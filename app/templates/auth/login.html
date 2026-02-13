@@ -48,8 +48,8 @@
 {% block scripts %}
 <script src="{{ url_for('static', filename='js/webauthn.js') }}"></script>
 <script>
-// WebAuthn が使えるブラウザでのみ表示
-if (window.PublicKeyCredential) {
+// WebAuthn が使えるブラウザ＋セキュアコンテキストでのみ表示
+if (window.PublicKeyCredential && navigator.credentials) {
   document.getElementById("passkey-section").classList.remove("d-none");
 
   document.getElementById("btn-passkey-login").addEventListener("click", async () => {

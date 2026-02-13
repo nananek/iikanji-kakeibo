@@ -82,6 +82,11 @@
 {% block scripts %}
 <script src="{{ url_for('static', filename='js/webauthn.js') }}"></script>
 <script>
+if (!isWebAuthnAvailable()) {
+  document.getElementById("btn-register-passkey").disabled = true;
+  document.getElementById("register-status").innerHTML =
+    '<span class="text-warning"><i class="bi bi-exclamation-triangle"></i> Passkeyを利用するにはHTTPSまたはlocalhostでアクセスしてください。</span>';
+}
 document.getElementById("btn-register-passkey").addEventListener("click", async () => {
   const nameInput = document.getElementById("passkey-name");
   const statusEl = document.getElementById("register-status");

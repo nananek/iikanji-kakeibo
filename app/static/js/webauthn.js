@@ -2,6 +2,10 @@
  * WebAuthn / Passkey ヘルパー
  */
 
+function isWebAuthnAvailable() {
+  return !!(window.PublicKeyCredential && navigator.credentials);
+}
+
 function base64urlToBuffer(base64url) {
   const base64 = base64url.replace(/-/g, "+").replace(/_/g, "/");
   const pad = base64.length % 4 === 0 ? "" : "=".repeat(4 - (base64.length % 4));
@@ -28,6 +32,9 @@ function bufferToBase64url(buffer) {
  * @returns {Promise<object>}
  */
 async function registerPasskey(passkeyName) {
+  if (!isWebAuthnAvailable()) {
+    throw new Error("このブラウザまたは接続ではPasskeyを利用できません。HTTPSまたはlocalhostでアクセスしてください。");
+  }
   // 1. サーバーからオプション取得
   const optionsResp = await fetch("/webauthn/register/options", {
     method: "POST",
@@ -81,6 +88,9 @@ async function registerPasskey(passkeyName) {
  * @returns {Promise<object>}
  */
 async function authenticatePasskey() {
+  if (!isWebAuthnAvailable()) {
+    throw new Error("このブラウザまたは接続ではPasskeyを利用できません。HTTPSまたはlocalhostでアクセスしてください。");
+  }
   // 1. サーバーからオプション取得
   const optionsResp = await fetch("/webauthn/authenticate/options", {
     method: "POST",
