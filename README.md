@@ -126,4 +126,4 @@ app/
 
 ## ライセンス
 
-Private
+[いいかんじ™ライセンス (IKL) v1.0](./LICENSE) — MIT License 互換
