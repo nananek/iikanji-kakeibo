@@ -1,5 +1,5 @@
-import json
 from datetime import datetime, timezone
+from urllib.parse import urlparse
 
 from flask import Blueprint, current_app, jsonify, request, session
 from flask_login import current_user, login_required, login_user
@@ -25,6 +25,15 @@ from app.models.webauthn import WebAuthnCredential
 bp = Blueprint("webauthn", __name__, url_prefix="/webauthn")
 
 
+def _get_rp_id_and_origin():
+    """リクエストの Origin ヘッダーから RP_ID と origin を決定する。
+    localhost / 127.0.0.1 どちらでアクセスしても動作するようにする。"""
+    origin = request.headers.get("Origin") or request.host_url.rstrip("/")
+    parsed = urlparse(origin)
+    rp_id = parsed.hostname  # e.g. "localhost" or "127.0.0.1"
+    return rp_id, origin
+
+
 # ---------- 登録 ----------
 
 
@@ -37,8 +46,9 @@ def register_options():
         PublicKeyCredentialDescriptor(id=c.credential_id) for c in existing
     ]
 
+    rp_id, _ = _get_rp_id_and_origin()
     options = generate_registration_options(
-        rp_id=current_app.config["WEBAUTHN_RP_ID"],
+        rp_id=rp_id,
         rp_name=current_app.config["WEBAUTHN_RP_NAME"],
         user_id=str(current_user.id).encode(),
         user_name=current_user.username,
@@ -65,12 +75,13 @@ def register_verify():
         return jsonify(error="チャレンジが見つかりません。もう一度お試しください。"), 400
 
     body = request.get_json()
+    rp_id, origin = _get_rp_id_and_origin()
     try:
         verification = verify_registration_response(
             credential=body,
             expected_challenge=challenge,
-            expected_rp_id=current_app.config["WEBAUTHN_RP_ID"],
-            expected_origin=current_app.config["WEBAUTHN_ORIGIN"],
+            expected_rp_id=rp_id,
+            expected_origin=origin,
         )
     except Exception as e:
         return jsonify(error=f"検証に失敗しました: {e}"), 400
@@ -97,8 +108,9 @@ def register_verify():
 @bp.route("/authenticate/options", methods=["POST"])
 def authenticate_options():
     """認証セレモニー: PublicKeyCredentialRequestOptions を生成"""
+    rp_id, _ = _get_rp_id_and_origin()
     options = generate_authentication_options(
-        rp_id=current_app.config["WEBAUTHN_RP_ID"],
+        rp_id=rp_id,
         user_verification=UserVerificationRequirement.PREFERRED,
     )
 
@@ -132,12 +144,13 @@ def authenticate_verify():
     if not stored:
         return jsonify(error="登録されていないPasskeyです。"), 400
 
+    rp_id, origin = _get_rp_id_and_origin()
     try:
         verification = verify_authentication_response(
             credential=body,
             expected_challenge=challenge,
-            expected_rp_id=current_app.config["WEBAUTHN_RP_ID"],
-            expected_origin=current_app.config["WEBAUTHN_ORIGIN"],
+            expected_rp_id=rp_id,
+            expected_origin=origin,
             credential_public_key=stored.credential_public_key,
             credential_current_sign_count=stored.current_sign_count,
         )
