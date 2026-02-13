@@ -29,6 +29,10 @@
 | 収支計算書 | 月次 / 年次の収入・支出を科目別に内訳表示 |
 | 確定申告用集計 | 社会保険料・生命保険料・地震保険料・医療費・寄附金・iDeCo・源泉所得税・住民税を税区分ごとに集計 |
 
+### Passkey (WebAuthn) 認証
+
+パスワードに加え、指紋認証や Face ID などの **Passkey** でログイン可能。設定画面から Passkey の追加・管理・削除ができます。WebAuthn 対応ブラウザで自動的にボタンが表示されます。
+
 ### 勘定科目管理
 
 ユーザー登録時に約 40 科目の標準勘定科目を自動投入。確定申告用の税区分（`tax_category`）付き。独自科目の追加・編集も可能。
@@ -73,6 +77,7 @@
 - PostgreSQL 16
 - SQLAlchemy 2.x / Alembic (Flask-Migrate)
 - Flask-Login / Flask-WTF
+- py_webauthn (Passkey / WebAuthn)
 - Bootstrap 5.3 (CDN)
 - Docker Compose
 
@@ -80,12 +85,13 @@
 
 ```bash
 # リポジトリをクローン
-git clone https://github.com/nananek/iikanji-account-personal.git
-cd iikanji-account-personal
+git clone https://github.com/nananek/iikanji-kakeibo.git
+cd iikanji-kakeibo
 
-# 環境変数ファイルを作成
+# 設定ファイルを作成
+cp docker-compose.yml.example docker-compose.yml
 cp .env.example .env
-# 必要に応じて .env の SECRET_KEY を変更
+# 必要に応じて .env の SECRET_KEY やポート番号を変更
 
 # 起動（初回はマイグレーションと勘定科目区分の投入を自動実行）
 docker compose up -d
@@ -104,7 +110,8 @@ app/
 │   ├── user.py          #   User
 │   ├── account.py       #   AccountType, Account
 │   ├── journal.py       #   JournalEntry, JournalEntryLine
-│   └── medical.py       #   MedicalExpense
+│   ├── medical.py       #   MedicalExpense
+│   └── webauthn.py      #   WebAuthnCredential
 ├── views/               # Blueprint (ルーティング)
 │   ├── auth.py          #   認証
 │   ├── dashboard.py     #   ダッシュボード
@@ -113,7 +120,9 @@ app/
 │   ├── csv_import.py    #   CSV明細取込
 │   ├── medical.py       #   医療費管理
 │   ├── reports.py       #   レポート
-│   └── accounts.py      #   勘定科目管理
+│   ├── accounts.py      #   勘定科目管理
+│   ├── webauthn.py      #   Passkey WebAuthn API
+│   └── settings.py      #   設定 (Passkey管理)
 ├── services/            # ビジネスロジック
 │   ├── accounting.py    #   仕訳自動生成
 │   ├── csv_import.py    #   CSVパース
