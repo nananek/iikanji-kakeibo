@@ -1,0 +1,112 @@
+{% extends "base.html" %}
+{% block title %}Passkey管理 - いいかんじ家計簿{% endblock %}
+
+{% block content %}
+<div class="row">
+  <div class="col-lg-8">
+    <h2><i class="bi bi-key"></i> Passkey管理</h2>
+    <p class="text-muted">パスワードの代わりに指紋認証やFace IDでログインできます。</p>
+
+    <div class="card mb-4">
+      <div class="card-header">
+        <i class="bi bi-plus-circle"></i> 新しいPasskeyを追加
+      </div>
+      <div class="card-body">
+        <div class="input-group">
+          <input type="text" id="passkey-name" class="form-control"
+                 placeholder="Passkey名（例: MacBook Pro、iPhone）" maxlength="100">
+          <button class="btn btn-primary" id="btn-register-passkey" type="button">
+            <i class="bi bi-key"></i> 追加
+          </button>
+        </div>
+        <div id="register-status" class="mt-2"></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header">
+        <i class="bi bi-list-ul"></i> 登録済みPasskey
+      </div>
+      {% if credentials %}
+      <div class="table-responsive">
+        <table class="table table-hover mb-0">
+          <thead>
+            <tr>
+              <th>名前</th>
+              <th>登録日</th>
+              <th>最終使用</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for cred in credentials %}
+            <tr>
+              <td>
+                <i class="bi bi-key-fill text-primary"></i>
+                {{ cred.name or "Passkey #%d" % cred.id }}
+              </td>
+              <td>{{ cred.created_at.strftime('%Y/%m/%d %H:%M') }}</td>
+              <td>
+                {% if cred.last_used_at %}
+                  {{ cred.last_used_at.strftime('%Y/%m/%d %H:%M') }}
+                {% else %}
+                  <span class="text-muted">未使用</span>
+                {% endif %}
+              </td>
+              <td class="text-end">
+                <form method="POST"
+                      action="{{ url_for('settings.delete_passkey', credential_id=cred.id) }}"
+                      onsubmit="return confirm('この Passkey を削除しますか？')">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <button type="submit" class="btn btn-sm btn-outline-danger">
+                    <i class="bi bi-trash"></i> 削除
+                  </button>
+                </form>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <div class="card-body text-muted text-center py-4">
+        <i class="bi bi-key" style="font-size: 2rem;"></i>
+        <p class="mt-2 mb-0">Passkeyがまだ登録されていません。</p>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/webauthn.js') }}"></script>
+<script>
+document.getElementById("btn-register-passkey").addEventListener("click", async () => {
+  const nameInput = document.getElementById("passkey-name");
+  const statusEl = document.getElementById("register-status");
+  const btn = document.getElementById("btn-register-passkey");
+
+  btn.disabled = true;
+  statusEl.innerHTML = '<span class="text-info"><i class="bi bi-hourglass-split"></i> デバイスの認証を待っています...</span>';
+
+  try {
+    const result = await registerPasskey(nameInput.value.trim());
+    if (result.ok) {
+      statusEl.innerHTML = '<span class="text-success"><i class="bi bi-check-circle"></i> 登録しました！</span>';
+      setTimeout(() => location.reload(), 800);
+    } else {
+      statusEl.innerHTML = '<span class="text-danger"><i class="bi bi-x-circle"></i> ' + (result.error || "登録に失敗しました。") + '</span>';
+      btn.disabled = false;
+    }
+  } catch (e) {
+    if (e.name === "NotAllowedError") {
+      statusEl.innerHTML = '<span class="text-warning"><i class="bi bi-exclamation-triangle"></i> キャンセルされました。</span>';
+    } else {
+      statusEl.innerHTML = '<span class="text-danger"><i class="bi bi-x-circle"></i> ' + e.message + '</span>';
+    }
+    btn.disabled = false;
+  }
+});
+</script>
+{% endblock %}

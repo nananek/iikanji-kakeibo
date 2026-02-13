@@ -21,6 +21,10 @@ def create_app(config_class=Config):
     from app.views import register_blueprints
     register_blueprints(app)
 
+    # WebAuthn blueprint は JSON API なので CSRF 免除
+    from app.views.webauthn import bp as webauthn_bp
+    csrf.exempt(webauthn_bp)
+
     # CLI commands
     register_cli(app)
 

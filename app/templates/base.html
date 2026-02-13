@@ -74,6 +74,12 @@
             <span class="nav-link text-light"><i class="bi bi-person"></i> {{ current_user.username }}</span>
           </li>
           <li class="nav-item">
+            <a class="nav-link {% if request.endpoint and request.endpoint.startswith('settings.') %}active{% endif %}"
+               href="{{ url_for('settings.passkeys') }}">
+              <i class="bi bi-key"></i> Passkey
+            </a>
+          </li>
+          <li class="nav-item">
             <a class="nav-link" href="{{ url_for('auth.logout') }}"><i class="bi bi-box-arrow-right"></i> ログアウト</a>
           </li>
         </ul>

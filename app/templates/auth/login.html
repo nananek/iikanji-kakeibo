@@ -25,6 +25,17 @@
           </div>
           {{ form.submit(class="btn btn-primary w-100") }}
         </form>
+
+        <div id="passkey-section" class="d-none">
+          <div class="text-center my-3">
+            <span class="text-muted">または</span>
+          </div>
+          <button type="button" id="btn-passkey-login" class="btn btn-outline-secondary w-100">
+            <i class="bi bi-key"></i> Passkeyでログイン
+          </button>
+          <div id="passkey-login-status" class="mt-2 text-center"></div>
+        </div>
+
         <div class="text-center mt-3">
           <a href="{{ url_for('auth.register') }}">アカウント登録</a>
         </div>
@@ -32,4 +43,40 @@
     </div>
   </div>
 </div>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/webauthn.js') }}"></script>
+<script>
+// WebAuthn が使えるブラウザでのみ表示
+if (window.PublicKeyCredential) {
+  document.getElementById("passkey-section").classList.remove("d-none");
+
+  document.getElementById("btn-passkey-login").addEventListener("click", async () => {
+    const btn = document.getElementById("btn-passkey-login");
+    const statusEl = document.getElementById("passkey-login-status");
+
+    btn.disabled = true;
+    statusEl.innerHTML = '<span class="text-info"><i class="bi bi-hourglass-split"></i> デバイスの認証を待っています...</span>';
+
+    try {
+      const result = await authenticatePasskey();
+      if (result.ok) {
+        statusEl.innerHTML = '<span class="text-success"><i class="bi bi-check-circle"></i> 認証成功！</span>';
+        window.location.href = result.redirect || "/";
+      } else {
+        statusEl.innerHTML = '<span class="text-danger"><i class="bi bi-x-circle"></i> ' + (result.error || "認証に失敗しました。") + '</span>';
+        btn.disabled = false;
+      }
+    } catch (e) {
+      if (e.name === "NotAllowedError") {
+        statusEl.innerHTML = '<span class="text-warning"><i class="bi bi-exclamation-triangle"></i> キャンセルされました。</span>';
+      } else {
+        statusEl.innerHTML = '<span class="text-danger"><i class="bi bi-x-circle"></i> ' + e.message + '</span>';
+      }
+      btn.disabled = false;
+    }
+  });
+}
+</script>
 {% endblock %}
