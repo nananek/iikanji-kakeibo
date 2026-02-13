@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+{% block title %}確定申告用集計 - いいかんじ家計簿{% endblock %}
+
+{% block content %}
+<h2><i class="bi bi-file-earmark-text"></i> 確定申告用集計</h2>
+
+<form class="row g-3 mb-4 mt-2" method="GET">
+  <div class="col-auto">
+    <select name="year" class="form-select">
+      {% for y in range(year - 2, year + 2) %}
+      <option value="{{ y }}" {% if y == year %}selected{% endif %}>{{ y }}年</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="col-auto">
+    <button type="submit" class="btn btn-outline-secondary">表示</button>
+  </div>
+</form>
+
+<h4 class="mt-4">控除対象の支出</h4>
+
+{% if tax_summary %}
+{% for cat_code, cat_data in tax_summary.items() %}
+<div class="card shadow-sm mb-3">
+  <div class="card-header d-flex justify-content-between">
+    <strong>{{ cat_data.label }}</strong>
+    <span class="badge bg-dark fs-6">&yen;{{ "{:,}".format(cat_data.total|int) }}</span>
+  </div>
+  <div class="card-body p-0">
+    <table class="table table-sm mb-0">
+      <tbody>
+        {% for account in cat_data.accounts %}
+        <tr>
+          <td>{{ account.name }}</td>
+          <td class="text-end">&yen;{{ "{:,}".format(account.amount|int) }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endfor %}
+{% else %}
+<div class="text-muted py-3">控除対象の支出データがありません。</div>
+{% endif %}
+
+<h4 class="mt-5">医療費控除</h4>
+
+<div class="card shadow-sm mb-3">
+  <div class="card-body">
+    <div class="row text-center">
+      <div class="col-md-3">
+        <h6 class="text-muted">支払医療費合計</h6>
+        <h4>&yen;{{ "{:,}".format(medical_summary.total_paid) }}</h4>
+      </div>
+      <div class="col-md-3">
+        <h6 class="text-muted">保険補填額</h6>
+        <h4>&yen;{{ "{:,}".format(medical_summary.total_reimbursed) }}</h4>
+      </div>
+      <div class="col-md-3">
+        <h6 class="text-muted">自己負担額</h6>
+        <h4>&yen;{{ "{:,}".format(medical_summary.net_total) }}</h4>
+      </div>
+      <div class="col-md-3">
+        <h6 class="text-muted">控除対象額</h6>
+        <h4 class="{% if medical_summary.deductible > 0 %}text-success{% endif %}">
+          &yen;{{ "{:,}".format(medical_summary.deductible) }}
+        </h4>
+        <small class="text-muted">(10万円超過分)</small>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% if medical_summary.expenses %}
+<div class="table-responsive">
+  <table class="table table-sm">
+    <thead class="table-light">
+      <tr>
+        <th>日付</th>
+        <th>受診者</th>
+        <th>病院・薬局</th>
+        <th>治療内容</th>
+        <th class="text-end">支払額</th>
+        <th class="text-end">保険補填</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for e in medical_summary.expenses %}
+      <tr>
+        <td>{{ e.date.strftime('%Y/%m/%d') }}</td>
+        <td>{{ e.patient_name }}</td>
+        <td>{{ e.hospital_name }}</td>
+        <td>{{ e.treatment_description }}</td>
+        <td class="text-end">&yen;{{ "{:,}".format(e.amount_paid) }}</td>
+        <td class="text-end">&yen;{{ "{:,}".format(e.insurance_reimbursement) }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+{% endblock %}

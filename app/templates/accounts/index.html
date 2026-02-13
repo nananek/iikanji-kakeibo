@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{% block title %}勘定科目 - いいかんじ家計簿{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <h2><i class="bi bi-list-ul"></i> 勘定科目</h2>
+  <a href="{{ url_for('accounts.new') }}" class="btn btn-primary">
+    <i class="bi bi-plus-lg"></i> 科目を追加
+  </a>
+</div>
+
+{% for account_type, accounts in grouped.items() %}
+<div class="card shadow-sm mb-4">
+  <div class="card-header">
+    <strong>{{ account_type.name }}</strong>
+    <span class="badge bg-secondary">{{ accounts|length }}科目</span>
+  </div>
+  {% if accounts %}
+  <div class="table-responsive">
+    <table class="table table-sm table-hover mb-0">
+      <thead class="table-light">
+        <tr>
+          <th>コード</th>
+          <th>科目名</th>
+          <th>説明</th>
+          <th>確定申告区分</th>
+          <th>状態</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for account in accounts %}
+        <tr {% if not account.is_active %}class="text-muted"{% endif %}>
+          <td>{{ account.code }}</td>
+          <td>
+            {{ account.name }}
+            {% if account.is_system %}
+            <span class="badge bg-info">標準</span>
+            {% endif %}
+          </td>
+          <td>{{ account.description }}</td>
+          <td>
+            {% if account.tax_category %}
+            <span class="badge bg-warning text-dark">{{ account.tax_category }}</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if account.is_active %}
+            <span class="badge bg-success">有効</span>
+            {% else %}
+            <span class="badge bg-secondary">無効</span>
+            {% endif %}
+          </td>
+          <td>
+            <a href="{{ url_for('accounts.edit', account_id=account.id) }}" class="btn btn-outline-secondary btn-sm">
+              <i class="bi bi-pencil"></i>
+            </a>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="card-body text-muted">科目がありません</div>
+  {% endif %}
+</div>
+{% endfor %}
+{% endblock %}

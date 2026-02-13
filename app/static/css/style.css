@@ -1,0 +1,21 @@
+body {
+  background-color: #f8f9fa;
+}
+
+.navbar-brand {
+  font-weight: bold;
+}
+
+.card {
+  border: none;
+  border-radius: 0.5rem;
+}
+
+.table th {
+  white-space: nowrap;
+}
+
+.btn-group .btn + form .btn {
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}

@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block title %}{{ '編集' if is_edit else '新規記帳' }} - 出納帳 - いいかんじ家計簿{% endblock %}
+
+{% block content %}
+<h2><i class="bi bi-wallet2"></i> 出納帳 — {{ '編集' if is_edit else '新規記帳' }}</h2>
+
+<div class="card shadow-sm mt-4">
+  <div class="card-body">
+    <form method="POST">
+      {{ form.hidden_tag() }}
+
+      <div class="row mb-3">
+        <div class="col-md-3">
+          {{ form.date.label(class="form-label") }}
+          {{ form.date(class="form-control") }}
+          {% for error in form.date.errors %}
+          <div class="invalid-feedback d-block">{{ error }}</div>
+          {% endfor %}
+        </div>
+        <div class="col-md-3">
+          {{ form.transaction_type.label(class="form-label") }}
+          {{ form.transaction_type(class="form-select", id="transaction_type") }}
+        </div>
+      </div>
+
+      <div class="row mb-3">
+        <div class="col-md-4">
+          {{ form.payment_account_id.label(class="form-label") }}
+          {{ form.payment_account_id(class="form-select") }}
+        </div>
+        <div class="col-md-4">
+          {{ form.category_account_id.label(class="form-label") }}
+          {{ form.category_account_id(class="form-select") }}
+        </div>
+        <div class="col-md-4">
+          {{ form.amount.label(class="form-label") }}
+          <div class="input-group">
+            <span class="input-group-text">&yen;</span>
+            {{ form.amount(class="form-control", placeholder="0") }}
+          </div>
+          {% for error in form.amount.errors %}
+          <div class="invalid-feedback d-block">{{ error }}</div>
+          {% endfor %}
+        </div>
+      </div>
+
+      <div class="mb-3">
+        {{ form.description.label(class="form-label") }}
+        {{ form.description(class="form-control", placeholder="例: スーパーで食料品を購入") }}
+        {% for error in form.description.errors %}
+        <div class="invalid-feedback d-block">{{ error }}</div>
+        {% endfor %}
+      </div>
+
+      <div class="d-flex gap-2">
+        {{ form.submit(class="btn btn-primary") }}
+        <a href="{{ url_for('cashbook.index') }}" class="btn btn-outline-secondary">キャンセル</a>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}

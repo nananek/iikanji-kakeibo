@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}レポート - いいかんじ家計簿{% endblock %}
+
+{% block content %}
+<h2><i class="bi bi-bar-chart"></i> レポート</h2>
+
+<div class="row mt-4">
+  <div class="col-md-4 mb-3">
+    <div class="card shadow-sm h-100">
+      <div class="card-body">
+        <h5 class="card-title"><i class="bi bi-table"></i> 残高試算表</h5>
+        <p class="card-text">各勘定科目の残高を一覧で確認できます。</p>
+        <a href="{{ url_for('reports.balance') }}" class="btn btn-outline-primary">表示</a>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-4 mb-3">
+    <div class="card shadow-sm h-100">
+      <div class="card-body">
+        <h5 class="card-title"><i class="bi bi-graph-up"></i> 収支計算書</h5>
+        <p class="card-text">月次・年次の収入と支出の内訳を確認できます。</p>
+        <a href="{{ url_for('reports.pl') }}" class="btn btn-outline-primary">表示</a>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-4 mb-3">
+    <div class="card shadow-sm h-100">
+      <div class="card-body">
+        <h5 class="card-title"><i class="bi bi-file-earmark-text"></i> 確定申告用集計</h5>
+        <p class="card-text">控除対象の支出を区分ごとに集計します。</p>
+        <a href="{{ url_for('reports.tax') }}" class="btn btn-outline-primary">表示</a>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

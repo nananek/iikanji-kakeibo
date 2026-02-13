@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}いいかんじ家計簿{% endblock %}</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
+  <link href="{{ url_for('static', filename='css/style.css') }}" rel="stylesheet">
+</head>
+<body>
+  {% if current_user.is_authenticated %}
+  <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
+    <div class="container-fluid">
+      <a class="navbar-brand" href="{{ url_for('dashboard.index') }}">
+        <i class="bi bi-journal-text"></i> いいかんじ家計簿
+      </a>
+      <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+        <span class="navbar-toggler-icon"></span>
+      </button>
+      <div class="collapse navbar-collapse" id="navbarNav">
+        <ul class="navbar-nav me-auto">
+          <li class="nav-item">
+            <a class="nav-link {% if request.endpoint == 'dashboard.index' %}active{% endif %}"
+               href="{{ url_for('dashboard.index') }}">
+              <i class="bi bi-speedometer2"></i> ダッシュボード
+            </a>
+          </li>
+          <li class="nav-item">
+            <a class="nav-link {% if request.endpoint and request.endpoint.startswith('cashbook.') %}active{% endif %}"
+               href="{{ url_for('cashbook.index') }}">
+              <i class="bi bi-wallet2"></i> 出納帳
+            </a>
+          </li>
+          <li class="nav-item">
+            <a class="nav-link {% if request.endpoint and request.endpoint.startswith('csv_import.') %}active{% endif %}"
+               href="{{ url_for('csv_import.upload') }}">
+              <i class="bi bi-filetype-csv"></i> CSV取込
+            </a>
+          </li>
+          <li class="nav-item">
+            <a class="nav-link {% if request.endpoint and request.endpoint.startswith('journal.') %}active{% endif %}"
+               href="{{ url_for('journal.index') }}">
+              <i class="bi bi-journal-bookmark"></i> 仕訳帳
+            </a>
+          </li>
+          <li class="nav-item">
+            <a class="nav-link {% if request.endpoint and request.endpoint.startswith('medical.') %}active{% endif %}"
+               href="{{ url_for('medical.index') }}">
+              <i class="bi bi-hospital"></i> 医療費
+            </a>
+          </li>
+          <li class="nav-item dropdown">
+            <a class="nav-link dropdown-toggle {% if request.endpoint and request.endpoint.startswith('reports.') %}active{% endif %}"
+               href="#" role="button" data-bs-toggle="dropdown">
+              <i class="bi bi-bar-chart"></i> レポート
+            </a>
+            <ul class="dropdown-menu">
+              <li><a class="dropdown-item" href="{{ url_for('reports.balance') }}">残高試算表</a></li>
+              <li><a class="dropdown-item" href="{{ url_for('reports.pl') }}">収支計算書</a></li>
+              <li><hr class="dropdown-divider"></li>
+              <li><a class="dropdown-item" href="{{ url_for('reports.tax') }}">確定申告用集計</a></li>
+            </ul>
+          </li>
+          <li class="nav-item">
+            <a class="nav-link {% if request.endpoint and request.endpoint.startswith('accounts.') %}active{% endif %}"
+               href="{{ url_for('accounts.index') }}">
+              <i class="bi bi-list-ul"></i> 勘定科目
+            </a>
+          </li>
+        </ul>
+        <ul class="navbar-nav">
+          <li class="nav-item">
+            <span class="nav-link text-light"><i class="bi bi-person"></i> {{ current_user.username }}</span>
+          </li>
+          <li class="nav-item">
+            <a class="nav-link" href="{{ url_for('auth.logout') }}"><i class="bi bi-box-arrow-right"></i> ログアウト</a>
+          </li>
+        </ul>
+      </div>
+    </div>
+  </nav>
+  {% endif %}
+
+  <div class="container mt-4">
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        {% for category, message in messages %}
+        <div class="alert alert-{{ category }} alert-dismissible fade show" role="alert">
+          {{ message }}
+          <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        </div>
+        {% endfor %}
+      {% endif %}
+    {% endwith %}
+
+    {% block content %}{% endblock %}
+  </div>
+
+  <footer class="text-center text-muted py-4 mt-5">
+    <small>いいかんじ家計簿 &copy; {{ now().year if now is defined else 2026 }}</small>
+  </footer>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+  <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

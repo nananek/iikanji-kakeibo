@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block title %}残高試算表 - いいかんじ家計簿{% endblock %}
+
+{% block content %}
+<h2><i class="bi bi-table"></i> 残高試算表</h2>
+
+<form class="row g-3 mb-4 mt-2" method="GET">
+  <div class="col-auto">
+    <select name="year" class="form-select">
+      {% for y in range(year - 2, year + 2) %}
+      <option value="{{ y }}" {% if y == year %}selected{% endif %}>{{ y }}年</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="col-auto">
+    <button type="submit" class="btn btn-outline-secondary">表示</button>
+  </div>
+</form>
+
+{% if balances %}
+{% set ns = namespace(current_type='') %}
+<div class="table-responsive">
+  <table class="table table-hover">
+    <thead class="table-dark">
+      <tr>
+        <th>コード</th>
+        <th>勘定科目</th>
+        <th class="text-end">借方合計</th>
+        <th class="text-end">貸方合計</th>
+        <th class="text-end">残高</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for item in balances %}
+        {% if item.account.account_type.name != ns.current_type %}
+          {% set ns.current_type = item.account.account_type.name %}
+          <tr class="table-secondary">
+            <td colspan="5"><strong>{{ ns.current_type }}</strong></td>
+          </tr>
+        {% endif %}
+        <tr>
+          <td>{{ item.account.code }}</td>
+          <td>{{ item.account.name }}</td>
+          <td class="text-end">&yen;{{ "{:,}".format(item.debit|int) }}</td>
+          <td class="text-end">&yen;{{ "{:,}".format(item.credit|int) }}</td>
+          <td class="text-end {% if item.balance < 0 %}text-danger{% endif %}">
+            &yen;{{ "{:,}".format(item.balance|int) }}
+          </td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<div class="text-center text-muted py-5">
+  <p>{{ year }}年の仕訳データがありません。</p>
+</div>
+{% endif %}
+{% endblock %}

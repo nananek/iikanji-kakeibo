@@ -1,0 +1,125 @@
+{% extends "base.html" %}
+{% block title %}仕訳帳 - いいかんじ家計簿{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <h2><i class="bi bi-journal-bookmark"></i> 仕訳帳</h2>
+  <a href="{{ url_for('journal.new') }}" class="btn btn-primary">
+    <i class="bi bi-plus-lg"></i> 新規仕訳
+  </a>
+</div>
+
+<form class="row g-3 mb-4" method="GET">
+  <div class="col-auto">
+    <input type="date" name="date_from" class="form-control" value="{{ date_from }}">
+  </div>
+  <div class="col-auto">
+    <input type="date" name="date_to" class="form-control" value="{{ date_to }}">
+  </div>
+  <div class="col-auto">
+    <input type="text" name="search" class="form-control" value="{{ search }}" placeholder="摘要で検索">
+  </div>
+  <div class="col-auto">
+    <button type="submit" class="btn btn-outline-secondary">検索</button>
+    <a href="{{ url_for('journal.index') }}" class="btn btn-outline-secondary">リセット</a>
+  </div>
+</form>
+
+{% if entries.items %}
+<div class="table-responsive">
+  <table class="table table-hover">
+    <thead class="table-light">
+      <tr>
+        <th>No.</th>
+        <th>日付</th>
+        <th>摘要</th>
+        <th>借方</th>
+        <th>貸方</th>
+        <th class="text-end">金額</th>
+        <th>入力元</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for entry in entries.items %}
+      <tr>
+        <td>{{ entry.entry_number }}</td>
+        <td>{{ entry.date.strftime('%Y/%m/%d') }}</td>
+        <td>{{ entry.description }}</td>
+        <td>
+          {% for line in entry.lines if line.debit_amount > 0 %}
+          <div>{{ line.account.name }}</div>
+          {% endfor %}
+        </td>
+        <td>
+          {% for line in entry.lines if line.credit_amount > 0 %}
+          <div>{{ line.account.name }}</div>
+          {% endfor %}
+        </td>
+        <td class="text-end">&yen;{{ "{:,}".format(entry.total_debit|int) }}</td>
+        <td>
+          {% if entry.source == 'cashbook' %}
+          <span class="badge bg-info">出納帳</span>
+          {% else %}
+          <span class="badge bg-secondary">仕訳</span>
+          {% endif %}
+        </td>
+        <td>
+          <div class="btn-group btn-group-sm">
+            {% if entry.source == 'cashbook' %}
+            <a href="{{ url_for('cashbook.edit', entry_id=entry.id) }}" class="btn btn-outline-secondary">
+              <i class="bi bi-pencil"></i>
+            </a>
+            {% else %}
+            <a href="{{ url_for('journal.edit', entry_id=entry.id) }}" class="btn btn-outline-secondary">
+              <i class="bi bi-pencil"></i>
+            </a>
+            {% endif %}
+            <form method="POST" action="{{ url_for('journal.delete', entry_id=entry.id) }}"
+                  onsubmit="return confirm('この仕訳を削除しますか？')" class="d-inline">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <button type="submit" class="btn btn-outline-danger">
+                <i class="bi bi-trash"></i>
+              </button>
+            </form>
+          </div>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% if entries.pages > 1 %}
+<nav>
+  <ul class="pagination justify-content-center">
+    {% if entries.has_prev %}
+    <li class="page-item">
+      <a class="page-link" href="{{ url_for('journal.index', page=entries.prev_num, date_from=date_from, date_to=date_to, search=search) }}">前へ</a>
+    </li>
+    {% endif %}
+    {% for p in entries.iter_pages() %}
+      {% if p %}
+      <li class="page-item {% if p == entries.page %}active{% endif %}">
+        <a class="page-link" href="{{ url_for('journal.index', page=p, date_from=date_from, date_to=date_to, search=search) }}">{{ p }}</a>
+      </li>
+      {% else %}
+      <li class="page-item disabled"><span class="page-link">...</span></li>
+      {% endif %}
+    {% endfor %}
+    {% if entries.has_next %}
+    <li class="page-item">
+      <a class="page-link" href="{{ url_for('journal.index', page=entries.next_num, date_from=date_from, date_to=date_to, search=search) }}">次へ</a>
+    </li>
+    {% endif %}
+  </ul>
+</nav>
+{% endif %}
+
+{% else %}
+<div class="text-center text-muted py-5">
+  <i class="bi bi-journal-x" style="font-size: 3rem;"></i>
+  <p class="mt-3">まだ仕訳がありません。</p>
+</div>
+{% endif %}
+{% endblock %}

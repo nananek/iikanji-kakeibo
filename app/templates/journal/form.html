@@ -1,0 +1,138 @@
+{% extends "base.html" %}
+{% block title %}{{ '編集' if is_edit else '新規仕訳' }} - 仕訳帳 - いいかんじ家計簿{% endblock %}
+
+{% block content %}
+<h2><i class="bi bi-journal-bookmark"></i> 仕訳帳 — {{ '編集' if is_edit else '新規仕訳' }}</h2>
+
+<div class="card shadow-sm mt-4">
+  <div class="card-body">
+    <form method="POST" id="journalForm">
+      {{ form.hidden_tag() }}
+      <input type="hidden" name="lines_json" id="linesJson">
+
+      <div class="row mb-3">
+        <div class="col-md-3">
+          {{ form.date.label(class="form-label") }}
+          {{ form.date(class="form-control") }}
+        </div>
+        <div class="col-md-9">
+          {{ form.description.label(class="form-label") }}
+          {{ form.description(class="form-control", placeholder="取引の摘要") }}
+        </div>
+      </div>
+
+      <h5 class="mt-4">仕訳明細</h5>
+      <div class="table-responsive">
+        <table class="table" id="linesTable">
+          <thead class="table-light">
+            <tr>
+              <th style="width:35%">勘定科目</th>
+              <th style="width:20%">借方</th>
+              <th style="width:20%">貸方</th>
+              <th style="width:20%">摘要</th>
+              <th style="width:5%"></th>
+            </tr>
+          </thead>
+          <tbody id="linesBody">
+          </tbody>
+          <tfoot>
+            <tr class="table-light">
+              <th>合計</th>
+              <th id="totalDebit" class="text-end">0</th>
+              <th id="totalCredit" class="text-end">0</th>
+              <th></th>
+              <th></th>
+            </tr>
+            <tr id="balanceWarning" class="d-none">
+              <td colspan="5">
+                <div class="alert alert-danger mb-0 py-1">貸借が一致していません</div>
+              </td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+      <button type="button" class="btn btn-outline-secondary btn-sm" onclick="addLine()">
+        <i class="bi bi-plus-lg"></i> 行を追加
+      </button>
+
+      <hr>
+      <div class="d-flex gap-2">
+        {{ form.submit(class="btn btn-primary") }}
+        <a href="{{ url_for('journal.index') }}" class="btn btn-outline-secondary">キャンセル</a>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const accountChoices = {{ account_choices | tojson }};
+let lineCount = 0;
+
+function createAccountSelect(selectedId) {
+  let html = '<select class="form-select form-select-sm account-select" name="account_id">';
+  html += '<option value="">-- 選択 --</option>';
+  accountChoices.forEach(([id, name]) => {
+    const selected = id === selectedId ? ' selected' : '';
+    html += `<option value="${id}"${selected}>${name}</option>`;
+  });
+  html += '</select>';
+  return html;
+}
+
+function addLine(data) {
+  data = data || {};
+  const tbody = document.getElementById('linesBody');
+  const tr = document.createElement('tr');
+  tr.innerHTML = `
+    <td>${createAccountSelect(data.account_id || '')}</td>
+    <td><input type="number" class="form-control form-control-sm text-end debit-input" value="${data.debit_amount || 0}" min="0" onchange="updateTotals()"></td>
+    <td><input type="number" class="form-control form-control-sm text-end credit-input" value="${data.credit_amount || 0}" min="0" onchange="updateTotals()"></td>
+    <td><input type="text" class="form-control form-control-sm line-desc" value="${data.description || ''}"></td>
+    <td><button type="button" class="btn btn-outline-danger btn-sm" onclick="this.closest('tr').remove(); updateTotals()"><i class="bi bi-x"></i></button></td>
+  `;
+  tbody.appendChild(tr);
+  lineCount++;
+  updateTotals();
+}
+
+function updateTotals() {
+  let totalDebit = 0, totalCredit = 0;
+  document.querySelectorAll('.debit-input').forEach(el => totalDebit += parseInt(el.value) || 0);
+  document.querySelectorAll('.credit-input').forEach(el => totalCredit += parseInt(el.value) || 0);
+  document.getElementById('totalDebit').textContent = '¥' + totalDebit.toLocaleString();
+  document.getElementById('totalCredit').textContent = '¥' + totalCredit.toLocaleString();
+
+  const warning = document.getElementById('balanceWarning');
+  if (totalDebit !== totalCredit && (totalDebit > 0 || totalCredit > 0)) {
+    warning.classList.remove('d-none');
+  } else {
+    warning.classList.add('d-none');
+  }
+}
+
+document.getElementById('journalForm').addEventListener('submit', function(e) {
+  const lines = [];
+  document.querySelectorAll('#linesBody tr').forEach(tr => {
+    const accountId = tr.querySelector('.account-select').value;
+    const debit = parseInt(tr.querySelector('.debit-input').value) || 0;
+    const credit = parseInt(tr.querySelector('.credit-input').value) || 0;
+    const desc = tr.querySelector('.line-desc').value;
+    if (accountId && (debit > 0 || credit > 0)) {
+      lines.push({ account_id: accountId, debit_amount: debit, credit_amount: credit, description: desc });
+    }
+  });
+  document.getElementById('linesJson').value = JSON.stringify(lines);
+});
+
+// 初期化
+{% if is_edit and existing_lines is defined %}
+const existingLines = {{ existing_lines | safe }};
+existingLines.forEach(l => addLine(l));
+{% else %}
+addLine();
+addLine();
+{% endif %}
+</script>
+{% endblock %}

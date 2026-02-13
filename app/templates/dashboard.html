@@ -1,0 +1,153 @@
+{% extends "base.html" %}
+{% block title %}ダッシュボード - いいかんじ家計簿{% endblock %}
+
+{% block content %}
+<h2 class="mb-4"><i class="bi bi-speedometer2"></i> ダッシュボード</h2>
+
+<div class="row mb-4">
+  <div class="col-md-4">
+    <div class="card text-bg-primary shadow-sm">
+      <div class="card-body">
+        <h6 class="card-title">{{ year }}年{{ month }}月 収入</h6>
+        <h3 class="mb-0">&yen;{{ "{:,}".format(monthly.income|int) }}</h3>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-4">
+    <div class="card text-bg-danger shadow-sm">
+      <div class="card-body">
+        <h6 class="card-title">{{ year }}年{{ month }}月 支出</h6>
+        <h3 class="mb-0">&yen;{{ "{:,}".format(monthly.expense|int) }}</h3>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-4">
+    <div class="card {% if monthly.balance >= 0 %}text-bg-success{% else %}text-bg-warning{% endif %} shadow-sm">
+      <div class="card-body">
+        <h6 class="card-title">{{ year }}年{{ month }}月 収支</h6>
+        <h3 class="mb-0">&yen;{{ "{:,}".format(monthly.balance|int) }}</h3>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="row mb-4">
+  <div class="col-md-4">
+    <div class="card shadow-sm">
+      <div class="card-body">
+        <h6 class="card-title text-muted">{{ year }}年 累計収入</h6>
+        <h4 class="mb-0">&yen;{{ "{:,}".format(yearly.income|int) }}</h4>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-4">
+    <div class="card shadow-sm">
+      <div class="card-body">
+        <h6 class="card-title text-muted">{{ year }}年 累計支出</h6>
+        <h4 class="mb-0">&yen;{{ "{:,}".format(yearly.expense|int) }}</h4>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-4">
+    <div class="card shadow-sm">
+      <div class="card-body">
+        <h6 class="card-title text-muted">{{ year }}年 累計収支</h6>
+        <h4 class="mb-0">&yen;{{ "{:,}".format(yearly.balance|int) }}</h4>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="card shadow-sm mb-4">
+  <div class="card-body">
+    <h5 class="card-title">月別収支推移（{{ year }}年）</h5>
+    <canvas id="monthlyChart" height="100"></canvas>
+  </div>
+</div>
+
+<div class="row">
+  <div class="col-md-6">
+    <div class="card shadow-sm">
+      <div class="card-body">
+        <h5 class="card-title">クイック入力</h5>
+        <div class="d-grid gap-2">
+          <a href="{{ url_for('cashbook.new') }}" class="btn btn-outline-primary">
+            <i class="bi bi-wallet2"></i> 出納帳に記帳
+          </a>
+          <a href="{{ url_for('journal.new') }}" class="btn btn-outline-secondary">
+            <i class="bi bi-journal-bookmark"></i> 仕訳伝票を作成
+          </a>
+          <a href="{{ url_for('medical.new') }}" class="btn btn-outline-info">
+            <i class="bi bi-hospital"></i> 医療費を記録
+          </a>
+          <a href="{{ url_for('csv_import.upload') }}" class="btn btn-outline-success">
+            <i class="bi bi-filetype-csv"></i> CSV明細を取込
+          </a>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-6">
+    <div class="card shadow-sm">
+      <div class="card-body">
+        <h5 class="card-title">レポート</h5>
+        <div class="d-grid gap-2">
+          <a href="{{ url_for('reports.balance') }}" class="btn btn-outline-dark">
+            <i class="bi bi-table"></i> 残高試算表
+          </a>
+          <a href="{{ url_for('reports.pl') }}" class="btn btn-outline-dark">
+            <i class="bi bi-graph-up"></i> 収支計算書
+          </a>
+          <a href="{{ url_for('reports.tax') }}" class="btn btn-outline-dark">
+            <i class="bi bi-file-earmark-text"></i> 確定申告用集計
+          </a>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+<script>
+const data = {{ monthly_trend | tojson }};
+const ctx = document.getElementById('monthlyChart').getContext('2d');
+new Chart(ctx, {
+  type: 'bar',
+  data: {
+    labels: data.map(d => d.month + '月'),
+    datasets: [
+      {
+        label: '収入',
+        data: data.map(d => d.income),
+        backgroundColor: 'rgba(13, 110, 253, 0.7)',
+      },
+      {
+        label: '支出',
+        data: data.map(d => d.expense),
+        backgroundColor: 'rgba(220, 53, 69, 0.7)',
+      }
+    ]
+  },
+  options: {
+    responsive: true,
+    scales: {
+      y: {
+        beginAtZero: true,
+        ticks: {
+          callback: v => '¥' + v.toLocaleString()
+        }
+      }
+    },
+    plugins: {
+      tooltip: {
+        callbacks: {
+          label: ctx => ctx.dataset.label + ': ¥' + ctx.parsed.y.toLocaleString()
+        }
+      }
+    }
+  }
+});
+</script>
+{% endblock %}

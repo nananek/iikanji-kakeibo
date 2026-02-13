@@ -1,0 +1,167 @@
+{% extends "base.html" %}
+{% block title %}列マッピング - CSV取込 - いいかんじ家計簿{% endblock %}
+
+{% block content %}
+<h2><i class="bi bi-filetype-csv"></i> CSV明細取込</h2>
+
+<div class="card shadow-sm mt-4">
+  <div class="card-header">
+    <strong>Step 2:</strong> 列マッピング
+    <span class="text-muted ms-2">取込先: {{ payment_account.name }} / 全{{ total_rows }}件</span>
+  </div>
+  <div class="card-body">
+    <form method="POST">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+      <div class="row mb-4">
+        <div class="col-md-3">
+          <label class="form-label"><strong>日付の列</strong></label>
+          <select class="form-select" name="date_col" id="dateCol" required>
+            <option value="">-- 選択 --</option>
+            {% for i in col_indices %}
+            <option value="{{ i }}">{{ headers[i] }}（{{ i + 1 }}列目）</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-md-3">
+          <label class="form-label"><strong>日付の形式</strong></label>
+          <select class="form-select" name="date_format" required>
+            {% for label, fmt in date_formats %}
+            <option value="{{ fmt }}">{{ label }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-md-3">
+          <label class="form-label"><strong>摘要の列</strong></label>
+          <select class="form-select" name="desc_col" id="descCol" required>
+            <option value="">-- 選択 --</option>
+            {% for i in col_indices %}
+            <option value="{{ i }}">{{ headers[i] }}（{{ i + 1 }}列目）</option>
+            {% endfor %}
+          </select>
+        </div>
+      </div>
+
+      <div class="mb-4">
+        <label class="form-label"><strong>金額の列</strong></label>
+        <div class="form-check mb-2">
+          <input class="form-check-input" type="radio" name="amount_mode" id="modeSeparate"
+                 value="separate" checked onchange="toggleAmountMode()">
+          <label class="form-check-label" for="modeSeparate">入金と出金が別の列</label>
+        </div>
+        <div id="separateCols" class="row ms-4 mb-3">
+          <div class="col-md-4">
+            <label class="form-label">入金（預入・収入）の列</label>
+            <select class="form-select" name="deposit_col" id="depositCol">
+              <option value="">-- なし --</option>
+              {% for i in col_indices %}
+              <option value="{{ i }}">{{ headers[i] }}（{{ i + 1 }}列目）</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="col-md-4">
+            <label class="form-label">出金（引出・支払）の列</label>
+            <select class="form-select" name="withdrawal_col" id="withdrawalCol">
+              <option value="">-- なし --</option>
+              {% for i in col_indices %}
+              <option value="{{ i }}">{{ headers[i] }}（{{ i + 1 }}列目）</option>
+              {% endfor %}
+            </select>
+          </div>
+        </div>
+
+        <div class="form-check mb-2">
+          <input class="form-check-input" type="radio" name="amount_mode" id="modeSingle"
+                 value="single" onchange="toggleAmountMode()">
+          <label class="form-check-label" for="modeSingle">入出金が1列（正=入金、負=出金）</label>
+        </div>
+        <div id="singleCol" class="row ms-4 mb-3 d-none">
+          <div class="col-md-4">
+            <label class="form-label">金額の列</label>
+            <select class="form-select" name="amount_col" id="amountCol">
+              <option value="">-- 選択 --</option>
+              {% for i in col_indices %}
+              <option value="{{ i }}">{{ headers[i] }}（{{ i + 1 }}列目）</option>
+              {% endfor %}
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <div class="d-flex gap-2 mb-4">
+        <button type="submit" class="btn btn-primary">
+          <i class="bi bi-arrow-right"></i> プレビューして次へ
+        </button>
+        <a href="{{ url_for('csv_import.upload') }}" class="btn btn-outline-secondary">戻る</a>
+      </div>
+    </form>
+
+    <h5 class="mt-4">CSVプレビュー（先頭{{ preview_rows|length }}行）</h5>
+    <div class="table-responsive">
+      <table class="table table-sm table-bordered" id="previewTable">
+        <thead class="table-light">
+          <tr>
+            {% for h in headers %}
+            <th>
+              <small class="text-muted d-block">{{ loop.index }}列目</small>
+              {{ h }}
+            </th>
+            {% endfor %}
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in preview_rows %}
+          <tr>
+            {% for cell in row %}
+            <td>{{ cell }}</td>
+            {% endfor %}
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function toggleAmountMode() {
+  const isSeparate = document.getElementById('modeSeparate').checked;
+  document.getElementById('separateCols').classList.toggle('d-none', !isSeparate);
+  document.getElementById('singleCol').classList.toggle('d-none', isSeparate);
+}
+
+// 列選択時にプレビューテーブルの該当列をハイライト
+document.querySelectorAll('#dateCol, #descCol, #depositCol, #withdrawalCol, #amountCol').forEach(sel => {
+  sel.addEventListener('change', highlightColumns);
+});
+
+function highlightColumns() {
+  // リセット
+  document.querySelectorAll('#previewTable th, #previewTable td').forEach(el => {
+    el.classList.remove('table-primary', 'table-success', 'table-danger', 'table-warning');
+  });
+
+  const mappings = [
+    { id: 'dateCol', cls: 'table-primary' },
+    { id: 'descCol', cls: 'table-warning' },
+    { id: 'depositCol', cls: 'table-success' },
+    { id: 'withdrawalCol', cls: 'table-danger' },
+    { id: 'amountCol', cls: 'table-success' },
+  ];
+
+  mappings.forEach(({ id, cls }) => {
+    const val = document.getElementById(id).value;
+    if (val === '') return;
+    const colIdx = parseInt(val);
+    document.querySelectorAll('#previewTable tr').forEach(tr => {
+      const cells = tr.children;
+      if (colIdx < cells.length) {
+        cells[colIdx].classList.add(cls);
+      }
+    });
+  });
+}
+</script>
+{% endblock %}
