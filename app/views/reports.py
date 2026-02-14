@@ -40,9 +40,15 @@ def balance():
         .all()
     )
 
+    # P/L科目は当年発生額、B/S科目は累計残高
+    start_of_year = date(year, 1, 1)
+    pl_type_codes = {"revenue", "expense"}
+
     balances = []
     for account in accounts:
-        result = (
+        is_pl = account.account_type.code in pl_type_codes
+
+        query = (
             db.session.query(
                 func.coalesce(func.sum(JournalEntryLine.debit_amount), 0),
                 func.coalesce(func.sum(JournalEntryLine.credit_amount), 0),
@@ -52,8 +58,12 @@ def balance():
                 JournalEntryLine.account_id == account.id,
                 JournalEntry.date <= as_of,
             )
-            .first()
         )
+
+        if is_pl:
+            query = query.filter(JournalEntry.date >= start_of_year)
+
+        result = query.first()
         total_debit = result[0]
         total_credit = result[1]
 
