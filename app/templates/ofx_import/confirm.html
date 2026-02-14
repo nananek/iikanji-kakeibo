@@ -1,0 +1,195 @@
+{% extends "base.html" %}
+{% block title %}取込確認 - OFX取込 - いいかんじ家計簿{% endblock %}
+
+{% block content %}
+<h2><i class="bi bi-file-earmark-binary"></i> OFX明細取込</h2>
+
+<div class="card shadow-sm mt-4">
+  <div class="card-header d-flex justify-content-between align-items-center">
+    <div>
+      <strong>Step 2:</strong> 確認して取込
+      <span class="text-muted ms-2">
+        取込先: {{ payment_account.name }} / {{ parsed|length }}件
+        {% if ofx_account_info %}
+        <small>(OFX口座: {{ ofx_account_info }})</small>
+        {% endif %}
+      </span>
+    </div>
+    <div>
+      <button type="button" class="btn btn-sm btn-outline-secondary" onclick="toggleAll(true)">全選択</button>
+      <button type="button" class="btn btn-sm btn-outline-secondary" onclick="toggleAll(false)">全解除</button>
+    </div>
+  </div>
+  <div class="card-body">
+    <form method="POST" id="importForm">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="import_rows" id="importRows">
+
+      <div class="table-responsive">
+        <table class="table table-sm table-hover" id="confirmTable">
+          <thead class="table-light">
+            <tr>
+              <th style="width:3%">
+                <input type="checkbox" class="form-check-input" id="checkAll"
+                       checked onchange="toggleAll(this.checked)">
+              </th>
+              <th style="width:5%">行</th>
+              <th style="width:12%">日付</th>
+              <th style="width:30%">摘要</th>
+              <th style="width:10%" class="text-end">入金</th>
+              <th style="width:10%" class="text-end">出金</th>
+              <th style="width:25%">費目</th>
+              <th style="width:5%">状態</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in parsed %}
+            <tr data-idx="{{ loop.index0 }}"
+                {% if not row.date %}class="table-warning"{% endif %}>
+              <td>
+                <input type="checkbox" class="form-check-input row-check"
+                       data-idx="{{ loop.index0 }}"
+                       {% if row.date and (row.deposit or row.withdrawal) %}checked{% endif %}>
+              </td>
+              <td>{{ row.row_num }}</td>
+              <td>{{ row.date if row.date else '(不明)' }}</td>
+              <td>{{ row.description }}</td>
+              <td class="text-end {% if row.deposit %}text-primary fw-bold{% endif %}">
+                {% if row.deposit %}&yen;{{ "{:,}".format(row.deposit) }}{% endif %}
+              </td>
+              <td class="text-end {% if row.withdrawal %}text-danger fw-bold{% endif %}">
+                {% if row.withdrawal %}&yen;{{ "{:,}".format(row.withdrawal) }}{% endif %}
+              </td>
+              <td>
+                <input type="hidden" class="category-id" data-idx="{{ loop.index0 }}"
+                       value="{% if row.deposit and default_income_id %}{{ default_income_id }}{% elif row.withdrawal and default_expense_id %}{{ default_expense_id }}{% endif %}">
+                <button type="button" class="form-control form-control-sm text-start category-btn"
+                        data-idx="{{ loop.index0 }}">
+                  <span class="category-name text-muted">-- 選択 --</span>
+                </button>
+              </td>
+              <td>
+                {% if not row.date %}
+                <span class="badge bg-warning text-dark">日付なし</span>
+                {% elif not row.deposit and not row.withdrawal %}
+                <span class="badge bg-secondary">金額なし</span>
+                {% else %}
+                <span class="badge bg-success">OK</span>
+                {% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+          <tfoot class="table-light fw-bold">
+            <tr>
+              <td colspan="4" class="text-end">選択行の合計</td>
+              <td class="text-end text-primary" id="totalDeposit">&yen;0</td>
+              <td class="text-end text-danger" id="totalWithdrawal">&yen;0</td>
+              <td colspan="2"></td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+
+      <div class="d-flex gap-2 align-items-center mt-3">
+        <button type="submit" class="btn btn-primary btn-lg">
+          <i class="bi bi-check-lg"></i>
+          <span id="importCount">{{ parsed|length }}</span>件を取り込む
+        </button>
+        <a href="{{ url_for('ofx_import.upload') }}" class="btn btn-outline-secondary">最初からやり直す</a>
+      </div>
+    </form>
+  </div>
+</div>
+
+{% include "_partials/account_selector.html" %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+var parsedData = {{ parsed | tojson }};
+var paymentAccountId = {{ payment_account.id }};
+
+function _categoryNameById(id) {
+  for (var i = 0; i < _acctSelectorData.length; i++) {
+    var g = _acctSelectorData[i];
+    for (var j = 0; j < g.accounts.length; j++) {
+      if (g.accounts[j].id === id) return g.accounts[j].name;
+    }
+  }
+  return '';
+}
+
+// 初期化: デフォルト費目名を設定
+document.querySelectorAll('.category-btn').forEach(function(btn) {
+  var idx = btn.dataset.idx;
+  var hiddenInput = document.querySelector('.category-id[data-idx="' + idx + '"]');
+  var catId = parseInt(hiddenInput.value);
+  if (catId) {
+    var name = _categoryNameById(catId);
+    if (name) {
+      var span = btn.querySelector('.category-name');
+      span.textContent = name;
+      span.classList.remove('text-muted');
+    }
+  }
+
+  btn.addEventListener('click', function() {
+    var thisBtn = this;
+    var thisIdx = thisBtn.dataset.idx;
+    var curId = document.querySelector('.category-id[data-idx="' + thisIdx + '"]').value;
+    openAccountSelector(function(id, name) {
+      var input = document.querySelector('.category-id[data-idx="' + thisIdx + '"]');
+      input.value = id;
+      var span = thisBtn.querySelector('.category-name');
+      span.textContent = name;
+      span.classList.remove('text-muted');
+    }, {filter: 'category_transfer', excludeId: paymentAccountId, activeTab: 'pl', currentId: curId});
+  });
+});
+
+function toggleAll(checked) {
+  document.querySelectorAll('.row-check').forEach(function(cb) { cb.checked = checked; });
+  document.getElementById('checkAll').checked = checked;
+  updateCount();
+}
+
+function updateCount() {
+  var count = 0, totalDep = 0, totalWd = 0;
+  document.querySelectorAll('.row-check').forEach(function(cb) {
+    if (cb.checked) {
+      var idx = parseInt(cb.dataset.idx);
+      count++;
+      totalDep += parsedData[idx].deposit || 0;
+      totalWd += parsedData[idx].withdrawal || 0;
+    }
+  });
+  document.getElementById('importCount').textContent = count;
+  document.getElementById('totalDeposit').textContent = '\u00a5' + totalDep.toLocaleString();
+  document.getElementById('totalWithdrawal').textContent = '\u00a5' + totalWd.toLocaleString();
+}
+
+document.querySelectorAll('.row-check').forEach(function(cb) {
+  cb.addEventListener('change', updateCount);
+});
+
+document.getElementById('importForm').addEventListener('submit', function(e) {
+  var rows = [];
+  document.querySelectorAll('.row-check').forEach(function(cb) {
+    var idx = parseInt(cb.dataset.idx);
+    var catInput = document.querySelector('.category-id[data-idx="' + idx + '"]');
+    rows.push({
+      enabled: cb.checked,
+      date: parsedData[idx].date,
+      description: parsedData[idx].description,
+      deposit: parsedData[idx].deposit,
+      withdrawal: parsedData[idx].withdrawal,
+      category_id: catInput ? parseInt(catInput.value) : 0,
+    });
+  });
+  document.getElementById('importRows').value = JSON.stringify(rows);
+});
+
+updateCount();
+</script>
+{% endblock %}

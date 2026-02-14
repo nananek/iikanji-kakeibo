@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% block title %}OFX取込 - いいかんじ家計簿{% endblock %}
+
+{% block content %}
+<h2><i class="bi bi-file-earmark-binary"></i> OFX明細取込</h2>
+
+<div class="row mt-4">
+  <div class="col-lg-8">
+    <div class="card shadow-sm">
+      <div class="card-header">
+        <strong>Step 1:</strong> OFXファイルをアップロード
+      </div>
+      <div class="card-body">
+        <form method="POST" enctype="multipart/form-data">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+          <div class="mb-3">
+            <label class="form-label" for="ofx_file">OFXファイル</label>
+            <input type="file" class="form-control" name="ofx_file" id="ofx_file"
+                   accept=".ofx,.qfx" required>
+            <div class="form-text">
+              銀行やクレジットカードのOFX/QFXファイルを選択してください
+            </div>
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label">取込先の口座</label>
+            <input type="hidden" name="payment_account_id" id="paymentAccountId" value="">
+            <button type="button" class="form-control text-start" id="paymentAccountBtn"
+                    onclick="openAccountSelector(onPaymentSelected, {filter: 'payment', currentId: document.getElementById('paymentAccountId').value})">
+              <span id="paymentAccountName" class="text-muted">-- 選択してください --</span>
+            </button>
+            <div class="form-text">
+              この明細がどの口座（銀行口座・クレジットカード等）のものか選択します
+            </div>
+          </div>
+
+          <button type="submit" class="btn btn-primary">
+            <i class="bi bi-upload"></i> アップロードして次へ
+          </button>
+          <a href="{{ url_for('cashbook.index') }}" class="btn btn-outline-secondary">キャンセル</a>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-lg-4">
+    <div class="card shadow-sm">
+      <div class="card-header">OFX取込の流れ</div>
+      <div class="card-body">
+        <ol class="mb-0">
+          <li class="mb-2"><strong>アップロード</strong><br>OFXファイルと取込先口座を選択</li>
+          <li><strong>確認・取込</strong><br>プレビューを確認して一括取込</li>
+        </ol>
+      </div>
+    </div>
+  </div>
+</div>
+{% include "_partials/account_selector.html" %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+function onPaymentSelected(id, name) {
+  document.getElementById('paymentAccountId').value = id;
+  var span = document.getElementById('paymentAccountName');
+  span.textContent = name;
+  span.classList.remove('text-muted');
+}
+</script>
+{% endblock %}

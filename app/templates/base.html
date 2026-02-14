@@ -32,17 +32,16 @@
               <i class="bi bi-wallet2"></i> 出納帳
             </a>
           </li>
-          <li class="nav-item">
-            <a class="nav-link {% if request.endpoint and request.endpoint.startswith('csv_import.') %}active{% endif %}"
-               href="{{ url_for('csv_import.upload') }}">
-              <i class="bi bi-filetype-csv"></i> CSV取込
+          <li class="nav-item dropdown">
+            <a class="nav-link dropdown-toggle {% if request.endpoint and (request.endpoint.startswith('csv_import.') or request.endpoint.startswith('web_import.') or request.endpoint.startswith('ofx_import.')) %}active{% endif %}"
+               href="#" role="button" data-bs-toggle="dropdown">
+              <i class="bi bi-download"></i> 明細取込
             </a>
-          </li>
-          <li class="nav-item">
-            <a class="nav-link {% if request.endpoint and request.endpoint.startswith('web_import.') %}active{% endif %}"
-               href="{{ url_for('web_import.upload') }}">
-              <i class="bi bi-globe"></i> Web取込
-            </a>
+            <ul class="dropdown-menu">
+              <li><a class="dropdown-item" href="{{ url_for('csv_import.upload') }}"><i class="bi bi-filetype-csv"></i> CSV取込</a></li>
+              <li><a class="dropdown-item" href="{{ url_for('web_import.upload') }}"><i class="bi bi-globe"></i> Web取込</a></li>
+              <li><a class="dropdown-item" href="{{ url_for('ofx_import.upload') }}"><i class="bi bi-file-earmark-binary"></i> OFX取込</a></li>
+            </ul>
           </li>
           <li class="nav-item">
             <a class="nav-link {% if request.endpoint and request.endpoint.startswith('ai_journal.') %}active{% endif %}"
