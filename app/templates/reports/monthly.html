@@ -79,6 +79,46 @@
         </tr>
       </thead>
       <tbody>
+        {# --- 収入 --- #}
+        <tr class="table-secondary">
+          <td colspan="15"><strong>収入</strong></td>
+        </tr>
+        {% for a in comparison.income_accounts %}
+        {% set ct = a.cost_type or 'occasional' %}
+        <tr class="{% if ct == 'fixed' %}table-info{% elif ct == 'occasional' %}table-light{% endif %}">
+          <td style="position:sticky; left:0; z-index:1; background:{% if ct == 'fixed' %}#cff4fc{% elif ct == 'occasional' %}#f8f9fa{% else %}#fff{% endif %};">{{ a.name }}</td>
+          <td>
+            {% if ct == 'fixed' %}<span class="badge bg-info text-dark">固定</span>
+            {% elif ct == 'variable' %}<span class="badge bg-warning text-dark">変動</span>
+            {% else %}<span class="badge bg-secondary">臨時</span>{% endif %}
+          </td>
+          {% for m in range(12) %}
+          <td class="text-end {% if current_month and m + 1 == current_month %}table-warning{% endif %}">
+            {% if a.months[m] %}&yen;{{ "{:,}".format(a.months[m]) }}
+            {% elif current_month and m + 1 > current_month %}&nbsp;
+            {% else %}0{% endif %}
+          </td>
+          {% endfor %}
+          <td class="text-end fw-bold">&yen;{{ "{:,}".format(a.total) }}</td>
+          {% set months_with_data = [] %}
+          {% for m in range(12) %}{% if a.months[m] > 0 %}{% if months_with_data.append(1) %}{% endif %}{% endif %}{% endfor %}
+          <td class="text-end">
+            {% if months_with_data|length > 0 %}&yen;{{ "{:,}".format((a.total / months_with_data|length)|round|int) }}{% else %}0{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+        <tr class="table-dark">
+          <td style="position:sticky; left:0; z-index:1; background:#212529;"><strong>収入合計</strong></td>
+          <td></td>
+          {% for m in range(12) %}
+          <td class="text-end"><strong>{% if comparison.income_totals[m] %}&yen;{{ "{:,}".format(comparison.income_totals[m]) }}{% elif current_month and m + 1 > current_month %}&nbsp;{% else %}0{% endif %}</strong></td>
+          {% endfor %}
+          <td class="text-end"><strong>&yen;{{ "{:,}".format(comparison.income_totals|sum) }}</strong></td>
+          {% set inc_months = [] %}
+          {% for t in comparison.income_totals %}{% if t > 0 %}{% if inc_months.append(1) %}{% endif %}{% endif %}{% endfor %}
+          <td class="text-end"><strong>{% if inc_months|length > 0 %}&yen;{{ "{:,}".format((comparison.income_totals|sum / inc_months|length)|round|int) }}{% else %}0{% endif %}</strong></td>
+        </tr>
+
         {# --- 支出 --- #}
         <tr class="table-secondary">
           <td colspan="15"><strong>支出</strong></td>
@@ -123,46 +163,6 @@
           <td class="text-end"><strong>{% if exp_months|length > 0 %}&yen;{{ "{:,}".format((comparison.expense_totals|sum / exp_months|length)|round|int) }}{% else %}0{% endif %}</strong></td>
         </tr>
 
-        {# --- 収入 --- #}
-        <tr class="table-secondary">
-          <td colspan="15"><strong>収入</strong></td>
-        </tr>
-        {% for a in comparison.income_accounts %}
-        {% set ct = a.cost_type or 'occasional' %}
-        <tr class="{% if ct == 'fixed' %}table-info{% elif ct == 'occasional' %}table-light{% endif %}">
-          <td style="position:sticky; left:0; z-index:1; background:{% if ct == 'fixed' %}#cff4fc{% elif ct == 'occasional' %}#f8f9fa{% else %}#fff{% endif %};">{{ a.name }}</td>
-          <td>
-            {% if ct == 'fixed' %}<span class="badge bg-info text-dark">固定</span>
-            {% elif ct == 'variable' %}<span class="badge bg-warning text-dark">変動</span>
-            {% else %}<span class="badge bg-secondary">臨時</span>{% endif %}
-          </td>
-          {% for m in range(12) %}
-          <td class="text-end {% if current_month and m + 1 == current_month %}table-warning{% endif %}">
-            {% if a.months[m] %}&yen;{{ "{:,}".format(a.months[m]) }}
-            {% elif current_month and m + 1 > current_month %}&nbsp;
-            {% else %}0{% endif %}
-          </td>
-          {% endfor %}
-          <td class="text-end fw-bold">&yen;{{ "{:,}".format(a.total) }}</td>
-          {% set months_with_data = [] %}
-          {% for m in range(12) %}{% if a.months[m] > 0 %}{% if months_with_data.append(1) %}{% endif %}{% endif %}{% endfor %}
-          <td class="text-end">
-            {% if months_with_data|length > 0 %}&yen;{{ "{:,}".format((a.total / months_with_data|length)|round|int) }}{% else %}0{% endif %}
-          </td>
-        </tr>
-        {% endfor %}
-        <tr class="table-dark">
-          <td style="position:sticky; left:0; z-index:1; background:#212529;"><strong>収入合計</strong></td>
-          <td></td>
-          {% for m in range(12) %}
-          <td class="text-end"><strong>{% if comparison.income_totals[m] %}&yen;{{ "{:,}".format(comparison.income_totals[m]) }}{% elif current_month and m + 1 > current_month %}&nbsp;{% else %}0{% endif %}</strong></td>
-          {% endfor %}
-          <td class="text-end"><strong>&yen;{{ "{:,}".format(comparison.income_totals|sum) }}</strong></td>
-          {% set inc_months = [] %}
-          {% for t in comparison.income_totals %}{% if t > 0 %}{% if inc_months.append(1) %}{% endif %}{% endif %}{% endfor %}
-          <td class="text-end"><strong>{% if inc_months|length > 0 %}&yen;{{ "{:,}".format((comparison.income_totals|sum / inc_months|length)|round|int) }}{% else %}0{% endif %}</strong></td>
-        </tr>
-
         {# --- 収支差額 --- #}
         <tr class="table-light fw-bold">
           <td style="position:sticky; left:0; z-index:1; background:#f8f9fa;"><strong>収支差額</strong></td>
@@ -183,66 +183,6 @@
     </table>
   </div>
 </div>
-
-{# ========== 固定費/変動費/随時費分析 ========== #}
-{% set fixed_total = [] %}
-{% set variable_total = [] %}
-{% set occasional_total = [] %}
-{% for a in comparison.expense_accounts %}
-  {% set ct = a.cost_type or 'occasional' %}
-  {% if ct == 'fixed' %}{% if fixed_total.append(a.total) %}{% endif %}
-  {% elif ct == 'variable' %}{% if variable_total.append(a.total) %}{% endif %}
-  {% else %}{% if occasional_total.append(a.total) %}{% endif %}
-  {% endif %}
-{% endfor %}
-{% set ft = fixed_total|sum %}
-{% set vt = variable_total|sum %}
-{% set ot = occasional_total|sum %}
-{% set expense_grand = ft + vt + ot %}
-
-{% if expense_grand > 0 %}
-<div class="card shadow-sm mb-4">
-  <div class="card-header"><strong><i class="bi bi-pie-chart"></i> 費用区分分析</strong></div>
-  <div class="card-body">
-    <div class="row">
-      <div class="col-md-4">
-        <canvas id="costTypeChart" height="250"></canvas>
-      </div>
-      <div class="col-md-8">
-        <canvas id="costTypeTrendChart" height="250"></canvas>
-      </div>
-    </div>
-    <div class="row mt-3">
-      <div class="col-md-4">
-        <table class="table table-sm">
-          <tbody>
-            <tr>
-              <td><span class="badge bg-info text-dark">固定費</span></td>
-              <td class="text-end">&yen;{{ "{:,}".format(ft) }}</td>
-              <td class="text-end">{{ "{:.1f}".format(ft / expense_grand * 100) }}%</td>
-            </tr>
-            <tr>
-              <td><span class="badge bg-warning text-dark">変動費</span></td>
-              <td class="text-end">&yen;{{ "{:,}".format(vt) }}</td>
-              <td class="text-end">{{ "{:.1f}".format(vt / expense_grand * 100) }}%</td>
-            </tr>
-            <tr>
-              <td><span class="badge bg-secondary">随時費</span></td>
-              <td class="text-end">&yen;{{ "{:,}".format(ot) }}</td>
-              <td class="text-end">{{ "{:.1f}".format(ot / expense_grand * 100) }}%</td>
-            </tr>
-            <tr class="fw-bold">
-              <td>合計</td>
-              <td class="text-end">&yen;{{ "{:,}".format(expense_grand) }}</td>
-              <td class="text-end">100%</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-    </div>
-  </div>
-</div>
-{% endif %}
 
 {# ========== 収入区分分析 ========== #}
 {% set inc_fixed_total = [] %}
@@ -294,6 +234,66 @@
             <tr class="fw-bold">
               <td>合計</td>
               <td class="text-end">&yen;{{ "{:,}".format(income_grand) }}</td>
+              <td class="text-end">100%</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+{# ========== 支出区分分析 ========== #}
+{% set fixed_total = [] %}
+{% set variable_total = [] %}
+{% set occasional_total = [] %}
+{% for a in comparison.expense_accounts %}
+  {% set ct = a.cost_type or 'occasional' %}
+  {% if ct == 'fixed' %}{% if fixed_total.append(a.total) %}{% endif %}
+  {% elif ct == 'variable' %}{% if variable_total.append(a.total) %}{% endif %}
+  {% else %}{% if occasional_total.append(a.total) %}{% endif %}
+  {% endif %}
+{% endfor %}
+{% set ft = fixed_total|sum %}
+{% set vt = variable_total|sum %}
+{% set ot = occasional_total|sum %}
+{% set expense_grand = ft + vt + ot %}
+
+{% if expense_grand > 0 %}
+<div class="card shadow-sm mb-4">
+  <div class="card-header"><strong><i class="bi bi-pie-chart"></i> 支出区分分析</strong></div>
+  <div class="card-body">
+    <div class="row">
+      <div class="col-md-4">
+        <canvas id="costTypeChart" height="250"></canvas>
+      </div>
+      <div class="col-md-8">
+        <canvas id="costTypeTrendChart" height="250"></canvas>
+      </div>
+    </div>
+    <div class="row mt-3">
+      <div class="col-md-4">
+        <table class="table table-sm">
+          <tbody>
+            <tr>
+              <td><span class="badge bg-info text-dark">固定費</span></td>
+              <td class="text-end">&yen;{{ "{:,}".format(ft) }}</td>
+              <td class="text-end">{{ "{:.1f}".format(ft / expense_grand * 100) }}%</td>
+            </tr>
+            <tr>
+              <td><span class="badge bg-warning text-dark">変動費</span></td>
+              <td class="text-end">&yen;{{ "{:,}".format(vt) }}</td>
+              <td class="text-end">{{ "{:.1f}".format(vt / expense_grand * 100) }}%</td>
+            </tr>
+            <tr>
+              <td><span class="badge bg-secondary">随時費</span></td>
+              <td class="text-end">&yen;{{ "{:,}".format(ot) }}</td>
+              <td class="text-end">{{ "{:.1f}".format(ot / expense_grand * 100) }}%</td>
+            </tr>
+            <tr class="fw-bold">
+              <td>合計</td>
+              <td class="text-end">&yen;{{ "{:,}".format(expense_grand) }}</td>
               <td class="text-end">100%</td>
             </tr>
           </tbody>
