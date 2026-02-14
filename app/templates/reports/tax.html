@@ -72,75 +72,51 @@
   </div>
 </div>
 
-{% if medical_summary.by_patient or medical_summary.by_hospital %}
-<div class="row mb-4">
-  <div class="col-md-6">
-    <div class="card shadow-sm">
-      <div class="card-header"><strong>受診者別</strong></div>
-      <div class="card-body p-0">
-        <table class="table table-sm mb-0">
-          <thead class="table-light">
-            <tr>
-              <th>受診者</th>
-              <th class="text-end">支払額</th>
-              <th class="text-end">補填額</th>
-              <th class="text-end">自己負担</th>
-            </tr>
-          </thead>
-          <tbody>
-            {% for p in medical_summary.by_patient %}
-            <tr>
-              <td>{{ p.name }}</td>
-              <td class="text-end">&yen;{{ "{:,}".format(p.paid) }}</td>
-              <td class="text-end">
-                {% if p.reimbursed %}&yen;{{ "{:,}".format(p.reimbursed) }}{% endif %}
-              </td>
-              <td class="text-end">&yen;{{ "{:,}".format(p.net) }}</td>
-            </tr>
-            {% endfor %}
-          </tbody>
-        </table>
-      </div>
-    </div>
+{% if medical_summary.by_patient %}
+{% for p in medical_summary.by_patient %}
+<div class="card shadow-sm mb-3">
+  <div class="card-header d-flex justify-content-between">
+    <strong><i class="bi bi-person"></i> {{ p.name }}</strong>
+    <span>
+      支払 &yen;{{ "{:,}".format(p.paid) }}
+      {% if p.reimbursed %} / 補填 &yen;{{ "{:,}".format(p.reimbursed) }}{% endif %}
+      / 自己負担 <strong>&yen;{{ "{:,}".format(p.net) }}</strong>
+    </span>
   </div>
-  <div class="col-md-6">
-    <div class="card shadow-sm">
-      <div class="card-header"><strong>医療機関別</strong></div>
-      <div class="card-body p-0">
-        <table class="table table-sm mb-0">
-          <thead class="table-light">
-            <tr>
-              <th>医療機関</th>
-              <th>区分</th>
-              <th class="text-end">支払額</th>
-              <th class="text-end">補填額</th>
-              <th class="text-end">自己負担</th>
-            </tr>
-          </thead>
-          <tbody>
-            {% for h in medical_summary.by_hospital %}
-            <tr>
-              <td>{{ h.name }}</td>
-              <td>
-                {% if h.provider_type == 'hospital' %}病院
-                {% elif h.provider_type == 'pharmacy' %}薬局
-                {% elif h.provider_type == 'nursing' %}介護
-                {% elif h.provider_type == 'other' %}その他
-                {% endif %}
-              </td>
-              <td class="text-end">&yen;{{ "{:,}".format(h.paid) }}</td>
-              <td class="text-end">
-                {% if h.reimbursed %}&yen;{{ "{:,}".format(h.reimbursed) }}{% endif %}
-              </td>
-              <td class="text-end">&yen;{{ "{:,}".format(h.net) }}</td>
-            </tr>
-            {% endfor %}
-          </tbody>
-        </table>
-      </div>
-    </div>
+  <div class="card-body p-0">
+    <table class="table table-sm mb-0">
+      <thead class="table-light">
+        <tr>
+          <th>医療機関</th>
+          <th>区分</th>
+          <th class="text-end">支払額</th>
+          <th class="text-end">補填額</th>
+          <th class="text-end">自己負担</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for h in p.hospitals %}
+        <tr>
+          <td>{{ h.name }}</td>
+          <td>
+            {% if h.provider_type == 'hospital' %}病院
+            {% elif h.provider_type == 'pharmacy' %}薬局
+            {% elif h.provider_type == 'nursing' %}介護
+            {% elif h.provider_type == 'other' %}その他
+            {% endif %}
+          </td>
+          <td class="text-end">&yen;{{ "{:,}".format(h.paid) }}</td>
+          <td class="text-end">
+            {% if h.reimbursed %}&yen;{{ "{:,}".format(h.reimbursed) }}{% endif %}
+          </td>
+          <td class="text-end">&yen;{{ "{:,}".format(h.net) }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
   </div>
 </div>
+{% endfor %}
 {% endif %}
 
 {% if medical_summary.expenses %}

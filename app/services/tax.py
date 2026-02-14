@@ -120,34 +120,37 @@ def get_medical_summary(user_id, year):
     total_reimbursed = sum(e["insurance_reimbursement"] for e in expenses)
     net_total = total_paid - total_reimbursed
 
-    # 受診者別集計
+    # 受診者別 → 医療機関別の階層集計
     by_patient = {}
     for e in expenses:
-        key = e["patient_name"] or "(未設定)"
-        if key not in by_patient:
-            by_patient[key] = {"paid": 0, "reimbursed": 0}
-        by_patient[key]["paid"] += e["amount"]
-        by_patient[key]["reimbursed"] += e["insurance_reimbursement"]
-    by_patient_list = sorted(
-        [{"name": k, "paid": v["paid"], "reimbursed": v["reimbursed"],
-          "net": v["paid"] - v["reimbursed"]} for k, v in by_patient.items()],
-        key=lambda x: x["paid"], reverse=True,
-    )
+        patient = e["patient_name"] or "(未設定)"
+        hospital = e["hospital_name"] or "(未設定)"
+        if patient not in by_patient:
+            by_patient[patient] = {"hospitals": {}, "paid": 0, "reimbursed": 0}
+        by_patient[patient]["paid"] += e["amount"]
+        by_patient[patient]["reimbursed"] += e["insurance_reimbursement"]
+        if hospital not in by_patient[patient]["hospitals"]:
+            by_patient[patient]["hospitals"][hospital] = {
+                "paid": 0, "reimbursed": 0, "provider_type": e["provider_type"],
+            }
+        by_patient[patient]["hospitals"][hospital]["paid"] += e["amount"]
+        by_patient[patient]["hospitals"][hospital]["reimbursed"] += e["insurance_reimbursement"]
 
-    # 医療機関別集計
-    by_hospital = {}
-    for e in expenses:
-        key = e["hospital_name"] or "(未設定)"
-        if key not in by_hospital:
-            by_hospital[key] = {"paid": 0, "reimbursed": 0, "provider_type": e["provider_type"]}
-        by_hospital[key]["paid"] += e["amount"]
-        by_hospital[key]["reimbursed"] += e["insurance_reimbursement"]
-    by_hospital_list = sorted(
-        [{"name": k, "paid": v["paid"], "reimbursed": v["reimbursed"],
-          "net": v["paid"] - v["reimbursed"], "provider_type": v["provider_type"]}
-         for k, v in by_hospital.items()],
-        key=lambda x: x["paid"], reverse=True,
-    )
+    by_patient_list = []
+    for patient, pdata in sorted(by_patient.items(), key=lambda x: x[1]["paid"], reverse=True):
+        hospitals = sorted(
+            [{"name": h, "paid": v["paid"], "reimbursed": v["reimbursed"],
+              "net": v["paid"] - v["reimbursed"], "provider_type": v["provider_type"]}
+             for h, v in pdata["hospitals"].items()],
+            key=lambda x: x["paid"], reverse=True,
+        )
+        by_patient_list.append({
+            "name": patient,
+            "paid": pdata["paid"],
+            "reimbursed": pdata["reimbursed"],
+            "net": pdata["paid"] - pdata["reimbursed"],
+            "hospitals": hospitals,
+        })
 
     return {
         "expenses": expenses,
@@ -156,7 +159,6 @@ def get_medical_summary(user_id, year):
         "net_total": net_total,
         "deductible": max(0, net_total - 100000),
         "by_patient": by_patient_list,
-        "by_hospital": by_hospital_list,
     }
 
 
