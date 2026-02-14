@@ -75,6 +75,14 @@
             </tr>
             {% endfor %}
           </tbody>
+          <tfoot class="table-light fw-bold">
+            <tr>
+              <td colspan="4" class="text-end">選択行の合計</td>
+              <td class="text-end text-primary" id="totalDeposit">&yen;0</td>
+              <td class="text-end text-danger" id="totalWithdrawal">&yen;0</td>
+              <td colspan="2"></td>
+            </tr>
+          </tfoot>
         </table>
       </div>
 
@@ -143,8 +151,18 @@ function toggleAll(checked) {
 }
 
 function updateCount() {
-  var count = document.querySelectorAll('.row-check:checked').length;
+  var count = 0, totalDep = 0, totalWd = 0;
+  document.querySelectorAll('.row-check').forEach(function(cb) {
+    if (cb.checked) {
+      var idx = parseInt(cb.dataset.idx);
+      count++;
+      totalDep += parsedData[idx].deposit || 0;
+      totalWd += parsedData[idx].withdrawal || 0;
+    }
+  });
   document.getElementById('importCount').textContent = count;
+  document.getElementById('totalDeposit').textContent = '\u00a5' + totalDep.toLocaleString();
+  document.getElementById('totalWithdrawal').textContent = '\u00a5' + totalWd.toLocaleString();
 }
 
 document.querySelectorAll('.row-check').forEach(function(cb) {
