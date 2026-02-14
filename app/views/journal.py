@@ -206,6 +206,89 @@ def edit(entry_id):
     )
 
 
+@bp.route("/<int:entry_id>/json")
+@login_required
+def get_json(entry_id):
+    """仕訳データをJSON形式で返す（モーダル編集用）"""
+    entry = JournalEntry.query.filter_by(
+        id=entry_id, user_id=current_user.id
+    ).first_or_404()
+
+    return jsonify({
+        "id": entry.id,
+        "date": entry.date.isoformat(),
+        "description": entry.description,
+        "entry_number": entry.entry_number,
+        "lines": [
+            {
+                "account_id": line.account_id,
+                "debit_amount": int(line.debit_amount),
+                "credit_amount": int(line.credit_amount),
+                "description": line.description or "",
+            }
+            for line in entry.lines
+        ],
+    })
+
+
+@bp.route("/<int:entry_id>/edit-api", methods=["POST"])
+@login_required
+def edit_api(entry_id):
+    """仕訳をJSON APIで更新する（モーダル編集用）"""
+    entry = JournalEntry.query.filter_by(
+        id=entry_id, user_id=current_user.id
+    ).first_or_404()
+
+    data = request.get_json()
+    if not data:
+        return jsonify({"error": "リクエストが不正です。"}), 400
+
+    entry_date = data.get("date")
+    description = data.get("description", "").strip()
+    lines_data = data.get("lines", [])
+
+    if not entry_date or not description:
+        return jsonify({"error": "日付と摘要は必須です。"}), 400
+
+    if not lines_data:
+        return jsonify({"error": "仕訳明細を1行以上入力してください。"}), 400
+
+    parsed = []
+    for line in lines_data:
+        parsed.append({
+            "account_id": int(line["account_id"]),
+            "debit_amount": int(line.get("debit_amount", 0) or 0),
+            "credit_amount": int(line.get("credit_amount", 0) or 0),
+            "description": line.get("description", ""),
+        })
+
+    total_debit = sum(l["debit_amount"] for l in parsed)
+    total_credit = sum(l["credit_amount"] for l in parsed)
+    if total_debit != total_credit:
+        return jsonify({
+            "error": f"貸借が一致しません（借方: {total_debit:,}, 貸方: {total_credit:,}）"
+        }), 400
+
+    entry.date = date.fromisoformat(entry_date)
+    entry.description = description
+
+    for line in entry.lines:
+        db.session.delete(line)
+    db.session.flush()
+
+    for line_data in parsed:
+        db.session.add(JournalEntryLine(
+            journal_entry_id=entry.id,
+            account_id=line_data["account_id"],
+            debit_amount=line_data["debit_amount"],
+            credit_amount=line_data["credit_amount"],
+            description=line_data.get("description", ""),
+        ))
+
+    db.session.commit()
+    return jsonify({"ok": True, "entry_number": entry.entry_number})
+
+
 @bp.route("/<int:entry_id>/delete", methods=["POST"])
 @login_required
 def delete(entry_id):

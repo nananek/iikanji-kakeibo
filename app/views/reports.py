@@ -269,6 +269,9 @@ def ledger():
                     "entry_id": line.entry_id,
                 })
 
+    # モーダル用: 全科目の選択肢
+    account_choices = [(a.id, f"{a.code} {a.name}") for a in accounts]
+
     return render_template(
         "reports/ledger.html",
         year=year,
@@ -278,4 +281,5 @@ def ledger():
         account_id=account_id,
         entries=entries,
         carry_forward=carry_forward,
+        account_choices=account_choices,
     )

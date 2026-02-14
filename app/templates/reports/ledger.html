@@ -89,10 +89,10 @@
             &yen;{{ "{:,}".format(e.balance) }}
           </td>
           <td>
-            <a href="{{ url_for('journal.edit', entry_id=e.entry_id) }}"
-               class="btn btn-outline-secondary btn-sm py-0" title="仕訳を編集">
+            <button type="button" class="btn btn-outline-secondary btn-sm py-0"
+                    title="仕訳を編集" onclick="openEditModal({{ e.entry_id }})">
               <i class="bi bi-pencil"></i>
-            </a>
+            </button>
           </td>
         </tr>
         {% set ns.total_debit = ns.total_debit + e.debit %}
@@ -116,10 +116,195 @@
   </div>
 </div>
 
+<!-- 仕訳編集モーダル -->
+<div class="modal fade" id="editModal" tabindex="-1">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="bi bi-pencil"></i> 仕訳編集 <span id="modalEntryNum"></span></h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div id="modalError" class="alert alert-danger d-none"></div>
+        <div class="row mb-3">
+          <div class="col-md-3">
+            <label class="form-label">日付</label>
+            <input type="date" class="form-control" id="modalDate">
+          </div>
+          <div class="col-md-9">
+            <label class="form-label">摘要</label>
+            <input type="text" class="form-control" id="modalDesc" placeholder="取引の摘要">
+          </div>
+        </div>
+        <h6>仕訳明細</h6>
+        <div class="table-responsive">
+          <table class="table table-sm" id="modalLinesTable">
+            <thead class="table-light">
+              <tr>
+                <th style="width:35%">勘定科目</th>
+                <th style="width:20%">借方</th>
+                <th style="width:20%">貸方</th>
+                <th style="width:20%">摘要</th>
+                <th style="width:5%"></th>
+              </tr>
+            </thead>
+            <tbody id="modalLinesBody"></tbody>
+            <tfoot>
+              <tr class="table-light">
+                <th>合計</th>
+                <th id="modalTotalDebit" class="text-end">0</th>
+                <th id="modalTotalCredit" class="text-end">0</th>
+                <th></th>
+                <th></th>
+              </tr>
+              <tr id="modalBalanceWarning" class="d-none">
+                <td colspan="5">
+                  <div class="alert alert-danger mb-0 py-1">貸借が一致していません</div>
+                </td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+        <button type="button" class="btn btn-outline-secondary btn-sm" onclick="modalAddLine()">
+          <i class="bi bi-plus-lg"></i> 行を追加
+        </button>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">キャンセル</button>
+        <button type="button" class="btn btn-primary" id="modalSaveBtn" onclick="saveEntry()">
+          <i class="bi bi-check-lg"></i> 保存
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
 {% elif not account_id %}
 <div class="text-center text-muted py-5">
   <i class="bi bi-book" style="font-size: 3rem;"></i>
   <p class="mt-2">科目を選択してください。</p>
 </div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+{% if selected_account %}
+<script>
+var accountChoices = {{ account_choices | tojson }};
+var csrfToken = "{{ csrf_token() }}";
+var currentEntryId = null;
+var editModal = null;
+
+function createModalAccountSelect(selectedId) {
+  var html = '<select class="form-select form-select-sm modal-account-select">';
+  html += '<option value="">-- 選択 --</option>';
+  accountChoices.forEach(function(item) {
+    var id = item[0], name = item[1];
+    var selected = id === selectedId ? ' selected' : '';
+    html += '<option value="' + id + '"' + selected + '>' + name.replace(/&/g,'&amp;').replace(/</g,'&lt;') + '</option>';
+  });
+  html += '</select>';
+  return html;
+}
+
+function modalAddLine(data) {
+  data = data || {};
+  var tbody = document.getElementById('modalLinesBody');
+  var tr = document.createElement('tr');
+  tr.innerHTML =
+    '<td>' + createModalAccountSelect(data.account_id || '') + '</td>' +
+    '<td><input type="number" class="form-control form-control-sm text-end modal-debit" value="' + (data.debit_amount || 0) + '" min="0" onchange="modalUpdateTotals()"></td>' +
+    '<td><input type="number" class="form-control form-control-sm text-end modal-credit" value="' + (data.credit_amount || 0) + '" min="0" onchange="modalUpdateTotals()"></td>' +
+    '<td><input type="text" class="form-control form-control-sm modal-line-desc" value="' + (data.description || '').replace(/"/g, '&quot;') + '"></td>' +
+    '<td><button type="button" class="btn btn-outline-danger btn-sm" onclick="this.closest(\'tr\').remove(); modalUpdateTotals()"><i class="bi bi-x"></i></button></td>';
+  tbody.appendChild(tr);
+  modalUpdateTotals();
+}
+
+function modalUpdateTotals() {
+  var totalDebit = 0, totalCredit = 0;
+  document.querySelectorAll('.modal-debit').forEach(function(el) { totalDebit += parseInt(el.value) || 0; });
+  document.querySelectorAll('.modal-credit').forEach(function(el) { totalCredit += parseInt(el.value) || 0; });
+  document.getElementById('modalTotalDebit').textContent = '\u00a5' + totalDebit.toLocaleString();
+  document.getElementById('modalTotalCredit').textContent = '\u00a5' + totalCredit.toLocaleString();
+  var warning = document.getElementById('modalBalanceWarning');
+  if (totalDebit !== totalCredit && (totalDebit > 0 || totalCredit > 0)) {
+    warning.classList.remove('d-none');
+  } else {
+    warning.classList.add('d-none');
+  }
+}
+
+function openEditModal(entryId) {
+  currentEntryId = entryId;
+  document.getElementById('modalError').classList.add('d-none');
+  document.getElementById('modalLinesBody').innerHTML = '';
+
+  fetch('/journal/' + entryId + '/json')
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      document.getElementById('modalEntryNum').textContent = '#' + data.entry_number;
+      document.getElementById('modalDate').value = data.date;
+      document.getElementById('modalDesc').value = data.description;
+      data.lines.forEach(function(l) { modalAddLine(l); });
+
+      if (!editModal) {
+        editModal = new bootstrap.Modal(document.getElementById('editModal'));
+      }
+      editModal.show();
+    })
+    .catch(function() {
+      alert('仕訳データの取得に失敗しました。');
+    });
+}
+
+function saveEntry() {
+  var lines = [];
+  document.querySelectorAll('#modalLinesBody tr').forEach(function(tr) {
+    var accountId = tr.querySelector('.modal-account-select').value;
+    var debit = parseInt(tr.querySelector('.modal-debit').value) || 0;
+    var credit = parseInt(tr.querySelector('.modal-credit').value) || 0;
+    var desc = tr.querySelector('.modal-line-desc').value;
+    if (accountId && (debit > 0 || credit > 0)) {
+      lines.push({ account_id: parseInt(accountId), debit_amount: debit, credit_amount: credit, description: desc });
+    }
+  });
+
+  var payload = {
+    date: document.getElementById('modalDate').value,
+    description: document.getElementById('modalDesc').value,
+    lines: lines,
+  };
+
+  var saveBtn = document.getElementById('modalSaveBtn');
+  saveBtn.disabled = true;
+
+  fetch('/journal/' + currentEntryId + '/edit-api', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-CSRFToken': csrfToken,
+    },
+    body: JSON.stringify(payload),
+  })
+  .then(function(r) { return r.json().then(function(d) { return { ok: r.ok, data: d }; }); })
+  .then(function(result) {
+    saveBtn.disabled = false;
+    if (!result.ok || result.data.error) {
+      document.getElementById('modalError').textContent = result.data.error || 'エラーが発生しました。';
+      document.getElementById('modalError').classList.remove('d-none');
+      return;
+    }
+    editModal.hide();
+    // ページをリロードして元帳を更新
+    window.location.reload();
+  })
+  .catch(function() {
+    saveBtn.disabled = false;
+    document.getElementById('modalError').textContent = '通信エラーが発生しました。';
+    document.getElementById('modalError').classList.remove('d-none');
+  });
+}
+</script>
 {% endif %}
 {% endblock %}
