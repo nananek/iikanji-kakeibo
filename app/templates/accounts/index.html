@@ -4,9 +4,9 @@
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-4">
   <h2><i class="bi bi-list-ul"></i> 勘定科目</h2>
-  <a href="{{ url_for('accounts.new') }}" class="btn btn-primary">
+  <button type="button" class="btn btn-primary" onclick="openAccountModal()">
     <i class="bi bi-plus-lg"></i> 科目を追加
-  </a>
+  </button>
 </div>
 
 {% for account_type, accounts in grouped.items() %}
@@ -52,12 +52,14 @@
             {% endif %}
           </td>
           <td class="text-nowrap">
-            <a href="{{ url_for('accounts.new', copy_from=account.id) }}" class="btn btn-outline-success btn-sm" title="コピーして追加">
+            <button type="button" class="btn btn-outline-success btn-sm" title="コピーして追加"
+                    onclick="openAccountModal({{ account.id }}, true)">
               <i class="bi bi-copy"></i>
-            </a>
-            <a href="{{ url_for('accounts.edit', account_id=account.id) }}" class="btn btn-outline-secondary btn-sm" title="編集">
+            </button>
+            <button type="button" class="btn btn-outline-secondary btn-sm" title="編集"
+                    onclick="openAccountModal({{ account.id }})">
               <i class="bi bi-pencil"></i>
-            </a>
+            </button>
           </td>
         </tr>
         {% endfor %}
@@ -69,4 +71,195 @@
   {% endif %}
 </div>
 {% endfor %}
+
+<!-- 科目編集モーダル -->
+<div class="modal fade" id="accountModal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="accountModalTitle">科目を追加</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div id="accountModalError" class="alert alert-danger d-none"></div>
+
+        <div class="row mb-3">
+          <div class="col-5">
+            <label for="acctCode" class="form-label">科目コード</label>
+            <input type="text" class="form-control" id="acctCode" maxlength="10">
+          </div>
+          <div class="col-7">
+            <label for="acctName" class="form-label">科目名</label>
+            <input type="text" class="form-control" id="acctName" maxlength="100">
+          </div>
+        </div>
+
+        <div class="mb-3">
+          <label for="acctType" class="form-label">科目区分</label>
+          <select class="form-select" id="acctType">
+            {% for at in account_types %}
+            <option value="{{ at.id }}">{{ at.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <div class="mb-3">
+          <label for="acctDesc" class="form-label">説明</label>
+          <input type="text" class="form-control" id="acctDesc" maxlength="255">
+        </div>
+
+        <div class="row mb-3">
+          <div class="col-6">
+            <label for="acctTax" class="form-label">確定申告区分</label>
+            <select class="form-select" id="acctTax">
+              {% for val, label in tax_categories %}
+              <option value="{{ val }}">{{ label }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="col-6" id="acctCostGroup">
+            <label for="acctCost" class="form-label">費用区分</label>
+            <select class="form-select" id="acctCost">
+              {% for val, label in cost_types %}
+              <option value="{{ val }}">{{ label }}</option>
+              {% endfor %}
+            </select>
+          </div>
+        </div>
+
+        <div class="form-check">
+          <input class="form-check-input" type="checkbox" id="acctActive" checked>
+          <label class="form-check-label" for="acctActive">有効</label>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">キャンセル</button>
+        <button type="button" class="btn btn-primary" id="acctSaveBtn" onclick="saveAccount()">
+          <span class="spinner-border spinner-border-sm d-none" id="acctSpinner"></span>
+          保存
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function() {
+  var EXPENSE_TYPE_ID = {{ expense_type_id }};
+  var editingId = null;
+  var modal = null;
+
+  function getModal() {
+    if (!modal) modal = new bootstrap.Modal(document.getElementById('accountModal'));
+    return modal;
+  }
+
+  function toggleCostType() {
+    var typeVal = parseInt(document.getElementById('acctType').value);
+    document.getElementById('acctCostGroup').style.display =
+      (typeVal === EXPENSE_TYPE_ID) ? '' : 'none';
+  }
+
+  document.getElementById('acctType').addEventListener('change', toggleCostType);
+
+  function resetForm() {
+    document.getElementById('acctCode').value = '';
+    document.getElementById('acctCode').readOnly = false;
+    document.getElementById('acctName').value = '';
+    document.getElementById('acctType').value = document.getElementById('acctType').options[0].value;
+    document.getElementById('acctType').disabled = false;
+    document.getElementById('acctDesc').value = '';
+    document.getElementById('acctTax').value = '';
+    document.getElementById('acctCost').value = '';
+    document.getElementById('acctActive').checked = true;
+    document.getElementById('accountModalError').classList.add('d-none');
+    editingId = null;
+  }
+
+  window.openAccountModal = function(accountId, copy) {
+    resetForm();
+
+    if (accountId) {
+      var url = '/accounts/api/' + accountId;
+      if (copy) url += '?copy=1';
+
+      fetch(url)
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+          editingId = data.id;  // null for copy
+          document.getElementById('accountModalTitle').textContent =
+            copy ? 'コピーして追加' : '科目を編集';
+          document.getElementById('acctCode').value = data.code;
+          document.getElementById('acctCode').readOnly = (!copy && data.is_system);
+          document.getElementById('acctName').value = data.name;
+          document.getElementById('acctType').value = data.account_type_id;
+          document.getElementById('acctType').disabled = (!copy && data.is_system);
+          document.getElementById('acctDesc').value = data.description;
+          document.getElementById('acctTax').value = data.tax_category;
+          document.getElementById('acctCost').value = data.cost_type;
+          document.getElementById('acctActive').checked = data.is_active;
+          toggleCostType();
+          getModal().show();
+        });
+    } else {
+      document.getElementById('accountModalTitle').textContent = '科目を追加';
+      toggleCostType();
+      getModal().show();
+    }
+  };
+
+  window.saveAccount = function() {
+    var errorEl = document.getElementById('accountModalError');
+    errorEl.classList.add('d-none');
+
+    var payload = {
+      code: document.getElementById('acctCode').value,
+      name: document.getElementById('acctName').value,
+      account_type_id: parseInt(document.getElementById('acctType').value),
+      description: document.getElementById('acctDesc').value,
+      tax_category: document.getElementById('acctTax').value,
+      cost_type: document.getElementById('acctCost').value,
+      is_active: document.getElementById('acctActive').checked,
+    };
+
+    var url = editingId ? ('/accounts/api/' + editingId) : '/accounts/api/new';
+    var csrfToken = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
+
+    var spinner = document.getElementById('acctSpinner');
+    var saveBtn = document.getElementById('acctSaveBtn');
+    spinner.classList.remove('d-none');
+    saveBtn.disabled = true;
+
+    fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-CSRFToken': csrfToken,
+      },
+      body: JSON.stringify(payload),
+    })
+    .then(function(r) { return r.json().then(function(d) { return {ok: r.ok, data: d}; }); })
+    .then(function(res) {
+      spinner.classList.add('d-none');
+      saveBtn.disabled = false;
+
+      if (!res.ok) {
+        errorEl.textContent = res.data.error || 'エラーが発生しました。';
+        errorEl.classList.remove('d-none');
+        return;
+      }
+
+      location.reload();
+    })
+    .catch(function() {
+      spinner.classList.add('d-none');
+      saveBtn.disabled = false;
+      errorEl.textContent = '通信エラーが発生しました。';
+      errorEl.classList.remove('d-none');
+    });
+  };
+})();
+</script>
 {% endblock %}
