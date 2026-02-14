@@ -5,7 +5,7 @@ from flask_login import login_required, current_user
 
 from app.extensions import db
 from app.models.account import Account
-from app.models.journal import JournalEntry
+from app.models.journal import JournalEntry, JournalEntryLine
 from app.forms.cashbook import CashbookForm
 from app.services.accounting import (
     create_cashbook_entry,
@@ -37,11 +37,22 @@ def index():
     date_from = request.args.get("date_from", "")
     date_to = request.args.get("date_to", "")
 
+    allowed_ids = get_allowed_account_ids()
+
     query = (
         JournalEntry.query
         .filter_by(user_id=get_effective_user_id(), source="cashbook")
         .order_by(JournalEntry.date.desc(), JournalEntry.entry_number.desc())
     )
+
+    # Lv2: 公開科目を1つも含まない伝票を除外
+    if allowed_ids is not None:
+        query = query.filter(
+            JournalEntry.id.in_(
+                db.session.query(JournalEntryLine.journal_entry_id)
+                .filter(JournalEntryLine.account_id.in_(allowed_ids))
+            )
+        )
 
     if date_from:
         query = query.filter(JournalEntry.date >= date_from)
