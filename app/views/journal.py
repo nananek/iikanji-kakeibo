@@ -10,7 +10,7 @@ from app.models.account import Account
 from app.models.journal import JournalEntry, JournalEntryLine
 from app.forms.journal import JournalForm
 from app.services.accounting import create_journal_entry, get_next_entry_number
-from app.services.fiscal import check_entry_modifiable, check_period_open_for_new, get_effective_period
+from app.services.fiscal import check_entry_modifiable, check_period_open_for_new, get_effective_period, adjust_date_for_fiscal_period
 from app.services.audit import (
     get_effective_user_id, get_allowed_account_ids, get_submitted_account_ids,
     is_entry_locked_for_owner, is_entry_locked_for_auditor,
@@ -101,6 +101,8 @@ def new():
         fiscal_period = None
         if form.fiscal_period.data:
             fiscal_period = int(form.fiscal_period.data)
+        # 特殊期間の日付補正
+        form.date.data = adjust_date_for_fiscal_period(form.date.data, fiscal_period)
         period = fiscal_period if fiscal_period is not None else form.date.data.month
 
         # 確定済み期間チェック
@@ -247,6 +249,20 @@ def edit(entry_id):
             fiscal_period = None
             if form.fiscal_period.data:
                 fiscal_period = int(form.fiscal_period.data)
+            form.date.data = adjust_date_for_fiscal_period(form.date.data, fiscal_period)
+
+            # 変更先の期間が確定済みでないかチェック
+            new_period = fiscal_period if fiscal_period is not None else form.date.data.month
+            err = check_period_open_for_new(user_id, form.date.data.year, new_period)
+            if err:
+                flash(err, "danger")
+                return render_template(
+                    "journal/form.html",
+                    form=form,
+                    grouped_accounts=grouped_accounts,
+                    is_edit=True,
+                    entry=entry,
+                )
 
             entry.date = form.date.data
             entry.description = form.description.data
@@ -286,6 +302,20 @@ def edit(entry_id):
         fiscal_period = None
         if form.fiscal_period.data:
             fiscal_period = int(form.fiscal_period.data)
+        form.date.data = adjust_date_for_fiscal_period(form.date.data, fiscal_period)
+
+        # 変更先の期間が確定済みでないかチェック
+        new_period = fiscal_period if fiscal_period is not None else form.date.data.month
+        err = check_period_open_for_new(user_id, form.date.data.year, new_period)
+        if err:
+            flash(err, "danger")
+            return render_template(
+                "journal/form.html",
+                form=form,
+                grouped_accounts=grouped_accounts,
+                is_edit=True,
+                entry=entry,
+            )
 
         entry.date = form.date.data
         entry.description = form.description.data
@@ -494,8 +524,15 @@ def edit_api(entry_id):
         # 計上期間の決定
         raw_period = data.get("fiscal_period")
         fiscal_period = int(raw_period) if raw_period not in (None, "") else None
+        new_date = adjust_date_for_fiscal_period(date.fromisoformat(entry_date), fiscal_period)
 
-        entry.date = date.fromisoformat(entry_date)
+        # 変更先の期間が確定済みでないかチェック
+        new_period = fiscal_period if fiscal_period is not None else new_date.month
+        err = check_period_open_for_new(user_id, new_date.year, new_period)
+        if err:
+            return jsonify({"error": err}), 400
+
+        entry.date = new_date
         entry.description = description
         entry.fiscal_period = fiscal_period
 
@@ -529,8 +566,15 @@ def edit_api(entry_id):
     # 計上期間の決定
     raw_period = data.get("fiscal_period")
     fiscal_period = int(raw_period) if raw_period not in (None, "") else None
+    new_date = adjust_date_for_fiscal_period(date.fromisoformat(entry_date), fiscal_period)
 
-    entry.date = date.fromisoformat(entry_date)
+    # 変更先の期間が確定済みでないかチェック
+    new_period = fiscal_period if fiscal_period is not None else new_date.month
+    err = check_period_open_for_new(user_id, new_date.year, new_period)
+    if err:
+        return jsonify({"error": err}), 400
+
+    entry.date = new_date
     entry.description = description
     entry.fiscal_period = fiscal_period
 

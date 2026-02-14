@@ -22,6 +22,18 @@ PERIOD_LABELS = {
 }
 
 
+def adjust_date_for_fiscal_period(entry_date, fiscal_period):
+    """特殊期間に応じて日付を補正する。期首振戻→1/1、決算月→12/31"""
+    if fiscal_period is None:
+        return entry_date
+    year = entry_date.year
+    if fiscal_period == 0:
+        return date(year, 1, 1)
+    if fiscal_period in (13, 14, 15):
+        return date(year, 12, 31)
+    return entry_date
+
+
 def get_effective_period(entry):
     """仕訳の実効期間を返す"""
     if entry.fiscal_period is not None:

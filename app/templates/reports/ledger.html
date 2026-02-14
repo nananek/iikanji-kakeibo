@@ -153,7 +153,17 @@
             <label class="form-label">日付</label>
             <input type="date" class="form-control" id="modalDate">
           </div>
-          <div class="col-md-9">
+          <div class="col-md-3">
+            <label class="form-label">計上期間</label>
+            <select class="form-select" id="modalFiscalPeriod">
+              <option value="">自動（日付の月）</option>
+              <option value="0">期首振戻月</option>
+              <option value="13">決算月1</option>
+              <option value="14">決算月2</option>
+              <option value="15">決算月3</option>
+            </select>
+          </div>
+          <div class="col-md-6">
             <label class="form-label">摘要</label>
             <input type="text" class="form-control" id="modalDesc" placeholder="取引の摘要">
           </div>
@@ -338,6 +348,7 @@ function openEditModal(entryId) {
       document.getElementById('modalEntryNum').textContent = '#' + data.entry_number;
       document.getElementById('modalDate').value = data.date;
       document.getElementById('modalDesc').value = data.description;
+      document.getElementById('modalFiscalPeriod').value = (data.fiscal_period !== null && data.fiscal_period !== undefined) ? String(data.fiscal_period) : '';
       data.lines.forEach(function(l) { modalAddLine(l); });
 
       if (!editModal) {
@@ -349,6 +360,20 @@ function openEditModal(entryId) {
       alert('仕訳データの取得に失敗しました。');
     });
 }
+
+// 計上期間変更時に日付を自動調整
+document.getElementById('modalFiscalPeriod').addEventListener('change', function() {
+  var fp = this.value;
+  var dateEl = document.getElementById('modalDate');
+  var current = dateEl.value;
+  if (!current) return;
+  var year = current.substring(0, 4);
+  if (fp === '0') {
+    dateEl.value = year + '-01-01';
+  } else if (fp === '13' || fp === '14' || fp === '15') {
+    dateEl.value = year + '-12-31';
+  }
+});
 
 function saveEntry() {
   var lines = [];
@@ -362,9 +387,11 @@ function saveEntry() {
     }
   });
 
+  var fpVal = document.getElementById('modalFiscalPeriod').value;
   var payload = {
     date: document.getElementById('modalDate').value,
     description: document.getElementById('modalDesc').value,
+    fiscal_period: fpVal !== '' ? fpVal : null,
     lines: lines,
   };
 

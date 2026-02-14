@@ -11,7 +11,7 @@ from app.services.accounting import (
     create_cashbook_entry,
     update_cashbook_entry,
 )
-from app.services.fiscal import check_entry_modifiable, check_period_open_for_new
+from app.services.fiscal import check_entry_modifiable, check_period_open_for_new, adjust_date_for_fiscal_period
 from app.services.audit import (
     get_effective_user_id, get_allowed_account_ids, get_submitted_account_ids,
     is_entry_locked_for_owner, is_entry_locked_for_auditor,
@@ -100,6 +100,8 @@ def new():
         fiscal_period = None
         if form.fiscal_period.data:
             fiscal_period = int(form.fiscal_period.data)
+        # 特殊期間の日付補正
+        form.date.data = adjust_date_for_fiscal_period(form.date.data, fiscal_period)
         period = fiscal_period if fiscal_period is not None else form.date.data.month
 
         # 確定済み期間チェック
@@ -172,6 +174,23 @@ def edit(entry_id):
         fiscal_period = None
         if form.fiscal_period.data:
             fiscal_period = int(form.fiscal_period.data)
+        # 特殊期間の日付補正
+        form.date.data = adjust_date_for_fiscal_period(form.date.data, fiscal_period)
+
+        # 変更先の期間が確定済みでないかチェック
+        new_period = fiscal_period if fiscal_period is not None else form.date.data.month
+        err = check_period_open_for_new(user_id, form.date.data.year, new_period)
+        if err:
+            flash(err, "danger")
+            grouped_accounts = get_grouped_accounts(user_id, allowed_ids)
+            payment_account_name = _account_name(form.payment_account_id.data)
+            category_account_name = _account_name(form.category_account_id.data)
+            return render_template(
+                "cashbook/form.html", form=form, is_edit=True, entry=entry,
+                grouped_accounts=grouped_accounts,
+                payment_account_name=payment_account_name,
+                category_account_name=category_account_name,
+            )
 
         update_cashbook_entry(
             entry=entry,
