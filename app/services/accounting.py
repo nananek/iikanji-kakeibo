@@ -16,7 +16,7 @@ def get_next_entry_number(user_id):
 
 def create_cashbook_entry(user_id, date, transaction_type, payment_account_id,
                           category_account_id, amount, description,
-                          batch_id=None):
+                          batch_id=None, fiscal_period=None):
     """出納帳の入力から仕訳を自動生成する
 
     Args:
@@ -24,6 +24,7 @@ def create_cashbook_entry(user_id, date, transaction_type, payment_account_id,
         payment_account_id: 支払元/入金先の勘定科目ID（資産・負債）
         category_account_id: 費目の勘定科目ID（収益・費用）
         amount: 金額（正の整数）
+        fiscal_period: 計上期間（None=日付の月で自動判定）
     """
     entry = JournalEntry(
         user_id=user_id,
@@ -32,6 +33,7 @@ def create_cashbook_entry(user_id, date, transaction_type, payment_account_id,
         description=description,
         source="cashbook",
         batch_id=batch_id,
+        fiscal_period=fiscal_period,
     )
     db.session.add(entry)
     db.session.flush()
@@ -75,12 +77,13 @@ def create_cashbook_entry(user_id, date, transaction_type, payment_account_id,
 
 
 def create_journal_entry(user_id, date, description, lines_data,
-                         source="journal", batch_id=None):
+                         source="journal", batch_id=None, fiscal_period=None):
     """仕訳伝票を直接作成する
 
     Args:
         lines_data: list of dict with keys: account_id, debit_amount, credit_amount
         source: 仕訳の入力元（"journal", "ai_receipt" 等）
+        fiscal_period: 計上期間（None=日付の月で自動判定）
     """
     total_debit = sum(l["debit_amount"] for l in lines_data)
     total_credit = sum(l["credit_amount"] for l in lines_data)
@@ -96,6 +99,7 @@ def create_journal_entry(user_id, date, description, lines_data,
         description=description,
         source=source,
         batch_id=batch_id,
+        fiscal_period=fiscal_period,
     )
     db.session.add(entry)
     db.session.flush()
@@ -115,13 +119,14 @@ def create_journal_entry(user_id, date, description, lines_data,
 
 
 def create_transfer_entry(user_id, date, from_account_id, to_account_id,
-                          amount, description, batch_id=None):
+                          amount, description, batch_id=None, fiscal_period=None):
     """口座間振替の仕訳を作成する
 
     Args:
         from_account_id: 出金元の勘定科目ID（貸方）
         to_account_id: 入金先の勘定科目ID（借方）
         amount: 金額（正の整数）
+        fiscal_period: 計上期間（None=日付の月で自動判定）
     """
     entry = JournalEntry(
         user_id=user_id,
@@ -130,6 +135,7 @@ def create_transfer_entry(user_id, date, from_account_id, to_account_id,
         description=description,
         source="cashbook",
         batch_id=batch_id,
+        fiscal_period=fiscal_period,
     )
     db.session.add(entry)
     db.session.flush()

@@ -78,8 +78,13 @@ def new():
                 is_edit=False,
             )
 
+        # 計上期間の決定
+        fiscal_period = None
+        if form.fiscal_period.data:
+            fiscal_period = int(form.fiscal_period.data)
+        period = fiscal_period if fiscal_period is not None else form.date.data.month
+
         # 確定済み期間チェック
-        period = form.date.data.month
         err = check_period_open_for_new(current_user.id, form.date.data.year, period)
         if err:
             flash(err, "danger")
@@ -105,6 +110,7 @@ def new():
                 date=form.date.data,
                 description=form.description.data,
                 lines_data=parsed,
+                fiscal_period=fiscal_period,
             )
             flash(f"伝票 #{entry.entry_number} を登録しました。", "success")
             return redirect(url_for("journal.index"))
@@ -170,8 +176,14 @@ def edit(entry_id):
                 entry=entry,
             )
 
+        # 計上期間の決定
+        fiscal_period = None
+        if form.fiscal_period.data:
+            fiscal_period = int(form.fiscal_period.data)
+
         entry.date = form.date.data
         entry.description = form.description.data
+        entry.fiscal_period = fiscal_period
 
         # 既存明細を削除して再作成
         for line in entry.lines:
@@ -194,6 +206,7 @@ def edit(entry_id):
     if request.method == "GET":
         form.date.data = entry.date
         form.description.data = entry.description
+        form.fiscal_period.data = str(entry.fiscal_period) if entry.fiscal_period is not None else ""
 
     existing_lines = [
         {
@@ -228,6 +241,7 @@ def get_json(entry_id):
         "date": entry.date.isoformat(),
         "description": entry.description,
         "entry_number": entry.entry_number,
+        "fiscal_period": entry.fiscal_period,
         "lines": [
             {
                 "account_id": line.account_id,
@@ -283,8 +297,13 @@ def edit_api(entry_id):
             "error": f"貸借が一致しません（借方: {total_debit:,}, 貸方: {total_credit:,}）"
         }), 400
 
+    # 計上期間の決定
+    raw_period = data.get("fiscal_period")
+    fiscal_period = int(raw_period) if raw_period not in (None, "") else None
+
     entry.date = date.fromisoformat(entry_date)
     entry.description = description
+    entry.fiscal_period = fiscal_period
 
     for line in entry.lines:
         db.session.delete(line)

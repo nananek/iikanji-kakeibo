@@ -11,6 +11,13 @@ from wtforms.validators import DataRequired, NumberRange
 
 class CashbookForm(FlaskForm):
     date = DateField("日付", validators=[DataRequired()])
+    fiscal_period = SelectField("計上期間", coerce=str, choices=[
+        ("", "自動（日付の月）"),
+        ("0", "期首振戻月"),
+        ("13", "決算月1"),
+        ("14", "決算月2"),
+        ("15", "決算月3"),
+    ], default="")
     transaction_type = SelectField(
         "種類",
         choices=[("expense", "支出"), ("income", "収入")],

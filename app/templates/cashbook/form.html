@@ -18,6 +18,10 @@
           {% endfor %}
         </div>
         <div class="col-md-3">
+          {{ form.fiscal_period.label(class="form-label") }}
+          {{ form.fiscal_period(class="form-select") }}
+        </div>
+        <div class="col-md-3">
           {{ form.transaction_type.label(class="form-label") }}
           {{ form.transaction_type(class="form-select", id="transaction_type") }}
         </div>

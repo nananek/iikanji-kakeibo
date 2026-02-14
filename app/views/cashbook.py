@@ -61,9 +61,15 @@ def new():
         form.date.data = date.today()
 
     if form.validate_on_submit():
+        # 計上期間の決定
+        fiscal_period = None
+        if form.fiscal_period.data:
+            fiscal_period = int(form.fiscal_period.data)
+        period = fiscal_period if fiscal_period is not None else form.date.data.month
+
         # 確定済み期間チェック
         err = check_period_open_for_new(
-            current_user.id, form.date.data.year, form.date.data.month
+            current_user.id, form.date.data.year, period
         )
         if err:
             flash(err, "danger")
@@ -85,6 +91,7 @@ def new():
             category_account_id=form.category_account_id.data,
             amount=form.amount.data,
             description=form.description.data,
+            fiscal_period=fiscal_period,
         )
         flash(f"伝票 #{entry.entry_number} を登録しました。", "success")
         return redirect(url_for("cashbook.index"))
@@ -116,6 +123,11 @@ def edit(entry_id):
     form = CashbookForm()
 
     if form.validate_on_submit():
+        # 計上期間の決定
+        fiscal_period = None
+        if form.fiscal_period.data:
+            fiscal_period = int(form.fiscal_period.data)
+
         update_cashbook_entry(
             entry=entry,
             date=form.date.data,
@@ -125,12 +137,15 @@ def edit(entry_id):
             amount=form.amount.data,
             description=form.description.data,
         )
+        entry.fiscal_period = fiscal_period
+        db.session.commit()
         flash(f"伝票 #{entry.entry_number} を更新しました。", "success")
         return redirect(url_for("cashbook.index"))
 
     if request.method == "GET":
         form.date.data = entry.date
         form.description.data = entry.description
+        form.fiscal_period.data = str(entry.fiscal_period) if entry.fiscal_period is not None else ""
         # 仕訳明細から元のデータを復元
         lines = entry.lines
         if len(lines) == 2:

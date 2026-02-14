@@ -15,7 +15,11 @@
           {{ form.date.label(class="form-label") }}
           {{ form.date(class="form-control") }}
         </div>
-        <div class="col-md-9">
+        <div class="col-md-3">
+          {{ form.fiscal_period.label(class="form-label") }}
+          {{ form.fiscal_period(class="form-select") }}
+        </div>
+        <div class="col-md-6">
           {{ form.description.label(class="form-label") }}
           {{ form.description(class="form-control", placeholder="取引の摘要") }}
         </div>
