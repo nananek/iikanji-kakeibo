@@ -35,6 +35,15 @@
   <div class="col-md-4 mb-3">
     <div class="card shadow-sm h-100">
       <div class="card-body">
+        <h5 class="card-title"><i class="bi bi-calendar3"></i> 月次比較</h5>
+        <p class="card-text">科目別の月次推移比較と固定費/変動費分析ができます。</p>
+        <a href="{{ url_for('reports.monthly') }}" class="btn btn-outline-primary">表示</a>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-4 mb-3">
+    <div class="card shadow-sm h-100">
+      <div class="card-body">
         <h5 class="card-title"><i class="bi bi-file-earmark-text"></i> 確定申告用集計</h5>
         <p class="card-text">控除対象の支出を区分ごとに集計します。</p>
         <a href="{{ url_for('reports.tax') }}" class="btn btn-outline-primary">表示</a>

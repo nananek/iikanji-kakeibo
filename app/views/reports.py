@@ -8,7 +8,10 @@ from sqlalchemy import func, and_
 from app.extensions import db
 from app.models.account import Account, AccountType
 from app.models.journal import JournalEntry, JournalEntryLine
-from app.services.tax import get_tax_summary, get_medical_summary, get_income_expense_summary
+from app.services.tax import (
+    get_tax_summary, get_medical_summary, get_income_expense_summary,
+    get_monthly_comparison, get_month_projection,
+)
 from app.views.helpers import get_grouped_accounts
 
 bp = Blueprint("reports", __name__, url_prefix="/reports")
@@ -283,4 +286,28 @@ def ledger():
         entries=entries,
         carry_forward=carry_forward,
         all_grouped_accounts=all_grouped,
+    )
+
+
+@bp.route("/monthly")
+@login_required
+def monthly():
+    """月次比較レポート"""
+    year = request.args.get("year", date.today().year, type=int)
+    comparison = get_monthly_comparison(current_user.id, year)
+
+    projection = None
+    today = date.today()
+    if year == today.year and today.day < \
+            __import__("calendar").monthrange(year, today.month)[1]:
+        projection = get_month_projection(
+            current_user.id, year, today.month, comparison
+        )
+
+    return render_template(
+        "reports/monthly.html",
+        year=year,
+        current_month=today.month if year == today.year else None,
+        comparison=comparison,
+        projection=projection,
     )

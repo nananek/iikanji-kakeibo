@@ -59,7 +59,9 @@ def new():
         ).first()
         if existing:
             flash("この科目コードは既に使われています。", "danger")
-            return render_template("accounts/form.html", form=form, is_edit=False)
+            expense_type = AccountType.query.filter_by(code="expense").first()
+            return render_template("accounts/form.html", form=form, is_edit=False,
+                                   expense_type_id=expense_type.id if expense_type else 0)
 
         account = Account(
             user_id=current_user.id,
@@ -68,6 +70,7 @@ def new():
             name=form.name.data,
             description=form.description.data or "",
             tax_category=form.tax_category.data or None,
+            cost_type=form.cost_type.data or None,
             is_system=False,
             is_active=form.is_active.data,
             display_order=0,
@@ -89,9 +92,12 @@ def new():
                 form.account_type_id.data = source.account_type_id
                 form.description.data = source.description
                 form.tax_category.data = source.tax_category or ""
+                form.cost_type.data = source.cost_type or ""
                 form.is_active.data = source.is_active
 
-    return render_template("accounts/form.html", form=form, is_edit=False)
+    expense_type = AccountType.query.filter_by(code="expense").first()
+    return render_template("accounts/form.html", form=form, is_edit=False,
+                           expense_type_id=expense_type.id if expense_type else 0)
 
 
 @bp.route("/<int:account_id>/edit", methods=["GET", "POST"])
@@ -111,6 +117,7 @@ def edit(account_id):
         account.name = form.name.data
         account.description = form.description.data or ""
         account.tax_category = form.tax_category.data or None
+        account.cost_type = form.cost_type.data or None
         account.is_active = form.is_active.data
         if not account.is_system:
             account.code = form.code.data
@@ -125,8 +132,11 @@ def edit(account_id):
         form.account_type_id.data = account.account_type_id
         form.description.data = account.description
         form.tax_category.data = account.tax_category or ""
+        form.cost_type.data = account.cost_type or ""
         form.is_active.data = account.is_active
 
+    expense_type = AccountType.query.filter_by(code="expense").first()
     return render_template(
-        "accounts/form.html", form=form, is_edit=True, account=account
+        "accounts/form.html", form=form, is_edit=True, account=account,
+        expense_type_id=expense_type.id if expense_type else 0,
     )

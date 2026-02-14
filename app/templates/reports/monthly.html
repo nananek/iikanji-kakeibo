@@ -1,0 +1,327 @@
+{% extends "base.html" %}
+{% block title %}月次比較 - いいかんじ家計簿{% endblock %}
+
+{% block content %}
+<h2><i class="bi bi-calendar3"></i> 月次比較</h2>
+
+<form class="row g-3 mb-4 mt-2" method="GET">
+  <div class="col-auto">
+    <select name="year" class="form-select">
+      {% for y in range(year - 2, year + 2) %}
+      <option value="{{ y }}" {% if y == year %}selected{% endif %}>{{ y }}年</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="col-auto">
+    <button type="submit" class="btn btn-outline-secondary">表示</button>
+  </div>
+</form>
+
+{# ========== 当月着地予想 ========== #}
+{% if projection %}
+<div class="card shadow-sm mb-4">
+  <div class="card-header">
+    <strong><i class="bi bi-bullseye"></i> {{ projection.month }}月 着地予想</strong>
+    <span class="text-muted ms-2">{{ projection.days_elapsed }}日経過 / {{ projection.days_in_month }}日</span>
+  </div>
+  <div class="card-body">
+    <div class="progress mb-3" style="height: 6px;">
+      <div class="progress-bar" style="width: {{ (projection.days_elapsed / projection.days_in_month * 100)|round }}%"></div>
+    </div>
+    <div class="row">
+      <div class="col-md-4">
+        <div class="card text-bg-primary shadow-sm">
+          <div class="card-body text-center py-2">
+            <h6 class="mb-1">収入予想</h6>
+            <div class="small">&yen;{{ "{:,}".format(projection.income_total_actual) }}</div>
+            <h4 class="mb-0">&rarr; &yen;{{ "{:,}".format(projection.income_total_projected) }}</h4>
+          </div>
+        </div>
+      </div>
+      <div class="col-md-4">
+        <div class="card text-bg-danger shadow-sm">
+          <div class="card-body text-center py-2">
+            <h6 class="mb-1">支出予想</h6>
+            <div class="small">&yen;{{ "{:,}".format(projection.expense_total_actual) }}</div>
+            <h4 class="mb-0">&rarr; &yen;{{ "{:,}".format(projection.expense_total_projected) }}</h4>
+          </div>
+        </div>
+      </div>
+      <div class="col-md-4">
+        {% set proj_balance = projection.income_total_projected - projection.expense_total_projected %}
+        <div class="card {% if proj_balance >= 0 %}text-bg-success{% else %}text-bg-warning{% endif %} shadow-sm">
+          <div class="card-body text-center py-2">
+            <h6 class="mb-1">収支予想</h6>
+            <div class="small">&yen;{{ "{:,}".format(projection.income_total_actual - projection.expense_total_actual) }}</div>
+            <h4 class="mb-0">&rarr; &yen;{{ "{:,}".format(proj_balance) }}</h4>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+{# ========== 月次比較テーブル ========== #}
+<div class="card shadow-sm mb-4">
+  <div class="card-header"><strong><i class="bi bi-table"></i> 科目別月次推移</strong></div>
+  <div class="table-responsive">
+    <table class="table table-sm table-hover mb-0" style="font-size: 0.85rem;">
+      <thead class="table-dark">
+        <tr>
+          <th style="min-width:120px; position:sticky; left:0; z-index:2; background:#212529;">科目</th>
+          <th style="width:50px;">区分</th>
+          {% for m in range(1, 13) %}
+          <th class="text-end {% if current_month and m == current_month %}table-warning{% endif %}" style="min-width:80px;">{{ m }}月</th>
+          {% endfor %}
+          <th class="text-end" style="min-width:90px;">合計</th>
+          <th class="text-end" style="min-width:80px;">月平均</th>
+        </tr>
+      </thead>
+      <tbody>
+        {# --- 支出 --- #}
+        <tr class="table-secondary">
+          <td colspan="15"><strong>支出</strong></td>
+        </tr>
+        {% for a in comparison.expense_accounts %}
+        <tr class="{% if a.cost_type == 'fixed' %}table-info{% endif %}">
+          <td style="position:sticky; left:0; z-index:1; background:{% if a.cost_type == 'fixed' %}#cff4fc{% else %}#fff{% endif %};">{{ a.name }}</td>
+          <td>
+            {% if a.cost_type == 'fixed' %}<span class="badge bg-info text-dark">固定</span>
+            {% elif a.cost_type == 'variable' %}<span class="badge bg-warning text-dark">変動</span>
+            {% else %}<span class="badge bg-light text-muted">-</span>{% endif %}
+          </td>
+          {% for m in range(12) %}
+          <td class="text-end {% if current_month and m + 1 == current_month %}table-warning{% endif %}">
+            {% if a.months[m] %}
+            &yen;{{ "{:,}".format(a.months[m]) }}
+            {% if projection and m + 1 == current_month and a.cost_type != 'fixed' %}
+            {% set proj_item = projection.expense_projected[loop.index0] if loop.index0 < projection.expense_projected|length else none %}
+            {% endif %}
+            {% elif current_month and m + 1 > current_month %}&nbsp;
+            {% else %}0{% endif %}
+          </td>
+          {% endfor %}
+          <td class="text-end fw-bold">&yen;{{ "{:,}".format(a.total) }}</td>
+          {% set months_with_data = [] %}
+          {% for m in range(12) %}{% if a.months[m] > 0 %}{% if months_with_data.append(1) %}{% endif %}{% endif %}{% endfor %}
+          <td class="text-end">
+            {% if months_with_data|length > 0 %}&yen;{{ "{:,}".format((a.total / months_with_data|length)|round|int) }}{% else %}0{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+        <tr class="table-dark">
+          <td style="position:sticky; left:0; z-index:1; background:#212529;"><strong>支出合計</strong></td>
+          <td></td>
+          {% for m in range(12) %}
+          <td class="text-end"><strong>{% if comparison.expense_totals[m] %}&yen;{{ "{:,}".format(comparison.expense_totals[m]) }}{% elif current_month and m + 1 > current_month %}&nbsp;{% else %}0{% endif %}</strong></td>
+          {% endfor %}
+          <td class="text-end"><strong>&yen;{{ "{:,}".format(comparison.expense_totals|sum) }}</strong></td>
+          {% set exp_months = [] %}
+          {% for t in comparison.expense_totals %}{% if t > 0 %}{% if exp_months.append(1) %}{% endif %}{% endif %}{% endfor %}
+          <td class="text-end"><strong>{% if exp_months|length > 0 %}&yen;{{ "{:,}".format((comparison.expense_totals|sum / exp_months|length)|round|int) }}{% else %}0{% endif %}</strong></td>
+        </tr>
+
+        {# --- 収入 --- #}
+        <tr class="table-secondary">
+          <td colspan="15"><strong>収入</strong></td>
+        </tr>
+        {% for a in comparison.income_accounts %}
+        <tr>
+          <td style="position:sticky; left:0; z-index:1; background:#fff;">{{ a.name }}</td>
+          <td></td>
+          {% for m in range(12) %}
+          <td class="text-end {% if current_month and m + 1 == current_month %}table-warning{% endif %}">
+            {% if a.months[m] %}&yen;{{ "{:,}".format(a.months[m]) }}
+            {% elif current_month and m + 1 > current_month %}&nbsp;
+            {% else %}0{% endif %}
+          </td>
+          {% endfor %}
+          <td class="text-end fw-bold">&yen;{{ "{:,}".format(a.total) }}</td>
+          {% set months_with_data = [] %}
+          {% for m in range(12) %}{% if a.months[m] > 0 %}{% if months_with_data.append(1) %}{% endif %}{% endif %}{% endfor %}
+          <td class="text-end">
+            {% if months_with_data|length > 0 %}&yen;{{ "{:,}".format((a.total / months_with_data|length)|round|int) }}{% else %}0{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+        <tr class="table-dark">
+          <td style="position:sticky; left:0; z-index:1; background:#212529;"><strong>収入合計</strong></td>
+          <td></td>
+          {% for m in range(12) %}
+          <td class="text-end"><strong>{% if comparison.income_totals[m] %}&yen;{{ "{:,}".format(comparison.income_totals[m]) }}{% elif current_month and m + 1 > current_month %}&nbsp;{% else %}0{% endif %}</strong></td>
+          {% endfor %}
+          <td class="text-end"><strong>&yen;{{ "{:,}".format(comparison.income_totals|sum) }}</strong></td>
+          {% set inc_months = [] %}
+          {% for t in comparison.income_totals %}{% if t > 0 %}{% if inc_months.append(1) %}{% endif %}{% endif %}{% endfor %}
+          <td class="text-end"><strong>{% if inc_months|length > 0 %}&yen;{{ "{:,}".format((comparison.income_totals|sum / inc_months|length)|round|int) }}{% else %}0{% endif %}</strong></td>
+        </tr>
+
+        {# --- 収支差額 --- #}
+        <tr class="table-light fw-bold">
+          <td style="position:sticky; left:0; z-index:1; background:#f8f9fa;"><strong>収支差額</strong></td>
+          <td></td>
+          {% for m in range(12) %}
+          {% set bal = comparison.income_totals[m] - comparison.expense_totals[m] %}
+          <td class="text-end {% if bal < 0 %}text-danger{% elif bal > 0 %}text-success{% endif %} {% if current_month and m + 1 == current_month %}table-warning{% endif %}">
+            {% if comparison.income_totals[m] or comparison.expense_totals[m] %}&yen;{{ "{:,}".format(bal) }}
+            {% elif current_month and m + 1 > current_month %}&nbsp;
+            {% else %}0{% endif %}
+          </td>
+          {% endfor %}
+          {% set total_bal = comparison.income_totals|sum - comparison.expense_totals|sum %}
+          <td class="text-end {% if total_bal < 0 %}text-danger{% elif total_bal > 0 %}text-success{% endif %}">&yen;{{ "{:,}".format(total_bal) }}</td>
+          <td></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{# ========== 固定費/変動費分析 ========== #}
+{% set fixed_total = [] %}
+{% set variable_total = [] %}
+{% set unclassified_total = [] %}
+{% for a in comparison.expense_accounts %}
+  {% if a.cost_type == 'fixed' %}{% if fixed_total.append(a.total) %}{% endif %}
+  {% elif a.cost_type == 'variable' %}{% if variable_total.append(a.total) %}{% endif %}
+  {% else %}{% if unclassified_total.append(a.total) %}{% endif %}
+  {% endif %}
+{% endfor %}
+{% set ft = fixed_total|sum %}
+{% set vt = variable_total|sum %}
+{% set ut = unclassified_total|sum %}
+{% set expense_grand = ft + vt + ut %}
+
+{% if expense_grand > 0 %}
+<div class="card shadow-sm mb-4">
+  <div class="card-header"><strong><i class="bi bi-pie-chart"></i> 固定費/変動費分析</strong></div>
+  <div class="card-body">
+    <div class="row">
+      <div class="col-md-4">
+        <canvas id="costTypeChart" height="250"></canvas>
+      </div>
+      <div class="col-md-8">
+        <canvas id="costTypeTrendChart" height="250"></canvas>
+      </div>
+    </div>
+    <div class="row mt-3">
+      <div class="col-md-4">
+        <table class="table table-sm">
+          <tbody>
+            <tr>
+              <td><span class="badge bg-info text-dark">固定費</span></td>
+              <td class="text-end">&yen;{{ "{:,}".format(ft) }}</td>
+              <td class="text-end">{{ "{:.1f}".format(ft / expense_grand * 100) }}%</td>
+            </tr>
+            <tr>
+              <td><span class="badge bg-warning text-dark">変動費</span></td>
+              <td class="text-end">&yen;{{ "{:,}".format(vt) }}</td>
+              <td class="text-end">{{ "{:.1f}".format(vt / expense_grand * 100) }}%</td>
+            </tr>
+            {% if ut > 0 %}
+            <tr>
+              <td><span class="badge bg-light text-muted">未分類</span></td>
+              <td class="text-end">&yen;{{ "{:,}".format(ut) }}</td>
+              <td class="text-end">{{ "{:.1f}".format(ut / expense_grand * 100) }}%</td>
+            </tr>
+            {% endif %}
+            <tr class="fw-bold">
+              <td>合計</td>
+              <td class="text-end">&yen;{{ "{:,}".format(expense_grand) }}</td>
+              <td class="text-end">100%</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+{% endblock %}
+
+{% block scripts %}
+{% if expense_grand is defined and expense_grand > 0 %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+<script>
+(function() {
+  // ドーナツグラフ
+  var pieData = {
+    labels: ['固定費', '変動費'{% if ut > 0 %}, '未分類'{% endif %}],
+    datasets: [{
+      data: [{{ ft }}, {{ vt }}{% if ut > 0 %}, {{ ut }}{% endif %}],
+      backgroundColor: ['#0dcaf0', '#ffc107'{% if ut > 0 %}, '#dee2e6'{% endif %}],
+    }]
+  };
+  new Chart(document.getElementById('costTypeChart'), {
+    type: 'doughnut',
+    data: pieData,
+    options: {
+      responsive: true,
+      plugins: {
+        tooltip: {
+          callbacks: {
+            label: function(ctx) {
+              return ctx.label + ': \u00a5' + ctx.parsed.toLocaleString();
+            }
+          }
+        }
+      }
+    }
+  });
+
+  // 月次積み上げ棒グラフ
+  var expenseAccounts = {{ comparison.expense_accounts | tojson }};
+  var fixedMonthly = new Array(12).fill(0);
+  var variableMonthly = new Array(12).fill(0);
+  var unclassifiedMonthly = new Array(12).fill(0);
+  expenseAccounts.forEach(function(a) {
+    for (var i = 0; i < 12; i++) {
+      if (a.cost_type === 'fixed') fixedMonthly[i] += a.months[i];
+      else if (a.cost_type === 'variable') variableMonthly[i] += a.months[i];
+      else unclassifiedMonthly[i] += a.months[i];
+    }
+  });
+
+  var datasets = [
+    { label: '固定費', data: fixedMonthly, backgroundColor: 'rgba(13, 202, 240, 0.7)' },
+    { label: '変動費', data: variableMonthly, backgroundColor: 'rgba(255, 193, 7, 0.7)' },
+  ];
+  {% if ut > 0 %}
+  datasets.push({ label: '未分類', data: unclassifiedMonthly, backgroundColor: 'rgba(222, 226, 230, 0.7)' });
+  {% endif %}
+
+  new Chart(document.getElementById('costTypeTrendChart'), {
+    type: 'bar',
+    data: {
+      labels: ['1月','2月','3月','4月','5月','6月','7月','8月','9月','10月','11月','12月'],
+      datasets: datasets,
+    },
+    options: {
+      responsive: true,
+      scales: {
+        x: { stacked: true },
+        y: {
+          stacked: true,
+          beginAtZero: true,
+          ticks: {
+            callback: function(v) { return '\u00a5' + v.toLocaleString(); }
+          }
+        }
+      },
+      plugins: {
+        tooltip: {
+          callbacks: {
+            label: function(ctx) {
+              return ctx.dataset.label + ': \u00a5' + ctx.parsed.y.toLocaleString();
+            }
+          }
+        }
+      }
+    }
+  });
+})();
+</script>
+{% endif %}
+{% endblock %}

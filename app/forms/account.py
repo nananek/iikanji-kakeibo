@@ -23,5 +23,14 @@ class AccountForm(FlaskForm):
         ],
         validators=[Optional()],
     )
+    cost_type = SelectField(
+        "費用区分",
+        choices=[
+            ("", "未分類"),
+            ("fixed", "固定費"),
+            ("variable", "変動費"),
+        ],
+        validators=[Optional()],
+    )
     is_active = BooleanField("有効", default=True)
     submit = SubmitField("保存")

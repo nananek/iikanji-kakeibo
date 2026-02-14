@@ -34,13 +34,17 @@
       </div>
 
       <div class="row mb-3">
-        <div class="col-md-6">
+        <div class="col-md-5">
           {{ form.description.label(class="form-label") }}
           {{ form.description(class="form-control") }}
         </div>
-        <div class="col-md-4">
+        <div class="col-md-3">
           {{ form.tax_category.label(class="form-label") }}
           {{ form.tax_category(class="form-select") }}
+        </div>
+        <div class="col-md-2" id="costTypeGroup">
+          {{ form.cost_type.label(class="form-label") }}
+          {{ form.cost_type(class="form-select") }}
         </div>
         <div class="col-md-2 d-flex align-items-end">
           <div class="form-check mb-3">
@@ -57,4 +61,21 @@
     </form>
   </div>
 </div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function() {
+  var expenseTypeId = {{ expense_type_id }};
+  var typeSelect = document.getElementById('account_type_id');
+  var costGroup = document.getElementById('costTypeGroup');
+
+  function toggleCostType() {
+    costGroup.style.display = (parseInt(typeSelect.value) === expenseTypeId) ? '' : 'none';
+  }
+
+  toggleCostType();
+  typeSelect.addEventListener('change', toggleCostType);
+})();
+</script>
 {% endblock %}
