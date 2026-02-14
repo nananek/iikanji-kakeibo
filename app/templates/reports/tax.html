@@ -81,6 +81,7 @@
         <th>摘要</th>
         <th>受診者</th>
         <th>病院・薬局</th>
+        <th>区分</th>
         <th class="text-end">支払額</th>
         <th class="text-end">保険補填</th>
       </tr>
@@ -92,6 +93,13 @@
         <td>{{ e.description }}</td>
         <td>{{ e.patient_name }}</td>
         <td>{{ e.hospital_name }}</td>
+        <td>
+          {% if e.provider_type == 'hospital' %}病院
+          {% elif e.provider_type == 'pharmacy' %}薬局
+          {% elif e.provider_type == 'nursing' %}介護
+          {% elif e.provider_type == 'other' %}その他
+          {% endif %}
+        </td>
         <td class="text-end">&yen;{{ "{:,}".format(e.amount) }}</td>
         <td class="text-end">
           {% if e.insurance_reimbursement %}

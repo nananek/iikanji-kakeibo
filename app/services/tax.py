@@ -112,6 +112,7 @@ def get_medical_summary(user_id, year):
             "patient_name": me.patient_name if me else "",
             "hospital_name": me.hospital_name if me else "",
             "treatment_description": me.treatment_description if me else "",
+            "provider_type": me.provider_type or "" if me else "",
             "insurance_reimbursement": me.insurance_reimbursement if me else 0,
         })
 

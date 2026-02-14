@@ -1,6 +1,6 @@
 from datetime import date
 
-from flask import Blueprint, render_template, redirect, url_for, flash, request
+from flask import Blueprint, render_template, redirect, url_for, flash, request, jsonify
 from flask_login import login_required, current_user
 from app.extensions import db
 from app.models.account import Account
@@ -73,6 +73,7 @@ def index():
             "patient_name": me.patient_name if me else "",
             "hospital_name": me.hospital_name if me else "",
             "treatment_description": me.treatment_description if me else "",
+            "provider_type": me.provider_type if me else "",
             "insurance_reimbursement": me.insurance_reimbursement if me else 0,
             "medical_expense_id": me.id if me else None,
         })
@@ -203,3 +204,81 @@ def delete(expense_id):
     db.session.commit()
     flash("医療費を削除しました。", "success")
     return redirect(url_for("medical.index"))
+
+
+PROVIDER_TYPES = [
+    ("", "未設定"),
+    ("hospital", "病院"),
+    ("pharmacy", "薬局"),
+    ("nursing", "介護"),
+    ("other", "その他"),
+]
+
+PROVIDER_TYPE_LABELS = {k: v for k, v in PROVIDER_TYPES}
+
+
+@bp.route("/api/<int:entry_id>")
+@login_required
+def api_get(entry_id):
+    """仕訳IDから医療費詳細をJSON返却"""
+    entry = JournalEntry.query.filter_by(
+        id=entry_id, user_id=current_user.id
+    ).first_or_404()
+
+    me = MedicalExpense.query.filter_by(journal_entry_id=entry_id).first()
+
+    return jsonify({
+        "entry_id": entry_id,
+        "patient_name": me.patient_name if me else "",
+        "hospital_name": me.hospital_name if me else "",
+        "provider_type": me.provider_type or "" if me else "",
+        "insurance_reimbursement": me.insurance_reimbursement if me else 0,
+    })
+
+
+@bp.route("/api/<int:entry_id>", methods=["POST"])
+@login_required
+def api_update(entry_id):
+    """医療費詳細を作成 or 更新"""
+    entry = JournalEntry.query.filter_by(
+        id=entry_id, user_id=current_user.id
+    ).first_or_404()
+
+    data = request.get_json()
+
+    me = MedicalExpense.query.filter_by(journal_entry_id=entry_id).first()
+
+    # 仕訳の医療費科目への借方合計を amount_paid として使用
+    medical_lines = (
+        db.session.query(JournalEntryLine.debit_amount)
+        .join(Account, Account.id == JournalEntryLine.account_id)
+        .filter(
+            JournalEntryLine.journal_entry_id == entry_id,
+            Account.tax_category == "medical",
+            JournalEntryLine.debit_amount > 0,
+        )
+        .all()
+    )
+    amount_paid = sum(int(line.debit_amount) for line in medical_lines)
+
+    if me:
+        me.patient_name = (data.get("patient_name") or "").strip()
+        me.hospital_name = (data.get("hospital_name") or "").strip()
+        me.provider_type = data.get("provider_type") or None
+        me.insurance_reimbursement = int(data.get("insurance_reimbursement") or 0)
+        me.amount_paid = amount_paid
+    else:
+        me = MedicalExpense(
+            user_id=current_user.id,
+            journal_entry_id=entry_id,
+            date=entry.date,
+            patient_name=(data.get("patient_name") or "").strip(),
+            hospital_name=(data.get("hospital_name") or "").strip(),
+            provider_type=data.get("provider_type") or None,
+            amount_paid=amount_paid,
+            insurance_reimbursement=int(data.get("insurance_reimbursement") or 0),
+        )
+        db.session.add(me)
+
+    db.session.commit()
+    return jsonify({"success": True})
