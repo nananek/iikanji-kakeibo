@@ -111,6 +111,44 @@ def create_journal_entry(user_id, date, description, lines_data,
     return entry
 
 
+def create_transfer_entry(user_id, date, from_account_id, to_account_id,
+                          amount, description):
+    """口座間振替の仕訳を作成する
+
+    Args:
+        from_account_id: 出金元の勘定科目ID（貸方）
+        to_account_id: 入金先の勘定科目ID（借方）
+        amount: 金額（正の整数）
+    """
+    entry = JournalEntry(
+        user_id=user_id,
+        date=date,
+        entry_number=get_next_entry_number(user_id),
+        description=description,
+        source="cashbook",
+    )
+    db.session.add(entry)
+    db.session.flush()
+
+    lines = [
+        JournalEntryLine(
+            journal_entry_id=entry.id,
+            account_id=to_account_id,
+            debit_amount=amount,
+            credit_amount=0,
+        ),
+        JournalEntryLine(
+            journal_entry_id=entry.id,
+            account_id=from_account_id,
+            debit_amount=0,
+            credit_amount=amount,
+        ),
+    ]
+    db.session.add_all(lines)
+    db.session.commit()
+    return entry
+
+
 def update_cashbook_entry(entry, date, transaction_type, payment_account_id,
                           category_account_id, amount, description):
     """出納帳の仕訳を更新"""

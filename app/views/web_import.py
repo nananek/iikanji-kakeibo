@@ -10,7 +10,7 @@ from app.extensions import db
 from app.models.account import Account, AccountType
 from app.models.ai_config import UserAIConfig
 from app.services.ai_receipt import parse_web_text
-from app.services.accounting import create_cashbook_entry
+from app.services.accounting import create_cashbook_entry, create_transfer_entry
 
 bp = Blueprint("web_import", __name__, url_prefix="/web-import")
 
@@ -33,32 +33,32 @@ def _get_payment_choices(user_id):
     return [(a.id, a.name) for a in accounts]
 
 
-def _get_category_choices(user_id):
+def _get_category_choices(user_id, exclude_account_id=None):
     expense_type = AccountType.query.filter_by(code="expense").first()
     revenue_type = AccountType.query.filter_by(code="revenue").first()
-    expenses = (
-        Account.query
-        .filter(
+    asset_type = AccountType.query.filter_by(code="asset").first()
+    liability_type = AccountType.query.filter_by(code="liability").first()
+
+    def _query(type_id):
+        q = Account.query.filter(
             Account.user_id == user_id,
             Account.is_active.is_(True),
-            Account.account_type_id == expense_type.id,
+            Account.account_type_id == type_id,
         )
-        .order_by(Account.code)
-        .all()
-    )
-    revenues = (
-        Account.query
-        .filter(
-            Account.user_id == user_id,
-            Account.is_active.is_(True),
-            Account.account_type_id == revenue_type.id,
-        )
-        .order_by(Account.code)
-        .all()
-    )
+        if exclude_account_id:
+            q = q.filter(Account.id != exclude_account_id)
+        return q.order_by(Account.code).all()
+
+    expenses = _query(expense_type.id) if expense_type else []
+    revenues = _query(revenue_type.id) if revenue_type else []
+    assets = _query(asset_type.id) if asset_type else []
+    liabilities = _query(liability_type.id) if liability_type else []
+
     return (
         [(a.id, f"【支出】{a.name}") for a in expenses]
         + [(a.id, f"【収入】{a.name}") for a in revenues]
+        + [(a.id, f"【振替】{a.name}") for a in assets]
+        + [(a.id, f"【振替】{a.name}") for a in liabilities]
     )
 
 
@@ -147,7 +147,7 @@ def confirm():
 
     parsed = json.loads(parsed_json)
     payment_account = Account.query.get(payment_account_id)
-    category_choices = _get_category_choices(current_user.id)
+    category_choices = _get_category_choices(current_user.id, exclude_account_id=payment_account_id)
 
     expense_type = AccountType.query.filter_by(code="expense").first()
     default_expense = (
@@ -163,6 +163,11 @@ def confirm():
         .order_by(Account.code)
         .first()
     )
+
+    # 振替判定用
+    asset_type = AccountType.query.filter_by(code="asset").first()
+    liability_type = AccountType.query.filter_by(code="liability").first()
+    transfer_type_ids = {asset_type.id, liability_type.id}
 
     if request.method == "POST":
         import_rows = request.form.get("import_rows", "")
@@ -190,7 +195,35 @@ def confirm():
             withdrawal = int(row.get("withdrawal", 0))
             category_id = int(row.get("category_id", 0))
 
-            if deposit > 0 and category_id:
+            if not category_id or (deposit == 0 and withdrawal == 0):
+                skipped += 1
+                continue
+
+            cat_account = Account.query.get(category_id)
+            is_transfer = cat_account and cat_account.account_type_id in transfer_type_ids
+
+            if is_transfer:
+                amount = deposit or withdrawal
+                if withdrawal > 0:
+                    create_transfer_entry(
+                        user_id=current_user.id,
+                        date=row_date,
+                        from_account_id=payment_account_id,
+                        to_account_id=category_id,
+                        amount=amount,
+                        description=description,
+                    )
+                else:
+                    create_transfer_entry(
+                        user_id=current_user.id,
+                        date=row_date,
+                        from_account_id=category_id,
+                        to_account_id=payment_account_id,
+                        amount=amount,
+                        description=description,
+                    )
+                imported += 1
+            elif deposit > 0:
                 create_cashbook_entry(
                     user_id=current_user.id,
                     date=row_date,
@@ -201,7 +234,7 @@ def confirm():
                     description=description,
                 )
                 imported += 1
-            elif withdrawal > 0 and category_id:
+            elif withdrawal > 0:
                 create_cashbook_entry(
                     user_id=current_user.id,
                     date=row_date,
