@@ -1,11 +1,27 @@
 import re
+from datetime import date
 
 from flask import Blueprint, render_template, redirect, url_for, flash, request, jsonify
 from flask_login import login_required, current_user
+from sqlalchemy import func
 
 from app.extensions import db
 from app.models.account import Account, AccountType
+from app.models.journal import JournalEntryLine
+from app.services.accounting import create_transfer_entry
 from app.services.audit import get_effective_user_id, get_allowed_account_ids
+
+
+def _get_account_balance(account):
+    """科目の全期間残高を計算"""
+    result = db.session.query(
+        func.coalesce(func.sum(JournalEntryLine.debit_amount), 0),
+        func.coalesce(func.sum(JournalEntryLine.credit_amount), 0),
+    ).filter(JournalEntryLine.account_id == account.id).first()
+    d, c = int(result[0]), int(result[1])
+    if account.account_type.normal_balance == "debit":
+        return d - c
+    return c - d
 
 
 def _next_code(code: str, user_id: int) -> str:
@@ -107,6 +123,17 @@ def api_get(account_id):
     return jsonify(data)
 
 
+@bp.route("/api/<int:account_id>/balance")
+@login_required
+def api_balance(account_id):
+    """科目の残高を返す"""
+    account = Account.query.filter_by(
+        id=account_id, user_id=get_effective_user_id()
+    ).first_or_404()
+    balance = _get_account_balance(account)
+    return jsonify({"balance": balance})
+
+
 @bp.route("/api/new", methods=["POST"])
 @login_required
 def api_create():
@@ -171,7 +198,57 @@ def api_update(account_id):
     account.description = (data.get("description") or "").strip()
     account.tax_category = data.get("tax_category") or None
     account.cost_type = data.get("cost_type") or None
-    account.is_active = data.get("is_active", True)
+
+    new_is_active = data.get("is_active", True)
+
+    # 有効→無効 の場合: 残高振替チェック
+    if account.is_active and not new_is_active:
+        balance = _get_account_balance(account)
+        if balance != 0:
+            transfer_to_id = data.get("transfer_to_account_id")
+            if not transfer_to_id:
+                return jsonify({"error": "残高がある科目を無効化するには振替先を指定してください。",
+                                "needs_transfer": True, "balance": balance}), 400
+            transfer_to = Account.query.filter_by(
+                id=int(transfer_to_id), user_id=get_effective_user_id()
+            ).first()
+            if not transfer_to or not transfer_to.is_active:
+                return jsonify({"error": "振替先の科目が無効です。"}), 400
+
+            # 残高を振替
+            if balance > 0:
+                if account.account_type.normal_balance == "debit":
+                    from_id, to_id = account.id, transfer_to.id
+                else:
+                    from_id, to_id = transfer_to.id, account.id
+                create_transfer_entry(
+                    user_id=get_effective_user_id(),
+                    date=date.today(),
+                    from_account_id=from_id,
+                    to_account_id=to_id,
+                    amount=abs(balance),
+                    description=f"科目無効化振替: {account.name} → {transfer_to.name}",
+                )
+            else:
+                if account.account_type.normal_balance == "debit":
+                    from_id, to_id = transfer_to.id, account.id
+                else:
+                    from_id, to_id = account.id, transfer_to.id
+                create_transfer_entry(
+                    user_id=get_effective_user_id(),
+                    date=date.today(),
+                    from_account_id=from_id,
+                    to_account_id=to_id,
+                    amount=abs(balance),
+                    description=f"科目無効化振替: {account.name} → {transfer_to.name}",
+                )
+        account.deactivated_year = date.today().year
+
+    # 無効→有効 の場合: deactivated_year クリア
+    if not account.is_active and new_is_active:
+        account.deactivated_year = None
+
+    account.is_active = new_is_active
 
     if not account.is_system:
         code = (data.get("code") or "").strip()

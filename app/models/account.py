@@ -35,6 +35,7 @@ class Account(db.Model):
     cost_type = db.Column(db.String(10), nullable=True)  # 'fixed' / 'variable' / 'occasional'
     is_system = db.Column(db.Boolean, nullable=False, default=False)
     is_active = db.Column(db.Boolean, nullable=False, default=True)
+    deactivated_year = db.Column(db.Integer, nullable=True)
     display_order = db.Column(db.Integer, nullable=False, default=0)
 
     journal_lines = db.relationship(

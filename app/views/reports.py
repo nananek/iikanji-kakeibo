@@ -43,10 +43,12 @@ def balance():
     account_types = AccountType.query.order_by(AccountType.display_order).all()
     accounts = (
         Account.query
-        .filter_by(user_id=get_effective_user_id(), is_active=True)
+        .filter_by(user_id=get_effective_user_id())
         .order_by(Account.code)
         .all()
     )
+    # 有効 OR 無効化年 >= 表示年
+    accounts = [a for a in accounts if a.is_active or (a.deactivated_year and a.deactivated_year >= year)]
 
     # Lv2: 公開科目のみに絞る
     allowed_ids = get_allowed_account_ids()
@@ -334,10 +336,12 @@ def ledger():
     account_types = AccountType.query.order_by(AccountType.display_order).all()
     accounts = (
         Account.query
-        .filter_by(user_id=get_effective_user_id(), is_active=True)
+        .filter_by(user_id=get_effective_user_id())
         .order_by(Account.code)
         .all()
     )
+    # 有効 OR 無効化年 >= 表示年
+    accounts = [a for a in accounts if a.is_active or (a.deactivated_year and a.deactivated_year >= year)]
 
     # Lv2: 公開科目のみ
     if allowed_ids is not None:

@@ -28,6 +28,16 @@ body {
   white-space: nowrap;
 }
 
+/* テーブルに淡い縦罫線 */
+.table td,
+.table th {
+  border-right: 1px solid rgba(0, 0, 0, 0.06);
+}
+.table td:last-child,
+.table th:last-child {
+  border-right: none;
+}
+
 .btn-group .btn + form .btn {
   border-top-left-radius: 0;
   border-bottom-left-radius: 0;

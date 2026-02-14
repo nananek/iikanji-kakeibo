@@ -22,7 +22,7 @@
       <optgroup label="{{ at.name }}">
         {% for a in accts %}
         <option value="{{ a.id }}" {% if a.id == account_id %}selected{% endif %}>
-          {{ a.code }} {{ a.name }}
+          {{ a.code }} {{ a.name }}{% if not a.is_active %} (無効){% endif %}
         </option>
         {% endfor %}
       </optgroup>

@@ -131,6 +131,29 @@
           <input class="form-check-input" type="checkbox" id="acctActive" checked>
           <label class="form-check-label" for="acctActive">有効</label>
         </div>
+
+        <div id="deactivateSection" class="d-none mt-3 p-3 bg-light rounded">
+          <div id="deactivateLoading" class="text-center py-2">
+            <span class="spinner-border spinner-border-sm"></span> 残高を確認中...
+          </div>
+          <div id="deactivateInfo" class="d-none">
+            <div class="alert alert-warning py-2 mb-2">
+              <i class="bi bi-exclamation-triangle"></i>
+              この科目の残高: <strong id="deactivateBalance">&yen;0</strong>
+            </div>
+            <div id="transferSection">
+              <label class="form-label">残高の振替先</label>
+              <select class="form-select" id="transferToAccount">
+                <option value="">-- 振替先を選択 --</option>
+              </select>
+            </div>
+          </div>
+          <div id="deactivateNoBalance" class="d-none">
+            <div class="alert alert-info py-2 mb-0">
+              <i class="bi bi-info-circle"></i> 残高がないため振替不要です。
+            </div>
+          </div>
+        </div>
       </div>
       <div class="modal-footer">
         <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">キャンセル</button>
@@ -150,7 +173,19 @@
   var EXPENSE_TYPE_ID = {{ expense_type_id }};
   var REVENUE_TYPE_ID = {{ revenue_type_id }};
   var editingId = null;
+  var editingTypeId = null;
+  var wasActive = true;
   var modal = null;
+
+  // 振替先候補データ（科目区分ごと）
+  var accountsByType = {};
+  {% for at, accts in grouped.items() %}
+  accountsByType[{{ at.id }}] = [
+    {% for a in accts %}{% if a.is_active %}
+    { id: {{ a.id }}, code: "{{ a.code }}", name: "{{ a.name }}" },
+    {% endif %}{% endfor %}
+  ];
+  {% endfor %}
 
   function getModal() {
     if (!modal) modal = new bootstrap.Modal(document.getElementById('accountModal'));
@@ -167,6 +202,45 @@
 
   document.getElementById('acctType').addEventListener('change', toggleCostType);
 
+  // 無効化チェック変更時
+  document.getElementById('acctActive').addEventListener('change', function() {
+    var section = document.getElementById('deactivateSection');
+    if (!this.checked && editingId && wasActive) {
+      section.classList.remove('d-none');
+      document.getElementById('deactivateLoading').classList.remove('d-none');
+      document.getElementById('deactivateInfo').classList.add('d-none');
+      document.getElementById('deactivateNoBalance').classList.add('d-none');
+
+      fetch('/accounts/api/' + editingId + '/balance')
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+          document.getElementById('deactivateLoading').classList.add('d-none');
+          if (data.balance !== 0) {
+            document.getElementById('deactivateBalance').textContent =
+              '\u00a5' + Math.abs(data.balance).toLocaleString() +
+              (data.balance < 0 ? '（貸方残）' : '（借方残）');
+            // 振替先セレクトを生成
+            var sel = document.getElementById('transferToAccount');
+            sel.innerHTML = '<option value="">-- 振替先を選択 --</option>';
+            var candidates = accountsByType[editingTypeId] || [];
+            candidates.forEach(function(a) {
+              if (a.id !== editingId) {
+                var opt = document.createElement('option');
+                opt.value = a.id;
+                opt.textContent = a.code + ' ' + a.name;
+                sel.appendChild(opt);
+              }
+            });
+            document.getElementById('deactivateInfo').classList.remove('d-none');
+          } else {
+            document.getElementById('deactivateNoBalance').classList.remove('d-none');
+          }
+        });
+    } else {
+      section.classList.add('d-none');
+    }
+  });
+
   function resetForm() {
     document.getElementById('acctCode').value = '';
     document.getElementById('acctCode').readOnly = false;
@@ -178,7 +252,10 @@
     document.getElementById('acctCost').value = '';
     document.getElementById('acctActive').checked = true;
     document.getElementById('accountModalError').classList.add('d-none');
+    document.getElementById('deactivateSection').classList.add('d-none');
     editingId = null;
+    editingTypeId = null;
+    wasActive = true;
   }
 
   window.openAccountModal = function(accountId, copy) {
@@ -192,6 +269,8 @@
         .then(function(r) { return r.json(); })
         .then(function(data) {
           editingId = data.id;  // null for copy
+          editingTypeId = data.account_type_id;
+          wasActive = data.is_active;
           document.getElementById('accountModalTitle').textContent =
             copy ? 'コピーして追加' : '科目を編集';
           document.getElementById('acctCode').value = data.code;
@@ -226,6 +305,12 @@
       cost_type: document.getElementById('acctCost').value,
       is_active: document.getElementById('acctActive').checked,
     };
+
+    // 無効化で振替先が指定されている場合
+    var transferSel = document.getElementById('transferToAccount');
+    if (!payload.is_active && editingId && wasActive && transferSel.value) {
+      payload.transfer_to_account_id = parseInt(transferSel.value);
+    }
 
     var url = editingId ? ('/accounts/api/' + editingId) : '/accounts/api/new';
     var csrfToken = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
