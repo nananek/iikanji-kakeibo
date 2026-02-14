@@ -12,7 +12,9 @@ from app.models.account import Account, AccountType
 from app.models.ai_config import UserAIConfig
 from app.services.ai_receipt import parse_web_text
 from app.services.accounting import create_cashbook_entry, create_transfer_entry
-from app.views.helpers import get_grouped_accounts
+from app.views.helpers import (
+    get_grouped_accounts, save_import_data, load_import_data, delete_import_data,
+)
 
 bp = Blueprint("web_import", __name__, url_prefix="/web-import")
 
@@ -82,7 +84,8 @@ def upload():
                 payment_account_name=payment_account.name,
             )
 
-        session["web_parsed"] = json.dumps(parsed, ensure_ascii=False)
+        key = save_import_data(parsed)
+        session["web_data_key"] = key
         session["web_payment_account_id"] = payment_account_id
 
         return redirect(url_for("web_import.confirm"))
@@ -98,13 +101,12 @@ def upload():
 @login_required
 def confirm():
     """Step 2: 確認して一括取込（日付一括編集対応）"""
-    parsed_json = session.get("web_parsed")
+    data_key = session.get("web_data_key")
     payment_account_id = session.get("web_payment_account_id")
-    if not parsed_json or not payment_account_id:
+    parsed = load_import_data(data_key)
+    if not parsed or not payment_account_id:
         flash("データがありません。もう一度入力してください。", "warning")
         return redirect(url_for("web_import.upload"))
-
-    parsed = json.loads(parsed_json)
     payment_account = Account.query.get(payment_account_id)
 
     expense_type = AccountType.query.filter_by(code="expense").first()
@@ -211,7 +213,8 @@ def confirm():
             else:
                 skipped += 1
 
-        session.pop("web_parsed", None)
+        delete_import_data(data_key)
+        session.pop("web_data_key", None)
         session.pop("web_payment_account_id", None)
 
         flash(f"{imported}件を取り込みました。（スキップ: {skipped}件）", "success")

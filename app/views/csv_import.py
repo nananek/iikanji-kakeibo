@@ -14,7 +14,9 @@ from app.services.csv_import import (
     DATE_FORMATS,
 )
 from app.services.accounting import create_cashbook_entry, create_transfer_entry
-from app.views.helpers import get_grouped_accounts
+from app.views.helpers import (
+    get_grouped_accounts, save_import_data, load_import_data, delete_import_data,
+)
 
 bp = Blueprint("csv_import", __name__, url_prefix="/csv-import")
 
@@ -56,9 +58,12 @@ def upload():
                 "csv_import/upload.html", grouped_accounts=grouped_accounts
             )
 
-        # セッションにCSVデータと口座IDを保存
+        # 一時ファイルにCSVデータを保存（Cookieサイズ制限を回避）
         import base64
-        session["csv_raw"] = base64.b64encode(raw_bytes).decode("ascii")
+        key = save_import_data({
+            "raw_b64": base64.b64encode(raw_bytes).decode("ascii"),
+        })
+        session["csv_data_key"] = key
         session["csv_payment_account_id"] = payment_account_id
 
         return redirect(url_for("csv_import.mapping"))
@@ -74,13 +79,14 @@ def mapping():
     """Step 2: 列マッピング + プレビュー"""
     import base64
 
-    csv_b64 = session.get("csv_raw")
+    data_key = session.get("csv_data_key")
     payment_account_id = session.get("csv_payment_account_id")
-    if not csv_b64 or not payment_account_id:
+    stored = load_import_data(data_key)
+    if not stored or not payment_account_id:
         flash("CSVデータがありません。もう一度アップロードしてください。", "warning")
         return redirect(url_for("csv_import.upload"))
 
-    raw_bytes = base64.b64decode(csv_b64)
+    raw_bytes = base64.b64decode(stored["raw_b64"])
     preview = parse_csv_preview(raw_bytes)
     headers = preview["headers"]
     col_indices = list(range(len(headers)))
@@ -137,7 +143,7 @@ def mapping():
                 payment_account=payment_account,
             )
 
-        # パース結果をセッションに保存してconfirmへ
+        # パース結果を一時ファイルに保存してconfirmへ
         serializable = []
         for p in parsed:
             serializable.append({
@@ -147,7 +153,9 @@ def mapping():
                 "deposit": p["deposit"],
                 "withdrawal": p["withdrawal"],
             })
-        session["csv_parsed"] = json.dumps(serializable, ensure_ascii=False)
+        delete_import_data(data_key)
+        parsed_key = save_import_data(serializable)
+        session["csv_data_key"] = parsed_key
 
         return redirect(url_for("csv_import.confirm"))
 
@@ -166,16 +174,14 @@ def mapping():
 @login_required
 def confirm():
     """Step 3: 確認して一括取り込み"""
-    import base64
     from datetime import date as date_type
 
-    parsed_json = session.get("csv_parsed")
+    data_key = session.get("csv_data_key")
     payment_account_id = session.get("csv_payment_account_id")
-    if not parsed_json or not payment_account_id:
+    parsed = load_import_data(data_key)
+    if not parsed or not payment_account_id:
         flash("データがありません。もう一度アップロードしてください。", "warning")
         return redirect(url_for("csv_import.upload"))
-
-    parsed = json.loads(parsed_json)
     payment_account = Account.query.get(payment_account_id)
 
     # デフォルト費目を取得
@@ -286,9 +292,9 @@ def confirm():
             else:
                 skipped += 1
 
-        session.pop("csv_raw", None)
+        delete_import_data(data_key)
+        session.pop("csv_data_key", None)
         session.pop("csv_payment_account_id", None)
-        session.pop("csv_parsed", None)
 
         flash(f"{imported}件を取り込みました。（スキップ: {skipped}件）", "success")
         return redirect(url_for("cashbook.index"))

@@ -11,7 +11,9 @@ from app.extensions import db
 from app.models.account import Account, AccountType
 from app.services.ofx_import import parse_ofx
 from app.services.accounting import create_cashbook_entry, create_transfer_entry
-from app.views.helpers import get_grouped_accounts
+from app.views.helpers import (
+    get_grouped_accounts, save_import_data, load_import_data, delete_import_data,
+)
 
 bp = Blueprint("ofx_import", __name__, url_prefix="/ofx-import")
 
@@ -66,7 +68,9 @@ def upload():
                 grouped_accounts=grouped_accounts,
             )
 
-        session["ofx_parsed"] = json.dumps(result["rows"])
+        # 一時ファイルに保存（Cookieサイズ制限を回避）
+        key = save_import_data(result["rows"])
+        session["ofx_data_key"] = key
         session["ofx_payment_account_id"] = payment_account_id
         session["ofx_account_info"] = result.get("account_id", "")
 
@@ -83,13 +87,14 @@ def upload():
 @login_required
 def confirm():
     """Step 2: 確認して一括取り込み"""
-    parsed_json = session.get("ofx_parsed")
+    data_key = session.get("ofx_data_key")
     payment_account_id = session.get("ofx_payment_account_id")
-    if not parsed_json or not payment_account_id:
+    parsed = load_import_data(data_key)
+
+    if not parsed or not payment_account_id:
         flash("データがありません。もう一度アップロードしてください。", "warning")
         return redirect(url_for("ofx_import.upload"))
 
-    parsed = json.loads(parsed_json)
     payment_account = Account.query.get(payment_account_id)
 
     expense_type = AccountType.query.filter_by(code="expense").first()
@@ -196,7 +201,8 @@ def confirm():
             else:
                 skipped += 1
 
-        session.pop("ofx_parsed", None)
+        delete_import_data(data_key)
+        session.pop("ofx_data_key", None)
         session.pop("ofx_payment_account_id", None)
         session.pop("ofx_account_info", None)
 
