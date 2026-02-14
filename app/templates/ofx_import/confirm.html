@@ -15,9 +15,12 @@
         {% endif %}
       </span>
     </div>
-    <div>
+    <div class="d-flex gap-1">
       <button type="button" class="btn btn-sm btn-outline-secondary" onclick="toggleAll(true)">全選択</button>
       <button type="button" class="btn btn-sm btn-outline-secondary" onclick="toggleAll(false)">全解除</button>
+      <button type="button" class="btn btn-sm btn-outline-primary" onclick="bulkSetCategory()">
+        <i class="bi bi-tags"></i> 選択行に科目を設定
+      </button>
     </div>
   </div>
   <div class="card-body">
@@ -35,7 +38,7 @@
               </th>
               <th style="width:5%">行</th>
               <th style="width:12%">日付</th>
-              <th style="width:30%">摘要</th>
+              <th style="width:30%" id="sortDescription">摘要<span class="sort-icon"></span></th>
               <th style="width:10%" class="text-end">入金</th>
               <th style="width:10%" class="text-end">出金</th>
               <th style="width:25%">費目</th>
@@ -106,90 +109,8 @@
 {% endblock %}
 
 {% block scripts %}
+<script src="{{ url_for('static', filename='js/import_confirm.js') }}"></script>
 <script>
-var parsedData = {{ parsed | tojson }};
-var paymentAccountId = {{ payment_account.id }};
-
-function _categoryNameById(id) {
-  for (var i = 0; i < _acctSelectorData.length; i++) {
-    var g = _acctSelectorData[i];
-    for (var j = 0; j < g.accounts.length; j++) {
-      if (g.accounts[j].id === id) return g.accounts[j].name;
-    }
-  }
-  return '';
-}
-
-// 初期化: デフォルト費目名を設定
-document.querySelectorAll('.category-btn').forEach(function(btn) {
-  var idx = btn.dataset.idx;
-  var hiddenInput = document.querySelector('.category-id[data-idx="' + idx + '"]');
-  var catId = parseInt(hiddenInput.value);
-  if (catId) {
-    var name = _categoryNameById(catId);
-    if (name) {
-      var span = btn.querySelector('.category-name');
-      span.textContent = name;
-      span.classList.remove('text-muted');
-    }
-  }
-
-  btn.addEventListener('click', function() {
-    var thisBtn = this;
-    var thisIdx = thisBtn.dataset.idx;
-    var curId = document.querySelector('.category-id[data-idx="' + thisIdx + '"]').value;
-    openAccountSelector(function(id, name) {
-      var input = document.querySelector('.category-id[data-idx="' + thisIdx + '"]');
-      input.value = id;
-      var span = thisBtn.querySelector('.category-name');
-      span.textContent = name;
-      span.classList.remove('text-muted');
-    }, {filter: 'category_transfer', excludeId: paymentAccountId, activeTab: 'pl', currentId: curId});
-  });
-});
-
-function toggleAll(checked) {
-  document.querySelectorAll('.row-check').forEach(function(cb) { cb.checked = checked; });
-  document.getElementById('checkAll').checked = checked;
-  updateCount();
-}
-
-function updateCount() {
-  var count = 0, totalDep = 0, totalWd = 0;
-  document.querySelectorAll('.row-check').forEach(function(cb) {
-    if (cb.checked) {
-      var idx = parseInt(cb.dataset.idx);
-      count++;
-      totalDep += parsedData[idx].deposit || 0;
-      totalWd += parsedData[idx].withdrawal || 0;
-    }
-  });
-  document.getElementById('importCount').textContent = count;
-  document.getElementById('totalDeposit').textContent = '\u00a5' + totalDep.toLocaleString();
-  document.getElementById('totalWithdrawal').textContent = '\u00a5' + totalWd.toLocaleString();
-}
-
-document.querySelectorAll('.row-check').forEach(function(cb) {
-  cb.addEventListener('change', updateCount);
-});
-
-document.getElementById('importForm').addEventListener('submit', function(e) {
-  var rows = [];
-  document.querySelectorAll('.row-check').forEach(function(cb) {
-    var idx = parseInt(cb.dataset.idx);
-    var catInput = document.querySelector('.category-id[data-idx="' + idx + '"]');
-    rows.push({
-      enabled: cb.checked,
-      date: parsedData[idx].date,
-      description: parsedData[idx].description,
-      deposit: parsedData[idx].deposit,
-      withdrawal: parsedData[idx].withdrawal,
-      category_id: catInput ? parseInt(catInput.value) : 0,
-    });
-  });
-  document.getElementById('importRows').value = JSON.stringify(rows);
-});
-
-updateCount();
+initImportConfirm({{ parsed | tojson }}, {{ payment_account.id }});
 </script>
 {% endblock %}
