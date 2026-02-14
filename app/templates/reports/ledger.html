@@ -40,81 +40,103 @@
 </form>
 
 {% if selected_account %}
-<div class="card shadow-sm">
-  <div class="card-header">
-    <strong>{{ selected_account.code }} {{ selected_account.name }}</strong>
-    <span class="text-muted ms-2">{{ year }}年{% if month %}{{ month }}月{% endif %}</span>
+<form id="ledgerBulkForm" method="POST" action="{{ url_for('journal.bulk_delete') }}"
+      onsubmit="return confirm('選択した仕訳を削除しますか？この操作は取り消せません。');">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <input type="hidden" name="redirect_url" value="{{ request.url }}">
+
+  <div class="card shadow-sm">
+    <div class="card-header">
+      <strong>{{ selected_account.code }} {{ selected_account.name }}</strong>
+      <span class="text-muted ms-2">{{ year }}年{% if month %}{{ month }}月{% endif %}</span>
+    </div>
+    <div class="table-responsive">
+      <table class="table table-sm table-hover mb-0">
+        <thead class="table-dark">
+          <tr>
+            <th style="width:4%">
+              <input type="checkbox" class="form-check-input" id="ledgerSelectAll">
+            </th>
+            <th style="width:8%">日付</th>
+            <th style="width:6%">伝票</th>
+            <th style="width:22%">摘要</th>
+            <th style="width:15%">相手科目</th>
+            <th style="width:11%" class="text-end">借方</th>
+            <th style="width:11%" class="text-end">貸方</th>
+            <th style="width:13%" class="text-end">残高</th>
+            <th style="width:4%"></th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr class="table-secondary">
+            <td></td>
+            <td></td>
+            <td></td>
+            <td><strong>{% if month %}前月繰越{% else %}前期繰越{% endif %}</strong></td>
+            <td></td>
+            <td></td>
+            <td></td>
+            <td class="text-end {% if carry_forward < 0 %}text-danger{% endif %}">
+              <strong>&yen;{{ "{:,}".format(carry_forward) }}</strong>
+            </td>
+            <td></td>
+          </tr>
+          {% set ns = namespace(total_debit=0, total_credit=0) %}
+          {% for e in entries %}
+          <tr>
+            <td>
+              <input type="checkbox" class="form-check-input ledger-cb" name="entry_ids" value="{{ e.entry_id }}">
+            </td>
+            <td>{{ e.date.strftime('%m/%d') }}</td>
+            <td><small class="text-muted">#{{ e.entry_number }}</small></td>
+            <td>{{ e.description }}</td>
+            <td><small>{{ e.counter_account }}</small></td>
+            <td class="text-end">
+              {% if e.debit %}&yen;{{ "{:,}".format(e.debit) }}{% endif %}
+            </td>
+            <td class="text-end">
+              {% if e.credit %}&yen;{{ "{:,}".format(e.credit) }}{% endif %}
+            </td>
+            <td class="text-end {% if e.balance < 0 %}text-danger{% endif %}">
+              &yen;{{ "{:,}".format(e.balance) }}
+            </td>
+            <td>
+              <button type="button" class="btn btn-outline-secondary btn-sm py-0"
+                      title="仕訳を編集" onclick="openEditModal({{ e.entry_id }})">
+                <i class="bi bi-pencil"></i>
+              </button>
+            </td>
+          </tr>
+          {% set ns.total_debit = ns.total_debit + e.debit %}
+          {% set ns.total_credit = ns.total_credit + e.credit %}
+          {% endfor %}
+          <tr class="table-dark">
+            <td></td>
+            <td colspan="4"><strong>合計</strong></td>
+            <td class="text-end"><strong>&yen;{{ "{:,}".format(ns.total_debit) }}</strong></td>
+            <td class="text-end"><strong>&yen;{{ "{:,}".format(ns.total_credit) }}</strong></td>
+            <td class="text-end">
+              {% if entries %}
+              <strong>&yen;{{ "{:,}".format(entries[-1].balance) }}</strong>
+              {% else %}
+              <strong>&yen;{{ "{:,}".format(carry_forward) }}</strong>
+              {% endif %}
+            </td>
+            <td></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
   </div>
-  <div class="table-responsive">
-    <table class="table table-sm table-hover mb-0">
-      <thead class="table-dark">
-        <tr>
-          <th style="width:9%">日付</th>
-          <th style="width:6%">伝票</th>
-          <th style="width:23%">摘要</th>
-          <th style="width:16%">相手科目</th>
-          <th style="width:12%" class="text-end">借方</th>
-          <th style="width:12%" class="text-end">貸方</th>
-          <th style="width:14%" class="text-end">残高</th>
-          <th style="width:4%"></th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr class="table-secondary">
-          <td></td>
-          <td></td>
-          <td><strong>{% if month %}前月繰越{% else %}前期繰越{% endif %}</strong></td>
-          <td></td>
-          <td></td>
-          <td></td>
-          <td class="text-end {% if carry_forward < 0 %}text-danger{% endif %}">
-            <strong>&yen;{{ "{:,}".format(carry_forward) }}</strong>
-          </td>
-          <td></td>
-        </tr>
-        {% set ns = namespace(total_debit=0, total_credit=0) %}
-        {% for e in entries %}
-        <tr>
-          <td>{{ e.date.strftime('%m/%d') }}</td>
-          <td><small class="text-muted">#{{ e.entry_number }}</small></td>
-          <td>{{ e.description }}</td>
-          <td><small>{{ e.counter_account }}</small></td>
-          <td class="text-end">
-            {% if e.debit %}&yen;{{ "{:,}".format(e.debit) }}{% endif %}
-          </td>
-          <td class="text-end">
-            {% if e.credit %}&yen;{{ "{:,}".format(e.credit) }}{% endif %}
-          </td>
-          <td class="text-end {% if e.balance < 0 %}text-danger{% endif %}">
-            &yen;{{ "{:,}".format(e.balance) }}
-          </td>
-          <td>
-            <button type="button" class="btn btn-outline-secondary btn-sm py-0"
-                    title="仕訳を編集" onclick="openEditModal({{ e.entry_id }})">
-              <i class="bi bi-pencil"></i>
-            </button>
-          </td>
-        </tr>
-        {% set ns.total_debit = ns.total_debit + e.debit %}
-        {% set ns.total_credit = ns.total_credit + e.credit %}
-        {% endfor %}
-        <tr class="table-dark">
-          <td colspan="4"><strong>合計</strong></td>
-          <td class="text-end"><strong>&yen;{{ "{:,}".format(ns.total_debit) }}</strong></td>
-          <td class="text-end"><strong>&yen;{{ "{:,}".format(ns.total_credit) }}</strong></td>
-          <td class="text-end">
-            {% if entries %}
-            <strong>&yen;{{ "{:,}".format(entries[-1].balance) }}</strong>
-            {% else %}
-            <strong>&yen;{{ "{:,}".format(carry_forward) }}</strong>
-            {% endif %}
-          </td>
-          <td></td>
-        </tr>
-      </tbody>
-    </table>
+
+  {# 一括操作バー #}
+  <div id="ledgerBulkBar" class="position-fixed bottom-0 start-50 translate-middle-x mb-3 px-4 py-2 bg-dark text-white rounded-pill shadow d-none align-items-center gap-3" style="z-index:1050;">
+    <span><strong id="ledgerSelectedCount">0</strong>件選択中</span>
+    <button type="submit" class="btn btn-danger btn-sm">
+      <i class="bi bi-trash"></i> 一括削除
+    </button>
   </div>
-</div>
+</form>
 
 <!-- 仕訳編集モーダル -->
 <div class="modal fade" id="editModal" tabindex="-1">
@@ -194,6 +216,39 @@
 {% block scripts %}
 {% if selected_account %}
 <script>
+// 一括選択
+(function() {
+  var selectAll = document.getElementById('ledgerSelectAll');
+  var bulkBar = document.getElementById('ledgerBulkBar');
+  var countEl = document.getElementById('ledgerSelectedCount');
+  if (!selectAll) return;
+
+  function getCheckboxes() { return document.querySelectorAll('.ledger-cb'); }
+
+  function updateBar() {
+    var checked = document.querySelectorAll('.ledger-cb:checked').length;
+    countEl.textContent = checked;
+    if (checked > 0) { bulkBar.classList.remove('d-none'); bulkBar.classList.add('d-flex'); }
+    else { bulkBar.classList.add('d-none'); bulkBar.classList.remove('d-flex'); }
+  }
+
+  selectAll.addEventListener('change', function() {
+    getCheckboxes().forEach(function(cb) { cb.checked = selectAll.checked; });
+    updateBar();
+  });
+
+  document.addEventListener('change', function(e) {
+    if (e.target.classList.contains('ledger-cb')) {
+      updateBar();
+      if (!e.target.checked) selectAll.checked = false;
+      else {
+        var all = getCheckboxes();
+        selectAll.checked = Array.from(all).every(function(cb) { return cb.checked; });
+      }
+    }
+  });
+})();
+
 var csrfToken = "{{ csrf_token() }}";
 var currentEntryId = null;
 var editModal = null;

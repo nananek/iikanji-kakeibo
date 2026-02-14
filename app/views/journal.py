@@ -298,9 +298,11 @@ def delete(entry_id):
 def bulk_delete():
     """仕訳の一括削除"""
     entry_ids = request.form.getlist("entry_ids", type=int)
+    redirect_url = request.form.get("redirect_url") or url_for("journal.index")
+
     if not entry_ids:
         flash("削除する仕訳が選択されていません。", "warning")
-        return redirect(url_for("journal.index"))
+        return redirect(redirect_url)
 
     entries = JournalEntry.query.filter(
         JournalEntry.id.in_(entry_ids),
@@ -311,7 +313,7 @@ def bulk_delete():
         db.session.delete(entry)
     db.session.commit()
     flash(f"{count}件の仕訳を削除しました。", "success")
-    return redirect(url_for("journal.index"))
+    return redirect(redirect_url)
 
 
 SOURCE_LABELS = {
