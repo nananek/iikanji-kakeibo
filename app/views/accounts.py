@@ -60,12 +60,14 @@ def index():
         grouped[at] = [a for a in accounts if a.account_type_id == at.id]
 
     expense_type = AccountType.query.filter_by(code="expense").first()
+    revenue_type = AccountType.query.filter_by(code="revenue").first()
 
     return render_template(
         "accounts/index.html",
         grouped=grouped,
         account_types=account_types,
         expense_type_id=expense_type.id if expense_type else 0,
+        revenue_type_id=revenue_type.id if revenue_type else 0,
         tax_categories=TAX_CATEGORIES,
         cost_types=COST_TYPES,
     )

@@ -118,7 +118,7 @@
             </select>
           </div>
           <div class="col-6" id="acctCostGroup">
-            <label for="acctCost" class="form-label">費用区分</label>
+            <label for="acctCost" class="form-label" id="acctCostLabel">費用区分</label>
             <select class="form-select" id="acctCost">
               {% for val, label in cost_types %}
               <option value="{{ val }}">{{ label }}</option>
@@ -148,6 +148,7 @@
 <script>
 (function() {
   var EXPENSE_TYPE_ID = {{ expense_type_id }};
+  var REVENUE_TYPE_ID = {{ revenue_type_id }};
   var editingId = null;
   var modal = null;
 
@@ -158,8 +159,10 @@
 
   function toggleCostType() {
     var typeVal = parseInt(document.getElementById('acctType').value);
-    document.getElementById('acctCostGroup').style.display =
-      (typeVal === EXPENSE_TYPE_ID) ? '' : 'none';
+    var show = (typeVal === EXPENSE_TYPE_ID || typeVal === REVENUE_TYPE_ID);
+    document.getElementById('acctCostGroup').style.display = show ? '' : 'none';
+    document.getElementById('acctCostLabel').textContent =
+      (typeVal === REVENUE_TYPE_ID) ? '収入区分' : '費用区分';
   }
 
   document.getElementById('acctType').addEventListener('change', toggleCostType);

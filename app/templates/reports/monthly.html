@@ -128,9 +128,14 @@
           <td colspan="15"><strong>収入</strong></td>
         </tr>
         {% for a in comparison.income_accounts %}
-        <tr>
-          <td style="position:sticky; left:0; z-index:1; background:#fff;">{{ a.name }}</td>
-          <td></td>
+        {% set ct = a.cost_type or 'occasional' %}
+        <tr class="{% if ct == 'fixed' %}table-info{% elif ct == 'occasional' %}table-light{% endif %}">
+          <td style="position:sticky; left:0; z-index:1; background:{% if ct == 'fixed' %}#cff4fc{% elif ct == 'occasional' %}#f8f9fa{% else %}#fff{% endif %};">{{ a.name }}</td>
+          <td>
+            {% if ct == 'fixed' %}<span class="badge bg-info text-dark">固定</span>
+            {% elif ct == 'variable' %}<span class="badge bg-warning text-dark">変動</span>
+            {% else %}<span class="badge bg-secondary">臨時</span>{% endif %}
+          </td>
           {% for m in range(12) %}
           <td class="text-end {% if current_month and m + 1 == current_month %}table-warning{% endif %}">
             {% if a.months[m] %}&yen;{{ "{:,}".format(a.months[m]) }}
@@ -239,86 +244,159 @@
 </div>
 {% endif %}
 
+{# ========== 収入区分分析 ========== #}
+{% set inc_fixed_total = [] %}
+{% set inc_variable_total = [] %}
+{% set inc_occasional_total = [] %}
+{% for a in comparison.income_accounts %}
+  {% set ct = a.cost_type or 'occasional' %}
+  {% if ct == 'fixed' %}{% if inc_fixed_total.append(a.total) %}{% endif %}
+  {% elif ct == 'variable' %}{% if inc_variable_total.append(a.total) %}{% endif %}
+  {% else %}{% if inc_occasional_total.append(a.total) %}{% endif %}
+  {% endif %}
+{% endfor %}
+{% set ift = inc_fixed_total|sum %}
+{% set ivt = inc_variable_total|sum %}
+{% set iot = inc_occasional_total|sum %}
+{% set income_grand = ift + ivt + iot %}
+
+{% if income_grand > 0 %}
+<div class="card shadow-sm mb-4">
+  <div class="card-header"><strong><i class="bi bi-pie-chart"></i> 収入区分分析</strong></div>
+  <div class="card-body">
+    <div class="row">
+      <div class="col-md-4">
+        <canvas id="incomeTypeChart" height="250"></canvas>
+      </div>
+      <div class="col-md-8">
+        <canvas id="incomeTypeTrendChart" height="250"></canvas>
+      </div>
+    </div>
+    <div class="row mt-3">
+      <div class="col-md-4">
+        <table class="table table-sm">
+          <tbody>
+            <tr>
+              <td><span class="badge bg-info text-dark">固定収入</span></td>
+              <td class="text-end">&yen;{{ "{:,}".format(ift) }}</td>
+              <td class="text-end">{{ "{:.1f}".format(ift / income_grand * 100) }}%</td>
+            </tr>
+            <tr>
+              <td><span class="badge bg-warning text-dark">変動収入</span></td>
+              <td class="text-end">&yen;{{ "{:,}".format(ivt) }}</td>
+              <td class="text-end">{{ "{:.1f}".format(ivt / income_grand * 100) }}%</td>
+            </tr>
+            <tr>
+              <td><span class="badge bg-secondary">臨時収入</span></td>
+              <td class="text-end">&yen;{{ "{:,}".format(iot) }}</td>
+              <td class="text-end">{{ "{:.1f}".format(iot / income_grand * 100) }}%</td>
+            </tr>
+            <tr class="fw-bold">
+              <td>合計</td>
+              <td class="text-end">&yen;{{ "{:,}".format(income_grand) }}</td>
+              <td class="text-end">100%</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+
 {% endblock %}
 
 {% block scripts %}
-{% if expense_grand is defined and expense_grand > 0 %}
+{% set need_charts = (expense_grand is defined and expense_grand > 0) or (income_grand is defined and income_grand > 0) %}
+{% if need_charts %}
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
 <script>
 (function() {
-  // ドーナツグラフ
-  var pieLabels = ['固定費', '変動費', '随時費'];
-  var pieValues = [{{ ft }}, {{ vt }}, {{ ot }}];
-  var pieColors = ['#0dcaf0', '#ffc107', '#6c757d'];
+  var monthLabels = ['1月','2月','3月','4月','5月','6月','7月','8月','9月','10月','11月','12月'];
+  var tooltipCb = {
+    callbacks: {
+      label: function(ctx) { return ctx.label + ': \u00a5' + ctx.parsed.toLocaleString(); }
+    }
+  };
+  var barTooltipCb = {
+    callbacks: {
+      label: function(ctx) { return ctx.dataset.label + ': \u00a5' + ctx.parsed.y.toLocaleString(); }
+    }
+  };
 
+  function buildMonthlyData(accounts) {
+    var f = new Array(12).fill(0), v = new Array(12).fill(0), o = new Array(12).fill(0);
+    accounts.forEach(function(a) {
+      for (var i = 0; i < 12; i++) {
+        if (a.cost_type === 'fixed') f[i] += a.months[i];
+        else if (a.cost_type === 'variable') v[i] += a.months[i];
+        else o[i] += a.months[i];
+      }
+    });
+    return {fixed: f, variable: v, occasional: o};
+  }
+
+  {% if expense_grand is defined and expense_grand > 0 %}
+  // 支出ドーナツ
   new Chart(document.getElementById('costTypeChart'), {
     type: 'doughnut',
     data: {
-      labels: pieLabels,
-      datasets: [{ data: pieValues, backgroundColor: pieColors }]
+      labels: ['固定費', '変動費', '随時費'],
+      datasets: [{ data: [{{ ft }}, {{ vt }}, {{ ot }}], backgroundColor: ['#0dcaf0', '#ffc107', '#6c757d'] }]
     },
-    options: {
-      responsive: true,
-      plugins: {
-        tooltip: {
-          callbacks: {
-            label: function(ctx) {
-              return ctx.label + ': \u00a5' + ctx.parsed.toLocaleString();
-            }
-          }
-        }
-      }
-    }
+    options: { responsive: true, plugins: { tooltip: tooltipCb } }
   });
 
-  // 月次積み上げ棒グラフ
-  var expenseAccounts = {{ comparison.expense_accounts | tojson }};
-  var fixedMonthly = new Array(12).fill(0);
-  var variableMonthly = new Array(12).fill(0);
-  var occasionalMonthly = new Array(12).fill(0);
-  expenseAccounts.forEach(function(a) {
-    for (var i = 0; i < 12; i++) {
-      if (a.cost_type === 'fixed') fixedMonthly[i] += a.months[i];
-      else if (a.cost_type === 'variable') variableMonthly[i] += a.months[i];
-      else occasionalMonthly[i] += a.months[i];
-    }
-  });
-
-  var datasets = [
-    { label: '固定費', data: fixedMonthly, backgroundColor: 'rgba(13, 202, 240, 0.7)' },
-    { label: '変動費', data: variableMonthly, backgroundColor: 'rgba(255, 193, 7, 0.7)' },
-    { label: '随時費', data: occasionalMonthly, backgroundColor: 'rgba(108, 117, 125, 0.7)' },
-  ];
-
+  // 支出月次積み上げ
+  var expData = buildMonthlyData({{ comparison.expense_accounts | tojson }});
   new Chart(document.getElementById('costTypeTrendChart'), {
     type: 'bar',
     data: {
-      labels: ['1月','2月','3月','4月','5月','6月','7月','8月','9月','10月','11月','12月'],
-      datasets: datasets,
+      labels: monthLabels,
+      datasets: [
+        { label: '固定費', data: expData.fixed, backgroundColor: 'rgba(13, 202, 240, 0.7)' },
+        { label: '変動費', data: expData.variable, backgroundColor: 'rgba(255, 193, 7, 0.7)' },
+        { label: '随時費', data: expData.occasional, backgroundColor: 'rgba(108, 117, 125, 0.7)' },
+      ],
     },
     options: {
       responsive: true,
-      scales: {
-        x: { stacked: true },
-        y: {
-          stacked: true,
-          beginAtZero: true,
-          ticks: {
-            callback: function(v) { return '\u00a5' + v.toLocaleString(); }
-          }
-        }
-      },
-      plugins: {
-        tooltip: {
-          callbacks: {
-            label: function(ctx) {
-              return ctx.dataset.label + ': \u00a5' + ctx.parsed.y.toLocaleString();
-            }
-          }
-        }
-      }
+      scales: { x: { stacked: true }, y: { stacked: true, beginAtZero: true, ticks: { callback: function(v) { return '\u00a5' + v.toLocaleString(); } } } },
+      plugins: { tooltip: barTooltipCb }
     }
   });
+  {% endif %}
+
+  {% if income_grand is defined and income_grand > 0 %}
+  // 収入ドーナツ
+  new Chart(document.getElementById('incomeTypeChart'), {
+    type: 'doughnut',
+    data: {
+      labels: ['固定収入', '変動収入', '臨時収入'],
+      datasets: [{ data: [{{ ift }}, {{ ivt }}, {{ iot }}], backgroundColor: ['#0d6efd', '#198754', '#6c757d'] }]
+    },
+    options: { responsive: true, plugins: { tooltip: tooltipCb } }
+  });
+
+  // 収入月次積み上げ
+  var incData = buildMonthlyData({{ comparison.income_accounts | tojson }});
+  new Chart(document.getElementById('incomeTypeTrendChart'), {
+    type: 'bar',
+    data: {
+      labels: monthLabels,
+      datasets: [
+        { label: '固定収入', data: incData.fixed, backgroundColor: 'rgba(13, 110, 253, 0.7)' },
+        { label: '変動収入', data: incData.variable, backgroundColor: 'rgba(25, 135, 84, 0.7)' },
+        { label: '臨時収入', data: incData.occasional, backgroundColor: 'rgba(108, 117, 125, 0.7)' },
+      ],
+    },
+    options: {
+      responsive: true,
+      scales: { x: { stacked: true }, y: { stacked: true, beginAtZero: true, ticks: { callback: function(v) { return '\u00a5' + v.toLocaleString(); } } } },
+      plugins: { tooltip: barTooltipCb }
+    }
+  });
+  {% endif %}
 })();
 </script>
 {% endif %}
