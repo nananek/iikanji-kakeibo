@@ -19,3 +19,103 @@ body {
   border-top-left-radius: 0;
   border-bottom-left-radius: 0;
 }
+
+/* AI解析ローディングオーバーレイ */
+.ai-loading-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.6);
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ai-loading-card {
+  background: #fff;
+  border-radius: 1rem;
+  padding: 2.5rem 3rem;
+  text-align: center;
+  max-width: 400px;
+  width: 90%;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+}
+
+.ai-loading-icon {
+  font-size: 3rem;
+  color: #0d6efd;
+  animation: ai-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes ai-pulse {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.15); opacity: 0.7; }
+}
+
+.ai-loading-steps {
+  margin-top: 1.5rem;
+  text-align: left;
+}
+
+.ai-loading-step {
+  padding: 0.5rem 0;
+  color: #adb5bd;
+  transition: color 0.3s, opacity 0.3s;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.ai-loading-step.active {
+  color: #0d6efd;
+  font-weight: 600;
+}
+
+.ai-loading-step.done {
+  color: #198754;
+}
+
+.ai-loading-step .step-icon {
+  width: 1.5rem;
+  text-align: center;
+}
+
+.ai-loading-step.active .step-icon .spinner-border {
+  width: 1rem;
+  height: 1rem;
+  border-width: 0.15em;
+}
+
+/* 仕訳案カード */
+.suggestion-card {
+  border: 2px solid #dee2e6;
+  border-radius: 0.75rem;
+  transition: border-color 0.2s, box-shadow 0.2s;
+  cursor: pointer;
+}
+
+.suggestion-card:hover {
+  border-color: #0d6efd;
+  box-shadow: 0 4px 12px rgba(13, 110, 253, 0.15);
+}
+
+.suggestion-card .card-header {
+  background: #f8f9fa;
+  border-radius: 0.75rem 0.75rem 0 0;
+  font-weight: 600;
+}
+
+.suggestion-line {
+  display: flex;
+  justify-content: space-between;
+  padding: 0.25rem 0;
+  font-size: 0.9rem;
+}
+
+.suggestion-line .amount {
+  font-family: monospace;
+  white-space: nowrap;
+}

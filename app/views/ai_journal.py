@@ -1,16 +1,18 @@
 """AI証憑仕訳ビュー"""
 
 import json
+from dataclasses import asdict
 from datetime import date as date_type
 
 from flask import (
     Blueprint, render_template, redirect, url_for, flash, request, session,
+    jsonify,
 )
 from flask_login import login_required, current_user
 
 from app.models.account import Account, AccountType
 from app.models.ai_config import UserAIConfig
-from app.services.ai_receipt import analyze_receipt, match_account
+from app.services.ai_receipt import analyze_and_suggest
 from app.services.accounting import create_journal_entry
 
 bp = Blueprint("ai_journal", __name__, url_prefix="/ai-journal")
@@ -85,102 +87,71 @@ def _get_category_choices(user_id):
     return choices
 
 
-@bp.route("/", methods=["GET", "POST"])
+@bp.route("/", methods=["GET"])
 @login_required
 def upload():
-    """Step 1: 証憑画像アップロード + AI解析"""
+    """証憑画像アップロード画面"""
     config = UserAIConfig.query.filter_by(user_id=current_user.id).first()
-    payment_choices = _get_payment_choices(current_user.id)
-
-    if request.method == "POST":
-        if not config:
-            flash("AI API設定が登録されていません。先に設定してください。", "danger")
-            return redirect(url_for("settings.ai_config"))
-
-        image_file = request.files.get("image_file")
-        if not image_file or not image_file.filename:
-            flash("画像ファイルを選択してください。", "danger")
-            return render_template(
-                "ai_journal/upload.html",
-                has_config=bool(config),
-                payment_choices=payment_choices,
-            )
-
-        image_bytes = image_file.read()
-        if len(image_bytes) > MAX_IMAGE_SIZE:
-            flash("ファイルサイズが大きすぎます（上限10MB）。", "danger")
-            return render_template(
-                "ai_journal/upload.html",
-                has_config=bool(config),
-                payment_choices=payment_choices,
-            )
-
-        mime_type = image_file.content_type
-        if mime_type not in ALLOWED_MIME_TYPES:
-            flash(
-                "対応していないファイル形式です。JPEG/PNG/WebP/GIF を使用してください。",
-                "danger",
-            )
-            return render_template(
-                "ai_journal/upload.html",
-                has_config=bool(config),
-                payment_choices=payment_choices,
-            )
-
-        payment_account_id = request.form.get("payment_account_id", type=int)
-        if not payment_account_id:
-            flash("支払元の口座を選択してください。", "danger")
-            return render_template(
-                "ai_journal/upload.html",
-                has_config=bool(config),
-                payment_choices=payment_choices,
-            )
-
-        try:
-            result = analyze_receipt(current_user.id, image_bytes, mime_type)
-        except (ValueError, RuntimeError) as e:
-            flash(str(e), "danger")
-            return render_template(
-                "ai_journal/upload.html",
-                has_config=bool(config),
-                payment_choices=payment_choices,
-            )
-
-        matched_account_id = match_account(
-            current_user.id, result.suggested_category
-        )
-
-        session["ai_journal_result"] = json.dumps(
-            {
-                "date": result.date,
-                "description": result.description,
-                "amount": result.amount,
-                "suggested_category": result.suggested_category,
-                "matched_account_id": matched_account_id,
-                "payment_account_id": payment_account_id,
-            },
-            ensure_ascii=False,
-        )
-
-        return redirect(url_for("ai_journal.review"))
-
     return render_template(
         "ai_journal/upload.html",
         has_config=bool(config),
-        payment_choices=payment_choices,
     )
+
+
+@bp.route("/analyze", methods=["POST"])
+@login_required
+def analyze():
+    """AJAX: 証憑画像を解析して仕訳案を返す"""
+    config = UserAIConfig.query.filter_by(user_id=current_user.id).first()
+    if not config:
+        return jsonify({"error": "AI API設定が登録されていません。先に設定してください。"}), 400
+
+    image_file = request.files.get("image_file")
+    if not image_file or not image_file.filename:
+        return jsonify({"error": "画像ファイルを選択してください。"}), 400
+
+    image_bytes = image_file.read()
+    if len(image_bytes) > MAX_IMAGE_SIZE:
+        return jsonify({"error": "ファイルサイズが大きすぎます（上限10MB）。"}), 400
+
+    mime_type = image_file.content_type
+    if mime_type not in ALLOWED_MIME_TYPES:
+        return jsonify({
+            "error": "対応していないファイル形式です。JPEG/PNG/WebP/GIF を使用してください。"
+        }), 400
+
+    try:
+        suggestions = analyze_and_suggest(
+            current_user.id, image_bytes, mime_type
+        )
+    except (ValueError, RuntimeError) as e:
+        return jsonify({"error": str(e)}), 400
+
+    suggestions_data = [asdict(s) for s in suggestions]
+
+    session["ai_journal_suggestions"] = json.dumps(
+        suggestions_data, ensure_ascii=False
+    )
+
+    return jsonify({"suggestions": suggestions_data})
 
 
 @bp.route("/review", methods=["GET", "POST"])
 @login_required
 def review():
-    """Step 2: AI結果の確認・編集・保存"""
-    result_json = session.get("ai_journal_result")
-    if not result_json:
+    """仕訳案の確認・編集・保存"""
+    suggestions_json = session.get("ai_journal_suggestions")
+    if not suggestions_json:
         flash("AI解析データがありません。もう一度アップロードしてください。", "warning")
         return redirect(url_for("ai_journal.upload"))
 
-    result = json.loads(result_json)
+    suggestions = json.loads(suggestions_json)
+    suggestion_index = request.args.get("idx", 0, type=int)
+    if suggestion_index < 0 or suggestion_index >= len(suggestions):
+        suggestion_index = 0
+
+    selected = suggestions[suggestion_index]
+
     payment_choices = _get_payment_choices(current_user.id)
     category_choices = _get_category_choices(current_user.id)
     account_choices = _get_account_choices(current_user.id)
@@ -194,7 +165,9 @@ def review():
             flash("日付と摘要を入力してください。", "danger")
             return render_template(
                 "ai_journal/review.html",
-                result=result,
+                suggestions=suggestions,
+                selected=selected,
+                selected_index=suggestion_index,
                 payment_choices=payment_choices,
                 category_choices=category_choices,
                 account_choices=account_choices,
@@ -206,7 +179,9 @@ def review():
             flash("日付の形式が不正です。", "danger")
             return render_template(
                 "ai_journal/review.html",
-                result=result,
+                suggestions=suggestions,
+                selected=selected,
+                selected_index=suggestion_index,
                 payment_choices=payment_choices,
                 category_choices=category_choices,
                 account_choices=account_choices,
@@ -223,7 +198,9 @@ def review():
                 flash("金額・費目・支払元を入力してください。", "danger")
                 return render_template(
                     "ai_journal/review.html",
-                    result=result,
+                    suggestions=suggestions,
+                    selected=selected,
+                    selected_index=suggestion_index,
                     payment_choices=payment_choices,
                     category_choices=category_choices,
                     account_choices=account_choices,
@@ -251,7 +228,9 @@ def review():
                 flash("明細データが不正です。", "danger")
                 return render_template(
                     "ai_journal/review.html",
-                    result=result,
+                    suggestions=suggestions,
+                    selected=selected,
+                    selected_index=suggestion_index,
                     payment_choices=payment_choices,
                     category_choices=category_choices,
                     account_choices=account_choices,
@@ -272,7 +251,9 @@ def review():
             flash("仕訳明細を入力してください。", "danger")
             return render_template(
                 "ai_journal/review.html",
-                result=result,
+                suggestions=suggestions,
+                selected=selected,
+                selected_index=suggestion_index,
                 payment_choices=payment_choices,
                 category_choices=category_choices,
                 account_choices=account_choices,
@@ -286,7 +267,7 @@ def review():
                 lines_data=lines_data,
                 source="ai_receipt",
             )
-            session.pop("ai_journal_result", None)
+            session.pop("ai_journal_suggestions", None)
             flash(f"伝票 #{entry.entry_number} を登録しました。", "success")
             return redirect(url_for("journal.index"))
         except ValueError as e:
@@ -294,7 +275,9 @@ def review():
 
     return render_template(
         "ai_journal/review.html",
-        result=result,
+        suggestions=suggestions,
+        selected=selected,
+        selected_index=suggestion_index,
         payment_choices=payment_choices,
         category_choices=category_choices,
         account_choices=account_choices,

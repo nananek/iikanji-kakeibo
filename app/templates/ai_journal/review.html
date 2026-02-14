@@ -4,10 +4,44 @@
 {% block content %}
 <h2><i class="bi bi-robot"></i> AI証憑仕訳</h2>
 
+<!-- 仕訳案の一覧（選択用） -->
+{% if suggestions|length > 1 %}
 <div class="card shadow-sm mt-4">
   <div class="card-header">
-    <strong>Step 2:</strong> AI解析結果の確認・修正
-    <span class="badge bg-info ms-2">AI推測: {{ result.suggested_category }}</span>
+    <i class="bi bi-lightbulb"></i> AIが提案した仕訳案（{{ suggestions|length }}件）
+  </div>
+  <div class="card-body">
+    <div class="row g-2">
+      {% for s in suggestions %}
+      <div class="col-md-4">
+        <a href="{{ url_for('ai_journal.review', idx=loop.index0) }}"
+           class="card text-decoration-none h-100 {% if loop.index0 == selected_index %}border-primary{% endif %}"
+           style="{% if loop.index0 == selected_index %}border-width: 2px;{% endif %}">
+          <div class="card-body py-2 px-3">
+            <div class="d-flex justify-content-between align-items-center">
+              <strong style="font-size: 0.9rem;">
+                <i class="bi bi-journal-text"></i> {{ s.title }}
+              </strong>
+              {% if loop.index0 == selected_index %}
+              <span class="badge bg-primary">選択中</span>
+              {% else %}
+              <span class="badge bg-secondary">案{{ loop.index }}</span>
+              {% endif %}
+            </div>
+            <small class="text-muted">{{ s.description[:60] }}{% if s.description|length > 60 %}...{% endif %}</small>
+          </div>
+        </a>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+{% endif %}
+
+<div class="card shadow-sm mt-3">
+  <div class="card-header">
+    <strong>Step 2:</strong> 仕訳の確認・修正
+    <span class="badge bg-info ms-2">{{ selected.title }}</span>
   </div>
   <div class="card-body">
     <ul class="nav nav-tabs mb-4" role="tablist">
@@ -36,19 +70,20 @@
             <div class="col-md-3">
               <label class="form-label">日付</label>
               <input type="date" class="form-control" name="date"
-                     value="{{ result.date or '' }}" required>
+                     value="{{ selected.date or '' }}" required>
             </div>
             <div class="col-md-6">
               <label class="form-label">摘要</label>
               <input type="text" class="form-control" name="description"
-                     value="{{ result.description }}" required>
+                     value="{{ selected.entry_description }}" required>
             </div>
             <div class="col-md-3">
               <label class="form-label">金額</label>
               <div class="input-group">
                 <span class="input-group-text">&yen;</span>
                 <input type="number" class="form-control text-end" name="amount"
-                       value="{{ result.amount }}" min="1" required>
+                       value="{{ selected.lines[0].debit_amount or selected.lines[0].credit_amount if selected.lines else 0 }}"
+                       min="1" required>
               </div>
             </div>
           </div>
@@ -59,7 +94,7 @@
               <select class="form-select" name="category_account_id" required>
                 {% for cid, cname in category_choices %}
                 <option value="{{ cid }}"
-                  {% if cid == result.matched_account_id %}selected{% endif %}>
+                  {% if selected.lines and cid == selected.lines[0].account_id %}selected{% endif %}>
                   {{ cname }}
                 </option>
                 {% endfor %}
@@ -68,9 +103,10 @@
             <div class="col-md-6">
               <label class="form-label">支払元</label>
               <select class="form-select" name="payment_account_id" required>
+                <option value="">-- 選択してください --</option>
                 {% for pid, pname in payment_choices %}
                 <option value="{{ pid }}"
-                  {% if pid == result.payment_account_id %}selected{% endif %}>
+                  {% if selected.lines|length > 1 and pid == selected.lines[1].account_id %}selected{% endif %}>
                   {{ pname }}
                 </option>
                 {% endfor %}
@@ -101,12 +137,12 @@
             <div class="col-md-3">
               <label class="form-label">日付</label>
               <input type="date" class="form-control" name="date"
-                     value="{{ result.date or '' }}" required>
+                     value="{{ selected.date or '' }}" required>
             </div>
             <div class="col-md-9">
               <label class="form-label">摘要</label>
               <input type="text" class="form-control" name="description"
-                     value="{{ result.description }}" required>
+                     value="{{ selected.entry_description }}" required>
             </div>
           </div>
 
@@ -226,10 +262,16 @@ document.getElementById('advancedForm').addEventListener('submit', function() {
 });
 
 // AI結果で初期化
-var aiResult = {{ result | tojson }};
-if (aiResult.matched_account_id && aiResult.amount > 0) {
-  addLine({ account_id: aiResult.matched_account_id, debit_amount: aiResult.amount, credit_amount: 0, description: '' });
-  addLine({ account_id: aiResult.payment_account_id, debit_amount: 0, credit_amount: aiResult.amount, description: '' });
+var selected = {{ selected | tojson }};
+if (selected.lines && selected.lines.length > 0) {
+  selected.lines.forEach(function(line) {
+    addLine({
+      account_id: line.account_id,
+      debit_amount: line.debit_amount,
+      credit_amount: line.credit_amount,
+      description: line.description || ''
+    });
+  });
 } else {
   addLine();
   addLine();

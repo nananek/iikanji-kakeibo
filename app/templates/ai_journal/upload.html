@@ -19,11 +19,11 @@
         </div>
         {% endif %}
 
-        <form method="POST" enctype="multipart/form-data" id="uploadForm">
+        <form id="uploadForm" enctype="multipart/form-data">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 
           <div class="mb-3">
-            <label class="form-label" for="image_file">領収書・レシート画像</label>
+            <label class="form-label" for="image_file">証憑画像（領収書・給与明細・請求書など）</label>
             <input type="file" class="form-control" name="image_file" id="image_file"
                    accept="image/jpeg,image/png,image/webp,image/gif" required
                    {% if not has_config %}disabled{% endif %}>
@@ -35,18 +35,7 @@
                  style="max-height: 300px;" alt="プレビュー">
           </div>
 
-          <div class="mb-3">
-            <label class="form-label" for="payment_account_id">支払元の口座</label>
-            <select class="form-select" name="payment_account_id"
-                    id="payment_account_id" required
-                    {% if not has_config %}disabled{% endif %}>
-              <option value="">-- 選択してください --</option>
-              {% for id, name in payment_choices %}
-              <option value="{{ id }}">{{ name }}</option>
-              {% endfor %}
-            </select>
-            <div class="form-text">この領収書の支払いに使った口座を選択します</div>
-          </div>
+          <div id="errorAlert" class="alert alert-danger d-none"></div>
 
           <button type="submit" class="btn btn-primary" id="submitBtn"
                   {% if not has_config %}disabled{% endif %}>
@@ -56,6 +45,13 @@
             キャンセル
           </a>
         </form>
+
+        <!-- 仕訳案表示エリア -->
+        <div id="suggestionsArea" class="d-none mt-4">
+          <h5><i class="bi bi-lightbulb"></i> AIが提案する仕訳案</h5>
+          <p class="text-muted">使用する仕訳案を選んでください。次の画面で編集できます。</p>
+          <div id="suggestionsContainer" class="row g-3"></div>
+        </div>
       </div>
     </div>
   </div>
@@ -67,14 +63,47 @@
         <ol class="mb-0">
           <li class="mb-2">
             <strong class="text-primary">画像アップロード</strong><br>
-            領収書・レシートの画像と支払元口座を選択
+            証憑画像（領収書・給与明細など）を選択
+          </li>
+          <li class="mb-2">
+            <strong>仕訳案の選択</strong><br>
+            AIが複数の仕訳案を提案します
           </li>
           <li class="mb-2">
             <strong>確認・保存</strong><br>
-            AIの解析結果を確認・修正して仕訳を保存
+            選んだ仕訳案を確認・修正して保存
           </li>
         </ol>
       </div>
+    </div>
+  </div>
+</div>
+
+<!-- ローディングオーバーレイ -->
+<div id="loadingOverlay" class="ai-loading-overlay d-none">
+  <div class="ai-loading-card">
+    <div class="ai-loading-icon">
+      <i class="bi bi-robot"></i>
+    </div>
+    <h5 class="mt-3">AIが証憑を解析中</h5>
+    <div class="ai-loading-steps">
+      <div class="ai-loading-step active" id="loadingStep1">
+        <span class="step-icon">
+          <span class="spinner-border spinner-border-sm" role="status"></span>
+        </span>
+        <span>画像を読み取り中...</span>
+      </div>
+      <div class="ai-loading-step" id="loadingStep2">
+        <span class="step-icon"><i class="bi bi-book"></i></span>
+        <span>関連する元帳を参照中...</span>
+      </div>
+      <div class="ai-loading-step" id="loadingStep3">
+        <span class="step-icon"><i class="bi bi-pencil-square"></i></span>
+        <span>仕訳案を作成中...</span>
+      </div>
+    </div>
+    <div class="text-muted mt-3" style="font-size: 0.85rem;">
+      書類の種類により30秒〜1分ほどかかります
     </div>
   </div>
 </div>
@@ -82,26 +111,190 @@
 
 {% block scripts %}
 <script>
-document.getElementById('image_file').addEventListener('change', function(e) {
-  var file = e.target.files[0];
+(function() {
+  var form = document.getElementById('uploadForm');
+  var fileInput = document.getElementById('image_file');
   var preview = document.getElementById('imagePreview');
-  var area = document.getElementById('previewArea');
-  if (file) {
-    var reader = new FileReader();
-    reader.onload = function(ev) {
-      preview.src = ev.target.result;
-      area.classList.remove('d-none');
-    };
-    reader.readAsDataURL(file);
-  } else {
-    area.classList.add('d-none');
-  }
-});
+  var previewArea = document.getElementById('previewArea');
+  var submitBtn = document.getElementById('submitBtn');
+  var errorAlert = document.getElementById('errorAlert');
+  var loadingOverlay = document.getElementById('loadingOverlay');
+  var suggestionsArea = document.getElementById('suggestionsArea');
+  var suggestionsContainer = document.getElementById('suggestionsContainer');
+  var reviewUrl = "{{ url_for('ai_journal.review') }}";
+  var analyzeUrl = "{{ url_for('ai_journal.analyze') }}";
 
-document.getElementById('uploadForm').addEventListener('submit', function() {
-  var btn = document.getElementById('submitBtn');
-  btn.disabled = true;
-  btn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status"></span> AIが解析中...';
-});
+  // 画像プレビュー
+  fileInput.addEventListener('change', function(e) {
+    var file = e.target.files[0];
+    if (file) {
+      var reader = new FileReader();
+      reader.onload = function(ev) {
+        preview.src = ev.target.result;
+        previewArea.classList.remove('d-none');
+      };
+      reader.readAsDataURL(file);
+    } else {
+      previewArea.classList.add('d-none');
+    }
+    // 新しい画像選択時は既存の結果を消す
+    suggestionsArea.classList.add('d-none');
+    errorAlert.classList.add('d-none');
+  });
+
+  // ローディングステップの進行
+  var stepTimers = [];
+  function startLoadingSteps() {
+    var steps = [
+      document.getElementById('loadingStep1'),
+      document.getElementById('loadingStep2'),
+      document.getElementById('loadingStep3')
+    ];
+
+    // 初期状態にリセット
+    steps.forEach(function(s, i) {
+      s.classList.remove('active', 'done');
+      if (i === 0) s.classList.add('active');
+      var icon = s.querySelector('.step-icon');
+      if (i === 0) {
+        icon.innerHTML = '<span class="spinner-border spinner-border-sm" role="status"></span>';
+      }
+    });
+
+    // Step 2: 5秒後
+    stepTimers.push(setTimeout(function() {
+      steps[0].classList.remove('active');
+      steps[0].classList.add('done');
+      steps[0].querySelector('.step-icon').innerHTML = '<i class="bi bi-check-circle-fill"></i>';
+      steps[1].classList.add('active');
+      steps[1].querySelector('.step-icon').innerHTML = '<span class="spinner-border spinner-border-sm" role="status"></span>';
+    }, 5000));
+
+    // Step 3: 12秒後
+    stepTimers.push(setTimeout(function() {
+      steps[1].classList.remove('active');
+      steps[1].classList.add('done');
+      steps[1].querySelector('.step-icon').innerHTML = '<i class="bi bi-check-circle-fill"></i>';
+      steps[2].classList.add('active');
+      steps[2].querySelector('.step-icon').innerHTML = '<span class="spinner-border spinner-border-sm" role="status"></span>';
+    }, 12000));
+  }
+
+  function stopLoadingSteps() {
+    stepTimers.forEach(function(t) { clearTimeout(t); });
+    stepTimers = [];
+  }
+
+  // フォーム送信（AJAX）
+  form.addEventListener('submit', function(e) {
+    e.preventDefault();
+    errorAlert.classList.add('d-none');
+    suggestionsArea.classList.add('d-none');
+
+    var formData = new FormData(form);
+
+    // ローディング表示
+    loadingOverlay.classList.remove('d-none');
+    submitBtn.disabled = true;
+    startLoadingSteps();
+
+    fetch(analyzeUrl, {
+      method: 'POST',
+      body: formData,
+    })
+    .then(function(resp) {
+      return resp.json().then(function(data) {
+        return { ok: resp.ok, data: data };
+      });
+    })
+    .then(function(result) {
+      stopLoadingSteps();
+      loadingOverlay.classList.add('d-none');
+      submitBtn.disabled = false;
+
+      if (!result.ok || result.data.error) {
+        errorAlert.textContent = result.data.error || 'エラーが発生しました。';
+        errorAlert.classList.remove('d-none');
+        return;
+      }
+
+      renderSuggestions(result.data.suggestions);
+    })
+    .catch(function(err) {
+      stopLoadingSteps();
+      loadingOverlay.classList.add('d-none');
+      submitBtn.disabled = false;
+      errorAlert.textContent = '通信エラーが発生しました。もう一度お試しください。';
+      errorAlert.classList.remove('d-none');
+    });
+  });
+
+  // 仕訳案カードを描画
+  function renderSuggestions(suggestions) {
+    suggestionsContainer.innerHTML = '';
+
+    suggestions.forEach(function(s, idx) {
+      var totalDebit = 0, totalCredit = 0;
+      var linesHtml = '';
+
+      s.lines.forEach(function(line) {
+        var d = line.debit_amount || 0;
+        var c = line.credit_amount || 0;
+        totalDebit += d;
+        totalCredit += c;
+
+        linesHtml += '<div class="suggestion-line">';
+        linesHtml += '<span>' + escapeHtml(line.account_name) + '</span>';
+        if (d > 0) {
+          linesHtml += '<span class="amount text-primary">借 &yen;' + d.toLocaleString() + '</span>';
+        } else {
+          linesHtml += '<span class="amount text-danger">貸 &yen;' + c.toLocaleString() + '</span>';
+        }
+        linesHtml += '</div>';
+      });
+
+      var card = document.createElement('div');
+      card.className = 'col-md-6';
+      card.innerHTML =
+        '<div class="suggestion-card card h-100" data-idx="' + idx + '">' +
+          '<div class="card-header d-flex justify-content-between align-items-center">' +
+            '<span><i class="bi bi-journal-text"></i> ' + escapeHtml(s.title) + '</span>' +
+            '<span class="badge bg-secondary">案' + (idx + 1) + '</span>' +
+          '</div>' +
+          '<div class="card-body">' +
+            '<p class="text-muted mb-2" style="font-size: 0.85rem;">' + escapeHtml(s.description) + '</p>' +
+            '<div class="mb-2">' +
+              '<small class="text-muted">' +
+                (s.date || '日付未定') + ' / ' + escapeHtml(s.entry_description) +
+              '</small>' +
+            '</div>' +
+            '<hr class="my-2">' +
+            linesHtml +
+            '<hr class="my-2">' +
+            '<div class="d-flex justify-content-between">' +
+              '<small class="text-muted">借方合計 &yen;' + totalDebit.toLocaleString() + '</small>' +
+              '<small class="text-muted">貸方合計 &yen;' + totalCredit.toLocaleString() + '</small>' +
+            '</div>' +
+          '</div>' +
+          '<div class="card-footer text-center">' +
+            '<a href="' + reviewUrl + '?idx=' + idx + '" class="btn btn-primary btn-sm">' +
+              '<i class="bi bi-check-lg"></i> この仕訳を使う' +
+            '</a>' +
+          '</div>' +
+        '</div>';
+
+      suggestionsContainer.appendChild(card);
+    });
+
+    suggestionsArea.classList.remove('d-none');
+    suggestionsArea.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  function escapeHtml(text) {
+    var div = document.createElement('div');
+    div.appendChild(document.createTextNode(text || ''));
+    return div.innerHTML;
+  }
+})();
 </script>
 {% endblock %}
