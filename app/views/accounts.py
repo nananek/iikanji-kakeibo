@@ -1,9 +1,27 @@
+import re
+
 from flask import Blueprint, render_template, redirect, url_for, flash, request
 from flask_login import login_required, current_user
 
 from app.extensions import db
 from app.models.account import Account, AccountType
 from app.forms.account import AccountForm
+
+
+def _next_code(code: str, user_id: int) -> str:
+    """科目コードの末尾番号をインクリメントして未使用のコードを返す"""
+    match = re.match(r"^(.*?)(\d+)$", code)
+    if not match:
+        return code + "2"
+    prefix, num_str = match.group(1), match.group(2)
+    width = len(num_str)
+    next_num = int(num_str) + 1
+    while True:
+        candidate = f"{prefix}{next_num:0{width}d}"
+        exists = Account.query.filter_by(user_id=user_id, code=candidate).first()
+        if not exists:
+            return candidate
+        next_num += 1
 
 bp = Blueprint("accounts", __name__, url_prefix="/accounts")
 
@@ -58,6 +76,20 @@ def new():
         db.session.commit()
         flash(f"勘定科目「{account.name}」を追加しました。", "success")
         return redirect(url_for("accounts.index"))
+
+    if request.method == "GET":
+        copy_from = request.args.get("copy_from", type=int)
+        if copy_from:
+            source = Account.query.filter_by(
+                id=copy_from, user_id=current_user.id
+            ).first()
+            if source:
+                form.code.data = _next_code(source.code, current_user.id)
+                form.name.data = source.name
+                form.account_type_id.data = source.account_type_id
+                form.description.data = source.description
+                form.tax_category.data = source.tax_category or ""
+                form.is_active.data = source.is_active
 
     return render_template("accounts/form.html", form=form, is_edit=False)
 

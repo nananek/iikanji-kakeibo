@@ -51,8 +51,11 @@
             <span class="badge bg-secondary">無効</span>
             {% endif %}
           </td>
-          <td>
-            <a href="{{ url_for('accounts.edit', account_id=account.id) }}" class="btn btn-outline-secondary btn-sm">
+          <td class="text-nowrap">
+            <a href="{{ url_for('accounts.new', copy_from=account.id) }}" class="btn btn-outline-success btn-sm" title="コピーして追加">
+              <i class="bi bi-copy"></i>
+            </a>
+            <a href="{{ url_for('accounts.edit', account_id=account.id) }}" class="btn btn-outline-secondary btn-sm" title="編集">
               <i class="bi bi-pencil"></i>
             </a>
           </td>
