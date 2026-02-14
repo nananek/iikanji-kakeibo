@@ -2,26 +2,21 @@
 {% block title %}総勘定元帳 - いいかんじ™家計簿{% endblock %}
 
 {% block content %}
-<h2><i class="bi bi-book"></i> 総勘定元帳</h2>
+{% set range_label %}
+  {% if pf == pt %}{{ period_labels.get(pf, '') }}{% else %}{{ period_labels.get(pf, '') }}〜{{ period_labels.get(pt, '') }}{% endif %}
+{% endset %}
+<h2><i class="bi bi-book"></i> 総勘定元帳
+  <small class="text-muted">{{ year }}年 {{ range_label }}</small>
+</h2>
 
-<form class="row g-3 mb-4 mt-2" method="GET">
-  <div class="col-auto">
-    <select name="year" class="form-select">
-      {% for y in range(year - 2, year + 2) %}
+<div class="mb-4 mt-2">
+  <div class="d-flex align-items-center gap-2 mb-2">
+    <select id="yearSelect" class="form-select form-select-sm" style="width:auto">
+      {% for y in range(year - 2, year + 3) %}
       <option value="{{ y }}" {% if y == year %}selected{% endif %}>{{ y }}年</option>
       {% endfor %}
     </select>
-  </div>
-  <div class="col-auto">
-    <select name="month" class="form-select">
-      <option value="0">通年</option>
-      {% for m in range(1, 13) %}
-      <option value="{{ m }}" {% if m == month %}selected{% endif %}>{{ m }}月</option>
-      {% endfor %}
-    </select>
-  </div>
-  <div class="col-auto">
-    <select name="account_id" class="form-select">
+    <select id="accountSelect" class="form-select form-select-sm" style="width:auto;max-width:20rem">
       <option value="">-- 科目を選択 --</option>
       {% for at, accts in grouped_accounts.items() %}
       <optgroup label="{{ at.name }}">
@@ -33,11 +28,19 @@
       </optgroup>
       {% endfor %}
     </select>
+    <small class="text-muted">ドラッグで範囲を選択 / クリックで単月</small>
   </div>
-  <div class="col-auto">
-    <button type="submit" class="btn btn-outline-secondary">表示</button>
+  <div class="d-flex flex-wrap gap-0" id="periodBar" style="user-select:none">
+    {% set all_periods = [0] + range(1,16)|list %}
+    {% set short_labels = {0:'期首',1:'1月',2:'2月',3:'3月',4:'4月',5:'5月',6:'6月',7:'7月',8:'8月',9:'9月',10:'10月',11:'11月',12:'12月',13:'決1',14:'決2',15:'決3'} %}
+    {% for p in all_periods %}
+    <button type="button" class="btn btn-sm period-btn {% if pf <= p and p <= pt %}btn-dark{% else %}btn-outline-secondary{% endif %}"
+            data-period="{{ p }}" style="border-radius:0;min-width:3rem;{% if p == 0 %}border-radius:.25rem 0 0 .25rem{% elif p == 15 %}border-radius:0 .25rem .25rem 0{% endif %}">
+      {{ short_labels[p] }}
+    </button>
+    {% endfor %}
   </div>
-</form>
+</div>
 
 {% if selected_account %}
 <form id="ledgerBulkForm" method="POST" action="{{ url_for('journal.bulk_delete') }}"
@@ -48,7 +51,7 @@
   <div class="card shadow-sm">
     <div class="card-header">
       <strong>{{ selected_account.code }} {{ selected_account.name }}</strong>
-      <span class="text-muted ms-2">{{ year }}年{% if month %}{{ month }}月{% endif %}</span>
+      <span class="text-muted ms-2">{{ year }}年 {{ range_label }}</span>
     </div>
     <div class="table-responsive">
       <table class="table table-sm table-hover mb-0">
@@ -72,7 +75,7 @@
             <td></td>
             <td></td>
             <td></td>
-            <td><strong>{% if month %}前月繰越{% else %}前期繰越{% endif %}</strong></td>
+            <td><strong>前期繰越</strong></td>
             <td></td>
             <td></td>
             <td></td>
@@ -81,8 +84,14 @@
             </td>
             <td></td>
           </tr>
-          {% set ns = namespace(total_debit=0, total_credit=0) %}
+          {% set ns = namespace(total_debit=0, total_credit=0, prev_period=-1) %}
           {% for e in entries %}
+          {% if e.effective_period != ns.prev_period and ns.prev_period != -1 %}
+          <tr class="border-0">
+            <td colspan="9" class="py-1 border-0"></td>
+          </tr>
+          {% endif %}
+          {% set ns.prev_period = e.effective_period %}
           <tr>
             <td>
               <input type="checkbox" class="form-check-input ledger-cb" name="entry_ids" value="{{ e.entry_id }}">
@@ -224,6 +233,98 @@
 {% endblock %}
 
 {% block scripts %}
+<script>
+// 期間バー ドラッグ選択
+(function() {
+  var bar = document.getElementById('periodBar');
+  var btns = bar.querySelectorAll('.period-btn');
+  var dragging = false;
+  var dragStart = null;
+  var dragEnd = null;
+
+  function navigate(pfVal, ptVal) {
+    var year = document.getElementById('yearSelect').value;
+    var acctId = document.getElementById('accountSelect').value;
+    var url = '?year=' + year + '&pf=' + pfVal + '&pt=' + ptVal;
+    if (acctId) url += '&account_id=' + acctId;
+    location.href = url;
+  }
+
+  function getPeriod(btn) {
+    return parseInt(btn.dataset.period);
+  }
+
+  function highlight(pf, pt) {
+    btns.forEach(function(b) {
+      var p = getPeriod(b);
+      if (p >= pf && p <= pt) {
+        b.className = b.className.replace('btn-outline-secondary', 'btn-dark');
+      } else {
+        b.className = b.className.replace('btn-dark', 'btn-outline-secondary');
+      }
+    });
+  }
+
+  btns.forEach(function(btn) {
+    btn.addEventListener('mousedown', function(e) {
+      e.preventDefault();
+      dragging = true;
+      dragStart = getPeriod(btn);
+      dragEnd = dragStart;
+      highlight(dragStart, dragEnd);
+    });
+
+    btn.addEventListener('mouseenter', function() {
+      if (!dragging) return;
+      dragEnd = getPeriod(btn);
+      var pf = Math.min(dragStart, dragEnd);
+      var pt = Math.max(dragStart, dragEnd);
+      highlight(pf, pt);
+    });
+
+    btn.addEventListener('touchstart', function(e) {
+      e.preventDefault();
+      dragging = true;
+      dragStart = getPeriod(btn);
+      dragEnd = dragStart;
+      highlight(dragStart, dragEnd);
+    }, {passive: false});
+  });
+
+  bar.addEventListener('touchmove', function(e) {
+    if (!dragging) return;
+    e.preventDefault();
+    var touch = e.touches[0];
+    var el = document.elementFromPoint(touch.clientX, touch.clientY);
+    if (el && el.classList.contains('period-btn')) {
+      dragEnd = getPeriod(el);
+      var pf = Math.min(dragStart, dragEnd);
+      var pt = Math.max(dragStart, dragEnd);
+      highlight(pf, pt);
+    }
+  }, {passive: false});
+
+  function endDrag() {
+    if (!dragging) return;
+    dragging = false;
+    var pf = Math.min(dragStart, dragEnd);
+    var pt = Math.max(dragStart, dragEnd);
+    navigate(pf, pt);
+  }
+
+  document.addEventListener('mouseup', endDrag);
+  document.addEventListener('touchend', endDrag);
+
+  document.getElementById('yearSelect').addEventListener('change', function() {
+    navigate({{ pf }}, {{ pt }});
+  });
+
+  document.getElementById('accountSelect').addEventListener('change', function() {
+    navigate({{ pf }}, {{ pt }});
+  });
+})();
+</script>
+
 {% if selected_account %}
 <script>
 // 一括選択

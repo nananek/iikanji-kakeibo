@@ -73,7 +73,7 @@
         <tr>
           <td>{{ item.account.code }}</td>
           <td>
-            <a href="{{ url_for('reports.ledger', year=year, account_id=item.account.id) }}"
+            <a href="{{ url_for('reports.ledger', year=year, account_id=item.account.id, pf=pf, pt=pt) }}"
                class="text-decoration-none">
               {{ item.account.name }}
             </a>
