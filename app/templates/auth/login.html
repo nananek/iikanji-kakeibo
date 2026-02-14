@@ -39,6 +39,11 @@
         <div class="text-center mt-3">
           <a href="{{ url_for('auth.register') }}">アカウント登録</a>
         </div>
+        <hr>
+        <div class="text-center">
+          <small class="text-muted">税理士・公認会計士の方は</small><br>
+          <a href="{{ url_for('auth.login_auditor') }}"><i class="bi bi-shield-check"></i> 監査ログインはこちら</a>
+        </div>
       </div>
     </div>
   </div>

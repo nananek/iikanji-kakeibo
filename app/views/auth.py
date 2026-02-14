@@ -17,13 +17,30 @@ def login():
     form = LoginForm()
     if form.validate_on_submit():
         user = User.query.filter_by(username=form.username.data).first()
-        if user and user.check_password(form.password.data):
+        if user and user.user_type == "personal" and user.check_password(form.password.data):
             login_user(user)
             next_page = request.args.get("next")
             return redirect(next_page or url_for("dashboard.index"))
         flash("ユーザー名またはパスワードが正しくありません。", "danger")
 
     return render_template("auth/login.html", form=form)
+
+
+@bp.route("/login/auditor", methods=["GET", "POST"])
+def login_auditor():
+    if current_user.is_authenticated:
+        return redirect(url_for("dashboard.index"))
+
+    form = LoginForm()
+    if form.validate_on_submit():
+        user = User.query.filter_by(username=form.username.data).first()
+        if user and user.user_type == "auditor" and user.check_password(form.password.data):
+            login_user(user)
+            next_page = request.args.get("next")
+            return redirect(next_page or url_for("auditor.dashboard"))
+        flash("ユーザー名またはパスワードが正しくありません。", "danger")
+
+    return render_template("auth/login_auditor.html", form=form)
 
 
 @bp.route("/register", methods=["GET", "POST"])
@@ -36,19 +53,40 @@ def register():
         user = User(
             username=form.username.data,
             email=form.email.data,
-            user_type=form.user_type.data,
+            user_type="personal",
         )
         user.set_password(form.password.data)
         db.session.add(user)
         db.session.commit()
 
-        if user.user_type == "personal":
-            seed_accounts_for_user(user.id)
+        seed_accounts_for_user(user.id)
 
         flash("アカウントを作成しました。ログインしてください。", "success")
         return redirect(url_for("auth.login"))
 
     return render_template("auth/register.html", form=form)
+
+
+@bp.route("/register/auditor", methods=["GET", "POST"])
+def register_auditor():
+    if current_user.is_authenticated:
+        return redirect(url_for("dashboard.index"))
+
+    form = RegisterForm()
+    if form.validate_on_submit():
+        user = User(
+            username=form.username.data,
+            email=form.email.data,
+            user_type="auditor",
+        )
+        user.set_password(form.password.data)
+        db.session.add(user)
+        db.session.commit()
+
+        flash("監査用アカウントを作成しました。ログインしてください。", "success")
+        return redirect(url_for("auth.login_auditor"))
+
+    return render_template("auth/register_auditor.html", form=form)
 
 
 @bp.route("/logout")
