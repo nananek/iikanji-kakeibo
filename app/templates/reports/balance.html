@@ -28,13 +28,18 @@
 </form>
 
 {% if balances %}
-{% set ns = namespace(current_type='', type_debit=0, type_credit=0, type_balance=0, grand_debit=0, grand_credit=0) %}
+{% set ns = namespace(
+  current_type='',
+  type_opening=0, type_debit=0, type_credit=0, type_balance=0,
+  grand_debit=0, grand_credit=0
+) %}
 <div class="table-responsive">
   <table class="table table-hover">
     <thead class="table-dark">
       <tr>
         <th>コード</th>
         <th>勘定科目</th>
+        <th class="text-end">開始残高</th>
         <th class="text-end">借方合計</th>
         <th class="text-end">貸方合計</th>
         <th class="text-end">残高</th>
@@ -47,17 +52,19 @@
           <tr class="table-info">
             <td></td>
             <td class="text-end"><strong>{{ ns.current_type }} 小計</strong></td>
+            <td class="text-end">{% if ns.type_opening %}<strong>&yen;{{ "{:,}".format(ns.type_opening) }}</strong>{% endif %}</td>
             <td class="text-end"><strong>&yen;{{ "{:,}".format(ns.type_debit) }}</strong></td>
             <td class="text-end"><strong>&yen;{{ "{:,}".format(ns.type_credit) }}</strong></td>
             <td class="text-end"><strong>&yen;{{ "{:,}".format(ns.type_balance) }}</strong></td>
           </tr>
           {% endif %}
           {% set ns.current_type = item.account.account_type.name %}
+          {% set ns.type_opening = 0 %}
           {% set ns.type_debit = 0 %}
           {% set ns.type_credit = 0 %}
           {% set ns.type_balance = 0 %}
           <tr class="table-secondary">
-            <td colspan="5"><strong>{{ ns.current_type }}</strong></td>
+            <td colspan="6"><strong>{{ ns.current_type }}</strong></td>
           </tr>
         {% endif %}
         <tr>
@@ -68,12 +75,16 @@
               {{ item.account.name }}
             </a>
           </td>
+          <td class="text-end {% if item.opening < 0 %}text-danger{% endif %}">
+            {% if item.opening %}&yen;{{ "{:,}".format(item.opening|int) }}{% endif %}
+          </td>
           <td class="text-end">&yen;{{ "{:,}".format(item.debit|int) }}</td>
           <td class="text-end">&yen;{{ "{:,}".format(item.credit|int) }}</td>
           <td class="text-end {% if item.balance < 0 %}text-danger{% endif %}">
             &yen;{{ "{:,}".format(item.balance|int) }}
           </td>
         </tr>
+        {% set ns.type_opening = ns.type_opening + item.opening|int %}
         {% set ns.type_debit = ns.type_debit + item.debit|int %}
         {% set ns.type_credit = ns.type_credit + item.credit|int %}
         {% set ns.type_balance = ns.type_balance + item.balance|int %}
@@ -84,6 +95,7 @@
       <tr class="table-info">
         <td></td>
         <td class="text-end"><strong>{{ ns.current_type }} 小計</strong></td>
+        <td class="text-end">{% if ns.type_opening %}<strong>&yen;{{ "{:,}".format(ns.type_opening) }}</strong>{% endif %}</td>
         <td class="text-end"><strong>&yen;{{ "{:,}".format(ns.type_debit) }}</strong></td>
         <td class="text-end"><strong>&yen;{{ "{:,}".format(ns.type_credit) }}</strong></td>
         <td class="text-end"><strong>&yen;{{ "{:,}".format(ns.type_balance) }}</strong></td>
@@ -92,10 +104,21 @@
     </tbody>
     <tfoot>
       <tr class="table-dark">
-        <td colspan="2"><strong>総合計</strong></td>
+        <td colspan="3"><strong>総合計</strong></td>
         <td class="text-end"><strong>&yen;{{ "{:,}".format(ns.grand_debit) }}</strong></td>
         <td class="text-end"><strong>&yen;{{ "{:,}".format(ns.grand_credit) }}</strong></td>
         <td></td>
+      </tr>
+      <tr class="{% if net_income >= 0 %}table-success{% else %}table-danger{% endif %}">
+        <td colspan="3">
+          <strong><i class="bi bi-graph-up-arrow"></i>
+            {{ year }}年{% if month %}{{ month }}月{% endif %}の損益
+          </strong>
+        </td>
+        <td colspan="3" class="text-end">
+          <strong>&yen;{{ "{:,}".format(net_income|int) }}</strong>
+          {% if net_income >= 0 %}（黒字）{% else %}（赤字）{% endif %}
+        </td>
       </tr>
     </tfoot>
   </table>

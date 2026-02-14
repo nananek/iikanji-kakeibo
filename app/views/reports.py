@@ -43,64 +43,87 @@ def balance():
     # 期間の決定
     start_of_year = date(year, 1, 1)
     pl_type_codes = {"revenue", "expense"}
+    bs_type_codes = {"asset", "liability", "equity"}
 
     if month:
-        # 月次: P/LもB/Sも当月の発生額
         period_start = date(year, month, 1)
         if month == 12:
             period_end = date(year + 1, 1, 1)
         else:
             period_end = date(year, month + 1, 1)
-        as_of = period_end - timedelta(days=1)
     else:
-        # 年次
-        as_of = date(year, 12, 31)
+        period_start = start_of_year
+        period_end = date(year + 1, 1, 1)
 
-    balances = []
-    for account in accounts:
-        is_pl = account.account_type.code in pl_type_codes
-
-        query = (
+    def _query_sum(account_id, date_filter):
+        """指定条件での借方・貸方合計を返す"""
+        q = (
             db.session.query(
                 func.coalesce(func.sum(JournalEntryLine.debit_amount), 0),
                 func.coalesce(func.sum(JournalEntryLine.credit_amount), 0),
             )
             .join(JournalEntry, JournalEntry.id == JournalEntryLine.journal_entry_id)
             .filter(
-                JournalEntryLine.account_id == account.id,
-                # 損益振替仕訳を除外
+                JournalEntryLine.account_id == account_id,
                 JournalEntry.source != "closing",
             )
         )
+        for f in date_filter:
+            q = q.filter(f)
+        return q.first()
 
-        if month:
-            # 月次: 当月の発生額のみ
-            query = query.filter(
-                JournalEntry.date >= period_start,
-                JournalEntry.date < period_end,
-            )
+    balances = []
+    total_revenue = 0
+    total_expense = 0
+
+    for account in accounts:
+        is_pl = account.account_type.code in pl_type_codes
+        is_bs = account.account_type.code in bs_type_codes
+        is_debit_normal = account.account_type.normal_balance == "debit"
+
+        # 当期発生額
+        result = _query_sum(account.id, [
+            JournalEntry.date >= period_start,
+            JournalEntry.date < period_end,
+        ])
+        period_debit = int(result[0])
+        period_credit = int(result[1])
+
+        # 開始残高（B/S科目のみ: 期間開始日より前の累計）
+        opening = 0
+        if is_bs:
+            ob_result = _query_sum(account.id, [
+                JournalEntry.date < period_start,
+            ])
+            ob_debit = int(ob_result[0])
+            ob_credit = int(ob_result[1])
+            if is_debit_normal:
+                opening = ob_debit - ob_credit
+            else:
+                opening = ob_credit - ob_debit
+
+        # 残高
+        if is_debit_normal:
+            balance_amount = opening + period_debit - period_credit
         else:
-            # 年次: B/Sは累計、P/Lは当年
-            query = query.filter(JournalEntry.date <= as_of)
-            if is_pl:
-                query = query.filter(JournalEntry.date >= start_of_year)
+            balance_amount = opening + period_credit - period_debit
 
-        result = query.first()
-        total_debit = result[0]
-        total_credit = result[1]
+        # 損益集計（P/L科目）
+        if account.account_type.code == "revenue":
+            total_revenue += period_credit - period_debit
+        elif account.account_type.code == "expense":
+            total_expense += period_debit - period_credit
 
-        if account.account_type.normal_balance == "debit":
-            balance_amount = total_debit - total_credit
-        else:
-            balance_amount = total_credit - total_debit
-
-        if total_debit != 0 or total_credit != 0:
+        if period_debit != 0 or period_credit != 0 or opening != 0:
             balances.append({
                 "account": account,
-                "debit": total_debit,
-                "credit": total_credit,
+                "opening": opening,
+                "debit": period_debit,
+                "credit": period_credit,
                 "balance": balance_amount,
             })
+
+    net_income = total_revenue - total_expense
 
     return render_template(
         "reports/balance.html",
@@ -108,6 +131,7 @@ def balance():
         month=month,
         balances=balances,
         account_types=account_types,
+        net_income=net_income,
     )
 
 
