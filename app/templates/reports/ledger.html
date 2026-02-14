@@ -326,6 +326,7 @@
 </script>
 
 {% if selected_account %}
+<script src="{{ url_for('static', filename='js/drag_select.js') }}"></script>
 <script>
 // 一括選択
 (function() {
@@ -334,30 +335,25 @@
   var countEl = document.getElementById('ledgerSelectedCount');
   if (!selectAll) return;
 
-  function getCheckboxes() { return document.querySelectorAll('.ledger-cb'); }
-
   function updateBar() {
     var checked = document.querySelectorAll('.ledger-cb:checked').length;
+    var total = document.querySelectorAll('.ledger-cb').length;
     countEl.textContent = checked;
+    selectAll.checked = checked === total && total > 0;
     if (checked > 0) { bulkBar.classList.remove('d-none'); bulkBar.classList.add('d-flex'); }
     else { bulkBar.classList.add('d-none'); bulkBar.classList.remove('d-flex'); }
   }
 
   selectAll.addEventListener('change', function() {
-    getCheckboxes().forEach(function(cb) { cb.checked = selectAll.checked; });
+    document.querySelectorAll('.ledger-cb').forEach(function(cb) { cb.checked = selectAll.checked; });
     updateBar();
   });
 
   document.addEventListener('change', function(e) {
-    if (e.target.classList.contains('ledger-cb')) {
-      updateBar();
-      if (!e.target.checked) selectAll.checked = false;
-      else {
-        var all = getCheckboxes();
-        selectAll.checked = Array.from(all).every(function(cb) { return cb.checked; });
-      }
-    }
+    if (e.target.classList.contains('ledger-cb')) updateBar();
   });
+
+  initDragSelect('.table-sm', '.ledger-cb', updateBar);
 })();
 
 var csrfToken = "{{ csrf_token() }}";

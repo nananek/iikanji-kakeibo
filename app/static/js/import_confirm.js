@@ -94,6 +94,8 @@
         var btn = document.querySelector('.category-btn[data-idx="' + idx + '"]');
         if (btn) setCategoryDisplay(btn, id, name);
       });
+      // 設定後に全チェック解除
+      toggleAll(false);
     }, { filter: 'category_transfer', excludeId: _paymentAccountId, activeTab: 'pl' });
   }
 
@@ -135,79 +137,6 @@
     });
   }
 
-  /* ---------- ドラッグ選択 ---------- */
-
-  function initDragSelect() {
-    var tbody = document.querySelector('#confirmTable tbody');
-    if (!tbody) return;
-
-    var dragging = false;
-    var dragValue = false; // ドラッグ中に設定するチェック値
-
-    function getCheckbox(el) {
-      var tr = el.closest('tr');
-      if (!tr) return null;
-      return tr.querySelector('.row-check');
-    }
-
-    tbody.addEventListener('mousedown', function (e) {
-      var cb = getCheckbox(e.target);
-      if (!cb) return;
-      // 直接チェックボックスクリックの場合はブラウザデフォルトに任せる
-      if (e.target === cb) return;
-      e.preventDefault();
-      dragging = true;
-      dragValue = !cb.checked;
-      cb.checked = dragValue;
-      updateCount();
-      document.body.style.userSelect = 'none';
-    });
-
-    tbody.addEventListener('mousemove', function (e) {
-      if (!dragging) return;
-      var cb = getCheckbox(e.target);
-      if (cb && cb.checked !== dragValue) {
-        cb.checked = dragValue;
-        updateCount();
-      }
-    });
-
-    document.addEventListener('mouseup', function () {
-      if (!dragging) return;
-      dragging = false;
-      document.body.style.userSelect = '';
-    });
-
-    // タッチ対応
-    tbody.addEventListener('touchstart', function (e) {
-      var cb = getCheckbox(e.target);
-      if (!cb || e.target === cb) return;
-      e.preventDefault();
-      dragging = true;
-      dragValue = !cb.checked;
-      cb.checked = dragValue;
-      updateCount();
-    }, { passive: false });
-
-    tbody.addEventListener('touchmove', function (e) {
-      if (!dragging) return;
-      e.preventDefault();
-      var touch = e.touches[0];
-      var el = document.elementFromPoint(touch.clientX, touch.clientY);
-      if (!el) return;
-      var cb = getCheckbox(el);
-      if (cb && cb.checked !== dragValue) {
-        cb.checked = dragValue;
-        updateCount();
-      }
-    }, { passive: false });
-
-    document.addEventListener('touchend', function () {
-      if (!dragging) return;
-      dragging = false;
-    });
-  }
-
   /* ---------- フォーム送信 ---------- */
 
   function initFormSubmit() {
@@ -232,6 +161,44 @@
     });
   }
 
+  /* ---------- 科目自動推定 ---------- */
+
+  function suggestCategories() {
+    var descriptions = [];
+    for (var i = 0; i < _parsedData.length; i++) {
+      if (_parsedData[i].description) {
+        descriptions.push(_parsedData[i].description);
+      }
+    }
+    if (descriptions.length === 0) return;
+
+    var csrfToken = document.querySelector('meta[name="csrf-token"]');
+    fetch('/journal/api/suggest-categories', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-CSRFToken': csrfToken ? csrfToken.content : '',
+      },
+      body: JSON.stringify({
+        descriptions: descriptions,
+        payment_account_id: _paymentAccountId,
+      }),
+    })
+      .then(function (res) { return res.json(); })
+      .then(function (suggestions) {
+        if (!suggestions || typeof suggestions !== 'object') return;
+        document.querySelectorAll('.category-btn').forEach(function (btn) {
+          var idx = parseInt(btn.dataset.idx);
+          var desc = _parsedData[idx] && _parsedData[idx].description;
+          if (!desc || !suggestions[desc]) return;
+
+          // 推定結果で上書き（手動設定はこの時点ではまだ無い）
+          setCategoryDisplay(btn, suggestions[desc].account_id, suggestions[desc].account_name);
+        });
+      })
+      .catch(function () { /* 推定失敗は無視 */ });
+  }
+
   /* ---------- 初期化 ---------- */
 
   window.initImportConfirm = function (parsedData, paymentAccountId) {
@@ -240,7 +207,7 @@
 
     initCategoryButtons();
     initSort();
-    initDragSelect();
+    initDragSelect('#confirmTable', '.row-check', updateCount);
     initFormSubmit();
 
     document.querySelectorAll('.row-check').forEach(function (cb) {
@@ -248,6 +215,7 @@
     });
 
     updateCount();
+    suggestCategories();
   };
 
   window.toggleAll = toggleAll;

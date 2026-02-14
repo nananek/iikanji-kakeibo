@@ -151,6 +151,7 @@
 {% endblock %}
 
 {% block scripts %}
+<script src="{{ url_for('static', filename='js/drag_select.js') }}"></script>
 <script>
 (function() {
   var selectAll = document.getElementById('selectAll');
@@ -158,13 +159,11 @@
   var countEl = document.getElementById('selectedCount');
   if (!selectAll) return;
 
-  function getCheckboxes() {
-    return document.querySelectorAll('.entry-cb');
-  }
-
   function updateBar() {
     var checked = document.querySelectorAll('.entry-cb:checked').length;
+    var total = document.querySelectorAll('.entry-cb').length;
     countEl.textContent = checked;
+    selectAll.checked = checked === total && total > 0;
     if (checked > 0) {
       bulkBar.classList.remove('d-none');
       bulkBar.classList.add('d-flex');
@@ -175,21 +174,15 @@
   }
 
   selectAll.addEventListener('change', function() {
-    getCheckboxes().forEach(function(cb) { cb.checked = selectAll.checked; });
+    document.querySelectorAll('.entry-cb').forEach(function(cb) { cb.checked = selectAll.checked; });
     updateBar();
   });
 
   document.addEventListener('change', function(e) {
-    if (e.target.classList.contains('entry-cb')) {
-      updateBar();
-      if (!e.target.checked) selectAll.checked = false;
-      else {
-        var all = getCheckboxes();
-        var allChecked = Array.from(all).every(function(cb) { return cb.checked; });
-        selectAll.checked = allChecked;
-      }
-    }
+    if (e.target.classList.contains('entry-cb')) updateBar();
   });
+
+  initDragSelect('.table', '.entry-cb', updateBar);
 })();
 </script>
 {% endblock %}

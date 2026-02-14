@@ -105,6 +105,7 @@
 {% endblock %}
 
 {% block scripts %}
+<script src="{{ url_for('static', filename='js/drag_select.js') }}"></script>
 <script src="{{ url_for('static', filename='js/import_confirm.js') }}"></script>
 <script>
 initImportConfirm({{ parsed | tojson }}, {{ payment_account.id }});

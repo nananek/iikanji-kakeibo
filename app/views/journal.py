@@ -738,3 +738,55 @@ def delete_batch(batch_id):
     db.session.commit()
     flash(f"{count}件の仕訳を削除しました。", "success")
     return redirect(url_for("journal.batches"))
+
+
+@bp.route("/api/suggest-categories", methods=["POST"])
+@login_required
+def suggest_categories():
+    """摘要から過去の仕訳の科目を推定して返す
+
+    POST: {"descriptions": ["摘要1", "摘要2", ...], "payment_account_id": 123}
+    Response: {"摘要1": {"account_id": 456, "account_name": "食費"}, ...}
+    """
+    data = request.get_json()
+    if not data:
+        return jsonify({}), 400
+
+    descriptions = data.get("descriptions", [])
+    payment_account_id = data.get("payment_account_id")
+    if not descriptions:
+        return jsonify({})
+
+    user_id = get_effective_user_id()
+    unique_descs = list(set(d for d in descriptions if d))
+    if not unique_descs:
+        return jsonify({})
+
+    # 摘要ごとに最新の仕訳から相手科目を取得
+    result = {}
+    for desc in unique_descs:
+        entry = (
+            JournalEntry.query
+            .filter(
+                JournalEntry.user_id == user_id,
+                JournalEntry.description == desc,
+            )
+            .order_by(JournalEntry.date.desc(), JournalEntry.id.desc())
+            .first()
+        )
+        if not entry:
+            continue
+
+        # 支払口座以外の科目を取得（= 相手科目）
+        for line in entry.lines:
+            if payment_account_id and line.account_id == payment_account_id:
+                continue
+            account = Account.query.get(line.account_id)
+            if account and account.is_active:
+                result[desc] = {
+                    "account_id": account.id,
+                    "account_name": account.name,
+                }
+                break
+
+    return jsonify(result)
