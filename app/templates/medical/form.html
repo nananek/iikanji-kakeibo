@@ -63,8 +63,18 @@
           {% endfor %}
         </div>
         <div class="col-md-4">
-          {{ form.payment_account_id.label(class="form-label") }}
-          {{ form.payment_account_id(class="form-select") }}
+          <label class="form-label">支払元</label>
+          <input type="hidden" name="payment_account_id" id="paymentAccountId"
+                 value="{{ form.payment_account_id.data or '' }}">
+          <button type="button" class="form-control text-start"
+                  onclick="openAccountSelector(onPaymentSelected, {filter: 'payment', activeTab: 'bs'})">
+            <span id="paymentAccountName" class="{% if not payment_account_name %}text-muted{% endif %}">
+              {{ payment_account_name or '-- 選択 --' }}
+            </span>
+          </button>
+          {% for error in form.payment_account_id.errors %}
+          <div class="invalid-feedback d-block">{{ error }}</div>
+          {% endfor %}
         </div>
       </div>
 
@@ -75,4 +85,17 @@
     </form>
   </div>
 </div>
+
+{% include "_partials/account_selector.html" %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+function onPaymentSelected(id, name) {
+  document.getElementById('paymentAccountId').value = id;
+  var span = document.getElementById('paymentAccountName');
+  span.textContent = name;
+  span.classList.remove('text-muted');
+}
+</script>
 {% endblock %}

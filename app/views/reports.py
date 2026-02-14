@@ -9,6 +9,7 @@ from app.extensions import db
 from app.models.account import Account, AccountType
 from app.models.journal import JournalEntry, JournalEntryLine
 from app.services.tax import get_tax_summary, get_medical_summary, get_income_expense_summary
+from app.views.helpers import get_grouped_accounts
 
 bp = Blueprint("reports", __name__, url_prefix="/reports")
 
@@ -269,8 +270,8 @@ def ledger():
                     "entry_id": line.entry_id,
                 })
 
-    # モーダル用: 全科目の選択肢
-    account_choices = [(a.id, f"{a.code} {a.name}") for a in accounts]
+    # モーダル用: 全科目データ
+    all_grouped = get_grouped_accounts(current_user.id)
 
     return render_template(
         "reports/ledger.html",
@@ -281,5 +282,5 @@ def ledger():
         account_id=account_id,
         entries=entries,
         carry_forward=carry_forward,
-        account_choices=account_choices,
+        all_grouped_accounts=all_grouped,
     )

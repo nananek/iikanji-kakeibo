@@ -16,11 +16,11 @@ class CashbookForm(FlaskForm):
         choices=[("expense", "支出"), ("income", "収入")],
         validators=[DataRequired()],
     )
-    payment_account_id = SelectField(
-        "支払元 / 入金先", coerce=int, validators=[DataRequired()]
+    payment_account_id = IntegerField(
+        "支払元 / 入金先", validators=[DataRequired()]
     )
-    category_account_id = SelectField(
-        "費目", coerce=int, validators=[DataRequired()]
+    category_account_id = IntegerField(
+        "費目", validators=[DataRequired()]
     )
     amount = IntegerField(
         "金額", validators=[DataRequired(), NumberRange(min=1, message="1円以上を入力してください")]

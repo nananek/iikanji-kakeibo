@@ -1,5 +1,5 @@
 from flask_wtf import FlaskForm
-from wtforms import DateField, StringField, IntegerField, SelectField, SubmitField
+from wtforms import DateField, StringField, IntegerField, SubmitField
 from wtforms.validators import DataRequired, NumberRange, Optional
 
 
@@ -15,7 +15,7 @@ class MedicalExpenseForm(FlaskForm):
     insurance_reimbursement = IntegerField(
         "保険等で補填される金額", default=0, validators=[Optional(), NumberRange(min=0)]
     )
-    payment_account_id = SelectField(
-        "支払元", coerce=int, validators=[DataRequired()]
+    payment_account_id = IntegerField(
+        "支払元", validators=[DataRequired()]
     )
     submit = SubmitField("登録")

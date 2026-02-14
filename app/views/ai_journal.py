@@ -10,81 +10,15 @@ from flask import (
 )
 from flask_login import login_required, current_user
 
-from app.models.account import Account, AccountType
 from app.models.ai_config import UserAIConfig
 from app.services.ai_receipt import analyze_and_suggest
 from app.services.accounting import create_journal_entry
+from app.views.helpers import get_grouped_accounts
 
 bp = Blueprint("ai_journal", __name__, url_prefix="/ai-journal")
 
 MAX_IMAGE_SIZE = 10 * 1024 * 1024  # 10MB
 ALLOWED_MIME_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
-
-
-def _get_account_choices(user_id):
-    """全勘定科目の選択肢"""
-    accounts = (
-        Account.query
-        .filter_by(user_id=user_id, is_active=True)
-        .order_by(Account.code)
-        .all()
-    )
-    return [(a.id, f"{a.code} {a.name}") for a in accounts]
-
-
-def _get_payment_choices(user_id):
-    """資産・負債の勘定科目（支払元）の選択肢"""
-    type_ids = [
-        t.id for t in AccountType.query.filter(
-            AccountType.code.in_(["asset", "liability"])
-        ).all()
-    ]
-    accounts = (
-        Account.query
-        .filter(
-            Account.user_id == user_id,
-            Account.is_active.is_(True),
-            Account.account_type_id.in_(type_ids),
-        )
-        .order_by(Account.code)
-        .all()
-    )
-    return [(a.id, a.name) for a in accounts]
-
-
-def _get_category_choices(user_id):
-    """費用・収益の勘定科目（費目）の選択肢"""
-    expense_type = AccountType.query.filter_by(code="expense").first()
-    revenue_type = AccountType.query.filter_by(code="revenue").first()
-
-    choices = []
-    if expense_type:
-        expenses = (
-            Account.query
-            .filter(
-                Account.user_id == user_id,
-                Account.is_active.is_(True),
-                Account.account_type_id == expense_type.id,
-            )
-            .order_by(Account.code)
-            .all()
-        )
-        choices.extend([(a.id, f"[支出] {a.name}") for a in expenses])
-
-    if revenue_type:
-        revenues = (
-            Account.query
-            .filter(
-                Account.user_id == user_id,
-                Account.is_active.is_(True),
-                Account.account_type_id == revenue_type.id,
-            )
-            .order_by(Account.code)
-            .all()
-        )
-        choices.extend([(a.id, f"[収入] {a.name}") for a in revenues])
-
-    return choices
 
 
 @bp.route("/", methods=["GET"])
@@ -152,9 +86,7 @@ def review():
 
     selected = suggestions[suggestion_index]
 
-    payment_choices = _get_payment_choices(current_user.id)
-    category_choices = _get_category_choices(current_user.id)
-    account_choices = _get_account_choices(current_user.id)
+    grouped_accounts = get_grouped_accounts(current_user.id)
 
     if request.method == "POST":
         mode = request.form.get("mode", "simple")
@@ -168,9 +100,7 @@ def review():
                 suggestions=suggestions,
                 selected=selected,
                 selected_index=suggestion_index,
-                payment_choices=payment_choices,
-                category_choices=category_choices,
-                account_choices=account_choices,
+                grouped_accounts=grouped_accounts,
             )
 
         try:
@@ -182,9 +112,7 @@ def review():
                 suggestions=suggestions,
                 selected=selected,
                 selected_index=suggestion_index,
-                payment_choices=payment_choices,
-                category_choices=category_choices,
-                account_choices=account_choices,
+                grouped_accounts=grouped_accounts,
             )
 
         if mode == "simple":
@@ -201,9 +129,7 @@ def review():
                     suggestions=suggestions,
                     selected=selected,
                     selected_index=suggestion_index,
-                    payment_choices=payment_choices,
-                    category_choices=category_choices,
-                    account_choices=account_choices,
+                    grouped_accounts=grouped_accounts,
                 )
 
             lines_data = [
@@ -231,9 +157,7 @@ def review():
                     suggestions=suggestions,
                     selected=selected,
                     selected_index=suggestion_index,
-                    payment_choices=payment_choices,
-                    category_choices=category_choices,
-                    account_choices=account_choices,
+                    grouped_accounts=grouped_accounts,
                 )
 
             lines_data = [
@@ -254,9 +178,7 @@ def review():
                 suggestions=suggestions,
                 selected=selected,
                 selected_index=suggestion_index,
-                payment_choices=payment_choices,
-                category_choices=category_choices,
-                account_choices=account_choices,
+                grouped_accounts=grouped_accounts,
             )
 
         try:
@@ -278,7 +200,5 @@ def review():
         suggestions=suggestions,
         selected=selected,
         selected_index=suggestion_index,
-        payment_choices=payment_choices,
-        category_choices=category_choices,
-        account_choices=account_choices,
+        grouped_accounts=grouped_accounts,
     )

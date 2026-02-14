@@ -56,14 +56,12 @@
                 {% if row.withdrawal %}&yen;{{ "{:,}".format(row.withdrawal) }}{% endif %}
               </td>
               <td>
-                <select class="form-select form-select-sm category-select" data-idx="{{ loop.index0 }}">
-                  {% for cid, cname in category_choices %}
-                  <option value="{{ cid }}"
-                    {% if row.deposit and cid == default_income_id %}selected
-                    {% elif row.withdrawal and cid == default_expense_id %}selected
-                    {% endif %}>{{ cname }}</option>
-                  {% endfor %}
-                </select>
+                <input type="hidden" class="category-id" data-idx="{{ loop.index0 }}"
+                       value="{% if row.deposit and default_income_id %}{{ default_income_id }}{% elif row.withdrawal and default_expense_id %}{{ default_expense_id }}{% endif %}">
+                <button type="button" class="form-control form-control-sm text-start category-btn"
+                        data-idx="{{ loop.index0 }}">
+                  <span class="category-name text-muted">-- 選択 --</span>
+                </button>
               </td>
               <td>
                 {% if not row.date %}
@@ -91,39 +89,79 @@
     </form>
   </div>
 </div>
+
+{% include "_partials/account_selector.html" %}
 {% endblock %}
 
 {% block scripts %}
 <script>
-const parsedData = {{ parsed | tojson }};
+var parsedData = {{ parsed | tojson }};
+var paymentAccountId = {{ payment_account.id }};
+
+function _categoryNameById(id) {
+  for (var i = 0; i < _acctSelectorData.length; i++) {
+    var g = _acctSelectorData[i];
+    for (var j = 0; j < g.accounts.length; j++) {
+      if (g.accounts[j].id === id) return g.accounts[j].name;
+    }
+  }
+  return '';
+}
+
+// 初期化: デフォルト費目名を設定
+document.querySelectorAll('.category-btn').forEach(function(btn) {
+  var idx = btn.dataset.idx;
+  var hiddenInput = document.querySelector('.category-id[data-idx="' + idx + '"]');
+  var catId = parseInt(hiddenInput.value);
+  if (catId) {
+    var name = _categoryNameById(catId);
+    if (name) {
+      var span = btn.querySelector('.category-name');
+      span.textContent = name;
+      span.classList.remove('text-muted');
+    }
+  }
+
+  btn.addEventListener('click', function() {
+    var thisBtn = this;
+    var thisIdx = thisBtn.dataset.idx;
+    openAccountSelector(function(id, name) {
+      var input = document.querySelector('.category-id[data-idx="' + thisIdx + '"]');
+      input.value = id;
+      var span = thisBtn.querySelector('.category-name');
+      span.textContent = name;
+      span.classList.remove('text-muted');
+    }, {filter: 'category_transfer', excludeId: paymentAccountId, activeTab: 'pl'});
+  });
+});
 
 function toggleAll(checked) {
-  document.querySelectorAll('.row-check').forEach(cb => { cb.checked = checked; });
+  document.querySelectorAll('.row-check').forEach(function(cb) { cb.checked = checked; });
   document.getElementById('checkAll').checked = checked;
   updateCount();
 }
 
 function updateCount() {
-  const count = document.querySelectorAll('.row-check:checked').length;
+  var count = document.querySelectorAll('.row-check:checked').length;
   document.getElementById('importCount').textContent = count;
 }
 
-document.querySelectorAll('.row-check').forEach(cb => {
+document.querySelectorAll('.row-check').forEach(function(cb) {
   cb.addEventListener('change', updateCount);
 });
 
 document.getElementById('importForm').addEventListener('submit', function(e) {
-  const rows = [];
-  document.querySelectorAll('.row-check').forEach(cb => {
-    const idx = parseInt(cb.dataset.idx);
-    const catSelect = document.querySelector(`.category-select[data-idx="${idx}"]`);
+  var rows = [];
+  document.querySelectorAll('.row-check').forEach(function(cb) {
+    var idx = parseInt(cb.dataset.idx);
+    var catInput = document.querySelector('.category-id[data-idx="' + idx + '"]');
     rows.push({
       enabled: cb.checked,
       date: parsedData[idx].date,
       description: parsedData[idx].description,
       deposit: parsedData[idx].deposit,
       withdrawal: parsedData[idx].withdrawal,
-      category_id: catSelect ? parseInt(catSelect.value) : 0,
+      category_id: catInput ? parseInt(catInput.value) : 0,
     });
   });
   document.getElementById('importRows').value = JSON.stringify(rows);

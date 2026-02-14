@@ -20,6 +20,15 @@ body {
   border-bottom-left-radius: 0;
 }
 
+/* 科目選択モーダル（他のモーダルの上に表示） */
+#accountSelectorModal {
+  z-index: 1070;
+}
+#accountSelectorModal + .modal-backdrop,
+#accountSelectorModal ~ .modal-backdrop.show:last-of-type {
+  z-index: 1065;
+}
+
 /* AI解析ローディングオーバーレイ */
 .ai-loading-overlay {
   position: fixed;

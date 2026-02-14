@@ -23,17 +23,20 @@
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 
           <div class="mb-3">
-            <label class="form-label" for="payment_account_id">取込先の口座</label>
-            <select class="form-select" name="payment_account_id" id="payment_account_id" required
+            <label class="form-label">取込先の口座</label>
+            <input type="hidden" name="payment_account_id" id="paymentAccountId"
+                   value="{{ payment_account_id if payment_account_id is defined else '' }}">
+            <button type="button" class="form-control text-start" id="paymentAccountBtn"
+                    onclick="openAccountSelector(onPaymentSelected, {filter: 'payment'})"
                     {% if not has_config %}disabled{% endif %}>
-              <option value="">-- 選択してください --</option>
-              {% for id, name in payment_choices %}
-              <option value="{{ id }}"
-                {% if payment_account_id is defined and payment_account_id == id %}selected{% endif %}>
-                {{ name }}
-              </option>
-              {% endfor %}
-            </select>
+              <span id="paymentAccountName" class="{% if not (payment_account_id is defined and payment_account_id) %}text-muted{% endif %}">
+                {%- if payment_account_id is defined and payment_account_id -%}
+                  {{ payment_account_name }}
+                {%- else -%}
+                  -- 選択してください --
+                {%- endif -%}
+              </span>
+            </button>
             <div class="form-text">
               この明細がどの口座（銀行口座・クレジットカード等）のものか選択します
             </div>
@@ -88,15 +91,28 @@
     </div>
   </div>
 </div>
+{% include "_partials/account_selector.html" %}
 {% endblock %}
 
 {% block scripts %}
 <script>
+function onPaymentSelected(id, name) {
+  document.getElementById('paymentAccountId').value = id;
+  var span = document.getElementById('paymentAccountName');
+  span.textContent = name;
+  span.classList.remove('text-muted');
+}
+
 (function() {
   var form = document.getElementById('uploadForm');
   var submitBtn = document.getElementById('submitBtn');
 
-  form.addEventListener('submit', function() {
+  form.addEventListener('submit', function(e) {
+    if (!document.getElementById('paymentAccountId').value) {
+      e.preventDefault();
+      alert('取込先の口座を選択してください。');
+      return;
+    }
     submitBtn.disabled = true;
     submitBtn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status"></span> AIで解析中...';
   });

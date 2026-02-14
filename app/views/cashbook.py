@@ -4,65 +4,24 @@ from flask import Blueprint, render_template, redirect, url_for, flash, request
 from flask_login import login_required, current_user
 
 from app.extensions import db
-from app.models.account import Account, AccountType
+from app.models.account import Account
 from app.models.journal import JournalEntry
 from app.forms.cashbook import CashbookForm
 from app.services.accounting import (
     create_cashbook_entry,
     update_cashbook_entry,
 )
+from app.views.helpers import get_grouped_accounts
 
 bp = Blueprint("cashbook", __name__, url_prefix="/cashbook")
 
 
-def _get_account_choices(user_id):
-    """出納帳用の科目選択肢を生成"""
-    asset_type = AccountType.query.filter_by(code="asset").first()
-    liability_type = AccountType.query.filter_by(code="liability").first()
-    revenue_type = AccountType.query.filter_by(code="revenue").first()
-    expense_type = AccountType.query.filter_by(code="expense").first()
-
-    payment_accounts = (
-        Account.query
-        .filter(
-            Account.user_id == user_id,
-            Account.is_active.is_(True),
-            Account.account_type_id.in_([asset_type.id, liability_type.id]),
-        )
-        .order_by(Account.code)
-        .all()
-    )
-
-    expense_accounts = (
-        Account.query
-        .filter(
-            Account.user_id == user_id,
-            Account.is_active.is_(True),
-            Account.account_type_id == expense_type.id,
-        )
-        .order_by(Account.code)
-        .all()
-    )
-
-    revenue_accounts = (
-        Account.query
-        .filter(
-            Account.user_id == user_id,
-            Account.is_active.is_(True),
-            Account.account_type_id == revenue_type.id,
-        )
-        .order_by(Account.code)
-        .all()
-    )
-
-    payment_choices = [(a.id, f"{a.name}") for a in payment_accounts]
-    # 費用+収益を合わせた費目選択肢
-    category_choices = (
-        [(a.id, f"【支出】{a.name}") for a in expense_accounts]
-        + [(a.id, f"【収入】{a.name}") for a in revenue_accounts]
-    )
-
-    return payment_choices, category_choices
+def _account_name(account_id):
+    """科目IDから名前を取得"""
+    if not account_id:
+        return None
+    a = Account.query.get(account_id)
+    return a.name if a else None
 
 
 @bp.route("/")
@@ -96,9 +55,6 @@ def index():
 @login_required
 def new():
     form = CashbookForm()
-    payment_choices, category_choices = _get_account_choices(current_user.id)
-    form.payment_account_id.choices = payment_choices
-    form.category_account_id.choices = category_choices
 
     if not form.date.data:
         form.date.data = date.today()
@@ -116,7 +72,15 @@ def new():
         flash(f"伝票 #{entry.entry_number} を登録しました。", "success")
         return redirect(url_for("cashbook.index"))
 
-    return render_template("cashbook/form.html", form=form, is_edit=False)
+    grouped_accounts = get_grouped_accounts(current_user.id)
+    payment_account_name = _account_name(form.payment_account_id.data)
+    category_account_name = _account_name(form.category_account_id.data)
+    return render_template(
+        "cashbook/form.html", form=form, is_edit=False,
+        grouped_accounts=grouped_accounts,
+        payment_account_name=payment_account_name,
+        category_account_name=category_account_name,
+    )
 
 
 @bp.route("/<int:entry_id>/edit", methods=["GET", "POST"])
@@ -127,9 +91,6 @@ def edit(entry_id):
     ).first_or_404()
 
     form = CashbookForm()
-    payment_choices, category_choices = _get_account_choices(current_user.id)
-    form.payment_account_id.choices = payment_choices
-    form.category_account_id.choices = category_choices
 
     if form.validate_on_submit():
         update_cashbook_entry(
@@ -167,7 +128,15 @@ def edit(entry_id):
                 form.category_account_id.data = debit_line.account_id
                 form.amount.data = int(debit_line.debit_amount)
 
-    return render_template("cashbook/form.html", form=form, is_edit=True, entry=entry)
+    grouped_accounts = get_grouped_accounts(current_user.id)
+    payment_account_name = _account_name(form.payment_account_id.data)
+    category_account_name = _account_name(form.category_account_id.data)
+    return render_template(
+        "cashbook/form.html", form=form, is_edit=True, entry=entry,
+        grouped_accounts=grouped_accounts,
+        payment_account_name=payment_account_name,
+        category_account_name=category_account_name,
+    )
 
 
 @bp.route("/<int:entry_id>/delete", methods=["POST"])

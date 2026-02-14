@@ -24,13 +24,12 @@
           </div>
 
           <div class="mb-3">
-            <label class="form-label" for="payment_account_id">取込先の口座</label>
-            <select class="form-select" name="payment_account_id" id="payment_account_id" required>
-              <option value="">-- 選択してください --</option>
-              {% for id, name in payment_choices %}
-              <option value="{{ id }}">{{ name }}</option>
-              {% endfor %}
-            </select>
+            <label class="form-label">取込先の口座</label>
+            <input type="hidden" name="payment_account_id" id="paymentAccountId" value="">
+            <button type="button" class="form-control text-start" id="paymentAccountBtn"
+                    onclick="openAccountSelector(onPaymentSelected, {filter: 'payment'})">
+              <span id="paymentAccountName" class="text-muted">-- 選択してください --</span>
+            </button>
             <div class="form-text">
               この明細がどの口座（銀行口座・クレジットカード等）のものか選択します
             </div>
@@ -58,4 +57,23 @@
     </div>
   </div>
 </div>
+{% include "_partials/account_selector.html" %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+function onPaymentSelected(id, name) {
+  document.getElementById('paymentAccountId').value = id;
+  var span = document.getElementById('paymentAccountName');
+  span.textContent = name;
+  span.classList.remove('text-muted');
+}
+
+document.querySelector('form').addEventListener('submit', function(e) {
+  if (!document.getElementById('paymentAccountId').value) {
+    e.preventDefault();
+    alert('取込先の口座を選択してください。');
+  }
+});
+</script>
 {% endblock %}

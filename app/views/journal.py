@@ -9,6 +9,7 @@ from app.models.account import Account
 from app.models.journal import JournalEntry, JournalEntryLine
 from app.forms.journal import JournalForm
 from app.services.accounting import create_journal_entry, get_next_entry_number
+from app.views.helpers import get_grouped_accounts
 
 bp = Blueprint("journal", __name__, url_prefix="/journal")
 
@@ -48,13 +49,7 @@ def index():
 @login_required
 def new():
     form = JournalForm()
-    accounts = (
-        Account.query
-        .filter_by(user_id=current_user.id, is_active=True)
-        .order_by(Account.code)
-        .all()
-    )
-    account_choices = [(a.id, f"{a.code} {a.name}") for a in accounts]
+    grouped_accounts = get_grouped_accounts(current_user.id)
 
     if not form.date.data:
         form.date.data = date.today()
@@ -68,7 +63,7 @@ def new():
             return render_template(
                 "journal/form.html",
                 form=form,
-                account_choices=account_choices,
+                grouped_accounts=grouped_accounts,
                 is_edit=False,
             )
 
@@ -77,7 +72,7 @@ def new():
             return render_template(
                 "journal/form.html",
                 form=form,
-                account_choices=account_choices,
+                grouped_accounts=grouped_accounts,
                 is_edit=False,
             )
 
@@ -105,7 +100,7 @@ def new():
     return render_template(
         "journal/form.html",
         form=form,
-        account_choices=account_choices,
+        grouped_accounts=grouped_accounts,
         is_edit=False,
     )
 
@@ -118,13 +113,7 @@ def edit(entry_id):
     ).first_or_404()
 
     form = JournalForm()
-    accounts = (
-        Account.query
-        .filter_by(user_id=current_user.id, is_active=True)
-        .order_by(Account.code)
-        .all()
-    )
-    account_choices = [(a.id, f"{a.code} {a.name}") for a in accounts]
+    grouped_accounts = get_grouped_accounts(current_user.id)
 
     if request.method == "POST" and form.validate_on_submit():
         lines_json = request.form.get("lines_json", "[]")
@@ -135,7 +124,7 @@ def edit(entry_id):
             return render_template(
                 "journal/form.html",
                 form=form,
-                account_choices=account_choices,
+                grouped_accounts=grouped_accounts,
                 is_edit=True,
                 entry=entry,
             )
@@ -156,7 +145,7 @@ def edit(entry_id):
             return render_template(
                 "journal/form.html",
                 form=form,
-                account_choices=account_choices,
+                grouped_accounts=grouped_accounts,
                 is_edit=True,
                 entry=entry,
             )
@@ -199,7 +188,7 @@ def edit(entry_id):
     return render_template(
         "journal/form.html",
         form=form,
-        account_choices=account_choices,
+        grouped_accounts=grouped_accounts,
         is_edit=True,
         entry=entry,
         existing_lines=json.dumps(existing_lines),

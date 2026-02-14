@@ -4,28 +4,13 @@ from flask import Blueprint, render_template, redirect, url_for, flash, request
 from flask_login import login_required, current_user
 
 from app.extensions import db
-from app.models.account import Account, AccountType
+from app.models.account import Account
 from app.models.medical import MedicalExpense
 from app.forms.medical import MedicalExpenseForm
 from app.services.accounting import create_cashbook_entry
+from app.views.helpers import get_grouped_accounts
 
 bp = Blueprint("medical", __name__, url_prefix="/medical")
-
-
-def _get_payment_choices(user_id):
-    asset_type = AccountType.query.filter_by(code="asset").first()
-    liability_type = AccountType.query.filter_by(code="liability").first()
-    accounts = (
-        Account.query
-        .filter(
-            Account.user_id == user_id,
-            Account.is_active.is_(True),
-            Account.account_type_id.in_([asset_type.id, liability_type.id]),
-        )
-        .order_by(Account.code)
-        .all()
-    )
-    return [(a.id, a.name) for a in accounts]
 
 
 def _get_medical_account(user_id):
@@ -79,7 +64,6 @@ def index():
 @login_required
 def new():
     form = MedicalExpenseForm()
-    form.payment_account_id.choices = _get_payment_choices(current_user.id)
 
     if not form.date.data:
         form.date.data = date.today()
@@ -88,9 +72,12 @@ def new():
         medical_account = _get_medical_account(current_user.id)
         if not medical_account:
             flash("医療費の勘定科目が見つかりません。", "danger")
-            return render_template("medical/form.html", form=form, is_edit=False)
+            grouped_accounts = get_grouped_accounts(current_user.id)
+            return render_template(
+                "medical/form.html", form=form, is_edit=False,
+                grouped_accounts=grouped_accounts,
+            )
 
-        # 仕訳を作成
         entry = create_cashbook_entry(
             user_id=current_user.id,
             date=form.date.data,
@@ -101,7 +88,6 @@ def new():
             description=f"医療費: {form.hospital_name.data}",
         )
 
-        # 医療費明細を作成
         expense = MedicalExpense(
             user_id=current_user.id,
             journal_entry_id=entry.id,
@@ -118,7 +104,16 @@ def new():
         flash("医療費を登録しました。", "success")
         return redirect(url_for("medical.index"))
 
-    return render_template("medical/form.html", form=form, is_edit=False)
+    grouped_accounts = get_grouped_accounts(current_user.id)
+    payment_account_name = None
+    if form.payment_account_id.data:
+        a = Account.query.get(form.payment_account_id.data)
+        payment_account_name = a.name if a else None
+    return render_template(
+        "medical/form.html", form=form, is_edit=False,
+        grouped_accounts=grouped_accounts,
+        payment_account_name=payment_account_name,
+    )
 
 
 @bp.route("/<int:expense_id>/edit", methods=["GET", "POST"])
@@ -129,7 +124,6 @@ def edit(expense_id):
     ).first_or_404()
 
     form = MedicalExpenseForm()
-    form.payment_account_id.choices = _get_payment_choices(current_user.id)
 
     if form.validate_on_submit():
         expense.date = form.date.data
@@ -150,7 +144,16 @@ def edit(expense_id):
         form.amount_paid.data = expense.amount_paid
         form.insurance_reimbursement.data = expense.insurance_reimbursement
 
-    return render_template("medical/form.html", form=form, is_edit=True, expense=expense)
+    grouped_accounts = get_grouped_accounts(current_user.id)
+    payment_account_name = None
+    if form.payment_account_id.data:
+        a = Account.query.get(form.payment_account_id.data)
+        payment_account_name = a.name if a else None
+    return render_template(
+        "medical/form.html", form=form, is_edit=True, expense=expense,
+        grouped_accounts=grouped_accounts,
+        payment_account_name=payment_account_name,
+    )
 
 
 @bp.route("/<int:expense_id>/delete", methods=["POST"])

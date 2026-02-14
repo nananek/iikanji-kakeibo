@@ -91,26 +91,21 @@
           <div class="row mb-3">
             <div class="col-md-6">
               <label class="form-label">費目</label>
-              <select class="form-select" name="category_account_id" required>
-                {% for cid, cname in category_choices %}
-                <option value="{{ cid }}"
-                  {% if selected.lines and cid == selected.lines[0].account_id %}selected{% endif %}>
-                  {{ cname }}
-                </option>
-                {% endfor %}
-              </select>
+              <input type="hidden" name="category_account_id" id="simpleCategoryId"
+                     value="{{ selected.lines[0].account_id if selected.lines else '' }}">
+              <button type="button" class="form-control text-start" id="simpleCategoryBtn"
+                      onclick="openAccountSelector(onSimpleCategorySelected, {filter: 'category', activeTab: 'pl'})">
+                <span id="simpleCategoryName" class="text-muted">-- 選択 --</span>
+              </button>
             </div>
             <div class="col-md-6">
               <label class="form-label">支払元</label>
-              <select class="form-select" name="payment_account_id" required>
-                <option value="">-- 選択してください --</option>
-                {% for pid, pname in payment_choices %}
-                <option value="{{ pid }}"
-                  {% if selected.lines|length > 1 and pid == selected.lines[1].account_id %}selected{% endif %}>
-                  {{ pname }}
-                </option>
-                {% endfor %}
-              </select>
+              <input type="hidden" name="payment_account_id" id="simplePaymentId"
+                     value="{{ selected.lines[1].account_id if selected.lines|length > 1 else '' }}">
+              <button type="button" class="form-control text-start" id="simplePaymentBtn"
+                      onclick="openAccountSelector(onSimplePaymentSelected, {filter: 'payment', activeTab: 'bs'})">
+                <span id="simplePaymentName" class="text-muted">-- 選択 --</span>
+              </button>
             </div>
           </div>
 
@@ -193,34 +188,101 @@
     </div>
   </div>
 </div>
+
+{% include "_partials/account_selector.html" %}
 {% endblock %}
 
 {% block scripts %}
 <script>
-var accountChoices = {{ account_choices | tojson }};
-
-function createAccountSelect(selectedId) {
-  var html = '<select class="form-select form-select-sm account-select">';
-  html += '<option value="">-- 選択 --</option>';
-  accountChoices.forEach(function(item) {
-    var id = item[0], name = item[1];
-    var selected = id === selectedId ? ' selected' : '';
-    html += '<option value="' + id + '"' + selected + '>' + name + '</option>';
-  });
-  html += '</select>';
-  return html;
+function _acctNameById(id) {
+  for (var i = 0; i < _acctSelectorData.length; i++) {
+    var g = _acctSelectorData[i];
+    for (var j = 0; j < g.accounts.length; j++) {
+      if (g.accounts[j].id === id) return g.accounts[j].name;
+    }
+  }
+  return '';
 }
+
+function _acctFullNameById(id) {
+  for (var i = 0; i < _acctSelectorData.length; i++) {
+    var g = _acctSelectorData[i];
+    for (var j = 0; j < g.accounts.length; j++) {
+      if (g.accounts[j].id === id) return g.accounts[j].code + ' ' + g.accounts[j].name;
+    }
+  }
+  return '';
+}
+
+// --- かんたんモード ---
+function onSimpleCategorySelected(id, name) {
+  document.getElementById('simpleCategoryId').value = id;
+  var span = document.getElementById('simpleCategoryName');
+  span.textContent = name;
+  span.classList.remove('text-muted');
+}
+
+function onSimplePaymentSelected(id, name) {
+  document.getElementById('simplePaymentId').value = id;
+  var span = document.getElementById('simplePaymentName');
+  span.textContent = name;
+  span.classList.remove('text-muted');
+}
+
+// 初期値設定
+(function() {
+  var catId = parseInt(document.getElementById('simpleCategoryId').value);
+  if (catId) {
+    var name = _acctNameById(catId);
+    if (name) {
+      var span = document.getElementById('simpleCategoryName');
+      span.textContent = name;
+      span.classList.remove('text-muted');
+    }
+  }
+  var payId = parseInt(document.getElementById('simplePaymentId').value);
+  if (payId) {
+    var name2 = _acctNameById(payId);
+    if (name2) {
+      var span2 = document.getElementById('simplePaymentName');
+      span2.textContent = name2;
+      span2.classList.remove('text-muted');
+    }
+  }
+})();
+
+// --- 仕訳モード ---
+var lineCount = 0;
 
 function addLine(data) {
   data = data || {};
   var tbody = document.getElementById('linesBody');
   var tr = document.createElement('tr');
+  var lineIdx = lineCount++;
+  var acctName = data.account_id ? _acctFullNameById(data.account_id) : '-- 選択 --';
+  var acctClass = data.account_id ? '' : 'text-muted';
   tr.innerHTML =
-    '<td>' + createAccountSelect(data.account_id || '') + '</td>' +
+    '<td>' +
+      '<input type="hidden" class="line-account-id" value="' + (data.account_id || '') + '">' +
+      '<button type="button" class="form-control form-control-sm text-start line-account-btn" data-line="' + lineIdx + '">' +
+        '<span class="line-account-name ' + acctClass + '">' + acctName + '</span>' +
+      '</button>' +
+    '</td>' +
     '<td><input type="number" class="form-control form-control-sm text-end debit-input" value="' + (data.debit_amount || 0) + '" min="0" onchange="updateTotals()"></td>' +
     '<td><input type="number" class="form-control form-control-sm text-end credit-input" value="' + (data.credit_amount || 0) + '" min="0" onchange="updateTotals()"></td>' +
-    '<td><input type="text" class="form-control form-control-sm line-desc" value="' + (data.description || '') + '"></td>' +
+    '<td><input type="text" class="form-control form-control-sm line-desc" value="' + ((data.description || '').replace(/"/g, '&quot;')) + '"></td>' +
     '<td><button type="button" class="btn btn-outline-danger btn-sm" onclick="this.closest(\'tr\').remove(); updateTotals()"><i class="bi bi-x"></i></button></td>';
+
+  tr.querySelector('.line-account-btn').addEventListener('click', function() {
+    var btn = this;
+    openAccountSelector(function(id, name) {
+      btn.parentElement.querySelector('.line-account-id').value = id;
+      var span = btn.querySelector('.line-account-name');
+      span.textContent = name;
+      span.classList.remove('text-muted');
+    }, {filter: 'all'});
+  });
+
   tbody.appendChild(tr);
   updateTotals();
 }
@@ -247,7 +309,7 @@ function updateTotals() {
 document.getElementById('advancedForm').addEventListener('submit', function() {
   var lines = [];
   document.querySelectorAll('#linesBody tr').forEach(function(tr) {
-    var accountId = tr.querySelector('.account-select').value;
+    var accountId = tr.querySelector('.line-account-id').value;
     var debit = parseInt(tr.querySelector('.debit-input').value) || 0;
     var credit = parseInt(tr.querySelector('.credit-input').value) || 0;
     var desc = tr.querySelector('.line-desc').value;

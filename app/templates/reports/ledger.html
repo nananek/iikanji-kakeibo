@@ -185,38 +185,57 @@
   <p class="mt-2">科目を選択してください。</p>
 </div>
 {% endif %}
+
+{# 科目選択モーダル — grouped_accounts は all_grouped_accounts を使う #}
+{% set grouped_accounts = all_grouped_accounts %}
+{% include "_partials/account_selector.html" %}
 {% endblock %}
 
 {% block scripts %}
 {% if selected_account %}
 <script>
-var accountChoices = {{ account_choices | tojson }};
 var csrfToken = "{{ csrf_token() }}";
 var currentEntryId = null;
 var editModal = null;
 
-function createModalAccountSelect(selectedId) {
-  var html = '<select class="form-select form-select-sm modal-account-select">';
-  html += '<option value="">-- 選択 --</option>';
-  accountChoices.forEach(function(item) {
-    var id = item[0], name = item[1];
-    var selected = id === selectedId ? ' selected' : '';
-    html += '<option value="' + id + '"' + selected + '>' + name.replace(/&/g,'&amp;').replace(/</g,'&lt;') + '</option>';
-  });
-  html += '</select>';
-  return html;
+function _acctNameById(id) {
+  for (var i = 0; i < _acctSelectorData.length; i++) {
+    var g = _acctSelectorData[i];
+    for (var j = 0; j < g.accounts.length; j++) {
+      if (g.accounts[j].id === id) return g.accounts[j].code + ' ' + g.accounts[j].name;
+    }
+  }
+  return '';
 }
 
 function modalAddLine(data) {
   data = data || {};
   var tbody = document.getElementById('modalLinesBody');
   var tr = document.createElement('tr');
+  var acctName = data.account_id ? _acctNameById(data.account_id) : '-- 選択 --';
+  var acctClass = data.account_id ? '' : 'text-muted';
   tr.innerHTML =
-    '<td>' + createModalAccountSelect(data.account_id || '') + '</td>' +
+    '<td>' +
+      '<input type="hidden" class="modal-account-id" value="' + (data.account_id || '') + '">' +
+      '<button type="button" class="form-control form-control-sm text-start modal-account-btn">' +
+        '<span class="modal-account-name ' + acctClass + '">' + acctName + '</span>' +
+      '</button>' +
+    '</td>' +
     '<td><input type="number" class="form-control form-control-sm text-end modal-debit" value="' + (data.debit_amount || 0) + '" min="0" onchange="modalUpdateTotals()"></td>' +
     '<td><input type="number" class="form-control form-control-sm text-end modal-credit" value="' + (data.credit_amount || 0) + '" min="0" onchange="modalUpdateTotals()"></td>' +
     '<td><input type="text" class="form-control form-control-sm modal-line-desc" value="' + (data.description || '').replace(/"/g, '&quot;') + '"></td>' +
     '<td><button type="button" class="btn btn-outline-danger btn-sm" onclick="this.closest(\'tr\').remove(); modalUpdateTotals()"><i class="bi bi-x"></i></button></td>';
+
+  tr.querySelector('.modal-account-btn').addEventListener('click', function() {
+    var btn = this;
+    openAccountSelector(function(id, name) {
+      btn.parentElement.querySelector('.modal-account-id').value = id;
+      var span = btn.querySelector('.modal-account-name');
+      span.textContent = name;
+      span.classList.remove('text-muted');
+    }, {filter: 'all'});
+  });
+
   tbody.appendChild(tr);
   modalUpdateTotals();
 }
@@ -261,7 +280,7 @@ function openEditModal(entryId) {
 function saveEntry() {
   var lines = [];
   document.querySelectorAll('#modalLinesBody tr').forEach(function(tr) {
-    var accountId = tr.querySelector('.modal-account-select').value;
+    var accountId = tr.querySelector('.modal-account-id').value;
     var debit = parseInt(tr.querySelector('.modal-debit').value) || 0;
     var credit = parseInt(tr.querySelector('.modal-credit').value) || 0;
     var desc = tr.querySelector('.modal-line-desc').value;
@@ -296,7 +315,6 @@ function saveEntry() {
       return;
     }
     editModal.hide();
-    // ページをリロードして元帳を更新
     window.location.reload();
   })
   .catch(function() {

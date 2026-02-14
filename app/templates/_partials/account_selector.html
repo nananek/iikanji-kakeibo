@@ -1,0 +1,195 @@
+{# 科目選択モーダル — {% include "_partials/account_selector.html" %} で読み込む #}
+{# 必須: grouped_accounts を tojson でスクリプトに渡すこと #}
+
+<div class="modal fade" id="accountSelectorModal" tabindex="-1">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header py-2">
+        <h6 class="modal-title"><i class="bi bi-search"></i> 科目を選択</h6>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body p-0">
+        <div class="p-2 border-bottom">
+          <input type="text" class="form-control form-control-sm" id="acctSearchInput"
+                 placeholder="科目名で検索..." autocomplete="off">
+        </div>
+        <ul class="nav nav-tabs px-2 pt-2" id="acctSelectorTabs" role="tablist">
+          <li class="nav-item" role="presentation">
+            <button class="nav-link active" id="acctTabBS" data-bs-toggle="tab"
+                    data-bs-target="#acctPaneBS" type="button" role="tab">
+              <i class="bi bi-bank"></i> 貸借対照表
+            </button>
+          </li>
+          <li class="nav-item" role="presentation">
+            <button class="nav-link" id="acctTabPL" data-bs-toggle="tab"
+                    data-bs-target="#acctPanePL" type="button" role="tab">
+              <i class="bi bi-graph-up"></i> 損益計算書
+            </button>
+          </li>
+        </ul>
+        <div class="tab-content">
+          <!-- 貸借対照表タブ -->
+          <div class="tab-pane fade show active p-2" id="acctPaneBS" role="tabpanel">
+            <div class="row g-2">
+              <div class="col-6">
+                <div id="acctBS_debit"></div>
+              </div>
+              <div class="col-6">
+                <div id="acctBS_credit"></div>
+              </div>
+            </div>
+          </div>
+          <!-- 損益計算書タブ -->
+          <div class="tab-pane fade p-2" id="acctPanePL" role="tabpanel">
+            <div class="row g-2">
+              <div class="col-6">
+                <div id="acctPL_debit"></div>
+              </div>
+              <div class="col-6">
+                <div id="acctPL_credit"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+var _acctSelectorData = {{ grouped_accounts | tojson }};
+var _acctSelectorModal = null;
+var _acctSelectorCallback = null;
+var _acctSelectorOptions = {};
+
+// BS types: asset, liability, equity
+// PL types: expense, revenue
+var _bsTypeCodes = ['asset', 'liability', 'equity'];
+var _plTypeCodes = ['expense', 'revenue'];
+
+// filter presets: which type_codes to show
+var _acctFilterMap = {
+  'all': ['asset', 'liability', 'equity', 'expense', 'revenue'],
+  'payment': ['asset', 'liability'],
+  'category': ['expense', 'revenue'],
+  'category_transfer': ['asset', 'liability', 'expense', 'revenue'],
+};
+
+function _acctEsc(s) {
+  var d = document.createElement('span');
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+function _acctBuildList(groups, side, containerId) {
+  var container = document.getElementById(containerId);
+  container.innerHTML = '';
+  var sideGroups = groups.filter(function(g) { return g.normal_balance === side; });
+  if (sideGroups.length === 0) {
+    container.innerHTML = '<div class="text-muted small p-2">-</div>';
+    return;
+  }
+  sideGroups.forEach(function(g) {
+    var section = document.createElement('div');
+    section.className = 'mb-2';
+    section.innerHTML = '<div class="small fw-bold text-muted px-1 mb-1">' + _acctEsc(g.type_name) + '</div>';
+    var list = document.createElement('div');
+    list.className = 'list-group list-group-flush';
+    g.accounts.forEach(function(a) {
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'list-group-item list-group-item-action py-1 px-2 acct-item';
+      btn.dataset.id = a.id;
+      btn.dataset.name = a.name;
+      btn.dataset.code = a.code;
+      btn.dataset.typeCode = g.type_code;
+      btn.innerHTML = '<small class="text-muted me-1">' + _acctEsc(a.code) + '</small>' + _acctEsc(a.name);
+      btn.addEventListener('click', function() {
+        if (_acctSelectorCallback) {
+          _acctSelectorCallback(a.id, a.name, g.type_code);
+        }
+        _acctSelectorModal.hide();
+      });
+      list.appendChild(btn);
+    });
+    section.appendChild(list);
+    container.appendChild(section);
+  });
+}
+
+function _acctRender(filter, excludeId) {
+  var allowedCodes = _acctFilterMap[filter] || _acctFilterMap['all'];
+  var filtered = _acctSelectorData.filter(function(g) {
+    return allowedCodes.indexOf(g.type_code) !== -1;
+  });
+
+  // excludeId が指定されている場合、その科目を除外
+  if (excludeId) {
+    filtered = filtered.map(function(g) {
+      return {
+        type_code: g.type_code,
+        type_name: g.type_name,
+        normal_balance: g.normal_balance,
+        accounts: g.accounts.filter(function(a) { return a.id !== excludeId; }),
+      };
+    }).filter(function(g) { return g.accounts.length > 0; });
+  }
+
+  var bsGroups = filtered.filter(function(g) { return _bsTypeCodes.indexOf(g.type_code) !== -1; });
+  var plGroups = filtered.filter(function(g) { return _plTypeCodes.indexOf(g.type_code) !== -1; });
+
+  _acctBuildList(bsGroups, 'debit', 'acctBS_debit');
+  _acctBuildList(bsGroups, 'credit', 'acctBS_credit');
+  _acctBuildList(plGroups, 'debit', 'acctPL_debit');
+  _acctBuildList(plGroups, 'credit', 'acctPL_credit');
+
+  // タブの表示/非表示
+  var bsTab = document.getElementById('acctTabBS');
+  var plTab = document.getElementById('acctTabPL');
+  var hasBs = bsGroups.length > 0;
+  var hasPl = plGroups.length > 0;
+  bsTab.parentElement.style.display = hasBs ? '' : 'none';
+  plTab.parentElement.style.display = hasPl ? '' : 'none';
+
+  // activeTab の設定
+  var activeTab = (_acctSelectorOptions.activeTab === 'pl' && hasPl) ? 'pl' : 'bs';
+  if (activeTab === 'pl' || !hasBs) {
+    plTab.click();
+  } else {
+    bsTab.click();
+  }
+}
+
+function _acctApplySearch(query) {
+  query = query.toLowerCase();
+  document.querySelectorAll('#accountSelectorModal .acct-item').forEach(function(btn) {
+    var name = btn.dataset.name.toLowerCase();
+    var code = btn.dataset.code.toLowerCase();
+    btn.style.display = (query === '' || name.indexOf(query) !== -1 || code.indexOf(query) !== -1) ? '' : 'none';
+  });
+}
+
+/**
+ * 科目選択モーダルを開く
+ * @param {function} callback - callback(id, name, typeCode)
+ * @param {object} options - {filter: 'all'|'payment'|'category'|'category_transfer', excludeId: int, activeTab: 'bs'|'pl'}
+ */
+function openAccountSelector(callback, options) {
+  options = options || {};
+  _acctSelectorCallback = callback;
+  _acctSelectorOptions = options;
+
+  _acctRender(options.filter || 'all', options.excludeId || null);
+  document.getElementById('acctSearchInput').value = '';
+  _acctApplySearch('');
+
+  if (!_acctSelectorModal) {
+    _acctSelectorModal = new bootstrap.Modal(document.getElementById('accountSelectorModal'));
+  }
+  _acctSelectorModal.show();
+}
+
+document.getElementById('acctSearchInput').addEventListener('input', function() {
+  _acctApplySearch(this.value);
+});
+</script>

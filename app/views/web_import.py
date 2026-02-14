@@ -11,62 +11,18 @@ from app.models.account import Account, AccountType
 from app.models.ai_config import UserAIConfig
 from app.services.ai_receipt import parse_web_text
 from app.services.accounting import create_cashbook_entry, create_transfer_entry
+from app.views.helpers import get_grouped_accounts
 
 bp = Blueprint("web_import", __name__, url_prefix="/web-import")
 
 MAX_TEXT_LENGTH = 200_000
 
 
-def _get_payment_choices(user_id):
-    asset_type = AccountType.query.filter_by(code="asset").first()
-    liability_type = AccountType.query.filter_by(code="liability").first()
-    accounts = (
-        Account.query
-        .filter(
-            Account.user_id == user_id,
-            Account.is_active.is_(True),
-            Account.account_type_id.in_([asset_type.id, liability_type.id]),
-        )
-        .order_by(Account.code)
-        .all()
-    )
-    return [(a.id, a.name) for a in accounts]
-
-
-def _get_category_choices(user_id, exclude_account_id=None):
-    expense_type = AccountType.query.filter_by(code="expense").first()
-    revenue_type = AccountType.query.filter_by(code="revenue").first()
-    asset_type = AccountType.query.filter_by(code="asset").first()
-    liability_type = AccountType.query.filter_by(code="liability").first()
-
-    def _query(type_id):
-        q = Account.query.filter(
-            Account.user_id == user_id,
-            Account.is_active.is_(True),
-            Account.account_type_id == type_id,
-        )
-        if exclude_account_id:
-            q = q.filter(Account.id != exclude_account_id)
-        return q.order_by(Account.code).all()
-
-    expenses = _query(expense_type.id) if expense_type else []
-    revenues = _query(revenue_type.id) if revenue_type else []
-    assets = _query(asset_type.id) if asset_type else []
-    liabilities = _query(liability_type.id) if liability_type else []
-
-    return (
-        [(a.id, f"【支出】{a.name}") for a in expenses]
-        + [(a.id, f"【収入】{a.name}") for a in revenues]
-        + [(a.id, f"【振替】{a.name}") for a in assets]
-        + [(a.id, f"【振替】{a.name}") for a in liabilities]
-    )
-
-
 @bp.route("/", methods=["GET", "POST"])
 @login_required
 def upload():
     """Step 1: テキスト入力 + 口座選択 → AI解析"""
-    payment_choices = _get_payment_choices(current_user.id)
+    grouped_accounts = get_grouped_accounts(current_user.id)
     has_config = UserAIConfig.query.filter_by(user_id=current_user.id).first() is not None
 
     if request.method == "POST":
@@ -77,7 +33,7 @@ def upload():
             flash("テキストを入力してください。", "danger")
             return render_template(
                 "web_import/upload.html",
-                payment_choices=payment_choices,
+                grouped_accounts=grouped_accounts,
                 has_config=has_config,
             )
 
@@ -85,7 +41,7 @@ def upload():
             flash("テキストが長すぎます（上限20万文字）。", "danger")
             return render_template(
                 "web_import/upload.html",
-                payment_choices=payment_choices,
+                grouped_accounts=grouped_accounts,
                 has_config=has_config,
             )
 
@@ -93,7 +49,7 @@ def upload():
             flash("取込先の口座を選択してください。", "danger")
             return render_template(
                 "web_import/upload.html",
-                payment_choices=payment_choices,
+                grouped_accounts=grouped_accounts,
                 has_config=has_config,
             )
 
@@ -107,20 +63,22 @@ def upload():
             flash(str(e), "danger")
             return render_template(
                 "web_import/upload.html",
-                payment_choices=payment_choices,
+                grouped_accounts=grouped_accounts,
                 has_config=has_config,
                 raw_text=raw_text,
                 payment_account_id=payment_account_id,
+                payment_account_name=payment_account.name,
             )
 
         if not parsed:
             flash("明細データを読み取れませんでした。テキストを確認してください。", "danger")
             return render_template(
                 "web_import/upload.html",
-                payment_choices=payment_choices,
+                grouped_accounts=grouped_accounts,
                 has_config=has_config,
                 raw_text=raw_text,
                 payment_account_id=payment_account_id,
+                payment_account_name=payment_account.name,
             )
 
         session["web_parsed"] = json.dumps(parsed, ensure_ascii=False)
@@ -130,7 +88,7 @@ def upload():
 
     return render_template(
         "web_import/upload.html",
-        payment_choices=payment_choices,
+        grouped_accounts=grouped_accounts,
         has_config=has_config,
     )
 
@@ -147,7 +105,6 @@ def confirm():
 
     parsed = json.loads(parsed_json)
     payment_account = Account.query.get(payment_account_id)
-    category_choices = _get_category_choices(current_user.id, exclude_account_id=payment_account_id)
 
     expense_type = AccountType.query.filter_by(code="expense").first()
     default_expense = (
@@ -254,11 +211,12 @@ def confirm():
         flash(f"{imported}件を取り込みました。（スキップ: {skipped}件）", "success")
         return redirect(url_for("cashbook.index"))
 
+    grouped_accounts = get_grouped_accounts(current_user.id)
     return render_template(
         "web_import/confirm.html",
         parsed=parsed,
         payment_account=payment_account,
-        category_choices=category_choices,
         default_expense_id=default_expense.id if default_expense else 0,
         default_income_id=default_income.id if default_income else 0,
+        grouped_accounts=grouped_accounts,
     )

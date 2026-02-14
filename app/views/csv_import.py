@@ -13,90 +13,46 @@ from app.services.csv_import import (
     DATE_FORMATS,
 )
 from app.services.accounting import create_cashbook_entry, create_transfer_entry
+from app.views.helpers import get_grouped_accounts
 
 bp = Blueprint("csv_import", __name__, url_prefix="/csv-import")
 
 MAX_CSV_SIZE = 5 * 1024 * 1024  # 5MB
 
 
-def _get_payment_choices(user_id):
-    asset_type = AccountType.query.filter_by(code="asset").first()
-    liability_type = AccountType.query.filter_by(code="liability").first()
-    accounts = (
-        Account.query
-        .filter(
-            Account.user_id == user_id,
-            Account.is_active.is_(True),
-            Account.account_type_id.in_([asset_type.id, liability_type.id]),
-        )
-        .order_by(Account.code)
-        .all()
-    )
-    return [(a.id, a.name) for a in accounts]
-
-
-def _get_category_choices(user_id, exclude_account_id=None):
-    expense_type = AccountType.query.filter_by(code="expense").first()
-    revenue_type = AccountType.query.filter_by(code="revenue").first()
-    asset_type = AccountType.query.filter_by(code="asset").first()
-    liability_type = AccountType.query.filter_by(code="liability").first()
-
-    def _query(type_id):
-        q = Account.query.filter(
-            Account.user_id == user_id,
-            Account.is_active.is_(True),
-            Account.account_type_id == type_id,
-        )
-        if exclude_account_id:
-            q = q.filter(Account.id != exclude_account_id)
-        return q.order_by(Account.code).all()
-
-    expenses = _query(expense_type.id) if expense_type else []
-    revenues = _query(revenue_type.id) if revenue_type else []
-    assets = _query(asset_type.id) if asset_type else []
-    liabilities = _query(liability_type.id) if liability_type else []
-
-    return (
-        [(a.id, f"【支出】{a.name}") for a in expenses]
-        + [(a.id, f"【収入】{a.name}") for a in revenues]
-        + [(a.id, f"【振替】{a.name}") for a in assets]
-        + [(a.id, f"【振替】{a.name}") for a in liabilities]
-    )
-
-
 @bp.route("/", methods=["GET", "POST"])
 @login_required
 def upload():
     """Step 1: CSVアップロード"""
-    payment_choices = _get_payment_choices(current_user.id)
+    grouped_accounts = get_grouped_accounts(current_user.id)
 
     if request.method == "POST":
         csv_file = request.files.get("csv_file")
         if not csv_file or not csv_file.filename:
             flash("CSVファイルを選択してください。", "danger")
             return render_template(
-                "csv_import/upload.html", payment_choices=payment_choices
+                "csv_import/upload.html", grouped_accounts=grouped_accounts
             )
 
         raw_bytes = csv_file.read()
         if len(raw_bytes) > MAX_CSV_SIZE:
             flash("ファイルサイズが大きすぎます（上限5MB）。", "danger")
             return render_template(
-                "csv_import/upload.html", payment_choices=payment_choices
+                "csv_import/upload.html", grouped_accounts=grouped_accounts
             )
 
         payment_account_id = request.form.get("payment_account_id", type=int)
         if not payment_account_id:
             flash("取込先の口座を選択してください。", "danger")
             return render_template(
-                "csv_import/upload.html", payment_choices=payment_choices
+                "csv_import/upload.html", grouped_accounts=grouped_accounts
             )
 
         preview = parse_csv_preview(raw_bytes)
         if not preview["headers"] or not preview["rows"]:
             flash("CSVファイルの内容を読み取れませんでした。", "danger")
             return render_template(
-                "csv_import/upload.html", payment_choices=payment_choices
+                "csv_import/upload.html", grouped_accounts=grouped_accounts
             )
 
         # セッションにCSVデータと口座IDを保存
@@ -107,7 +63,7 @@ def upload():
         return redirect(url_for("csv_import.mapping"))
 
     return render_template(
-        "csv_import/upload.html", payment_choices=payment_choices
+        "csv_import/upload.html", grouped_accounts=grouped_accounts
     )
 
 
@@ -129,7 +85,6 @@ def mapping():
     col_indices = list(range(len(headers)))
 
     payment_account = Account.query.get(payment_account_id)
-    category_choices = _get_category_choices(current_user.id, exclude_account_id=payment_account_id)
 
     if request.method == "POST":
         date_col = request.form.get("date_col", type=int)
@@ -163,7 +118,6 @@ def mapping():
                 preview_rows=preview["rows"],
                 total_rows=preview["total_rows"],
                 date_formats=DATE_FORMATS,
-                category_choices=category_choices,
                 payment_account=payment_account,
             )
 
@@ -179,7 +133,6 @@ def mapping():
                 preview_rows=preview["rows"],
                 total_rows=preview["total_rows"],
                 date_formats=DATE_FORMATS,
-                category_choices=category_choices,
                 payment_account=payment_account,
             )
 
@@ -204,7 +157,6 @@ def mapping():
         preview_rows=preview["rows"],
         total_rows=preview["total_rows"],
         date_formats=DATE_FORMATS,
-        category_choices=category_choices,
         payment_account=payment_account,
     )
 
@@ -224,7 +176,6 @@ def confirm():
 
     parsed = json.loads(parsed_json)
     payment_account = Account.query.get(payment_account_id)
-    category_choices = _get_category_choices(current_user.id, exclude_account_id=payment_account_id)
 
     # デフォルト費目を取得
     expense_type = AccountType.query.filter_by(code="expense").first()
@@ -336,11 +287,12 @@ def confirm():
         flash(f"{imported}件を取り込みました。（スキップ: {skipped}件）", "success")
         return redirect(url_for("cashbook.index"))
 
+    grouped_accounts = get_grouped_accounts(current_user.id)
     return render_template(
         "csv_import/confirm.html",
         parsed=parsed,
         payment_account=payment_account,
-        category_choices=category_choices,
         default_expense_id=default_expense.id if default_expense else 0,
         default_income_id=default_income.id if default_income else 0,
+        grouped_accounts=grouped_accounts,
     )
