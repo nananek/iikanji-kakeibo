@@ -72,44 +72,118 @@
   </div>
 </div>
 
-{% if medical_summary.expenses %}
-<div class="table-responsive">
-  <table class="table table-sm">
-    <thead class="table-light">
-      <tr>
-        <th>日付</th>
-        <th>摘要</th>
-        <th>受診者</th>
-        <th>病院・薬局</th>
-        <th>区分</th>
-        <th class="text-end">支払額</th>
-        <th class="text-end">保険補填</th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for e in medical_summary.expenses %}
-      <tr>
-        <td>{{ e.date.strftime('%Y/%m/%d') }}</td>
-        <td>{{ e.description }}</td>
-        <td>{{ e.patient_name }}</td>
-        <td>{{ e.hospital_name }}</td>
-        <td>
-          {% if e.provider_type == 'hospital' %}病院
-          {% elif e.provider_type == 'pharmacy' %}薬局
-          {% elif e.provider_type == 'nursing' %}介護
-          {% elif e.provider_type == 'other' %}その他
-          {% endif %}
-        </td>
-        <td class="text-end">&yen;{{ "{:,}".format(e.amount) }}</td>
-        <td class="text-end">
-          {% if e.insurance_reimbursement %}
-          &yen;{{ "{:,}".format(e.insurance_reimbursement) }}
-          {% endif %}
-        </td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
+{% if medical_summary.by_patient or medical_summary.by_hospital %}
+<div class="row mb-4">
+  <div class="col-md-6">
+    <div class="card shadow-sm">
+      <div class="card-header"><strong>受診者別</strong></div>
+      <div class="card-body p-0">
+        <table class="table table-sm mb-0">
+          <thead class="table-light">
+            <tr>
+              <th>受診者</th>
+              <th class="text-end">支払額</th>
+              <th class="text-end">補填額</th>
+              <th class="text-end">自己負担</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for p in medical_summary.by_patient %}
+            <tr>
+              <td>{{ p.name }}</td>
+              <td class="text-end">&yen;{{ "{:,}".format(p.paid) }}</td>
+              <td class="text-end">
+                {% if p.reimbursed %}&yen;{{ "{:,}".format(p.reimbursed) }}{% endif %}
+              </td>
+              <td class="text-end">&yen;{{ "{:,}".format(p.net) }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-6">
+    <div class="card shadow-sm">
+      <div class="card-header"><strong>医療機関別</strong></div>
+      <div class="card-body p-0">
+        <table class="table table-sm mb-0">
+          <thead class="table-light">
+            <tr>
+              <th>医療機関</th>
+              <th>区分</th>
+              <th class="text-end">支払額</th>
+              <th class="text-end">補填額</th>
+              <th class="text-end">自己負担</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for h in medical_summary.by_hospital %}
+            <tr>
+              <td>{{ h.name }}</td>
+              <td>
+                {% if h.provider_type == 'hospital' %}病院
+                {% elif h.provider_type == 'pharmacy' %}薬局
+                {% elif h.provider_type == 'nursing' %}介護
+                {% elif h.provider_type == 'other' %}その他
+                {% endif %}
+              </td>
+              <td class="text-end">&yen;{{ "{:,}".format(h.paid) }}</td>
+              <td class="text-end">
+                {% if h.reimbursed %}&yen;{{ "{:,}".format(h.reimbursed) }}{% endif %}
+              </td>
+              <td class="text-end">&yen;{{ "{:,}".format(h.net) }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
 </div>
+{% endif %}
+
+{% if medical_summary.expenses %}
+<details>
+  <summary class="mb-2"><strong>明細一覧</strong> ({{ medical_summary.expenses|length }}件)</summary>
+  <div class="table-responsive">
+    <table class="table table-sm">
+      <thead class="table-light">
+        <tr>
+          <th>日付</th>
+          <th>摘要</th>
+          <th>受診者</th>
+          <th>病院・薬局</th>
+          <th>区分</th>
+          <th class="text-end">支払額</th>
+          <th class="text-end">保険補填</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for e in medical_summary.expenses %}
+        <tr>
+          <td>{{ e.date.strftime('%Y/%m/%d') }}</td>
+          <td>{{ e.description }}</td>
+          <td>{{ e.patient_name }}</td>
+          <td>{{ e.hospital_name }}</td>
+          <td>
+            {% if e.provider_type == 'hospital' %}病院
+            {% elif e.provider_type == 'pharmacy' %}薬局
+            {% elif e.provider_type == 'nursing' %}介護
+            {% elif e.provider_type == 'other' %}その他
+            {% endif %}
+          </td>
+          <td class="text-end">&yen;{{ "{:,}".format(e.amount) }}</td>
+          <td class="text-end">
+            {% if e.insurance_reimbursement %}
+            &yen;{{ "{:,}".format(e.insurance_reimbursement) }}
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</details>
 {% endif %}
 {% endblock %}
