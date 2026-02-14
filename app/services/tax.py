@@ -63,23 +63,60 @@ def get_tax_summary(user_id, year):
 
 
 def get_medical_summary(user_id, year):
-    """医療費控除用の年間集計"""
+    """医療費控除用の年間集計（仕訳から自動集計）"""
     start = date(year, 1, 1)
-    end = date(year, 12, 31)
+    end = date(year + 1, 1, 1)
 
-    expenses = (
-        MedicalExpense.query
-        .filter(
-            MedicalExpense.user_id == user_id,
-            MedicalExpense.date >= start,
-            MedicalExpense.date <= end,
+    # 医療費科目（tax_category="medical"）への借方仕訳を取得
+    rows = (
+        db.session.query(
+            JournalEntry.id.label("entry_id"),
+            JournalEntry.date,
+            JournalEntry.description,
+            JournalEntryLine.debit_amount,
+            Account.name.label("account_name"),
         )
-        .order_by(MedicalExpense.date)
+        .join(JournalEntryLine, JournalEntryLine.account_id == Account.id)
+        .join(JournalEntry, JournalEntry.id == JournalEntryLine.journal_entry_id)
+        .filter(
+            Account.user_id == user_id,
+            Account.tax_category == "medical",
+            JournalEntryLine.debit_amount > 0,
+            JournalEntry.date >= start,
+            JournalEntry.date < end,
+        )
+        .order_by(JournalEntry.date)
         .all()
     )
 
-    total_paid = sum(e.amount_paid for e in expenses)
-    total_reimbursed = sum(e.insurance_reimbursement for e in expenses)
+    # 紐付く MedicalExpense レコードを取得
+    entry_ids = [r.entry_id for r in rows]
+    medical_details = {}
+    if entry_ids:
+        me_records = (
+            MedicalExpense.query
+            .filter(MedicalExpense.journal_entry_id.in_(entry_ids))
+            .all()
+        )
+        for me in me_records:
+            medical_details[me.journal_entry_id] = me
+
+    expenses = []
+    for r in rows:
+        me = medical_details.get(r.entry_id)
+        expenses.append({
+            "date": r.date,
+            "description": r.description,
+            "amount": int(r.debit_amount),
+            "account_name": r.account_name,
+            "patient_name": me.patient_name if me else "",
+            "hospital_name": me.hospital_name if me else "",
+            "treatment_description": me.treatment_description if me else "",
+            "insurance_reimbursement": me.insurance_reimbursement if me else 0,
+        })
+
+    total_paid = sum(e["amount"] for e in expenses)
+    total_reimbursed = sum(e["insurance_reimbursement"] for e in expenses)
     net_total = total_paid - total_reimbursed
 
     return {

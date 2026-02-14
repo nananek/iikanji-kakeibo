@@ -2,9 +2,9 @@ from datetime import date
 
 from flask import Blueprint, render_template, redirect, url_for, flash, request
 from flask_login import login_required, current_user
-
 from app.extensions import db
 from app.models.account import Account
+from app.models.journal import JournalEntry, JournalEntryLine
 from app.models.medical import MedicalExpense
 from app.forms.medical import MedicalExpenseForm
 from app.services.accounting import create_cashbook_entry
@@ -22,31 +22,63 @@ def _get_medical_account(user_id):
 @bp.route("/")
 @login_required
 def index():
-    page = request.args.get("page", 1, type=int)
     year = request.args.get("year", date.today().year, type=int)
+    start = date(year, 1, 1)
+    end = date(year + 1, 1, 1)
 
-    query = (
-        MedicalExpense.query
-        .filter(
-            MedicalExpense.user_id == current_user.id,
-            db.extract("year", MedicalExpense.date) == year,
+    # 医療費科目（tax_category="medical"）への仕訳明細を取得
+    rows = (
+        db.session.query(
+            JournalEntry.id.label("entry_id"),
+            JournalEntry.date,
+            JournalEntry.description,
+            JournalEntryLine.debit_amount,
+            Account.name.label("account_name"),
         )
-        .order_by(MedicalExpense.date.desc())
-    )
-
-    expenses = query.paginate(page=page, per_page=20, error_out=False)
-
-    # 集計
-    all_expenses = (
-        MedicalExpense.query
+        .join(JournalEntryLine, JournalEntryLine.journal_entry_id == JournalEntry.id)
+        .join(Account, Account.id == JournalEntryLine.account_id)
         .filter(
-            MedicalExpense.user_id == current_user.id,
-            db.extract("year", MedicalExpense.date) == year,
+            JournalEntry.user_id == current_user.id,
+            Account.tax_category == "medical",
+            JournalEntryLine.debit_amount > 0,
+            JournalEntry.date >= start,
+            JournalEntry.date < end,
         )
+        .order_by(JournalEntry.date.desc())
         .all()
     )
-    total_paid = sum(e.amount_paid for e in all_expenses)
-    total_reimbursed = sum(e.insurance_reimbursement for e in all_expenses)
+
+    # 紐付く MedicalExpense レコードを取得（詳細情報用）
+    entry_ids = [r.entry_id for r in rows]
+    medical_details = {}
+    if entry_ids:
+        me_records = (
+            MedicalExpense.query
+            .filter(MedicalExpense.journal_entry_id.in_(entry_ids))
+            .all()
+        )
+        for me in me_records:
+            medical_details[me.journal_entry_id] = me
+
+    # テンプレート用のデータ構築
+    expenses = []
+    for r in rows:
+        me = medical_details.get(r.entry_id)
+        expenses.append({
+            "entry_id": r.entry_id,
+            "date": r.date,
+            "description": r.description,
+            "amount": int(r.debit_amount),
+            "account_name": r.account_name,
+            "patient_name": me.patient_name if me else "",
+            "hospital_name": me.hospital_name if me else "",
+            "treatment_description": me.treatment_description if me else "",
+            "insurance_reimbursement": me.insurance_reimbursement if me else 0,
+            "medical_expense_id": me.id if me else None,
+        })
+
+    total_paid = sum(e["amount"] for e in expenses)
+    total_reimbursed = sum(e["insurance_reimbursement"] for e in expenses)
     net_total = total_paid - total_reimbursed
 
     return render_template(

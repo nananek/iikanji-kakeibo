@@ -58,15 +58,15 @@
   </div>
 </div>
 
-{% if expenses.items %}
+{% if expenses %}
 <div class="table-responsive">
   <table class="table table-hover">
     <thead class="table-light">
       <tr>
         <th>日付</th>
+        <th>摘要</th>
         <th>受診者</th>
         <th>病院・薬局</th>
-        <th>治療内容</th>
         <th class="text-end">支払額</th>
         <th class="text-end">保険補填</th>
         <th class="text-end">自己負担</th>
@@ -74,64 +74,37 @@
       </tr>
     </thead>
     <tbody>
-      {% for expense in expenses.items %}
+      {% for e in expenses %}
       <tr>
-        <td>{{ expense.date.strftime('%Y/%m/%d') }}</td>
-        <td>{{ expense.patient_name }}</td>
-        <td>{{ expense.hospital_name }}</td>
-        <td>{{ expense.treatment_description }}</td>
-        <td class="text-end">&yen;{{ "{:,}".format(expense.amount_paid) }}</td>
-        <td class="text-end">&yen;{{ "{:,}".format(expense.insurance_reimbursement) }}</td>
-        <td class="text-end">&yen;{{ "{:,}".format(expense.net_amount) }}</td>
+        <td>{{ e.date.strftime('%Y/%m/%d') }}</td>
+        <td>{{ e.description }}</td>
+        <td>{{ e.patient_name }}</td>
+        <td>{{ e.hospital_name }}</td>
+        <td class="text-end">&yen;{{ "{:,}".format(e.amount) }}</td>
+        <td class="text-end">
+          {% if e.insurance_reimbursement %}
+          &yen;{{ "{:,}".format(e.insurance_reimbursement) }}
+          {% endif %}
+        </td>
+        <td class="text-end">&yen;{{ "{:,}".format(e.amount - e.insurance_reimbursement) }}</td>
         <td>
+          {% if e.medical_expense_id %}
           <div class="btn-group btn-group-sm">
-            <a href="{{ url_for('medical.edit', expense_id=expense.id) }}" class="btn btn-outline-secondary">
+            <a href="{{ url_for('medical.edit', expense_id=e.medical_expense_id) }}" class="btn btn-outline-secondary" title="詳細編集">
               <i class="bi bi-pencil"></i>
             </a>
-            <form method="POST" action="{{ url_for('medical.delete', expense_id=expense.id) }}"
-                  onsubmit="return confirm('この医療費を削除しますか？')" class="d-inline">
-              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-              <button type="submit" class="btn btn-outline-danger">
-                <i class="bi bi-trash"></i>
-              </button>
-            </form>
           </div>
+          {% endif %}
         </td>
       </tr>
       {% endfor %}
     </tbody>
   </table>
 </div>
-
-{% if expenses.pages > 1 %}
-<nav>
-  <ul class="pagination justify-content-center">
-    {% if expenses.has_prev %}
-    <li class="page-item">
-      <a class="page-link" href="{{ url_for('medical.index', page=expenses.prev_num, year=year) }}">前へ</a>
-    </li>
-    {% endif %}
-    {% for p in expenses.iter_pages() %}
-      {% if p %}
-      <li class="page-item {% if p == expenses.page %}active{% endif %}">
-        <a class="page-link" href="{{ url_for('medical.index', page=p, year=year) }}">{{ p }}</a>
-      </li>
-      {% else %}
-      <li class="page-item disabled"><span class="page-link">...</span></li>
-      {% endif %}
-    {% endfor %}
-    {% if expenses.has_next %}
-    <li class="page-item">
-      <a class="page-link" href="{{ url_for('medical.index', page=expenses.next_num, year=year) }}">次へ</a>
-    </li>
-    {% endif %}
-  </ul>
-</nav>
-{% endif %}
-
 {% else %}
 <div class="text-center text-muted py-5">
-  <p>{{ year }}年の医療費はまだ登録されていません。</p>
+  <p>{{ year }}年の医療費はまだありません。</p>
+  <p><small>医療費科目（税区分: 医療費控除）への仕訳が自動的に集計されます。</small></p>
 </div>
 {% endif %}
 {% endblock %}

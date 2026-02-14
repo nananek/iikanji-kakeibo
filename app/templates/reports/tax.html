@@ -78,9 +78,9 @@
     <thead class="table-light">
       <tr>
         <th>日付</th>
+        <th>摘要</th>
         <th>受診者</th>
         <th>病院・薬局</th>
-        <th>治療内容</th>
         <th class="text-end">支払額</th>
         <th class="text-end">保険補填</th>
       </tr>
@@ -89,11 +89,15 @@
       {% for e in medical_summary.expenses %}
       <tr>
         <td>{{ e.date.strftime('%Y/%m/%d') }}</td>
+        <td>{{ e.description }}</td>
         <td>{{ e.patient_name }}</td>
         <td>{{ e.hospital_name }}</td>
-        <td>{{ e.treatment_description }}</td>
-        <td class="text-end">&yen;{{ "{:,}".format(e.amount_paid) }}</td>
-        <td class="text-end">&yen;{{ "{:,}".format(e.insurance_reimbursement) }}</td>
+        <td class="text-end">&yen;{{ "{:,}".format(e.amount) }}</td>
+        <td class="text-end">
+          {% if e.insurance_reimbursement %}
+          &yen;{{ "{:,}".format(e.insurance_reimbursement) }}
+          {% endif %}
+        </td>
       </tr>
       {% endfor %}
     </tbody>
