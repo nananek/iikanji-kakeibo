@@ -164,6 +164,26 @@ document.getElementById('journalForm').addEventListener('submit', function(e) {
   document.getElementById('linesJson').value = JSON.stringify(lines);
 });
 
+// 計上期間変更時に日付を自動設定・readonly制御
+var fpSelect = document.getElementById('fiscal_period');
+var dateInput = document.getElementById('date');
+function onFiscalPeriodChange() {
+  var fp = fpSelect.value;
+  if (!dateInput.value) return;
+  var year = dateInput.value.substring(0, 4);
+  if (fp === '0') {
+    dateInput.value = year + '-01-01';
+    dateInput.readOnly = true;
+  } else if (fp === '13' || fp === '14' || fp === '15') {
+    dateInput.value = year + '-12-31';
+    dateInput.readOnly = true;
+  } else {
+    dateInput.readOnly = false;
+  }
+}
+fpSelect.addEventListener('change', onFiscalPeriodChange);
+onFiscalPeriodChange();
+
 // 初期化
 {% if is_edit and existing_lines is defined %}
 var existingLines = {{ existing_lines | safe }};

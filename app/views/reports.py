@@ -29,9 +29,16 @@ def index():
 @bp.route("/balance")
 @login_required
 def balance():
-    """残高試算表"""
+    """残高試算表（期間範囲指定対応）"""
+    from app.services.fiscal import PERIOD_LABELS
+
     year = request.args.get("year", date.today().year, type=int)
-    period = request.args.get("period", type=int)  # None=年間, 0=期首, 1-12=月, 13-15=決算月
+    pf = request.args.get("pf", 0, type=int)   # period_from (default: 期首)
+    pt = request.args.get("pt", 15, type=int)   # period_to   (default: 決算月3)
+
+    # 範囲の正規化
+    pf = max(0, min(15, pf))
+    pt = max(pf, min(15, pt))
 
     account_types = AccountType.query.order_by(AccountType.display_order).all()
     accounts = (
@@ -47,57 +54,31 @@ def balance():
         accounts = [a for a in accounts if a.id in allowed_ids]
 
     start_of_year = date(year, 1, 1)
-    end_of_year = date(year + 1, 1, 1)
     pl_type_codes = {"revenue", "expense"}
     bs_type_codes = {"asset", "liability", "equity"}
 
-    def _period_filter(period_num):
-        """期間番号に応じたSQLAlchemyフィルタ条件を返す"""
-        if period_num == 0:
-            return [JournalEntry.fiscal_period == 0]
-        elif 1 <= period_num <= 12:
-            month_start = date(year, period_num, 1)
-            if period_num == 12:
-                month_end = date(year + 1, 1, 1)
-            else:
-                month_end = date(year, period_num + 1, 1)
-            return [or_(
-                JournalEntry.fiscal_period == period_num,
+    def _single_period_condition(p):
+        """単一期間のSQLAlchemy条件を返す"""
+        if p == 0:
+            return JournalEntry.fiscal_period == 0
+        elif 1 <= p <= 12:
+            m_start = date(year, p, 1)
+            m_end = date(year, p + 1, 1) if p < 12 else date(year + 1, 1, 1)
+            return or_(
+                JournalEntry.fiscal_period == p,
                 and_(
                     JournalEntry.fiscal_period.is_(None),
-                    JournalEntry.date >= month_start,
-                    JournalEntry.date < month_end,
+                    JournalEntry.date >= m_start,
+                    JournalEntry.date < m_end,
                 ),
-            )]
-        elif 13 <= period_num <= 15:
-            return [JournalEntry.fiscal_period == period_num]
-        else:
-            return [JournalEntry.date >= start_of_year, JournalEntry.date < end_of_year]
+            )
+        else:  # 13-15
+            return JournalEntry.fiscal_period == p
 
-    def _prior_periods_filter(up_to_period):
-        """指定期間より前の全期間のフィルタ条件を返す"""
-        conditions = []
-        for p in range(0, up_to_period):
-            if p == 0:
-                conditions.append(JournalEntry.fiscal_period == 0)
-            elif 1 <= p <= 12:
-                m_start = date(year, p, 1)
-                m_end = date(year, p + 1, 1) if p < 12 else date(year + 1, 1, 1)
-                conditions.append(and_(
-                    or_(
-                        JournalEntry.fiscal_period == p,
-                        and_(
-                            JournalEntry.fiscal_period.is_(None),
-                            JournalEntry.date >= m_start,
-                            JournalEntry.date < m_end,
-                        ),
-                    )
-                ))
-            elif 13 <= p <= 15:
-                conditions.append(JournalEntry.fiscal_period == p)
-        if not conditions:
-            return None
-        return [or_(*conditions)]
+    def _range_filter(p_from, p_to):
+        """期間範囲のフィルタ条件リストを返す"""
+        conditions = [_single_period_condition(p) for p in range(p_from, p_to + 1)]
+        return [or_(*conditions)] if conditions else []
 
     def _query_sum(account_id, filters):
         """指定条件での借方・貸方合計を返す"""
@@ -120,11 +101,7 @@ def balance():
     total_revenue = 0
     total_expense = 0
 
-    # 当期フィルタ
-    if period is not None:
-        current_filters = _period_filter(period)
-    else:
-        current_filters = [JournalEntry.date >= start_of_year, JournalEntry.date < end_of_year]
+    current_filters = _range_filter(pf, pt)
 
     for account in accounts:
         is_pl = account.account_type.code in pl_type_codes
@@ -138,16 +115,15 @@ def balance():
 
         # 開始残高
         opening = 0
-        if period is not None:
+        if pf > 0:
+            prior_filters = _range_filter(0, pf - 1)
             if is_bs:
-                # B/S科目: 当年の当期間より前 + 前年以前の全累計
-                prior_filters = _prior_periods_filter(period)
+                # B/S科目: 当年の範囲開始前 + 前年以前の全累計
                 if prior_filters:
                     ob_result = _query_sum(account.id, prior_filters)
                     prior_d, prior_c = int(ob_result[0]), int(ob_result[1])
                 else:
                     prior_d, prior_c = 0, 0
-                # 前年以前
                 before_result = _query_sum(account.id, [JournalEntry.date < start_of_year])
                 before_d, before_c = int(before_result[0]), int(before_result[1])
                 ob_debit = prior_d + before_d
@@ -156,17 +132,22 @@ def balance():
                     opening = ob_debit - ob_credit
                 else:
                     opening = ob_credit - ob_debit
-            elif is_pl:
-                # P/L科目: 当年の当期間より前の累計
-                prior_filters = _prior_periods_filter(period)
-                if prior_filters:
-                    ob_result = _query_sum(account.id, prior_filters)
-                    ob_debit = int(ob_result[0])
-                    ob_credit = int(ob_result[1])
-                    if is_debit_normal:
-                        opening = ob_debit - ob_credit
-                    else:
-                        opening = ob_credit - ob_debit
+            elif is_pl and prior_filters:
+                ob_result = _query_sum(account.id, prior_filters)
+                ob_debit = int(ob_result[0])
+                ob_credit = int(ob_result[1])
+                if is_debit_normal:
+                    opening = ob_debit - ob_credit
+                else:
+                    opening = ob_credit - ob_debit
+        elif is_bs:
+            # pf==0 でも前年以前のB/S残高は必要
+            before_result = _query_sum(account.id, [JournalEntry.date < start_of_year])
+            before_d, before_c = int(before_result[0]), int(before_result[1])
+            if is_debit_normal:
+                opening = before_d - before_c
+            else:
+                opening = before_c - before_d
 
         # 残高
         if is_debit_normal:
@@ -191,11 +172,11 @@ def balance():
 
     net_income = total_revenue - total_expense
 
-    from app.services.fiscal import PERIOD_LABELS
     return render_template(
         "reports/balance.html",
         year=year,
-        period=period,
+        pf=pf,
+        pt=pt,
         period_labels=PERIOD_LABELS,
         balances=balances,
         account_types=account_types,

@@ -2,31 +2,32 @@
 {% block title %}残高試算表 - いいかんじ™家計簿{% endblock %}
 
 {% block content %}
+{% set range_label %}
+  {% if pf == pt %}{{ period_labels.get(pf, '') }}{% else %}{{ period_labels.get(pf, '') }}〜{{ period_labels.get(pt, '') }}{% endif %}
+{% endset %}
 <h2><i class="bi bi-table"></i> 残高試算表
-  <small class="text-muted">{{ year }}年{% if period is not none %}{{ period_labels.get(period, '') }}{% endif %}</small>
+  <small class="text-muted">{{ year }}年 {{ range_label }}</small>
 </h2>
 
-<div class="d-flex flex-wrap gap-1 mb-4 mt-2 align-items-center">
-  <select id="yearSelect" class="form-select form-select-sm" style="width:auto"
-          onchange="location.href='?year='+this.value{% if period is not none %}+'&period={{ period }}'{% endif %}">
-    {% for y in range(year - 2, year + 3) %}
-    <option value="{{ y }}" {% if y == year %}selected{% endif %}>{{ y }}年</option>
+<div class="mb-4 mt-2">
+  <div class="d-flex align-items-center gap-2 mb-2">
+    <select id="yearSelect" class="form-select form-select-sm" style="width:auto">
+      {% for y in range(year - 2, year + 3) %}
+      <option value="{{ y }}" {% if y == year %}selected{% endif %}>{{ y }}年</option>
+      {% endfor %}
+    </select>
+    <small class="text-muted">ドラッグで範囲を選択 / クリックで単月</small>
+  </div>
+  <div class="d-flex flex-wrap gap-0" id="periodBar" style="user-select:none">
+    {% set all_periods = [0] + range(1,16)|list %}
+    {% set short_labels = {0:'期首',1:'1月',2:'2月',3:'3月',4:'4月',5:'5月',6:'6月',7:'7月',8:'8月',9:'9月',10:'10月',11:'11月',12:'12月',13:'決1',14:'決2',15:'決3'} %}
+    {% for p in all_periods %}
+    <button type="button" class="btn btn-sm period-btn {% if pf <= p and p <= pt %}btn-dark{% else %}btn-outline-secondary{% endif %}"
+            data-period="{{ p }}" style="border-radius:0;min-width:3rem;{% if p == 0 %}border-radius:.25rem 0 0 .25rem{% elif p == 15 %}border-radius:0 .25rem .25rem 0{% endif %}">
+      {{ short_labels[p] }}
+    </button>
     {% endfor %}
-  </select>
-  <a href="?year={{ year }}&period=0"
-     class="btn btn-sm {% if period == 0 %}btn-dark{% else %}btn-outline-secondary{% endif %}">期首</a>
-  {% for m in range(1, 13) %}
-  <a href="?year={{ year }}&period={{ m }}"
-     class="btn btn-sm {% if period == m %}btn-dark{% else %}btn-outline-secondary{% endif %}">{{ m }}月</a>
-  {% endfor %}
-  <a href="?year={{ year }}&period=13"
-     class="btn btn-sm {% if period == 13 %}btn-dark{% else %}btn-outline-secondary{% endif %}">決算1</a>
-  <a href="?year={{ year }}&period=14"
-     class="btn btn-sm {% if period == 14 %}btn-dark{% else %}btn-outline-secondary{% endif %}">決算2</a>
-  <a href="?year={{ year }}&period=15"
-     class="btn btn-sm {% if period == 15 %}btn-dark{% else %}btn-outline-secondary{% endif %}">決算3</a>
-  <a href="?year={{ year }}"
-     class="btn btn-sm {% if period is none %}btn-dark{% else %}btn-outline-secondary{% endif %}">年間</a>
+  </div>
 </div>
 
 {% if balances %}
@@ -114,7 +115,7 @@
       <tr class="{% if net_income >= 0 %}table-success{% else %}table-danger{% endif %}">
         <td colspan="3">
           <strong><i class="bi bi-graph-up-arrow"></i>
-            {{ year }}年{% if period is not none %}{{ period_labels.get(period, '') }}{% endif %}の損益
+            {{ year }}年 {{ range_label }} の損益
           </strong>
         </td>
         <td colspan="3" class="text-end">
@@ -127,7 +128,96 @@
 </div>
 {% else %}
 <div class="text-center text-muted py-5">
-  <p>{{ year }}年{% if period is not none %}{{ period_labels.get(period, '') }}{% endif %}の仕訳データがありません。</p>
+  <p>{{ year }}年 {{ range_label }} の仕訳データがありません。</p>
 </div>
 {% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function() {
+  var bar = document.getElementById('periodBar');
+  var btns = bar.querySelectorAll('.period-btn');
+  var dragging = false;
+  var dragStart = null;
+  var dragEnd = null;
+
+  function navigate(pfVal, ptVal) {
+    var year = document.getElementById('yearSelect').value;
+    location.href = '?year=' + year + '&pf=' + pfVal + '&pt=' + ptVal;
+  }
+
+  function getPeriod(btn) {
+    return parseInt(btn.dataset.period);
+  }
+
+  function highlight(pf, pt) {
+    btns.forEach(function(b) {
+      var p = getPeriod(b);
+      if (p >= pf && p <= pt) {
+        b.className = b.className.replace('btn-outline-secondary', 'btn-dark');
+      } else {
+        b.className = b.className.replace('btn-dark', 'btn-outline-secondary');
+      }
+    });
+  }
+
+  btns.forEach(function(btn) {
+    btn.addEventListener('mousedown', function(e) {
+      e.preventDefault();
+      dragging = true;
+      dragStart = getPeriod(btn);
+      dragEnd = dragStart;
+      highlight(dragStart, dragEnd);
+    });
+
+    btn.addEventListener('mouseenter', function() {
+      if (!dragging) return;
+      dragEnd = getPeriod(btn);
+      var pf = Math.min(dragStart, dragEnd);
+      var pt = Math.max(dragStart, dragEnd);
+      highlight(pf, pt);
+    });
+
+    // Touch support
+    btn.addEventListener('touchstart', function(e) {
+      e.preventDefault();
+      dragging = true;
+      dragStart = getPeriod(btn);
+      dragEnd = dragStart;
+      highlight(dragStart, dragEnd);
+    }, {passive: false});
+  });
+
+  bar.addEventListener('touchmove', function(e) {
+    if (!dragging) return;
+    e.preventDefault();
+    var touch = e.touches[0];
+    var el = document.elementFromPoint(touch.clientX, touch.clientY);
+    if (el && el.classList.contains('period-btn')) {
+      dragEnd = getPeriod(el);
+      var pf = Math.min(dragStart, dragEnd);
+      var pt = Math.max(dragStart, dragEnd);
+      highlight(pf, pt);
+    }
+  }, {passive: false});
+
+  function endDrag() {
+    if (!dragging) return;
+    dragging = false;
+    var pf = Math.min(dragStart, dragEnd);
+    var pt = Math.max(dragStart, dragEnd);
+    navigate(pf, pt);
+  }
+
+  document.addEventListener('mouseup', endDrag);
+  document.addEventListener('touchend', endDrag);
+
+  document.getElementById('yearSelect').addEventListener('change', function() {
+    var pf = {{ pf }};
+    var pt = {{ pt }};
+    navigate(pf, pt);
+  });
+})();
+</script>
 {% endblock %}

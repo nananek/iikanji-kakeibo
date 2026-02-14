@@ -156,7 +156,7 @@
           <div class="col-md-3">
             <label class="form-label">計上期間</label>
             <select class="form-select" id="modalFiscalPeriod">
-              <option value="">自動（日付の月）</option>
+              <option value="">期中</option>
               <option value="0">期首振戻月</option>
               <option value="13">決算月1</option>
               <option value="14">決算月2</option>
@@ -349,6 +349,7 @@ function openEditModal(entryId) {
       document.getElementById('modalDate').value = data.date;
       document.getElementById('modalDesc').value = data.description;
       document.getElementById('modalFiscalPeriod').value = (data.fiscal_period !== null && data.fiscal_period !== undefined) ? String(data.fiscal_period) : '';
+      modalUpdateDateForPeriod();
       data.lines.forEach(function(l) { modalAddLine(l); });
 
       if (!editModal) {
@@ -361,19 +362,24 @@ function openEditModal(entryId) {
     });
 }
 
-// 計上期間変更時に日付を自動調整
-document.getElementById('modalFiscalPeriod').addEventListener('change', function() {
-  var fp = this.value;
+// 計上期間変更時に日付を自動調整・readonly制御
+function modalUpdateDateForPeriod() {
+  var fp = document.getElementById('modalFiscalPeriod').value;
   var dateEl = document.getElementById('modalDate');
   var current = dateEl.value;
   if (!current) return;
   var year = current.substring(0, 4);
   if (fp === '0') {
     dateEl.value = year + '-01-01';
+    dateEl.readOnly = true;
   } else if (fp === '13' || fp === '14' || fp === '15') {
     dateEl.value = year + '-12-31';
+    dateEl.readOnly = true;
+  } else {
+    dateEl.readOnly = false;
   }
-});
+}
+document.getElementById('modalFiscalPeriod').addEventListener('change', modalUpdateDateForPeriod);
 
 function saveEntry() {
   var lines = [];
