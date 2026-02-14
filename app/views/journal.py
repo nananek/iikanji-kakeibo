@@ -3,6 +3,7 @@ from datetime import date
 
 from flask import Blueprint, render_template, redirect, url_for, flash, request, jsonify
 from flask_login import login_required, current_user
+from sqlalchemy import func
 
 from app.extensions import db
 from app.models.account import Account
@@ -290,3 +291,80 @@ def delete(entry_id):
     db.session.commit()
     flash(f"伝票 #{num} を削除しました。", "success")
     return redirect(url_for("journal.index"))
+
+
+@bp.route("/bulk-delete", methods=["POST"])
+@login_required
+def bulk_delete():
+    """仕訳の一括削除"""
+    entry_ids = request.form.getlist("entry_ids", type=int)
+    if not entry_ids:
+        flash("削除する仕訳が選択されていません。", "warning")
+        return redirect(url_for("journal.index"))
+
+    entries = JournalEntry.query.filter(
+        JournalEntry.id.in_(entry_ids),
+        JournalEntry.user_id == current_user.id,
+    ).all()
+    count = len(entries)
+    for entry in entries:
+        db.session.delete(entry)
+    db.session.commit()
+    flash(f"{count}件の仕訳を削除しました。", "success")
+    return redirect(url_for("journal.index"))
+
+
+SOURCE_LABELS = {
+    "cashbook": "出納帳 / CSV / Web取込",
+    "journal": "仕訳帳",
+    "ai_receipt": "AI証憑仕訳",
+}
+
+
+@bp.route("/batches")
+@login_required
+def batches():
+    """インポート履歴"""
+    batch_list = (
+        db.session.query(
+            JournalEntry.batch_id,
+            JournalEntry.source,
+            func.count(JournalEntry.id).label("count"),
+            func.min(JournalEntry.date).label("date_from"),
+            func.max(JournalEntry.date).label("date_to"),
+            func.min(JournalEntry.created_at).label("imported_at"),
+        )
+        .filter(
+            JournalEntry.user_id == current_user.id,
+            JournalEntry.batch_id.isnot(None),
+        )
+        .group_by(JournalEntry.batch_id, JournalEntry.source)
+        .order_by(func.min(JournalEntry.created_at).desc())
+        .all()
+    )
+
+    return render_template(
+        "journal/batches.html",
+        batches=batch_list,
+        source_labels=SOURCE_LABELS,
+    )
+
+
+@bp.route("/batches/<batch_id>/delete", methods=["POST"])
+@login_required
+def delete_batch(batch_id):
+    """インポートバッチの一括削除"""
+    entries = JournalEntry.query.filter_by(
+        user_id=current_user.id, batch_id=batch_id
+    ).all()
+
+    if not entries:
+        flash("該当するバッチが見つかりません。", "warning")
+        return redirect(url_for("journal.batches"))
+
+    count = len(entries)
+    for entry in entries:
+        db.session.delete(entry)
+    db.session.commit()
+    flash(f"{count}件の仕訳を削除しました。", "success")
+    return redirect(url_for("journal.batches"))

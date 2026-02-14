@@ -1,6 +1,7 @@
 """CSV明細取り込みビュー"""
 
 import json
+import uuid
 
 from flask import Blueprint, render_template, redirect, url_for, flash, request, session
 from flask_login import login_required, current_user
@@ -207,6 +208,7 @@ def confirm():
         rows_data = json.loads(import_rows)
         imported = 0
         skipped = 0
+        batch_id = str(uuid.uuid4())
 
         for row in rows_data:
             if not row.get("enabled", True):
@@ -243,6 +245,7 @@ def confirm():
                         to_account_id=category_id,
                         amount=amount,
                         description=description,
+                        batch_id=batch_id,
                     )
                 else:
                     # 入金 → 振替元から取込先口座へ
@@ -253,6 +256,7 @@ def confirm():
                         to_account_id=payment_account_id,
                         amount=amount,
                         description=description,
+                        batch_id=batch_id,
                     )
                 imported += 1
             elif deposit > 0:
@@ -264,6 +268,7 @@ def confirm():
                     category_account_id=category_id,
                     amount=deposit,
                     description=description,
+                    batch_id=batch_id,
                 )
                 imported += 1
             elif withdrawal > 0:
@@ -275,6 +280,7 @@ def confirm():
                     category_account_id=category_id,
                     amount=withdrawal,
                     description=description,
+                    batch_id=batch_id,
                 )
                 imported += 1
             else:

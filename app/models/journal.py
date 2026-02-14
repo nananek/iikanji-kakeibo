@@ -14,6 +14,7 @@ class JournalEntry(db.Model):
     entry_number = db.Column(db.Integer, nullable=False)
     description = db.Column(db.String(255), nullable=False, default="")
     source = db.Column(db.String(20), nullable=False, default="journal")
+    batch_id = db.Column(db.String(36), nullable=True, index=True)
     created_at = db.Column(
         db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc)
     )

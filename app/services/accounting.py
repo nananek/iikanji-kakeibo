@@ -15,7 +15,8 @@ def get_next_entry_number(user_id):
 
 
 def create_cashbook_entry(user_id, date, transaction_type, payment_account_id,
-                          category_account_id, amount, description):
+                          category_account_id, amount, description,
+                          batch_id=None):
     """出納帳の入力から仕訳を自動生成する
 
     Args:
@@ -30,6 +31,7 @@ def create_cashbook_entry(user_id, date, transaction_type, payment_account_id,
         entry_number=get_next_entry_number(user_id),
         description=description,
         source="cashbook",
+        batch_id=batch_id,
     )
     db.session.add(entry)
     db.session.flush()
@@ -73,7 +75,7 @@ def create_cashbook_entry(user_id, date, transaction_type, payment_account_id,
 
 
 def create_journal_entry(user_id, date, description, lines_data,
-                         source="journal"):
+                         source="journal", batch_id=None):
     """仕訳伝票を直接作成する
 
     Args:
@@ -93,6 +95,7 @@ def create_journal_entry(user_id, date, description, lines_data,
         entry_number=get_next_entry_number(user_id),
         description=description,
         source=source,
+        batch_id=batch_id,
     )
     db.session.add(entry)
     db.session.flush()
@@ -112,7 +115,7 @@ def create_journal_entry(user_id, date, description, lines_data,
 
 
 def create_transfer_entry(user_id, date, from_account_id, to_account_id,
-                          amount, description):
+                          amount, description, batch_id=None):
     """口座間振替の仕訳を作成する
 
     Args:
@@ -126,6 +129,7 @@ def create_transfer_entry(user_id, date, from_account_id, to_account_id,
         entry_number=get_next_entry_number(user_id),
         description=description,
         source="cashbook",
+        batch_id=batch_id,
     )
     db.session.add(entry)
     db.session.flush()
