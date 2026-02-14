@@ -334,7 +334,7 @@ def _call_openai_text(api_key: str, model: str, prompt: str,
             "messages": [{"role": "user", "content": prompt}],
             "max_tokens": max_tokens,
         },
-        timeout=60.0,
+        timeout=120.0,
     )
     response.raise_for_status()
     content = response.json()["choices"][0]["message"]["content"]
@@ -354,7 +354,7 @@ def _call_google_text(api_key: str, model: str, prompt: str,
                 "maxOutputTokens": max_tokens,
             },
         },
-        timeout=60.0,
+        timeout=120.0,
     )
     response.raise_for_status()
     text = response.json()["candidates"][0]["content"]["parts"][0]["text"]
@@ -375,7 +375,7 @@ def _call_anthropic_text(api_key: str, model: str, prompt: str,
             "max_tokens": max_tokens,
             "messages": [{"role": "user", "content": prompt}],
         },
-        timeout=60.0,
+        timeout=120.0,
     )
     response.raise_for_status()
     content = response.json()["content"][0]["text"]
@@ -672,7 +672,7 @@ def parse_web_text(user_id: int, raw_text: str,
     )
 
     try:
-        result = text_handler(api_key, model, prompt, max_tokens=4000)
+        result = text_handler(api_key, model, prompt, max_tokens=16000)
     except httpx.HTTPStatusError as e:
         logger.error("AI API HTTP error for user %s: %s", user_id, e)
         raise RuntimeError(
