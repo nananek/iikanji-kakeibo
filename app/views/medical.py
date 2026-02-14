@@ -232,6 +232,7 @@ def api_get(entry_id):
         "patient_name": me.patient_name if me else "",
         "hospital_name": me.hospital_name if me else "",
         "provider_type": me.provider_type or "" if me else "",
+        "treatment_description": me.treatment_description if me else "",
         "insurance_reimbursement": me.insurance_reimbursement if me else 0,
     })
 
@@ -265,6 +266,7 @@ def api_update(entry_id):
         me.patient_name = (data.get("patient_name") or "").strip()
         me.hospital_name = (data.get("hospital_name") or "").strip()
         me.provider_type = data.get("provider_type") or None
+        me.treatment_description = (data.get("treatment_description") or "").strip()
         me.insurance_reimbursement = int(data.get("insurance_reimbursement") or 0)
         me.amount_paid = amount_paid
     else:
@@ -275,6 +277,7 @@ def api_update(entry_id):
             patient_name=(data.get("patient_name") or "").strip(),
             hospital_name=(data.get("hospital_name") or "").strip(),
             provider_type=data.get("provider_type") or None,
+            treatment_description=(data.get("treatment_description") or "").strip(),
             amount_paid=amount_paid,
             insurance_reimbursement=int(data.get("insurance_reimbursement") or 0),
         )
@@ -282,3 +285,33 @@ def api_update(entry_id):
 
     db.session.commit()
     return jsonify({"success": True})
+
+
+@bp.route("/api/suggestions")
+@login_required
+def api_suggestions():
+    """受診者名・病院名の補完候補を返す"""
+    patients = (
+        db.session.query(MedicalExpense.patient_name)
+        .filter(
+            MedicalExpense.user_id == current_user.id,
+            MedicalExpense.patient_name != "",
+        )
+        .distinct()
+        .order_by(MedicalExpense.patient_name)
+        .all()
+    )
+    hospitals = (
+        db.session.query(MedicalExpense.hospital_name)
+        .filter(
+            MedicalExpense.user_id == current_user.id,
+            MedicalExpense.hospital_name != "",
+        )
+        .distinct()
+        .order_by(MedicalExpense.hospital_name)
+        .all()
+    )
+    return jsonify({
+        "patients": [r[0] for r in patients],
+        "hospitals": [r[0] for r in hospitals],
+    })

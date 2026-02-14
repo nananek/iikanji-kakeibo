@@ -68,6 +68,7 @@
         <th>受診者</th>
         <th>病院・薬局</th>
         <th>区分</th>
+        <th>メモ</th>
         <th class="text-end">支払額</th>
         <th class="text-end">保険補填</th>
         <th class="text-end">自己負担</th>
@@ -92,6 +93,7 @@
           <span class="badge bg-secondary">その他</span>
           {% endif %}
         </td>
+        <td class="text-muted small">{{ e.treatment_description }}</td>
         <td class="text-end">&yen;{{ "{:,}".format(e.amount) }}</td>
         <td class="text-end">
           {% if e.insurance_reimbursement %}
@@ -130,12 +132,14 @@
 
         <div class="mb-3">
           <label for="medPatient" class="form-label">受診者</label>
-          <input type="text" class="form-control" id="medPatient" maxlength="100" placeholder="例: 山田太郎">
+          <input type="text" class="form-control" id="medPatient" list="patientList" maxlength="100" placeholder="例: 山田太郎" autocomplete="off">
+          <datalist id="patientList"></datalist>
         </div>
 
         <div class="mb-3">
           <label for="medHospital" class="form-label">病院・薬局名</label>
-          <input type="text" class="form-control" id="medHospital" maxlength="200" placeholder="例: ○○病院">
+          <input type="text" class="form-control" id="medHospital" list="hospitalList" maxlength="200" placeholder="例: ○○病院" autocomplete="off">
+          <datalist id="hospitalList"></datalist>
         </div>
 
         <div class="row mb-3">
@@ -157,6 +161,11 @@
             </div>
           </div>
         </div>
+
+        <div class="mb-3">
+          <label for="medDescription" class="form-label">メモ</label>
+          <input type="text" class="form-control" id="medDescription" maxlength="255" placeholder="例: 内科診察、処方薬">
+        </div>
       </div>
       <div class="modal-footer">
         <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">キャンセル</button>
@@ -175,15 +184,38 @@
 (function() {
   var editingEntryId = null;
   var modal = null;
+  var suggestionsLoaded = false;
 
   function getModal() {
     if (!modal) modal = new bootstrap.Modal(document.getElementById('medicalModal'));
     return modal;
   }
 
+  function loadSuggestions() {
+    if (suggestionsLoaded) return;
+    suggestionsLoaded = true;
+    fetch('/medical/api/suggestions')
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        var patientList = document.getElementById('patientList');
+        data.patients.forEach(function(name) {
+          var opt = document.createElement('option');
+          opt.value = name;
+          patientList.appendChild(opt);
+        });
+        var hospitalList = document.getElementById('hospitalList');
+        data.hospitals.forEach(function(name) {
+          var opt = document.createElement('option');
+          opt.value = name;
+          hospitalList.appendChild(opt);
+        });
+      });
+  }
+
   window.openMedicalModal = function(entryId) {
     editingEntryId = entryId;
     document.getElementById('medicalModalError').classList.add('d-none');
+    loadSuggestions();
 
     fetch('/medical/api/' + entryId)
       .then(function(r) { return r.json(); })
@@ -192,6 +224,7 @@
         document.getElementById('medHospital').value = data.hospital_name;
         document.getElementById('medProviderType').value = data.provider_type;
         document.getElementById('medReimbursement').value = data.insurance_reimbursement;
+        document.getElementById('medDescription').value = data.treatment_description;
         getModal().show();
       });
   };
@@ -204,6 +237,7 @@
       patient_name: document.getElementById('medPatient').value,
       hospital_name: document.getElementById('medHospital').value,
       provider_type: document.getElementById('medProviderType').value,
+      treatment_description: document.getElementById('medDescription').value,
       insurance_reimbursement: parseInt(document.getElementById('medReimbursement').value) || 0,
     };
 
