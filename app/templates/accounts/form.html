@@ -12,7 +12,7 @@
       <div class="row mb-3">
         <div class="col-md-3">
           {{ form.code.label(class="form-label") }}
-          {{ form.code(class="form-control", disabled=(is_edit and account.is_system)) }}
+          {{ form.code(class="form-control", readonly=(is_edit and account.is_system)) }}
           {% for error in form.code.errors %}
           <div class="invalid-feedback d-block">{{ error }}</div>
           {% endfor %}
@@ -27,6 +27,9 @@
         <div class="col-md-4">
           {{ form.account_type_id.label(class="form-label") }}
           {{ form.account_type_id(class="form-select", disabled=(is_edit and account.is_system)) }}
+          {% if is_edit and account.is_system %}
+          <input type="hidden" name="account_type_id" value="{{ account.account_type_id }}">
+          {% endif %}
         </div>
       </div>
 
