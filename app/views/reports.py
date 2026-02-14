@@ -159,15 +159,6 @@ def tax():
     )
 
 
-# provider_type → 医療費集計フォームの区分列マッピング
-_PROVIDER_CATEGORY = {
-    "hospital": "診療・治療",
-    "pharmacy": "医薬品購入",
-    "nursing": "介護保険サービス",
-    "other": "その他の医療費",
-}
-
-
 @bp.route("/tax/medical-csv")
 @login_required
 def medical_csv():
@@ -178,21 +169,27 @@ def medical_csv():
     output = io.StringIO()
     writer = csv.writer(output)
 
-    # ヘッダー行（Ver 3.1 準拠）
+    # ヘッダー行（Ver 3.1 準拠: A〜H列）
     writer.writerow([
         "医療を受けた人",
         "病院・薬局などの名称",
-        "医療費の区分",
+        "診療・治療",
+        "医薬品購入",
+        "介護保険サービス",
+        "その他の医療費",
         "支払った医療費の金額",
         "左のうち、補てんされる金額",
     ])
 
     for e in medical_summary["expenses"]:
-        category = _PROVIDER_CATEGORY.get(e["provider_type"], "診療・治療")
+        pt = e["provider_type"]
         writer.writerow([
             e["patient_name"],
             e["hospital_name"],
-            category,
+            "該当する" if pt == "hospital" or not pt else "",
+            "該当する" if pt == "pharmacy" else "",
+            "該当する" if pt == "nursing" else "",
+            "該当する" if pt == "other" else "",
             e["amount"],
             e["insurance_reimbursement"] if e["insurance_reimbursement"] else "",
         ])
