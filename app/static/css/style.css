@@ -1,5 +1,18 @@
 body {
+  font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   background-color: #f8f9fa;
+}
+
+/* 金額・数値: タビュラー数字（等幅数字 + 細いカンマ） */
+.table td.text-end,
+.table th.text-end,
+.table tfoot td,
+.card .text-end,
+.suggestion-line .amount,
+.num {
+  font-family: "Inter", sans-serif;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
 }
 
 .navbar-brand {
@@ -140,6 +153,5 @@ body {
 }
 
 .suggestion-line .amount {
-  font-family: monospace;
   white-space: nowrap;
 }
