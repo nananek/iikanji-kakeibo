@@ -97,6 +97,13 @@ def create_app(config_class=Config):
         allowed = get_allowed_account_ids()
         return mask_account_name(account_name, account_id, allowed)
 
+    # Serve service worker from root scope
+    @app.route("/sw.js")
+    def service_worker():
+        from flask import send_from_directory
+        return send_from_directory(app.static_folder, "sw.js",
+                                   mimetype="application/javascript")
+
     # CLI commands
     register_cli(app)
 

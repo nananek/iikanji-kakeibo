@@ -1,0 +1,21 @@
+{
+  "name": "いいかんじ™家計簿",
+  "short_name": "いいかんじ",
+  "description": "家計簿なのに、ちゃんと複式簿記。",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#212529",
+  "icons": [
+    {
+      "src": "/static/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/static/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}
