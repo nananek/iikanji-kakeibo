@@ -119,7 +119,7 @@ def generate_closing_entries(user_id, year):
     """損益振替仕訳を生成"""
     revenue_type = AccountType.query.filter_by(code="revenue").first()
     expense_type = AccountType.query.filter_by(code="expense").first()
-    retained = Account.query.filter_by(user_id=user_id, code="3020").first()
+    retained = Account.query.filter_by(user_id=user_id, system_role="retained_earnings").first()
 
     if not revenue_type or not expense_type or not retained:
         return "勘定科目（収益・費用・繰越利益）が見つかりません。"

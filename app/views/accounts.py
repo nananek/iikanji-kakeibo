@@ -84,6 +84,8 @@ def index():
     expense_type = AccountType.query.filter_by(code="expense").first()
     revenue_type = AccountType.query.filter_by(code="revenue").first()
 
+    tax_category_labels = {k: v for k, v in TAX_CATEGORIES if k}
+
     return render_template(
         "accounts/index.html",
         grouped=grouped,
@@ -91,6 +93,7 @@ def index():
         expense_type_id=expense_type.id if expense_type else 0,
         revenue_type_id=revenue_type.id if revenue_type else 0,
         tax_categories=TAX_CATEGORIES,
+        tax_category_labels=tax_category_labels,
         cost_types=COST_TYPES,
     )
 
@@ -114,10 +117,12 @@ def api_get(account_id):
         "cost_type": account.cost_type or "",
         "is_active": account.is_active,
         "is_system": account.is_system,
+        "system_role": account.system_role or "",
     }
     if copy:
         data["code"] = _next_code(account.code, get_effective_user_id())
         data["is_system"] = False
+        data["system_role"] = ""
         data["id"] = None
 
     return jsonify(data)
@@ -200,6 +205,10 @@ def api_update(account_id):
     account.cost_type = data.get("cost_type") or None
 
     new_is_active = data.get("is_active", True)
+
+    # 事業主勘定は無効化不可
+    if account.system_role and not new_is_active:
+        return jsonify({"error": "この科目はシステムで使用されるため無効化できません。"}), 400
 
     # 有効→無効 の場合: 残高振替チェック
     if account.is_active and not new_is_active:

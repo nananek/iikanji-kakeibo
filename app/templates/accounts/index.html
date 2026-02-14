@@ -17,14 +17,18 @@
   </div>
   {% if accounts %}
   <div class="table-responsive">
-    <table class="table table-sm table-hover mb-0">
+    <table class="table table-sm table-hover mb-0" style="table-layout:fixed">
+      <colgroup>
+        <col style="width:8%">
+        <col style="width:35%">
+        <col>
+        <col style="width:6rem">
+      </colgroup>
       <thead class="table-light">
         <tr>
           <th>コード</th>
           <th>科目名</th>
           <th>説明</th>
-          <th>確定申告区分</th>
-          <th>状態</th>
           <th></th>
         </tr>
       </thead>
@@ -37,20 +41,14 @@
             {% if account.is_system %}
             <span class="badge bg-info">標準</span>
             {% endif %}
-          </td>
-          <td>{{ account.description }}</td>
-          <td>
-            {% if account.tax_category %}
-            <span class="badge bg-warning text-dark">{{ account.tax_category }}</span>
-            {% endif %}
-          </td>
-          <td>
-            {% if account.is_active %}
-            <span class="badge bg-success">有効</span>
-            {% else %}
+            {% if not account.is_active %}
             <span class="badge bg-secondary">無効</span>
             {% endif %}
+            {% if account.tax_category %}
+            <span class="badge bg-warning text-dark">{{ tax_category_labels.get(account.tax_category, account.tax_category) }}</span>
+            {% endif %}
           </td>
+          <td>{{ account.description }}</td>
           <td class="text-nowrap">
             <button type="button" class="btn btn-outline-success btn-sm" title="コピーして追加"
                     onclick="openAccountModal({{ account.id }}, true)">
@@ -251,6 +249,7 @@
     document.getElementById('acctTax').value = '';
     document.getElementById('acctCost').value = '';
     document.getElementById('acctActive').checked = true;
+    document.getElementById('acctActive').disabled = false;
     document.getElementById('accountModalError').classList.add('d-none');
     document.getElementById('deactivateSection').classList.add('d-none');
     editingId = null;
@@ -282,6 +281,7 @@
           document.getElementById('acctTax').value = data.tax_category;
           document.getElementById('acctCost').value = data.cost_type;
           document.getElementById('acctActive').checked = data.is_active;
+          document.getElementById('acctActive').disabled = (!copy && !!data.system_role);
           toggleCostType();
           getModal().show();
         });

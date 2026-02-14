@@ -33,6 +33,7 @@ class Account(db.Model):
     description = db.Column(db.String(255), default="")
     tax_category = db.Column(db.String(50), nullable=True)
     cost_type = db.Column(db.String(10), nullable=True)  # 'fixed' / 'variable' / 'occasional'
+    system_role = db.Column(db.String(30), nullable=True)  # 'proprietor' / 'retained_earnings'
     is_system = db.Column(db.Boolean, nullable=False, default=False)
     is_active = db.Column(db.Boolean, nullable=False, default=True)
     deactivated_year = db.Column(db.Integer, nullable=True)

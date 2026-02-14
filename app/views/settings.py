@@ -244,7 +244,7 @@ def audit_add():
             user_id=current_user.id, is_active=True
         ).all()
         for account in accounts:
-            if account.tax_category or account.code == "3030":
+            if account.tax_category or account.system_role == "proprietor":
                 db.session.add(AuditGrantAccount(
                     audit_grant_id=grant.id,
                     account_id=account.id,
@@ -341,9 +341,9 @@ def audit_accounts_save(grant_id):
 
     selected_ids = set(request.form.getlist("account_ids", type=int))
 
-    # 事業主(3030)は常に含める
+    # 事業主は常に含める
     proprietor = Account.query.filter_by(
-        user_id=current_user.id, code="3030"
+        user_id=current_user.id, system_role="proprietor"
     ).first()
     if proprietor:
         selected_ids.add(proprietor.id)

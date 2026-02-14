@@ -22,7 +22,7 @@
       <h5 class="mt-4 mb-2">{{ current_type.name }}</h5>
     {% endif %}
     <div class="form-check">
-      {% if account.code == '3030' %}
+      {% if account.system_role == 'proprietor' %}
       <input class="form-check-input" type="checkbox" name="account_ids"
              value="{{ account.id }}" checked disabled>
       <input type="hidden" name="account_ids" value="{{ account.id }}">
@@ -37,7 +37,7 @@
         {% if account.tax_category %}
           <span class="badge bg-info text-dark">{{ account.tax_category }}</span>
         {% endif %}
-        {% if account.code == '3030' %}
+        {% if account.system_role == 'proprietor' %}
           <span class="badge bg-dark">常時公開</span>
         {% endif %}
       </label>

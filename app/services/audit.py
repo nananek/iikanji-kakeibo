@@ -128,7 +128,7 @@ def is_entry_locked_for_auditor(entry, allowed_account_ids):
 def get_proprietor_account_id(user_id):
     """事業主科目のIDを返す"""
     account = Account.query.filter_by(
-        user_id=user_id, code="3030"
+        user_id=user_id, system_role="proprietor"
     ).first()
     return account.id if account else None
 

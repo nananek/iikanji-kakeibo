@@ -3,6 +3,12 @@
 from app.extensions import db
 from app.models.account import AccountType, Account
 
+# system_role: 特殊科目の役割定義
+SYSTEM_ROLES = {
+    "3020": "retained_earnings",
+    "3030": "proprietor",
+}
+
 
 ACCOUNT_TYPES = [
     {"name": "資産", "code": "asset", "normal_balance": "debit", "display_order": 1},
@@ -101,6 +107,7 @@ def seed_accounts_for_user(user_id):
             name=name,
             description=desc,
             tax_category=tax_cat,
+            system_role=SYSTEM_ROLES.get(code),
             is_system=True,
             is_active=True,
             display_order=order,
