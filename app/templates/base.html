@@ -39,6 +39,12 @@
             </a>
           </li>
           <li class="nav-item">
+            <a class="nav-link {% if request.endpoint and request.endpoint.startswith('web_import.') %}active{% endif %}"
+               href="{{ url_for('web_import.upload') }}">
+              <i class="bi bi-globe"></i> Web取込
+            </a>
+          </li>
+          <li class="nav-item">
             <a class="nav-link {% if request.endpoint and request.endpoint.startswith('ai_journal.') %}active{% endif %}"
                href="{{ url_for('ai_journal.upload') }}">
               <i class="bi bi-robot"></i> AI証憑仕訳

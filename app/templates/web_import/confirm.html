@@ -1,0 +1,198 @@
+{% extends "base.html" %}
+{% block title %}取込確認 - Web取込 - いいかんじ家計簿{% endblock %}
+
+{% block content %}
+<h2><i class="bi bi-globe"></i> Web明細取込</h2>
+
+<div class="card shadow-sm mt-4">
+  <div class="card-header d-flex justify-content-between align-items-center">
+    <div>
+      <strong>Step 2:</strong> 確認して取込
+      <span class="text-muted ms-2">取込先: {{ payment_account.name }} / {{ parsed|length }}件</span>
+    </div>
+    <div>
+      <button type="button" class="btn btn-sm btn-outline-secondary" onclick="toggleAll(true)">全選択</button>
+      <button type="button" class="btn btn-sm btn-outline-secondary" onclick="toggleAll(false)">全解除</button>
+    </div>
+  </div>
+  <div class="card-body">
+    <!-- 日付一括変更 -->
+    <div class="card bg-light mb-3">
+      <div class="card-body py-2">
+        <div class="row align-items-end g-2">
+          <div class="col-auto">
+            <label class="form-label mb-0 small fw-bold">日付一括変更</label>
+            <input type="date" class="form-control form-control-sm" id="bulkDate">
+          </div>
+          <div class="col-auto d-flex align-items-end">
+            <div class="form-check mb-1">
+              <input class="form-check-input" type="checkbox" id="appendOriginalDate" checked>
+              <label class="form-check-label small" for="appendOriginalDate">
+                元の日付を摘要に付記
+              </label>
+            </div>
+          </div>
+          <div class="col-auto">
+            <button type="button" class="btn btn-sm btn-outline-primary" onclick="applyBulkDate()">
+              <i class="bi bi-calendar-check"></i> 全行に適用
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <form method="POST" id="importForm">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="import_rows" id="importRows">
+
+      <div class="table-responsive">
+        <table class="table table-sm table-hover" id="confirmTable">
+          <thead class="table-light">
+            <tr>
+              <th style="width:3%">
+                <input type="checkbox" class="form-check-input" id="checkAll"
+                       checked onchange="toggleAll(this.checked)">
+              </th>
+              <th style="width:5%">行</th>
+              <th style="width:12%">日付</th>
+              <th style="width:30%">摘要</th>
+              <th style="width:10%" class="text-end">入金</th>
+              <th style="width:10%" class="text-end">出金</th>
+              <th style="width:25%">費目</th>
+              <th style="width:5%">状態</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in parsed %}
+            <tr data-idx="{{ loop.index0 }}"
+                {% if not row.date %}class="table-warning"{% endif %}>
+              <td>
+                <input type="checkbox" class="form-check-input row-check"
+                       data-idx="{{ loop.index0 }}"
+                       {% if row.date and (row.deposit or row.withdrawal) %}checked{% endif %}>
+              </td>
+              <td>{{ row.row_num }}</td>
+              <td class="date-cell">{{ row.date if row.date else '(不明)' }}</td>
+              <td class="desc-cell">{{ row.description }}</td>
+              <td class="text-end {% if row.deposit %}text-primary fw-bold{% endif %}">
+                {% if row.deposit %}&yen;{{ "{:,}".format(row.deposit) }}{% endif %}
+              </td>
+              <td class="text-end {% if row.withdrawal %}text-danger fw-bold{% endif %}">
+                {% if row.withdrawal %}&yen;{{ "{:,}".format(row.withdrawal) }}{% endif %}
+              </td>
+              <td>
+                <select class="form-select form-select-sm category-select" data-idx="{{ loop.index0 }}">
+                  {% for cid, cname in category_choices %}
+                  <option value="{{ cid }}"
+                    {% if row.deposit and cid == default_income_id %}selected
+                    {% elif row.withdrawal and cid == default_expense_id %}selected
+                    {% endif %}>{{ cname }}</option>
+                  {% endfor %}
+                </select>
+              </td>
+              <td>
+                {% if not row.date %}
+                <span class="badge bg-warning text-dark">日付なし</span>
+                {% elif not row.deposit and not row.withdrawal %}
+                <span class="badge bg-secondary">金額なし</span>
+                {% else %}
+                <span class="badge bg-success">OK</span>
+                {% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+
+      <div class="d-flex gap-2 align-items-center mt-3">
+        <button type="submit" class="btn btn-primary btn-lg">
+          <i class="bi bi-check-lg"></i>
+          <span id="importCount">{{ parsed|length }}</span>件を取り込む
+        </button>
+        <a href="{{ url_for('web_import.upload') }}" class="btn btn-outline-secondary">最初からやり直す</a>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+var parsedData = {{ parsed | tojson }};
+
+function toggleAll(checked) {
+  document.querySelectorAll('.row-check').forEach(function(cb) { cb.checked = checked; });
+  document.getElementById('checkAll').checked = checked;
+  updateCount();
+}
+
+function updateCount() {
+  var count = document.querySelectorAll('.row-check:checked').length;
+  document.getElementById('importCount').textContent = count;
+}
+
+document.querySelectorAll('.row-check').forEach(function(cb) {
+  cb.addEventListener('change', updateCount);
+});
+
+function applyBulkDate() {
+  var newDate = document.getElementById('bulkDate').value;
+  if (!newDate) {
+    alert('日付を入力してください。');
+    return;
+  }
+  var appendOrig = document.getElementById('appendOriginalDate').checked;
+
+  var rows = document.querySelectorAll('#confirmTable tbody tr');
+  rows.forEach(function(tr) {
+    var idx = parseInt(tr.dataset.idx);
+    var origDate = parsedData[idx].date;
+
+    // 摘要に元の日付を付記
+    if (appendOrig && origDate) {
+      var origFormatted = origDate.replace(/-/g, '/');
+      var desc = parsedData[idx].description;
+      // 既に付記済みでなければ追加
+      if (desc.indexOf('（取引日:') === -1) {
+        parsedData[idx].description = desc + '（取引日: ' + origFormatted + '）';
+        tr.querySelector('.desc-cell').textContent = parsedData[idx].description;
+      }
+    }
+
+    // 日付を更新
+    parsedData[idx].date = newDate;
+    tr.querySelector('.date-cell').textContent = newDate;
+    tr.classList.remove('table-warning');
+
+    // 状態バッジを更新
+    var statusCell = tr.querySelector('td:last-child');
+    if (parsedData[idx].deposit || parsedData[idx].withdrawal) {
+      statusCell.innerHTML = '<span class="badge bg-success">OK</span>';
+      tr.querySelector('.row-check').checked = true;
+    }
+  });
+
+  updateCount();
+}
+
+document.getElementById('importForm').addEventListener('submit', function(e) {
+  var rows = [];
+  document.querySelectorAll('.row-check').forEach(function(cb) {
+    var idx = parseInt(cb.dataset.idx);
+    var catSelect = document.querySelector('.category-select[data-idx="' + idx + '"]');
+    rows.push({
+      enabled: cb.checked,
+      date: parsedData[idx].date,
+      description: parsedData[idx].description,
+      deposit: parsedData[idx].deposit,
+      withdrawal: parsedData[idx].withdrawal,
+      category_id: catSelect ? parseInt(catSelect.value) : 0,
+    });
+  });
+  document.getElementById('importRows').value = JSON.stringify(rows);
+});
+
+updateCount();
+</script>
+{% endblock %}

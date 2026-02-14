@@ -318,6 +318,77 @@ _PROVIDER_HANDLERS = {
 }
 
 
+# --- テキスト専用プロバイダー呼出し ---
+
+
+def _call_openai_text(api_key: str, model: str, prompt: str,
+                      max_tokens: int = 2000) -> dict:
+    response = httpx.post(
+        "https://api.openai.com/v1/chat/completions",
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+        json={
+            "model": model,
+            "messages": [{"role": "user", "content": prompt}],
+            "max_tokens": max_tokens,
+        },
+        timeout=60.0,
+    )
+    response.raise_for_status()
+    content = response.json()["choices"][0]["message"]["content"]
+    return _extract_json(content)
+
+
+def _call_google_text(api_key: str, model: str, prompt: str,
+                      max_tokens: int = 2000) -> dict:
+    response = httpx.post(
+        f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
+        params={"key": api_key},
+        headers={"Content-Type": "application/json"},
+        json={
+            "contents": [{"parts": [{"text": prompt}]}],
+            "generationConfig": {
+                "responseMimeType": "application/json",
+                "maxOutputTokens": max_tokens,
+            },
+        },
+        timeout=60.0,
+    )
+    response.raise_for_status()
+    text = response.json()["candidates"][0]["content"]["parts"][0]["text"]
+    return _extract_json(text)
+
+
+def _call_anthropic_text(api_key: str, model: str, prompt: str,
+                         max_tokens: int = 2000) -> dict:
+    response = httpx.post(
+        "https://api.anthropic.com/v1/messages",
+        headers={
+            "x-api-key": api_key,
+            "anthropic-version": "2023-06-01",
+            "Content-Type": "application/json",
+        },
+        json={
+            "model": model,
+            "max_tokens": max_tokens,
+            "messages": [{"role": "user", "content": prompt}],
+        },
+        timeout=60.0,
+    )
+    response.raise_for_status()
+    content = response.json()["content"][0]["text"]
+    return _extract_json(content)
+
+
+_TEXT_PROVIDER_HANDLERS = {
+    "openai": _call_openai_text,
+    "google": _call_google_text,
+    "anthropic": _call_anthropic_text,
+}
+
+
 # --- 元帳データ取得ヘルパー ---
 
 
@@ -553,6 +624,78 @@ def analyze_and_suggest(user_id: int, image_bytes: bytes,
         )
 
     return suggestions
+
+
+WEB_IMPORT_PROMPT = """あなたは日本の家計簿アプリのアシスタントです。
+以下はユーザーが銀行・クレジットカード・証券口座などのWebページからコピーしたテキストです。
+このテキストから取引明細を読み取り、以下のJSON形式で返してください。
+
+必ず以下の形式のJSONのみを返してください。余計なテキストは不要です。
+
+{{
+  "transactions": [
+    {{
+      "date": "YYYY-MM-DD形式の日付",
+      "description": "取引内容・摘要",
+      "deposit": 入金額（整数、なければ0）,
+      "withdrawal": 出金額（整数、なければ0）
+    }}
+  ]
+}}
+
+注意事項:
+- 金額は整数で返してください（カンマ・円記号は除去）
+- 入金（収入・預入・振込入金等）は deposit に、出金（支出・引落・振込出金等）は withdrawal に入れてください
+- 日付が読み取れない行はスキップせず、date を null にしてください
+- ヘッダー行や合計行、残高行は含めないでください
+- 明細の順序はテキストに現れる順序のまま返してください
+- クレジットカード明細の場合、利用金額は withdrawal として扱ってください
+
+取込先口座: {payment_account_name}
+
+--- Webページのテキスト ---
+{raw_text}"""
+
+
+def parse_web_text(user_id: int, raw_text: str,
+                   payment_account_name: str) -> list[dict]:
+    """Webページのテキストからai経由で明細を抽出する"""
+    api_key, provider, model, _ = _get_ai_config(user_id)
+
+    text_handler = _TEXT_PROVIDER_HANDLERS.get(provider)
+    if not text_handler:
+        raise ValueError(f"未対応のAIプロバイダーです: {provider}")
+
+    prompt = WEB_IMPORT_PROMPT.format(
+        payment_account_name=payment_account_name,
+        raw_text=raw_text[:50000],  # トークン上限を考慮して切り詰め
+    )
+
+    try:
+        result = text_handler(api_key, model, prompt, max_tokens=4000)
+    except httpx.HTTPStatusError as e:
+        logger.error("AI API HTTP error for user %s: %s", user_id, e)
+        raise RuntimeError(
+            f"AI APIエラー（HTTP {e.response.status_code}）: "
+            "APIキーやモデル名を確認してください。"
+        )
+    except Exception as e:
+        logger.error("AI API call failed for user %s: %s", user_id, e)
+        raise RuntimeError(f"AI APIの呼び出しに失敗しました: {e}")
+
+    transactions = result.get("transactions", [])
+
+    parsed = []
+    for i, tx in enumerate(transactions):
+        parsed.append({
+            "row_num": i + 1,
+            "date": tx.get("date"),
+            "description": tx.get("description", ""),
+            "deposit": int(tx.get("deposit", 0)),
+            "withdrawal": int(tx.get("withdrawal", 0)),
+        })
+
+    return parsed
 
 
 def match_account(user_id: int, category_name: str) -> int | None:

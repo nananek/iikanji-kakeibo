@@ -1,0 +1,105 @@
+{% extends "base.html" %}
+{% block title %}Web取込 - いいかんじ家計簿{% endblock %}
+
+{% block content %}
+<h2><i class="bi bi-globe"></i> Web明細取込</h2>
+
+<div class="row mt-4">
+  <div class="col-lg-8">
+    <div class="card shadow-sm">
+      <div class="card-header">
+        <strong>Step 1:</strong> Webページの内容を貼り付け
+      </div>
+      <div class="card-body">
+        {% if not has_config %}
+        <div class="alert alert-warning">
+          <i class="bi bi-exclamation-triangle"></i>
+          AI API設定が登録されていません。
+          <a href="{{ url_for('settings.ai_config') }}">設定画面</a>でAPIキーを登録してください。
+        </div>
+        {% endif %}
+
+        <form method="POST" id="uploadForm">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+          <div class="mb-3">
+            <label class="form-label" for="payment_account_id">取込先の口座</label>
+            <select class="form-select" name="payment_account_id" id="payment_account_id" required
+                    {% if not has_config %}disabled{% endif %}>
+              <option value="">-- 選択してください --</option>
+              {% for id, name in payment_choices %}
+              <option value="{{ id }}"
+                {% if payment_account_id is defined and payment_account_id == id %}selected{% endif %}>
+                {{ name }}
+              </option>
+              {% endfor %}
+            </select>
+            <div class="form-text">
+              この明細がどの口座（銀行口座・クレジットカード等）のものか選択します
+            </div>
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label" for="raw_text">明細テキスト</label>
+            <textarea class="form-control" name="raw_text" id="raw_text"
+                      rows="15" required placeholder="銀行・クレカ等のWebページの明細部分をコピー＆ペーストしてください"
+                      {% if not has_config %}disabled{% endif %}>{{ raw_text if raw_text is defined else '' }}</textarea>
+            <div class="form-text">
+              Webページの明細部分を選択してコピー＆ペーストしてください。AIが自動で解析します。
+            </div>
+          </div>
+
+          <button type="submit" class="btn btn-primary" id="submitBtn"
+                  {% if not has_config %}disabled{% endif %}>
+            <i class="bi bi-robot"></i> AIで解析して次へ
+          </button>
+          <a href="{{ url_for('cashbook.index') }}" class="btn btn-outline-secondary">キャンセル</a>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-lg-4">
+    <div class="card shadow-sm">
+      <div class="card-header">Web取込の流れ</div>
+      <div class="card-body">
+        <ol class="mb-0">
+          <li class="mb-2">
+            <strong class="text-primary">テキスト貼り付け</strong><br>
+            Webページの明細をコピー＆ペースト
+          </li>
+          <li class="mb-2">
+            <strong>確認・取込</strong><br>
+            AIが解析した結果を確認して一括取込
+          </li>
+        </ol>
+      </div>
+    </div>
+
+    <div class="card shadow-sm mt-3">
+      <div class="card-header">使い方のコツ</div>
+      <div class="card-body">
+        <ul class="mb-0 small">
+          <li class="mb-1">明細のテーブル部分を選択してCtrl+Cでコピー</li>
+          <li class="mb-1">ヘッダー行も含めてOK（AIが自動で除外します）</li>
+          <li class="mb-1">余計なメニュー等が混ざっても大丈夫です</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function() {
+  var form = document.getElementById('uploadForm');
+  var submitBtn = document.getElementById('submitBtn');
+
+  form.addEventListener('submit', function() {
+    submitBtn.disabled = true;
+    submitBtn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status"></span> AIで解析中...';
+  });
+})();
+</script>
+{% endblock %}
