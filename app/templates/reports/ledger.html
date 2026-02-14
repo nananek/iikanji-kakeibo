@@ -1,0 +1,108 @@
+{% extends "base.html" %}
+{% block title %}総勘定元帳 - いいかんじ家計簿{% endblock %}
+
+{% block content %}
+<h2><i class="bi bi-book"></i> 総勘定元帳</h2>
+
+<form class="row g-3 mb-4 mt-2" method="GET">
+  <div class="col-auto">
+    <select name="year" class="form-select">
+      {% for y in range(year - 2, year + 2) %}
+      <option value="{{ y }}" {% if y == year %}selected{% endif %}>{{ y }}年</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="col-auto">
+    <select name="account_id" class="form-select">
+      <option value="">-- 科目を選択 --</option>
+      {% for at, accts in grouped_accounts.items() %}
+      <optgroup label="{{ at.name }}">
+        {% for a in accts %}
+        <option value="{{ a.id }}" {% if a.id == account_id %}selected{% endif %}>
+          {{ a.code }} {{ a.name }}
+        </option>
+        {% endfor %}
+      </optgroup>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="col-auto">
+    <button type="submit" class="btn btn-outline-secondary">表示</button>
+  </div>
+</form>
+
+{% if selected_account %}
+<div class="card shadow-sm">
+  <div class="card-header">
+    <strong>{{ selected_account.code }} {{ selected_account.name }}</strong>
+    <span class="text-muted ms-2">{{ year }}年</span>
+  </div>
+  <div class="table-responsive">
+    <table class="table table-sm table-hover mb-0">
+      <thead class="table-dark">
+        <tr>
+          <th style="width:10%">日付</th>
+          <th style="width:7%">伝票</th>
+          <th style="width:25%">摘要</th>
+          <th style="width:18%">相手科目</th>
+          <th style="width:12%" class="text-end">借方</th>
+          <th style="width:12%" class="text-end">貸方</th>
+          <th style="width:16%" class="text-end">残高</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr class="table-secondary">
+          <td></td>
+          <td></td>
+          <td><strong>前期繰越</strong></td>
+          <td></td>
+          <td></td>
+          <td></td>
+          <td class="text-end {% if carry_forward < 0 %}text-danger{% endif %}">
+            <strong>&yen;{{ "{:,}".format(carry_forward) }}</strong>
+          </td>
+        </tr>
+        {% set ns = namespace(total_debit=0, total_credit=0) %}
+        {% for e in entries %}
+        <tr>
+          <td>{{ e.date.strftime('%m/%d') }}</td>
+          <td><small class="text-muted">#{{ e.entry_number }}</small></td>
+          <td>{{ e.description }}</td>
+          <td><small>{{ e.counter_account }}</small></td>
+          <td class="text-end">
+            {% if e.debit %}&yen;{{ "{:,}".format(e.debit) }}{% endif %}
+          </td>
+          <td class="text-end">
+            {% if e.credit %}&yen;{{ "{:,}".format(e.credit) }}{% endif %}
+          </td>
+          <td class="text-end {% if e.balance < 0 %}text-danger{% endif %}">
+            &yen;{{ "{:,}".format(e.balance) }}
+          </td>
+        </tr>
+        {% set ns.total_debit = ns.total_debit + e.debit %}
+        {% set ns.total_credit = ns.total_credit + e.credit %}
+        {% endfor %}
+        <tr class="table-dark">
+          <td colspan="4"><strong>合計</strong></td>
+          <td class="text-end"><strong>&yen;{{ "{:,}".format(ns.total_debit) }}</strong></td>
+          <td class="text-end"><strong>&yen;{{ "{:,}".format(ns.total_credit) }}</strong></td>
+          <td class="text-end">
+            {% if entries %}
+            <strong>&yen;{{ "{:,}".format(entries[-1].balance) }}</strong>
+            {% else %}
+            <strong>&yen;{{ "{:,}".format(carry_forward) }}</strong>
+            {% endif %}
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% elif not account_id %}
+<div class="text-center text-muted py-5">
+  <i class="bi bi-book" style="font-size: 3rem;"></i>
+  <p class="mt-2">科目を選択してください。</p>
+</div>
+{% endif %}
+{% endblock %}

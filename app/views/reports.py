@@ -3,7 +3,7 @@ from decimal import Decimal
 
 from flask import Blueprint, render_template, request
 from flask_login import login_required, current_user
-from sqlalchemy import func
+from sqlalchemy import func, and_
 
 from app.extensions import db
 from app.models.account import Account, AccountType
@@ -150,4 +150,120 @@ def tax():
         year=year,
         tax_summary=tax_summary,
         medical_summary=medical_summary,
+    )
+
+
+@bp.route("/ledger")
+@login_required
+def ledger():
+    """総勘定元帳"""
+    year = request.args.get("year", date.today().year, type=int)
+    account_id = request.args.get("account_id", 0, type=int)
+
+    account_types = AccountType.query.order_by(AccountType.display_order).all()
+    accounts = (
+        Account.query
+        .filter_by(user_id=current_user.id, is_active=True)
+        .order_by(Account.code)
+        .all()
+    )
+
+    # 科目区分ごとにグルーピング
+    grouped_accounts = {}
+    for at in account_types:
+        group = [a for a in accounts if a.account_type_id == at.id]
+        if group:
+            grouped_accounts[at] = group
+
+    selected_account = None
+    entries = []
+    carry_forward = 0
+
+    if account_id:
+        selected_account = Account.query.filter_by(
+            id=account_id, user_id=current_user.id
+        ).first()
+
+        if selected_account:
+            year_start = date(year, 1, 1)
+            year_end = date(year, 12, 31)
+
+            # 前期繰越（年初以前の累計残高）
+            cf_result = (
+                db.session.query(
+                    func.coalesce(func.sum(JournalEntryLine.debit_amount), 0),
+                    func.coalesce(func.sum(JournalEntryLine.credit_amount), 0),
+                )
+                .join(JournalEntry, JournalEntry.id == JournalEntryLine.journal_entry_id)
+                .filter(
+                    JournalEntryLine.account_id == account_id,
+                    JournalEntry.date < year_start,
+                )
+                .first()
+            )
+            if selected_account.account_type.normal_balance == "debit":
+                carry_forward = int(cf_result[0]) - int(cf_result[1])
+            else:
+                carry_forward = int(cf_result[1]) - int(cf_result[0])
+
+            # 当期の仕訳明細を取得
+            lines = (
+                db.session.query(
+                    JournalEntry.date,
+                    JournalEntry.entry_number,
+                    JournalEntry.description,
+                    JournalEntryLine.debit_amount,
+                    JournalEntryLine.credit_amount,
+                    JournalEntryLine.journal_entry_id,
+                )
+                .join(JournalEntry, JournalEntry.id == JournalEntryLine.journal_entry_id)
+                .filter(
+                    JournalEntryLine.account_id == account_id,
+                    JournalEntry.date >= year_start,
+                    JournalEntry.date <= year_end,
+                )
+                .order_by(JournalEntry.date, JournalEntry.entry_number)
+                .all()
+            )
+
+            running_balance = carry_forward
+            for line in lines:
+                debit = int(line.debit_amount)
+                credit = int(line.credit_amount)
+                if selected_account.account_type.normal_balance == "debit":
+                    running_balance += debit - credit
+                else:
+                    running_balance += credit - debit
+
+                # 相手科目を取得
+                counter_lines = (
+                    JournalEntryLine.query
+                    .filter(
+                        JournalEntryLine.journal_entry_id == line.journal_entry_id,
+                        JournalEntryLine.account_id != account_id,
+                    )
+                    .all()
+                )
+                counter_names = ", ".join(
+                    a.account.name for a in counter_lines
+                ) if counter_lines else ""
+
+                entries.append({
+                    "date": line.date,
+                    "entry_number": line.entry_number,
+                    "description": line.description,
+                    "counter_account": counter_names,
+                    "debit": debit,
+                    "credit": credit,
+                    "balance": running_balance,
+                })
+
+    return render_template(
+        "reports/ledger.html",
+        year=year,
+        grouped_accounts=grouped_accounts,
+        selected_account=selected_account,
+        account_id=account_id,
+        entries=entries,
+        carry_forward=carry_forward,
     )

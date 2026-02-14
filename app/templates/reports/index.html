@@ -17,6 +17,15 @@
   <div class="col-md-4 mb-3">
     <div class="card shadow-sm h-100">
       <div class="card-body">
+        <h5 class="card-title"><i class="bi bi-book"></i> 総勘定元帳</h5>
+        <p class="card-text">科目ごとの取引明細と残高の推移を確認できます。</p>
+        <a href="{{ url_for('reports.ledger') }}" class="btn btn-outline-primary">表示</a>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-4 mb-3">
+    <div class="card shadow-sm h-100">
+      <div class="card-body">
         <h5 class="card-title"><i class="bi bi-graph-up"></i> 収支計算書</h5>
         <p class="card-text">月次・年次の収入と支出の内訳を確認できます。</p>
         <a href="{{ url_for('reports.pl') }}" class="btn btn-outline-primary">表示</a>

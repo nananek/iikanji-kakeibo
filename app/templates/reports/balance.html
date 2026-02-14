@@ -18,7 +18,7 @@
 </form>
 
 {% if balances %}
-{% set ns = namespace(current_type='') %}
+{% set ns = namespace(current_type='', type_debit=0, type_credit=0, type_balance=0, grand_debit=0, grand_credit=0) %}
 <div class="table-responsive">
   <table class="table table-hover">
     <thead class="table-dark">
@@ -33,22 +33,61 @@
     <tbody>
       {% for item in balances %}
         {% if item.account.account_type.name != ns.current_type %}
+          {% if ns.current_type %}
+          <tr class="table-info">
+            <td></td>
+            <td class="text-end"><strong>{{ ns.current_type }} 小計</strong></td>
+            <td class="text-end"><strong>&yen;{{ "{:,}".format(ns.type_debit) }}</strong></td>
+            <td class="text-end"><strong>&yen;{{ "{:,}".format(ns.type_credit) }}</strong></td>
+            <td class="text-end"><strong>&yen;{{ "{:,}".format(ns.type_balance) }}</strong></td>
+          </tr>
+          {% endif %}
           {% set ns.current_type = item.account.account_type.name %}
+          {% set ns.type_debit = 0 %}
+          {% set ns.type_credit = 0 %}
+          {% set ns.type_balance = 0 %}
           <tr class="table-secondary">
             <td colspan="5"><strong>{{ ns.current_type }}</strong></td>
           </tr>
         {% endif %}
         <tr>
           <td>{{ item.account.code }}</td>
-          <td>{{ item.account.name }}</td>
+          <td>
+            <a href="{{ url_for('reports.ledger', year=year, account_id=item.account.id) }}"
+               class="text-decoration-none">
+              {{ item.account.name }}
+            </a>
+          </td>
           <td class="text-end">&yen;{{ "{:,}".format(item.debit|int) }}</td>
           <td class="text-end">&yen;{{ "{:,}".format(item.credit|int) }}</td>
           <td class="text-end {% if item.balance < 0 %}text-danger{% endif %}">
             &yen;{{ "{:,}".format(item.balance|int) }}
           </td>
         </tr>
+        {% set ns.type_debit = ns.type_debit + item.debit|int %}
+        {% set ns.type_credit = ns.type_credit + item.credit|int %}
+        {% set ns.type_balance = ns.type_balance + item.balance|int %}
+        {% set ns.grand_debit = ns.grand_debit + item.debit|int %}
+        {% set ns.grand_credit = ns.grand_credit + item.credit|int %}
       {% endfor %}
+      {% if ns.current_type %}
+      <tr class="table-info">
+        <td></td>
+        <td class="text-end"><strong>{{ ns.current_type }} 小計</strong></td>
+        <td class="text-end"><strong>&yen;{{ "{:,}".format(ns.type_debit) }}</strong></td>
+        <td class="text-end"><strong>&yen;{{ "{:,}".format(ns.type_credit) }}</strong></td>
+        <td class="text-end"><strong>&yen;{{ "{:,}".format(ns.type_balance) }}</strong></td>
+      </tr>
+      {% endif %}
     </tbody>
+    <tfoot>
+      <tr class="table-dark">
+        <td colspan="2"><strong>総合計</strong></td>
+        <td class="text-end"><strong>&yen;{{ "{:,}".format(ns.grand_debit) }}</strong></td>
+        <td class="text-end"><strong>&yen;{{ "{:,}".format(ns.grand_credit) }}</strong></td>
+        <td></td>
+      </tr>
+    </tfoot>
   </table>
 </div>
 {% else %}
