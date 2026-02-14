@@ -5,7 +5,7 @@ from flask_login import login_required, current_user
 
 from app.extensions import db
 from app.models.account import Account, AccountType
-from app.services.audit import get_effective_user_id
+from app.services.audit import get_effective_user_id, get_allowed_account_ids
 
 
 def _next_code(code: str, user_id: int) -> str:
@@ -55,6 +55,11 @@ def index():
         .order_by(Account.code)
         .all()
     )
+
+    # Lv2: 公開科目のみ
+    allowed_ids = get_allowed_account_ids()
+    if allowed_ids is not None:
+        accounts = [a for a in accounts if a.id in allowed_ids]
 
     grouped = {}
     for at in account_types:

@@ -49,12 +49,12 @@
         <td>{{ entry.description }}</td>
         <td>
           {% for line in entry.lines if line.debit_amount > 0 %}
-          {{ line.account.name }}
+          {{ line.account.name|mask_account(line.account_id) }}
           {% endfor %}
         </td>
         <td>
           {% for line in entry.lines if line.credit_amount > 0 %}
-          {{ line.account.name }}
+          {{ line.account.name|mask_account(line.account_id) }}
           {% endfor %}
         </td>
         <td class="text-end">

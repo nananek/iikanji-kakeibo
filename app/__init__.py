@@ -79,6 +79,13 @@ def create_app(config_class=Config):
             "audit_allowed_account_ids": get_allowed_account_ids(),
         }
 
+    # Template filter for account name masking
+    @app.template_filter("mask_account")
+    def mask_account_filter(account_name, account_id):
+        from app.services.audit import get_allowed_account_ids, mask_account_name
+        allowed = get_allowed_account_ids()
+        return mask_account_name(account_name, account_id, allowed)
+
     # CLI commands
     register_cli(app)
 
