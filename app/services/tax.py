@@ -200,13 +200,22 @@ def get_month_projection(user_id, year, month, comparison):
     days_in_month = calendar.monthrange(year, month)[1]
     m_idx = month - 1
 
+    prev_idx = m_idx - 1  # 前月インデックス（1月なら-1=前年12月はデータなし→0扱い）
+
     def project(accounts):
         result = []
         for a in accounts:
             actual = a["months"][m_idx]
-            if a["cost_type"] == "variable":
+            ct = a["cost_type"] or "occasional"
+            if ct == "fixed":
+                # 固定: 前月発生額を予測値とする
+                prev = a["months"][prev_idx] if prev_idx >= 0 else 0
+                projected = prev if prev > 0 else actual
+            elif ct == "variable":
+                # 変動: 経過日数で按分して月末着地を予測
                 projected = int(actual * days_in_month / days_elapsed) if days_elapsed > 0 else 0
             else:
+                # 随時: 実績をそのまま採用
                 projected = actual
             result.append({
                 "name": a["name"],
