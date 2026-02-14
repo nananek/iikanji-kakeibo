@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 
 from flask import Blueprint, render_template, request
@@ -158,6 +158,7 @@ def tax():
 def ledger():
     """総勘定元帳"""
     year = request.args.get("year", date.today().year, type=int)
+    month = request.args.get("month", 0, type=int)
     account_id = request.args.get("account_id", 0, type=int)
 
     account_types = AccountType.query.order_by(AccountType.display_order).all()
@@ -185,10 +186,18 @@ def ledger():
         ).first()
 
         if selected_account:
-            year_start = date(year, 1, 1)
-            year_end = date(year, 12, 31)
+            # 表示期間の決定
+            if month:
+                period_start = date(year, month, 1)
+                if month == 12:
+                    period_end = date(year, 12, 31)
+                else:
+                    period_end = date(year, month + 1, 1) - timedelta(days=1)
+            else:
+                period_start = date(year, 1, 1)
+                period_end = date(year, 12, 31)
 
-            # 前期繰越（年初以前の累計残高）
+            # 前期繰越（表示開始日より前の累計残高）
             cf_result = (
                 db.session.query(
                     func.coalesce(func.sum(JournalEntryLine.debit_amount), 0),
@@ -197,7 +206,7 @@ def ledger():
                 .join(JournalEntry, JournalEntry.id == JournalEntryLine.journal_entry_id)
                 .filter(
                     JournalEntryLine.account_id == account_id,
-                    JournalEntry.date < year_start,
+                    JournalEntry.date < period_start,
                 )
                 .first()
             )
@@ -215,12 +224,13 @@ def ledger():
                     JournalEntryLine.debit_amount,
                     JournalEntryLine.credit_amount,
                     JournalEntryLine.journal_entry_id,
+                    JournalEntry.id.label("entry_id"),
                 )
                 .join(JournalEntry, JournalEntry.id == JournalEntryLine.journal_entry_id)
                 .filter(
                     JournalEntryLine.account_id == account_id,
-                    JournalEntry.date >= year_start,
-                    JournalEntry.date <= year_end,
+                    JournalEntry.date >= period_start,
+                    JournalEntry.date <= period_end,
                 )
                 .order_by(JournalEntry.date, JournalEntry.entry_number)
                 .all()
@@ -256,11 +266,13 @@ def ledger():
                     "debit": debit,
                     "credit": credit,
                     "balance": running_balance,
+                    "entry_id": line.entry_id,
                 })
 
     return render_template(
         "reports/ledger.html",
         year=year,
+        month=month,
         grouped_accounts=grouped_accounts,
         selected_account=selected_account,
         account_id=account_id,
