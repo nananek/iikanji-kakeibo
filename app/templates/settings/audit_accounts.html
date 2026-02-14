@@ -35,7 +35,7 @@
       <label class="form-check-label">
         {{ account.code }} {{ account.name }}
         {% if account.tax_category %}
-          <span class="badge bg-info text-dark">{{ account.tax_category }}</span>
+          <span class="badge bg-info text-dark">{{ tax_category_labels.get(account.tax_category, account.tax_category) }}</span>
         {% endif %}
         {% if account.system_role == 'proprietor' %}
           <span class="badge bg-dark">常時公開</span>

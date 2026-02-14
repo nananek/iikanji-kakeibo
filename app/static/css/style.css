@@ -28,10 +28,17 @@ body {
   white-space: nowrap;
 }
 
-/* テーブルに淡い縦罫線 */
+.table > tbody > tr:nth-child(even):not([class*="table-"]) > td {
+  background-color: rgba(0, 0, 0, 0.015);
+}
+
+.table-hover > tbody > tr:hover > td {
+  background-color: #e3edfd !important;
+}
+
 .table td,
 .table th {
-  border-right: 1px solid rgba(0, 0, 0, 0.06);
+  border-right: 1px solid rgba(0, 0, 0, 0.2);
 }
 .table td:last-child,
 .table th:last-child {

@@ -107,6 +107,8 @@ def api_get(account_id):
     ).first_or_404()
 
     copy = request.args.get("copy") == "1"
+    if copy and account.system_role:
+        return jsonify({"error": "この科目はコピーできません。"}), 400
     data = {
         "id": account.id,
         "code": account.code,

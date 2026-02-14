@@ -13,6 +13,7 @@ from app.models.audit import AuditGrant, AuditGrantAccount
 from app.services.ai_receipt import (
     encrypt_api_key, PROVIDER_DEFAULTS, PROVIDER_LABELS,
 )
+from app.views.accounts import TAX_CATEGORIES
 from app.services.fiscal import (
     PERIOD_LABELS, get_closed_period, close_period, reopen_period,
 )
@@ -317,6 +318,8 @@ def audit_accounts(grant_id):
         ga.account_id for ga in grant.grant_accounts
     }
 
+    tax_category_labels = {k: v for k, v in TAX_CATEGORIES if k}
+
     return render_template(
         "settings/audit_accounts.html",
         grant=grant,
@@ -324,6 +327,7 @@ def audit_accounts(grant_id):
         accounts=accounts,
         published_ids=published_ids,
         permission_labels=PERMISSION_LABELS,
+        tax_category_labels=tax_category_labels,
     )
 
 

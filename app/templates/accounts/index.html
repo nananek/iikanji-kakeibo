@@ -50,10 +50,12 @@
           </td>
           <td>{{ account.description }}</td>
           <td class="text-nowrap">
+            {% if not account.system_role %}
             <button type="button" class="btn btn-outline-success btn-sm" title="コピーして追加"
                     onclick="openAccountModal({{ account.id }}, true)">
               <i class="bi bi-copy"></i>
             </button>
+            {% endif %}
             <button type="button" class="btn btn-outline-secondary btn-sm" title="編集"
                     onclick="openAccountModal({{ account.id }})">
               <i class="bi bi-pencil"></i>
