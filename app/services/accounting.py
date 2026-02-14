@@ -72,11 +72,13 @@ def create_cashbook_entry(user_id, date, transaction_type, payment_account_id,
     return entry
 
 
-def create_journal_entry(user_id, date, description, lines_data):
+def create_journal_entry(user_id, date, description, lines_data,
+                         source="journal"):
     """仕訳伝票を直接作成する
 
     Args:
         lines_data: list of dict with keys: account_id, debit_amount, credit_amount
+        source: 仕訳の入力元（"journal", "ai_receipt" 等）
     """
     total_debit = sum(l["debit_amount"] for l in lines_data)
     total_credit = sum(l["credit_amount"] for l in lines_data)
@@ -90,7 +92,7 @@ def create_journal_entry(user_id, date, description, lines_data):
         date=date,
         entry_number=get_next_entry_number(user_id),
         description=description,
-        source="journal",
+        source=source,
     )
     db.session.add(entry)
     db.session.flush()

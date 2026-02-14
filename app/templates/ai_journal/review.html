@@ -1,0 +1,238 @@
+{% extends "base.html" %}
+{% block title %}確認・保存 - AI証憑仕訳 - いいかんじ家計簿{% endblock %}
+
+{% block content %}
+<h2><i class="bi bi-robot"></i> AI証憑仕訳</h2>
+
+<div class="card shadow-sm mt-4">
+  <div class="card-header">
+    <strong>Step 2:</strong> AI解析結果の確認・修正
+    <span class="badge bg-info ms-2">AI推測: {{ result.suggested_category }}</span>
+  </div>
+  <div class="card-body">
+    <ul class="nav nav-tabs mb-4" role="tablist">
+      <li class="nav-item" role="presentation">
+        <button class="nav-link active" data-bs-toggle="tab"
+                data-bs-target="#simpleMode" type="button" role="tab">
+          <i class="bi bi-lightning"></i> かんたんモード
+        </button>
+      </li>
+      <li class="nav-item" role="presentation">
+        <button class="nav-link" data-bs-toggle="tab"
+                data-bs-target="#advancedMode" type="button" role="tab">
+          <i class="bi bi-journal-bookmark"></i> 仕訳モード
+        </button>
+      </li>
+    </ul>
+
+    <div class="tab-content">
+      <!-- かんたんモード -->
+      <div class="tab-pane fade show active" id="simpleMode" role="tabpanel">
+        <form method="POST" id="simpleForm">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <input type="hidden" name="mode" value="simple">
+
+          <div class="row mb-3">
+            <div class="col-md-3">
+              <label class="form-label">日付</label>
+              <input type="date" class="form-control" name="date"
+                     value="{{ result.date or '' }}" required>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label">摘要</label>
+              <input type="text" class="form-control" name="description"
+                     value="{{ result.description }}" required>
+            </div>
+            <div class="col-md-3">
+              <label class="form-label">金額</label>
+              <div class="input-group">
+                <span class="input-group-text">&yen;</span>
+                <input type="number" class="form-control text-end" name="amount"
+                       value="{{ result.amount }}" min="1" required>
+              </div>
+            </div>
+          </div>
+
+          <div class="row mb-3">
+            <div class="col-md-6">
+              <label class="form-label">費目</label>
+              <select class="form-select" name="category_account_id" required>
+                {% for cid, cname in category_choices %}
+                <option value="{{ cid }}"
+                  {% if cid == result.matched_account_id %}selected{% endif %}>
+                  {{ cname }}
+                </option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label">支払元</label>
+              <select class="form-select" name="payment_account_id" required>
+                {% for pid, pname in payment_choices %}
+                <option value="{{ pid }}"
+                  {% if pid == result.payment_account_id %}selected{% endif %}>
+                  {{ pname }}
+                </option>
+                {% endfor %}
+              </select>
+            </div>
+          </div>
+
+          <hr>
+          <div class="d-flex gap-2">
+            <button type="submit" class="btn btn-primary">
+              <i class="bi bi-check-lg"></i> 仕訳を登録
+            </button>
+            <a href="{{ url_for('ai_journal.upload') }}" class="btn btn-outline-secondary">
+              やり直す
+            </a>
+          </div>
+        </form>
+      </div>
+
+      <!-- 仕訳モード -->
+      <div class="tab-pane fade" id="advancedMode" role="tabpanel">
+        <form method="POST" id="advancedForm">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <input type="hidden" name="mode" value="advanced">
+          <input type="hidden" name="lines_json" id="linesJson">
+
+          <div class="row mb-3">
+            <div class="col-md-3">
+              <label class="form-label">日付</label>
+              <input type="date" class="form-control" name="date"
+                     value="{{ result.date or '' }}" required>
+            </div>
+            <div class="col-md-9">
+              <label class="form-label">摘要</label>
+              <input type="text" class="form-control" name="description"
+                     value="{{ result.description }}" required>
+            </div>
+          </div>
+
+          <h5 class="mt-4">仕訳明細</h5>
+          <div class="table-responsive">
+            <table class="table" id="linesTable">
+              <thead class="table-light">
+                <tr>
+                  <th style="width:35%">勘定科目</th>
+                  <th style="width:20%">借方</th>
+                  <th style="width:20%">貸方</th>
+                  <th style="width:20%">摘要</th>
+                  <th style="width:5%"></th>
+                </tr>
+              </thead>
+              <tbody id="linesBody"></tbody>
+              <tfoot>
+                <tr class="table-light">
+                  <th>合計</th>
+                  <th id="totalDebit" class="text-end">0</th>
+                  <th id="totalCredit" class="text-end">0</th>
+                  <th></th>
+                  <th></th>
+                </tr>
+                <tr id="balanceWarning" class="d-none">
+                  <td colspan="5">
+                    <div class="alert alert-danger mb-0 py-1">貸借が一致していません</div>
+                  </td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+          <button type="button" class="btn btn-outline-secondary btn-sm" onclick="addLine()">
+            <i class="bi bi-plus-lg"></i> 行を追加
+          </button>
+
+          <hr>
+          <div class="d-flex gap-2">
+            <button type="submit" class="btn btn-primary">
+              <i class="bi bi-check-lg"></i> 仕訳を登録
+            </button>
+            <a href="{{ url_for('ai_journal.upload') }}" class="btn btn-outline-secondary">
+              やり直す
+            </a>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+var accountChoices = {{ account_choices | tojson }};
+
+function createAccountSelect(selectedId) {
+  var html = '<select class="form-select form-select-sm account-select">';
+  html += '<option value="">-- 選択 --</option>';
+  accountChoices.forEach(function(item) {
+    var id = item[0], name = item[1];
+    var selected = id === selectedId ? ' selected' : '';
+    html += '<option value="' + id + '"' + selected + '>' + name + '</option>';
+  });
+  html += '</select>';
+  return html;
+}
+
+function addLine(data) {
+  data = data || {};
+  var tbody = document.getElementById('linesBody');
+  var tr = document.createElement('tr');
+  tr.innerHTML =
+    '<td>' + createAccountSelect(data.account_id || '') + '</td>' +
+    '<td><input type="number" class="form-control form-control-sm text-end debit-input" value="' + (data.debit_amount || 0) + '" min="0" onchange="updateTotals()"></td>' +
+    '<td><input type="number" class="form-control form-control-sm text-end credit-input" value="' + (data.credit_amount || 0) + '" min="0" onchange="updateTotals()"></td>' +
+    '<td><input type="text" class="form-control form-control-sm line-desc" value="' + (data.description || '') + '"></td>' +
+    '<td><button type="button" class="btn btn-outline-danger btn-sm" onclick="this.closest(\'tr\').remove(); updateTotals()"><i class="bi bi-x"></i></button></td>';
+  tbody.appendChild(tr);
+  updateTotals();
+}
+
+function updateTotals() {
+  var totalDebit = 0, totalCredit = 0;
+  document.querySelectorAll('.debit-input').forEach(function(el) {
+    totalDebit += parseInt(el.value) || 0;
+  });
+  document.querySelectorAll('.credit-input').forEach(function(el) {
+    totalCredit += parseInt(el.value) || 0;
+  });
+  document.getElementById('totalDebit').textContent = '\u00a5' + totalDebit.toLocaleString();
+  document.getElementById('totalCredit').textContent = '\u00a5' + totalCredit.toLocaleString();
+
+  var warning = document.getElementById('balanceWarning');
+  if (totalDebit !== totalCredit && (totalDebit > 0 || totalCredit > 0)) {
+    warning.classList.remove('d-none');
+  } else {
+    warning.classList.add('d-none');
+  }
+}
+
+document.getElementById('advancedForm').addEventListener('submit', function() {
+  var lines = [];
+  document.querySelectorAll('#linesBody tr').forEach(function(tr) {
+    var accountId = tr.querySelector('.account-select').value;
+    var debit = parseInt(tr.querySelector('.debit-input').value) || 0;
+    var credit = parseInt(tr.querySelector('.credit-input').value) || 0;
+    var desc = tr.querySelector('.line-desc').value;
+    if (accountId && (debit > 0 || credit > 0)) {
+      lines.push({
+        account_id: accountId, debit_amount: debit,
+        credit_amount: credit, description: desc
+      });
+    }
+  });
+  document.getElementById('linesJson').value = JSON.stringify(lines);
+});
+
+// AI結果で初期化
+var aiResult = {{ result | tojson }};
+if (aiResult.matched_account_id && aiResult.amount > 0) {
+  addLine({ account_id: aiResult.matched_account_id, debit_amount: aiResult.amount, credit_amount: 0, description: '' });
+  addLine({ account_id: aiResult.payment_account_id, debit_amount: 0, credit_amount: aiResult.amount, description: '' });
+} else {
+  addLine();
+  addLine();
+}
+</script>
+{% endblock %}

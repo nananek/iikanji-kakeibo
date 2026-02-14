@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+{% block title %}AI証憑仕訳 - いいかんじ家計簿{% endblock %}
+
+{% block content %}
+<h2><i class="bi bi-robot"></i> AI証憑仕訳</h2>
+
+<div class="row mt-4">
+  <div class="col-lg-8">
+    <div class="card shadow-sm">
+      <div class="card-header">
+        <strong>Step 1:</strong> 証憑画像をアップロード
+      </div>
+      <div class="card-body">
+        {% if not has_config %}
+        <div class="alert alert-warning">
+          <i class="bi bi-exclamation-triangle"></i>
+          AI API設定が登録されていません。
+          <a href="{{ url_for('settings.ai_config') }}">設定画面</a>でAPIキーを登録してください。
+        </div>
+        {% endif %}
+
+        <form method="POST" enctype="multipart/form-data" id="uploadForm">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+          <div class="mb-3">
+            <label class="form-label" for="image_file">領収書・レシート画像</label>
+            <input type="file" class="form-control" name="image_file" id="image_file"
+                   accept="image/jpeg,image/png,image/webp,image/gif" required
+                   {% if not has_config %}disabled{% endif %}>
+            <div class="form-text">JPEG / PNG / WebP / GIF（上限10MB）</div>
+          </div>
+
+          <div class="mb-3 d-none" id="previewArea">
+            <img id="imagePreview" class="img-fluid rounded border"
+                 style="max-height: 300px;" alt="プレビュー">
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label" for="payment_account_id">支払元の口座</label>
+            <select class="form-select" name="payment_account_id"
+                    id="payment_account_id" required
+                    {% if not has_config %}disabled{% endif %}>
+              <option value="">-- 選択してください --</option>
+              {% for id, name in payment_choices %}
+              <option value="{{ id }}">{{ name }}</option>
+              {% endfor %}
+            </select>
+            <div class="form-text">この領収書の支払いに使った口座を選択します</div>
+          </div>
+
+          <button type="submit" class="btn btn-primary" id="submitBtn"
+                  {% if not has_config %}disabled{% endif %}>
+            <i class="bi bi-robot"></i> AIで解析する
+          </button>
+          <a href="{{ url_for('journal.index') }}" class="btn btn-outline-secondary">
+            キャンセル
+          </a>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-lg-4">
+    <div class="card shadow-sm">
+      <div class="card-header">AI証憑仕訳の流れ</div>
+      <div class="card-body">
+        <ol class="mb-0">
+          <li class="mb-2">
+            <strong class="text-primary">画像アップロード</strong><br>
+            領収書・レシートの画像と支払元口座を選択
+          </li>
+          <li class="mb-2">
+            <strong>確認・保存</strong><br>
+            AIの解析結果を確認・修正して仕訳を保存
+          </li>
+        </ol>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.getElementById('image_file').addEventListener('change', function(e) {
+  var file = e.target.files[0];
+  var preview = document.getElementById('imagePreview');
+  var area = document.getElementById('previewArea');
+  if (file) {
+    var reader = new FileReader();
+    reader.onload = function(ev) {
+      preview.src = ev.target.result;
+      area.classList.remove('d-none');
+    };
+    reader.readAsDataURL(file);
+  } else {
+    area.classList.add('d-none');
+  }
+});
+
+document.getElementById('uploadForm').addEventListener('submit', function() {
+  var btn = document.getElementById('submitBtn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status"></span> AIが解析中...';
+});
+</script>
+{% endblock %}

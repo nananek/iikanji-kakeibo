@@ -39,6 +39,12 @@
             </a>
           </li>
           <li class="nav-item">
+            <a class="nav-link {% if request.endpoint and request.endpoint.startswith('ai_journal.') %}active{% endif %}"
+               href="{{ url_for('ai_journal.upload') }}">
+              <i class="bi bi-robot"></i> AI証憑仕訳
+            </a>
+          </li>
+          <li class="nav-item">
             <a class="nav-link {% if request.endpoint and request.endpoint.startswith('journal.') %}active{% endif %}"
                href="{{ url_for('journal.index') }}">
               <i class="bi bi-journal-bookmark"></i> 仕訳帳
@@ -73,11 +79,23 @@
           <li class="nav-item">
             <span class="nav-link text-light"><i class="bi bi-person"></i> {{ current_user.username }}</span>
           </li>
-          <li class="nav-item">
-            <a class="nav-link {% if request.endpoint and request.endpoint.startswith('settings.') %}active{% endif %}"
-               href="{{ url_for('settings.passkeys') }}">
-              <i class="bi bi-key"></i> Passkey
+          <li class="nav-item dropdown">
+            <a class="nav-link dropdown-toggle {% if request.endpoint and request.endpoint.startswith('settings.') %}active{% endif %}"
+               href="#" role="button" data-bs-toggle="dropdown">
+              <i class="bi bi-gear"></i> 設定
             </a>
+            <ul class="dropdown-menu dropdown-menu-end">
+              <li>
+                <a class="dropdown-item" href="{{ url_for('settings.passkeys') }}">
+                  <i class="bi bi-key"></i> Passkey管理
+                </a>
+              </li>
+              <li>
+                <a class="dropdown-item" href="{{ url_for('settings.ai_config') }}">
+                  <i class="bi bi-robot"></i> AI API設定
+                </a>
+              </li>
+            </ul>
           </li>
           <li class="nav-item">
             <a class="nav-link" href="{{ url_for('auth.logout') }}"><i class="bi bi-box-arrow-right"></i> ログアウト</a>

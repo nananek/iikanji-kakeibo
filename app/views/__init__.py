@@ -8,6 +8,7 @@ from app.views.accounts import bp as accounts_bp
 from app.views.csv_import import bp as csv_import_bp
 from app.views.webauthn import bp as webauthn_bp
 from app.views.settings import bp as settings_bp
+from app.views.ai_journal import bp as ai_journal_bp
 
 
 def register_blueprints(app):
@@ -21,3 +22,4 @@ def register_blueprints(app):
     app.register_blueprint(csv_import_bp)
     app.register_blueprint(webauthn_bp)
     app.register_blueprint(settings_bp)
+    app.register_blueprint(ai_journal_bp)
