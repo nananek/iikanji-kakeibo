@@ -10,6 +10,7 @@ from app.models.account import Account
 from app.models.journal import JournalEntry, JournalEntryLine
 from app.forms.journal import JournalForm
 from app.services.accounting import create_journal_entry, get_next_entry_number
+from app.services.fiscal import check_entry_modifiable, check_period_open_for_new, get_effective_period
 from app.views.helpers import get_grouped_accounts
 
 bp = Blueprint("journal", __name__, url_prefix="/journal")
@@ -77,6 +78,18 @@ def new():
                 is_edit=False,
             )
 
+        # 確定済み期間チェック
+        period = form.date.data.month
+        err = check_period_open_for_new(current_user.id, form.date.data.year, period)
+        if err:
+            flash(err, "danger")
+            return render_template(
+                "journal/form.html",
+                form=form,
+                grouped_accounts=grouped_accounts,
+                is_edit=False,
+            )
+
         parsed = []
         for line in lines_data:
             parsed.append({
@@ -112,6 +125,12 @@ def edit(entry_id):
     entry = JournalEntry.query.filter_by(
         id=entry_id, user_id=current_user.id
     ).first_or_404()
+
+    # 確定済み期間チェック
+    err = check_entry_modifiable(current_user.id, entry)
+    if err:
+        flash(err, "danger")
+        return redirect(url_for("journal.index"))
 
     form = JournalForm()
     grouped_accounts = get_grouped_accounts(current_user.id)
@@ -229,6 +248,11 @@ def edit_api(entry_id):
         id=entry_id, user_id=current_user.id
     ).first_or_404()
 
+    # 確定済み期間チェック
+    err = check_entry_modifiable(current_user.id, entry)
+    if err:
+        return jsonify({"error": err}), 400
+
     data = request.get_json()
     if not data:
         return jsonify({"error": "リクエストが不正です。"}), 400
@@ -286,6 +310,12 @@ def delete(entry_id):
         id=entry_id, user_id=current_user.id
     ).first_or_404()
 
+    # 確定済み期間チェック
+    err = check_entry_modifiable(current_user.id, entry)
+    if err:
+        flash(err, "danger")
+        return redirect(url_for("journal.index"))
+
     num = entry.entry_number
     db.session.delete(entry)
     db.session.commit()
@@ -308,8 +338,22 @@ def bulk_delete():
         JournalEntry.id.in_(entry_ids),
         JournalEntry.user_id == current_user.id,
     ).all()
-    count = len(entries)
+
+    # 確定済み期間チェック
+    locked = []
+    deletable = []
     for entry in entries:
+        err = check_entry_modifiable(current_user.id, entry)
+        if err:
+            locked.append(entry)
+        else:
+            deletable.append(entry)
+
+    if locked:
+        flash(f"{len(locked)}件の仕訳は確定済み期間のため削除できませんでした。", "warning")
+
+    count = len(deletable)
+    for entry in deletable:
         db.session.delete(entry)
     db.session.commit()
     flash(f"{count}件の仕訳を削除しました。", "success")
@@ -320,6 +364,7 @@ SOURCE_LABELS = {
     "cashbook": "出納帳 / CSV / Web取込",
     "journal": "仕訳帳",
     "ai_receipt": "AI証憑仕訳",
+    "closing": "損益振替（自動生成）",
 }
 
 
@@ -364,8 +409,21 @@ def delete_batch(batch_id):
         flash("該当するバッチが見つかりません。", "warning")
         return redirect(url_for("journal.batches"))
 
-    count = len(entries)
+    # 確定済み期間チェック
+    locked = []
+    deletable = []
     for entry in entries:
+        err = check_entry_modifiable(current_user.id, entry)
+        if err:
+            locked.append(entry)
+        else:
+            deletable.append(entry)
+
+    if locked:
+        flash(f"{len(locked)}件の仕訳は確定済み期間のため削除できませんでした。", "warning")
+
+    count = len(deletable)
+    for entry in deletable:
         db.session.delete(entry)
     db.session.commit()
     flash(f"{count}件の仕訳を削除しました。", "success")

@@ -8,6 +8,7 @@ from app.models.journal import JournalEntry, JournalEntryLine
 from app.models.medical import MedicalExpense
 from app.forms.medical import MedicalExpenseForm
 from app.services.accounting import create_cashbook_entry
+from app.services.fiscal import check_entry_modifiable, check_period_open_for_new
 from app.views.helpers import get_grouped_accounts
 
 bp = Blueprint("medical", __name__, url_prefix="/medical")
@@ -102,6 +103,18 @@ def new():
         form.date.data = date.today()
 
     if form.validate_on_submit():
+        # 確定済み期間チェック
+        err = check_period_open_for_new(
+            current_user.id, form.date.data.year, form.date.data.month
+        )
+        if err:
+            flash(err, "danger")
+            grouped_accounts = get_grouped_accounts(current_user.id)
+            return render_template(
+                "medical/form.html", form=form, is_edit=False,
+                grouped_accounts=grouped_accounts,
+            )
+
         medical_account = _get_medical_account(current_user.id)
         if not medical_account:
             flash("医療費の勘定科目が見つかりません。", "danger")
@@ -195,6 +208,13 @@ def delete(expense_id):
     expense = MedicalExpense.query.filter_by(
         id=expense_id, user_id=current_user.id
     ).first_or_404()
+
+    # 確定済み期間チェック
+    if expense.journal_entry:
+        err = check_entry_modifiable(current_user.id, expense.journal_entry)
+        if err:
+            flash(err, "danger")
+            return redirect(url_for("medical.index"))
 
     # 紐付いた仕訳も削除
     if expense.journal_entry:

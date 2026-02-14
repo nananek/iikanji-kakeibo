@@ -1,3 +1,5 @@
+from datetime import date
+
 from flask import Blueprint, render_template, redirect, url_for, flash, request
 from flask_login import login_required, current_user
 
@@ -6,6 +8,9 @@ from app.models.webauthn import WebAuthnCredential
 from app.models.ai_config import UserAIConfig
 from app.services.ai_receipt import (
     encrypt_api_key, PROVIDER_DEFAULTS, PROVIDER_LABELS,
+)
+from app.services.fiscal import (
+    PERIOD_LABELS, get_closed_period, close_period, reopen_period,
 )
 
 bp = Blueprint("settings", __name__, url_prefix="/settings")
@@ -99,3 +104,65 @@ def ai_config_delete():
         db.session.commit()
         flash("AI API設定を削除しました。", "success")
     return redirect(url_for("settings.ai_config"))
+
+
+# --- 月次確定 ---
+
+
+@bp.route("/fiscal")
+@login_required
+def fiscal():
+    """月次確定管理ページ"""
+    year = request.args.get("year", date.today().year, type=int)
+    closed = get_closed_period(current_user.id, year)
+
+    periods = []
+    for p in range(0, 16):
+        periods.append({
+            "number": p,
+            "label": PERIOD_LABELS[p],
+            "closed": p <= closed,
+            "can_close": p == closed + 1,
+            "can_reopen": p == closed,
+        })
+
+    return render_template(
+        "settings/fiscal.html",
+        year=year,
+        periods=periods,
+        closed_period=closed,
+    )
+
+
+@bp.route("/fiscal/close", methods=["POST"])
+@login_required
+def fiscal_close():
+    """月次確定を実行"""
+    year = request.form.get("year", type=int)
+    period = request.form.get("period", type=int)
+
+    err = close_period(current_user.id, year, period)
+    if err:
+        flash(err, "danger")
+    else:
+        label = PERIOD_LABELS.get(period, f"{period}月")
+        flash(f"{year}年{label}を確定しました。", "success")
+
+    return redirect(url_for("settings.fiscal", year=year))
+
+
+@bp.route("/fiscal/reopen", methods=["POST"])
+@login_required
+def fiscal_reopen():
+    """月次確定を解除"""
+    year = request.form.get("year", type=int)
+    period = request.form.get("period", type=int)
+
+    err = reopen_period(current_user.id, year, period)
+    if err:
+        flash(err, "danger")
+    else:
+        label = PERIOD_LABELS.get(period, f"{period}月")
+        flash(f"{year}年{label}の確定を解除しました。", "success")
+
+    return redirect(url_for("settings.fiscal", year=year))

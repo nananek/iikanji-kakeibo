@@ -11,6 +11,7 @@ from app.services.accounting import (
     create_cashbook_entry,
     update_cashbook_entry,
 )
+from app.services.fiscal import check_entry_modifiable, check_period_open_for_new
 from app.views.helpers import get_grouped_accounts
 
 bp = Blueprint("cashbook", __name__, url_prefix="/cashbook")
@@ -60,6 +61,22 @@ def new():
         form.date.data = date.today()
 
     if form.validate_on_submit():
+        # 確定済み期間チェック
+        err = check_period_open_for_new(
+            current_user.id, form.date.data.year, form.date.data.month
+        )
+        if err:
+            flash(err, "danger")
+            grouped_accounts = get_grouped_accounts(current_user.id)
+            payment_account_name = _account_name(form.payment_account_id.data)
+            category_account_name = _account_name(form.category_account_id.data)
+            return render_template(
+                "cashbook/form.html", form=form, is_edit=False,
+                grouped_accounts=grouped_accounts,
+                payment_account_name=payment_account_name,
+                category_account_name=category_account_name,
+            )
+
         entry = create_cashbook_entry(
             user_id=current_user.id,
             date=form.date.data,
@@ -89,6 +106,12 @@ def edit(entry_id):
     entry = JournalEntry.query.filter_by(
         id=entry_id, user_id=current_user.id, source="cashbook"
     ).first_or_404()
+
+    # 確定済み期間チェック
+    err = check_entry_modifiable(current_user.id, entry)
+    if err:
+        flash(err, "danger")
+        return redirect(url_for("cashbook.index"))
 
     form = CashbookForm()
 
@@ -145,6 +168,12 @@ def delete(entry_id):
     entry = JournalEntry.query.filter_by(
         id=entry_id, user_id=current_user.id, source="cashbook"
     ).first_or_404()
+
+    # 確定済み期間チェック
+    err = check_entry_modifiable(current_user.id, entry)
+    if err:
+        flash(err, "danger")
+        return redirect(url_for("cashbook.index"))
 
     num = entry.entry_number
     db.session.delete(entry)

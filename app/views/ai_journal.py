@@ -13,6 +13,7 @@ from flask_login import login_required, current_user
 from app.models.ai_config import UserAIConfig
 from app.services.ai_receipt import analyze_and_suggest
 from app.services.accounting import create_journal_entry
+from app.services.fiscal import check_period_open_for_new
 from app.views.helpers import get_grouped_accounts
 
 bp = Blueprint("ai_journal", __name__, url_prefix="/ai-journal")
@@ -173,6 +174,20 @@ def review():
 
         if not lines_data:
             flash("仕訳明細を入力してください。", "danger")
+            return render_template(
+                "ai_journal/review.html",
+                suggestions=suggestions,
+                selected=selected,
+                selected_index=suggestion_index,
+                grouped_accounts=grouped_accounts,
+            )
+
+        # 確定済み期間チェック
+        err = check_period_open_for_new(
+            current_user.id, entry_date.year, entry_date.month
+        )
+        if err:
+            flash(err, "danger")
             return render_template(
                 "ai_journal/review.html",
                 suggestions=suggestions,

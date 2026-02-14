@@ -14,6 +14,7 @@ from app.services.csv_import import (
     DATE_FORMATS,
 )
 from app.services.accounting import create_cashbook_entry, create_transfer_entry
+from app.services.fiscal import check_period_open_for_new
 from app.views.helpers import (
     get_grouped_accounts, save_import_data, load_import_data, delete_import_data,
 )
@@ -233,6 +234,14 @@ def confirm():
             category_id = int(row.get("category_id", 0))
 
             if not category_id or (deposit == 0 and withdrawal == 0):
+                skipped += 1
+                continue
+
+            # 確定済み期間チェック
+            err = check_period_open_for_new(
+                current_user.id, row_date.year, row_date.month
+            )
+            if err:
                 skipped += 1
                 continue
 
