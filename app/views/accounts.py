@@ -41,6 +41,7 @@ COST_TYPES = [
     ("", "未分類"),
     ("fixed", "固定費"),
     ("variable", "変動費"),
+    ("occasional", "随時費"),
 ]
 
 

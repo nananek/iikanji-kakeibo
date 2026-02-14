@@ -204,7 +204,7 @@ def get_month_projection(user_id, year, month, comparison):
         result = []
         for a in accounts:
             actual = a["months"][m_idx]
-            if a["cost_type"] == "fixed":
+            if a["cost_type"] in ("fixed", "occasional"):
                 projected = actual
             elif days_elapsed > 0:
                 projected = int(actual * days_in_month / days_elapsed)

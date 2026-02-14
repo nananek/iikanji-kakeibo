@@ -32,7 +32,7 @@ class Account(db.Model):
     name = db.Column(db.String(100), nullable=False)
     description = db.Column(db.String(255), default="")
     tax_category = db.Column(db.String(50), nullable=True)
-    cost_type = db.Column(db.String(10), nullable=True)  # 'fixed' / 'variable'
+    cost_type = db.Column(db.String(10), nullable=True)  # 'fixed' / 'variable' / 'occasional'
     is_system = db.Column(db.Boolean, nullable=False, default=False)
     is_active = db.Column(db.Boolean, nullable=False, default=True)
     display_order = db.Column(db.Integer, nullable=False, default=0)
