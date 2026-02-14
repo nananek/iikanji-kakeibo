@@ -11,6 +11,7 @@ from flask import (
 from flask_login import login_required, current_user
 
 from app.models.ai_config import UserAIConfig
+from app.services.audit import get_effective_user_id, get_submitted_account_ids
 from app.services.ai_receipt import analyze_and_suggest
 from app.services.accounting import create_journal_entry
 from app.services.fiscal import check_period_open_for_new
@@ -26,7 +27,7 @@ ALLOWED_MIME_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
 @login_required
 def upload():
     """証憑画像アップロード画面"""
-    config = UserAIConfig.query.filter_by(user_id=current_user.id).first()
+    config = UserAIConfig.query.filter_by(user_id=get_effective_user_id()).first()
     return render_template(
         "ai_journal/upload.html",
         has_config=bool(config),
@@ -37,7 +38,7 @@ def upload():
 @login_required
 def analyze():
     """AJAX: 証憑画像を解析して仕訳案を返す"""
-    config = UserAIConfig.query.filter_by(user_id=current_user.id).first()
+    config = UserAIConfig.query.filter_by(user_id=get_effective_user_id()).first()
     if not config:
         return jsonify({"error": "AI API設定が登録されていません。先に設定してください。"}), 400
 
@@ -57,7 +58,7 @@ def analyze():
 
     try:
         suggestions = analyze_and_suggest(
-            current_user.id, image_bytes, mime_type
+            get_effective_user_id(), image_bytes, mime_type
         )
     except (ValueError, RuntimeError) as e:
         return jsonify({"error": str(e)}), 400
@@ -87,7 +88,7 @@ def review():
 
     selected = suggestions[suggestion_index]
 
-    grouped_accounts = get_grouped_accounts(current_user.id)
+    grouped_accounts = get_grouped_accounts(get_effective_user_id())
 
     if request.method == "POST":
         mode = request.form.get("mode", "simple")
@@ -182,9 +183,23 @@ def review():
                 grouped_accounts=grouped_accounts,
             )
 
+        # 提出済みロック科目チェック
+        locked_ids = get_submitted_account_ids(get_effective_user_id())
+        if locked_ids:
+            used_ids = {line["account_id"] for line in lines_data}
+            if used_ids & locked_ids:
+                flash("提出済みの税務科目を含むため登録できません。", "danger")
+                return render_template(
+                    "ai_journal/review.html",
+                    suggestions=suggestions,
+                    selected=selected,
+                    selected_index=suggestion_index,
+                    grouped_accounts=grouped_accounts,
+                )
+
         # 確定済み期間チェック
         err = check_period_open_for_new(
-            current_user.id, entry_date.year, entry_date.month
+            get_effective_user_id(), entry_date.year, entry_date.month
         )
         if err:
             flash(err, "danger")
@@ -198,7 +213,7 @@ def review():
 
         try:
             entry = create_journal_entry(
-                user_id=current_user.id,
+                user_id=get_effective_user_id(),
                 date=entry_date,
                 description=description,
                 lines_data=lines_data,

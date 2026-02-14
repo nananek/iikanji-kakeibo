@@ -25,6 +25,60 @@ def create_app(config_class=Config):
     from app.views.webauthn import bp as webauthn_bp
     csrf.exempt(webauthn_bp)
 
+    # Before-request hook for audit permission control
+    @app.before_request
+    def audit_permission_check():
+        from flask import request, redirect, url_for
+        from flask_login import current_user as cu
+        if not cu.is_authenticated:
+            return
+        from app.services.audit import (
+            get_permission_level, is_acting_as_auditor, require_permission,
+        )
+        perm = get_permission_level()
+        if perm is None:
+            return
+        endpoint = request.endpoint or ""
+        # Static files and auth endpoints: always allow
+        if endpoint.startswith("static") or endpoint.startswith("auth."):
+            return
+        # Auditor exit: always allow
+        if endpoint == "auditor.exit_acting":
+            return
+        # Lv1: only tax report
+        if perm == 1:
+            if endpoint not in ("reports.tax", "reports.medical_csv"):
+                return redirect(url_for("reports.tax"))
+        # Lv2: block import/AI/account changes/fiscal settings
+        elif perm == 2:
+            blocked_prefixes = (
+                "csv_import.", "web_import.", "ofx_import.", "ai_journal.",
+                "settings.fiscal", "settings.fiscal_close", "settings.fiscal_reopen",
+            )
+            if endpoint in blocked_prefixes or any(endpoint.startswith(p) for p in blocked_prefixes):
+                from flask import flash
+                flash("この権限レベルではこの機能を使用できません。", "warning")
+                return redirect(url_for("dashboard.index"))
+            # accounts: block modification (new, edit, toggle, delete)
+            if endpoint in ("accounts.new", "accounts.edit", "accounts.toggle", "accounts.delete", "accounts.api_add"):
+                from flask import flash
+                flash("この権限レベルでは勘定科目を変更できません。", "warning")
+                return redirect(url_for("accounts.index"))
+
+    # Context processor for audit
+    @app.context_processor
+    def inject_audit_context():
+        from app.services.audit import (
+            is_acting_as_auditor, get_acting_as_user,
+            get_permission_level, get_allowed_account_ids,
+        )
+        return {
+            "is_acting_as": is_acting_as_auditor(),
+            "acting_as_user": get_acting_as_user() if is_acting_as_auditor() else None,
+            "audit_permission_level": get_permission_level(),
+            "audit_allowed_account_ids": get_allowed_account_ids(),
+        }
+
     # CLI commands
     register_cli(app)
 

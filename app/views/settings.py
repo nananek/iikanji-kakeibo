@@ -1,11 +1,15 @@
-from datetime import date
+from datetime import date, datetime, timezone
 
 from flask import Blueprint, render_template, redirect, url_for, flash, request
 from flask_login import login_required, current_user
 
 from app.extensions import db
+from app.models.user import User
+from app.services.audit import get_effective_user_id
+from app.models.account import Account, AccountType
 from app.models.webauthn import WebAuthnCredential
 from app.models.ai_config import UserAIConfig
+from app.models.audit import AuditGrant, AuditGrantAccount
 from app.services.ai_receipt import (
     encrypt_api_key, PROVIDER_DEFAULTS, PROVIDER_LABELS,
 )
@@ -114,7 +118,7 @@ def ai_config_delete():
 def fiscal():
     """月次確定管理ページ"""
     year = request.args.get("year", date.today().year, type=int)
-    closed = get_closed_period(current_user.id, year)
+    closed = get_closed_period(get_effective_user_id(), year)
 
     periods = []
     for p in range(0, 16):
@@ -141,7 +145,7 @@ def fiscal_close():
     year = request.form.get("year", type=int)
     period = request.form.get("period", type=int)
 
-    err = close_period(current_user.id, year, period)
+    err = close_period(get_effective_user_id(), year, period)
     if err:
         flash(err, "danger")
     else:
@@ -158,7 +162,7 @@ def fiscal_reopen():
     year = request.form.get("year", type=int)
     period = request.form.get("period", type=int)
 
-    err = reopen_period(current_user.id, year, period)
+    err = reopen_period(get_effective_user_id(), year, period)
     if err:
         flash(err, "danger")
     else:
@@ -166,3 +170,192 @@ def fiscal_reopen():
         flash(f"{year}年{label}の確定を解除しました。", "success")
 
     return redirect(url_for("settings.fiscal", year=year))
+
+
+# --- 監査アクセス管理 ---
+
+
+PERMISSION_LABELS = {1: "Lv1: 集計結果のみ", 2: "Lv2: 税務科目のみ", 3: "Lv3: 本人同等"}
+
+
+@bp.route("/audit")
+@login_required
+def audit():
+    """監査アクセス管理ページ（個人ユーザー専用）"""
+    if current_user.user_type != "personal":
+        flash("この機能は個人ユーザー専用です。", "warning")
+        return redirect(url_for("dashboard.index"))
+
+    grants = (
+        AuditGrant.query
+        .filter_by(owner_user_id=current_user.id)
+        .order_by(AuditGrant.created_at.desc())
+        .all()
+    )
+    return render_template(
+        "settings/audit_grants.html",
+        grants=grants,
+        permission_labels=PERMISSION_LABELS,
+    )
+
+
+@bp.route("/audit/add", methods=["POST"])
+@login_required
+def audit_add():
+    """監査アクセスの付与"""
+    if current_user.user_type != "personal":
+        flash("この機能は個人ユーザー専用です。", "warning")
+        return redirect(url_for("dashboard.index"))
+
+    username = request.form.get("username", "").strip()
+    level = request.form.get("permission_level", 1, type=int)
+
+    if level not in (1, 2, 3):
+        flash("無効な権限レベルです。", "danger")
+        return redirect(url_for("settings.audit"))
+
+    auditor = User.query.filter_by(username=username, user_type="auditor").first()
+    if not auditor:
+        flash(f"監査用アカウント「{username}」が見つかりません。", "danger")
+        return redirect(url_for("settings.audit"))
+
+    if auditor.id == current_user.id:
+        flash("自分自身にはアクセスを付与できません。", "danger")
+        return redirect(url_for("settings.audit"))
+
+    existing = AuditGrant.query.filter_by(
+        owner_user_id=current_user.id, auditor_user_id=auditor.id
+    ).first()
+    if existing:
+        flash(f"「{username}」には既にアクセスが付与されています。", "warning")
+        return redirect(url_for("settings.audit"))
+
+    grant = AuditGrant(
+        owner_user_id=current_user.id,
+        auditor_user_id=auditor.id,
+        permission_level=level,
+    )
+    db.session.add(grant)
+    db.session.flush()
+
+    # Lv2: tax_category付き科目 + 事業主 をデフォルト公開
+    if level == 2:
+        accounts = Account.query.filter_by(
+            user_id=current_user.id, is_active=True
+        ).all()
+        for account in accounts:
+            if account.tax_category or account.code == "3030":
+                db.session.add(AuditGrantAccount(
+                    audit_grant_id=grant.id,
+                    account_id=account.id,
+                ))
+
+    db.session.commit()
+    flash(f"「{username}」に{PERMISSION_LABELS[level]}のアクセスを付与しました。", "success")
+    return redirect(url_for("settings.audit"))
+
+
+@bp.route("/audit/<int:grant_id>/delete", methods=["POST"])
+@login_required
+def audit_delete(grant_id):
+    """監査アクセスの取消"""
+    grant = AuditGrant.query.filter_by(
+        id=grant_id, owner_user_id=current_user.id
+    ).first_or_404()
+    auditor_name = grant.auditor.username
+    db.session.delete(grant)
+    db.session.commit()
+    flash(f"「{auditor_name}」のアクセスを取り消しました。", "success")
+    return redirect(url_for("settings.audit"))
+
+
+@bp.route("/audit/<int:grant_id>/submit", methods=["POST"])
+@login_required
+def audit_submit(grant_id):
+    """Lv2: 提出"""
+    grant = AuditGrant.query.filter_by(
+        id=grant_id, owner_user_id=current_user.id, permission_level=2
+    ).first_or_404()
+    grant.status = "submitted"
+    grant.submitted_at = datetime.now(timezone.utc)
+    db.session.commit()
+    flash(f"「{grant.auditor.username}」に提出しました。", "success")
+    return redirect(url_for("settings.audit"))
+
+
+@bp.route("/audit/<int:grant_id>/unsubmit", methods=["POST"])
+@login_required
+def audit_unsubmit(grant_id):
+    """Lv2: 提出取消"""
+    grant = AuditGrant.query.filter_by(
+        id=grant_id, owner_user_id=current_user.id, permission_level=2
+    ).first_or_404()
+    grant.status = "draft"
+    grant.submitted_at = None
+    db.session.commit()
+    flash(f"「{grant.auditor.username}」への提出を取り消しました。", "success")
+    return redirect(url_for("settings.audit"))
+
+
+@bp.route("/audit/<int:grant_id>/accounts")
+@login_required
+def audit_accounts(grant_id):
+    """Lv2用: 公開科目の管理画面"""
+    grant = AuditGrant.query.filter_by(
+        id=grant_id, owner_user_id=current_user.id, permission_level=2
+    ).first_or_404()
+
+    account_types = AccountType.query.order_by(AccountType.display_order).all()
+    accounts = (
+        Account.query
+        .filter_by(user_id=current_user.id, is_active=True)
+        .order_by(Account.code)
+        .all()
+    )
+
+    published_ids = {
+        ga.account_id for ga in grant.grant_accounts
+    }
+
+    return render_template(
+        "settings/audit_accounts.html",
+        grant=grant,
+        account_types=account_types,
+        accounts=accounts,
+        published_ids=published_ids,
+        permission_labels=PERMISSION_LABELS,
+    )
+
+
+@bp.route("/audit/<int:grant_id>/accounts", methods=["POST"])
+@login_required
+def audit_accounts_save(grant_id):
+    """公開科目の保存"""
+    grant = AuditGrant.query.filter_by(
+        id=grant_id, owner_user_id=current_user.id, permission_level=2
+    ).first_or_404()
+
+    if grant.status == "submitted":
+        flash("提出済みのため公開科目を変更できません。", "danger")
+        return redirect(url_for("settings.audit_accounts", grant_id=grant_id))
+
+    selected_ids = set(request.form.getlist("account_ids", type=int))
+
+    # 事業主(3030)は常に含める
+    proprietor = Account.query.filter_by(
+        user_id=current_user.id, code="3030"
+    ).first()
+    if proprietor:
+        selected_ids.add(proprietor.id)
+
+    # 既存をクリアして再作成
+    AuditGrantAccount.query.filter_by(audit_grant_id=grant.id).delete()
+    for aid in selected_ids:
+        db.session.add(AuditGrantAccount(
+            audit_grant_id=grant.id,
+            account_id=aid,
+        ))
+
+    db.session.commit()
+    flash("公開科目を保存しました。", "success")
+    return redirect(url_for("settings.audit_accounts", grant_id=grant_id))

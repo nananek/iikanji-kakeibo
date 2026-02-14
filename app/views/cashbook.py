@@ -12,6 +12,11 @@ from app.services.accounting import (
     update_cashbook_entry,
 )
 from app.services.fiscal import check_entry_modifiable, check_period_open_for_new
+from app.services.audit import (
+    get_effective_user_id, get_allowed_account_ids, get_submitted_account_ids,
+    is_entry_locked_for_owner, is_entry_locked_for_auditor,
+    is_acting_as_auditor,
+)
 from app.views.helpers import get_grouped_accounts
 
 bp = Blueprint("cashbook", __name__, url_prefix="/cashbook")
@@ -34,7 +39,7 @@ def index():
 
     query = (
         JournalEntry.query
-        .filter_by(user_id=current_user.id, source="cashbook")
+        .filter_by(user_id=get_effective_user_id(), source="cashbook")
         .order_by(JournalEntry.date.desc(), JournalEntry.entry_number.desc())
     )
 
@@ -56,11 +61,30 @@ def index():
 @login_required
 def new():
     form = CashbookForm()
+    user_id = get_effective_user_id()
+    allowed_ids = get_allowed_account_ids()
 
     if not form.date.data:
         form.date.data = date.today()
 
     if form.validate_on_submit():
+        # 本人側: ロック科目チェック
+        if not is_acting_as_auditor():
+            locked_ids = get_submitted_account_ids(user_id)
+            if locked_ids:
+                used = {form.payment_account_id.data, form.category_account_id.data}
+                if used & locked_ids:
+                    flash("提出済みの税務科目を含むため登録できません。", "danger")
+                    grouped_accounts = get_grouped_accounts(user_id, allowed_ids)
+                    payment_account_name = _account_name(form.payment_account_id.data)
+                    category_account_name = _account_name(form.category_account_id.data)
+                    return render_template(
+                        "cashbook/form.html", form=form, is_edit=False,
+                        grouped_accounts=grouped_accounts,
+                        payment_account_name=payment_account_name,
+                        category_account_name=category_account_name,
+                    )
+
         # 計上期間の決定
         fiscal_period = None
         if form.fiscal_period.data:
@@ -69,11 +93,11 @@ def new():
 
         # 確定済み期間チェック
         err = check_period_open_for_new(
-            current_user.id, form.date.data.year, period
+            user_id, form.date.data.year, period
         )
         if err:
             flash(err, "danger")
-            grouped_accounts = get_grouped_accounts(current_user.id)
+            grouped_accounts = get_grouped_accounts(user_id, allowed_ids)
             payment_account_name = _account_name(form.payment_account_id.data)
             category_account_name = _account_name(form.category_account_id.data)
             return render_template(
@@ -84,7 +108,7 @@ def new():
             )
 
         entry = create_cashbook_entry(
-            user_id=current_user.id,
+            user_id=user_id,
             date=form.date.data,
             transaction_type=form.transaction_type.data,
             payment_account_id=form.payment_account_id.data,
@@ -96,7 +120,7 @@ def new():
         flash(f"伝票 #{entry.entry_number} を登録しました。", "success")
         return redirect(url_for("cashbook.index"))
 
-    grouped_accounts = get_grouped_accounts(current_user.id)
+    grouped_accounts = get_grouped_accounts(user_id, allowed_ids)
     payment_account_name = _account_name(form.payment_account_id.data)
     category_account_name = _account_name(form.category_account_id.data)
     return render_template(
@@ -110,12 +134,22 @@ def new():
 @bp.route("/<int:entry_id>/edit", methods=["GET", "POST"])
 @login_required
 def edit(entry_id):
+    user_id = get_effective_user_id()
+    allowed_ids = get_allowed_account_ids()
     entry = JournalEntry.query.filter_by(
-        id=entry_id, user_id=current_user.id, source="cashbook"
+        id=entry_id, user_id=user_id, source="cashbook"
     ).first_or_404()
 
+    # 伝票ロックチェック
+    if not is_acting_as_auditor() and is_entry_locked_for_owner(user_id, entry):
+        flash("提出済みの税務科目を含む伝票のため変更できません。", "danger")
+        return redirect(url_for("cashbook.index"))
+    if is_acting_as_auditor() and allowed_ids is not None and is_entry_locked_for_auditor(entry, allowed_ids):
+        flash("事業主勘定を含む伝票のため変更できません。", "danger")
+        return redirect(url_for("cashbook.index"))
+
     # 確定済み期間チェック
-    err = check_entry_modifiable(current_user.id, entry)
+    err = check_entry_modifiable(user_id, entry)
     if err:
         flash(err, "danger")
         return redirect(url_for("cashbook.index"))
@@ -166,7 +200,7 @@ def edit(entry_id):
                 form.category_account_id.data = debit_line.account_id
                 form.amount.data = int(debit_line.debit_amount)
 
-    grouped_accounts = get_grouped_accounts(current_user.id)
+    grouped_accounts = get_grouped_accounts(get_effective_user_id(), allowed_ids)
     payment_account_name = _account_name(form.payment_account_id.data)
     category_account_name = _account_name(form.category_account_id.data)
     return render_template(
@@ -180,12 +214,22 @@ def edit(entry_id):
 @bp.route("/<int:entry_id>/delete", methods=["POST"])
 @login_required
 def delete(entry_id):
+    user_id = get_effective_user_id()
+    allowed_ids = get_allowed_account_ids()
     entry = JournalEntry.query.filter_by(
-        id=entry_id, user_id=current_user.id, source="cashbook"
+        id=entry_id, user_id=user_id, source="cashbook"
     ).first_or_404()
 
+    # 伝票ロックチェック
+    if not is_acting_as_auditor() and is_entry_locked_for_owner(user_id, entry):
+        flash("提出済みの税務科目を含む伝票のため削除できません。", "danger")
+        return redirect(url_for("cashbook.index"))
+    if is_acting_as_auditor() and allowed_ids is not None and is_entry_locked_for_auditor(entry, allowed_ids):
+        flash("事業主勘定を含む伝票のため削除できません。", "danger")
+        return redirect(url_for("cashbook.index"))
+
     # 確定済み期間チェック
-    err = check_entry_modifiable(current_user.id, entry)
+    err = check_entry_modifiable(user_id, entry)
     if err:
         flash(err, "danger")
         return redirect(url_for("cashbook.index"))

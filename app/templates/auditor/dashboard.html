@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block title %}クライアント一覧 - いいかんじ家計簿{% endblock %}
+
+{% block content %}
+<h2><i class="bi bi-people"></i> クライアント一覧</h2>
+
+{% if grants %}
+<div class="table-responsive mt-3">
+  <table class="table table-hover">
+    <thead class="table-dark">
+      <tr>
+        <th>ユーザー名</th>
+        <th>権限レベル</th>
+        <th>状態</th>
+        <th>付与日</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for grant in grants %}
+      <tr>
+        <td>{{ grant.owner.username }}</td>
+        <td>{{ permission_labels.get(grant.permission_level, '不明') }}</td>
+        <td>
+          {% if grant.permission_level == 2 %}
+            {% if grant.status == 'submitted' %}
+              <span class="badge bg-success">提出済み</span>
+            {% else %}
+              <span class="badge bg-secondary">未提出</span>
+            {% endif %}
+          {% else %}
+            <span class="badge bg-primary">有効</span>
+          {% endif %}
+        </td>
+        <td>{{ grant.created_at.strftime('%Y-%m-%d') }}</td>
+        <td>
+          {% if grant.permission_level != 2 or grant.status == 'submitted' %}
+          <form method="POST" action="{{ url_for('auditor.switch', grant_id=grant.id) }}" class="d-inline">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button type="submit" class="btn btn-sm btn-outline-primary">
+              <i class="bi bi-box-arrow-in-right"></i> 切替
+            </button>
+          </form>
+          {% else %}
+          <button class="btn btn-sm btn-outline-secondary" disabled>未提出</button>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<div class="text-center text-muted py-5">
+  <p>クライアントからのアクセス付与がありません。</p>
+</div>
+{% endif %}
+{% endblock %}

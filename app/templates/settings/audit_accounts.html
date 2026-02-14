@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block title %}公開科目管理 - いいかんじ家計簿{% endblock %}
+
+{% block content %}
+<h2><i class="bi bi-list-check"></i> 公開科目管理
+  <small class="text-muted">{{ grant.auditor.username }} ({{ permission_labels.get(grant.permission_level, '') }})</small>
+</h2>
+
+{% if grant.status == 'submitted' %}
+<div class="alert alert-warning">
+  <i class="bi bi-lock"></i> 提出済みのため変更できません。変更するには提出を取り消してください。
+</div>
+{% endif %}
+
+<form method="POST" action="{{ url_for('settings.audit_accounts_save', grant_id=grant.id) }}">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+  {% set current_type = namespace(name='') %}
+  {% for account in accounts %}
+    {% if account.account_type.name != current_type.name %}
+      {% set current_type.name = account.account_type.name %}
+      <h5 class="mt-4 mb-2">{{ current_type.name }}</h5>
+    {% endif %}
+    <div class="form-check">
+      {% if account.code == '3030' %}
+      <input class="form-check-input" type="checkbox" name="account_ids"
+             value="{{ account.id }}" checked disabled>
+      <input type="hidden" name="account_ids" value="{{ account.id }}">
+      {% else %}
+      <input class="form-check-input" type="checkbox" name="account_ids"
+             value="{{ account.id }}"
+             {% if account.id in published_ids %}checked{% endif %}
+             {% if grant.status == 'submitted' %}disabled{% endif %}>
+      {% endif %}
+      <label class="form-check-label">
+        {{ account.code }} {{ account.name }}
+        {% if account.tax_category %}
+          <span class="badge bg-info text-dark">{{ account.tax_category }}</span>
+        {% endif %}
+        {% if account.code == '3030' %}
+          <span class="badge bg-dark">常時公開</span>
+        {% endif %}
+      </label>
+    </div>
+  {% endfor %}
+
+  {% if grant.status != 'submitted' %}
+  <div class="mt-4">
+    <button type="submit" class="btn btn-primary">
+      <i class="bi bi-check-lg"></i> 保存
+    </button>
+    <a href="{{ url_for('settings.audit') }}" class="btn btn-outline-secondary ms-2">戻る</a>
+  </div>
+  {% else %}
+  <div class="mt-4">
+    <a href="{{ url_for('settings.audit') }}" class="btn btn-outline-secondary">戻る</a>
+  </div>
+  {% endif %}
+</form>
+{% endblock %}

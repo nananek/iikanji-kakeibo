@@ -5,6 +5,7 @@ from flask_login import login_required, current_user
 
 from app.extensions import db
 from app.models.account import Account, AccountType
+from app.services.audit import get_effective_user_id
 
 
 def _next_code(code: str, user_id: int) -> str:
@@ -50,7 +51,7 @@ def index():
     account_types = AccountType.query.order_by(AccountType.display_order).all()
     accounts = (
         Account.query
-        .filter_by(user_id=current_user.id)
+        .filter_by(user_id=get_effective_user_id())
         .order_by(Account.code)
         .all()
     )
@@ -78,7 +79,7 @@ def index():
 def api_get(account_id):
     """編集・コピー用: アカウントデータをJSONで返す"""
     account = Account.query.filter_by(
-        id=account_id, user_id=current_user.id
+        id=account_id, user_id=get_effective_user_id()
     ).first_or_404()
 
     copy = request.args.get("copy") == "1"
@@ -94,7 +95,7 @@ def api_get(account_id):
         "is_system": account.is_system,
     }
     if copy:
-        data["code"] = _next_code(account.code, current_user.id)
+        data["code"] = _next_code(account.code, get_effective_user_id())
         data["is_system"] = False
         data["id"] = None
 
@@ -122,13 +123,13 @@ def api_create():
         return jsonify({"error": "科目区分は必須です。"}), 400
 
     existing = Account.query.filter_by(
-        user_id=current_user.id, code=code
+        user_id=get_effective_user_id(), code=code
     ).first()
     if existing:
         return jsonify({"error": "この科目コードは既に使われています。"}), 400
 
     account = Account(
-        user_id=current_user.id,
+        user_id=get_effective_user_id(),
         account_type_id=int(account_type_id),
         code=code,
         name=name,
@@ -150,7 +151,7 @@ def api_create():
 def api_update(account_id):
     """更新API"""
     account = Account.query.filter_by(
-        id=account_id, user_id=current_user.id
+        id=account_id, user_id=get_effective_user_id()
     ).first_or_404()
 
     data = request.get_json()
@@ -175,7 +176,7 @@ def api_update(account_id):
             return jsonify({"error": "科目コードは10文字以内にしてください。"}), 400
 
         existing = Account.query.filter_by(
-            user_id=current_user.id, code=code
+            user_id=get_effective_user_id(), code=code
         ).filter(Account.id != account_id).first()
         if existing:
             return jsonify({"error": "この科目コードは既に使われています。"}), 400

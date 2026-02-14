@@ -9,6 +9,7 @@ from flask_login import login_required, current_user
 
 from app.extensions import db
 from app.models.account import Account, AccountType
+from app.services.audit import get_effective_user_id, get_submitted_account_ids
 from app.models.ai_config import UserAIConfig
 from app.services.ai_receipt import parse_web_text
 from app.services.accounting import create_cashbook_entry, create_transfer_entry
@@ -26,8 +27,8 @@ MAX_TEXT_LENGTH = 200_000
 @login_required
 def upload():
     """Step 1: テキスト入力 + 口座選択 → AI解析"""
-    grouped_accounts = get_grouped_accounts(current_user.id)
-    has_config = UserAIConfig.query.filter_by(user_id=current_user.id).first() is not None
+    grouped_accounts = get_grouped_accounts(get_effective_user_id())
+    has_config = UserAIConfig.query.filter_by(user_id=get_effective_user_id()).first() is not None
 
     if request.method == "POST":
         raw_text = request.form.get("raw_text", "").strip()
@@ -61,7 +62,7 @@ def upload():
 
         try:
             parsed = parse_web_text(
-                current_user.id, raw_text, payment_account.name
+                get_effective_user_id(), raw_text, payment_account.name
             )
         except (ValueError, RuntimeError) as e:
             flash(str(e), "danger")
@@ -113,14 +114,14 @@ def confirm():
     expense_type = AccountType.query.filter_by(code="expense").first()
     default_expense = (
         Account.query
-        .filter_by(user_id=current_user.id, account_type_id=expense_type.id, is_active=True)
+        .filter_by(user_id=get_effective_user_id(), account_type_id=expense_type.id, is_active=True)
         .order_by(Account.code)
         .first()
     )
     revenue_type = AccountType.query.filter_by(code="revenue").first()
     default_income = (
         Account.query
-        .filter_by(user_id=current_user.id, account_type_id=revenue_type.id, is_active=True)
+        .filter_by(user_id=get_effective_user_id(), account_type_id=revenue_type.id, is_active=True)
         .order_by(Account.code)
         .first()
     )
@@ -140,6 +141,7 @@ def confirm():
         imported = 0
         skipped = 0
         batch_id = str(uuid.uuid4())
+        locked_ids = get_submitted_account_ids(get_effective_user_id())
 
         for row in rows_data:
             if not row.get("enabled", True):
@@ -161,9 +163,14 @@ def confirm():
                 skipped += 1
                 continue
 
+            # 提出済みロック科目チェック
+            if locked_ids and {payment_account_id, category_id} & locked_ids:
+                skipped += 1
+                continue
+
             # 確定済み期間チェック
             err = check_period_open_for_new(
-                current_user.id, row_date.year, row_date.month
+                get_effective_user_id(), row_date.year, row_date.month
             )
             if err:
                 skipped += 1
@@ -176,7 +183,7 @@ def confirm():
                 amount = deposit or withdrawal
                 if withdrawal > 0:
                     create_transfer_entry(
-                        user_id=current_user.id,
+                        user_id=get_effective_user_id(),
                         date=row_date,
                         from_account_id=payment_account_id,
                         to_account_id=category_id,
@@ -186,7 +193,7 @@ def confirm():
                     )
                 else:
                     create_transfer_entry(
-                        user_id=current_user.id,
+                        user_id=get_effective_user_id(),
                         date=row_date,
                         from_account_id=category_id,
                         to_account_id=payment_account_id,
@@ -197,7 +204,7 @@ def confirm():
                 imported += 1
             elif deposit > 0:
                 create_cashbook_entry(
-                    user_id=current_user.id,
+                    user_id=get_effective_user_id(),
                     date=row_date,
                     transaction_type="income",
                     payment_account_id=payment_account_id,
@@ -209,7 +216,7 @@ def confirm():
                 imported += 1
             elif withdrawal > 0:
                 create_cashbook_entry(
-                    user_id=current_user.id,
+                    user_id=get_effective_user_id(),
                     date=row_date,
                     transaction_type="expense",
                     payment_account_id=payment_account_id,
@@ -229,7 +236,7 @@ def confirm():
         flash(f"{imported}件を取り込みました。（スキップ: {skipped}件）", "success")
         return redirect(url_for("cashbook.index"))
 
-    grouped_accounts = get_grouped_accounts(current_user.id)
+    grouped_accounts = get_grouped_accounts(get_effective_user_id())
     return render_template(
         "web_import/confirm.html",
         parsed=parsed,

@@ -11,6 +11,12 @@ from app.models.journal import JournalEntry, JournalEntryLine
 from app.forms.journal import JournalForm
 from app.services.accounting import create_journal_entry, get_next_entry_number
 from app.services.fiscal import check_entry_modifiable, check_period_open_for_new, get_effective_period
+from app.services.audit import (
+    get_effective_user_id, get_allowed_account_ids, get_submitted_account_ids,
+    is_entry_locked_for_owner, is_entry_locked_for_auditor,
+    is_acting_as_auditor, get_permission_level,
+    get_proprietor_account_id, mask_account_name,
+)
 from app.views.helpers import get_grouped_accounts
 
 bp = Blueprint("journal", __name__, url_prefix="/journal")
@@ -26,7 +32,7 @@ def index():
 
     query = (
         JournalEntry.query
-        .filter_by(user_id=current_user.id)
+        .filter_by(user_id=get_effective_user_id())
         .order_by(JournalEntry.date.desc(), JournalEntry.entry_number.desc())
     )
 
@@ -51,7 +57,9 @@ def index():
 @login_required
 def new():
     form = JournalForm()
-    grouped_accounts = get_grouped_accounts(current_user.id)
+    user_id = get_effective_user_id()
+    allowed_ids = get_allowed_account_ids()
+    grouped_accounts = get_grouped_accounts(user_id, allowed_ids)
 
     if not form.date.data:
         form.date.data = date.today()
@@ -85,7 +93,7 @@ def new():
         period = fiscal_period if fiscal_period is not None else form.date.data.month
 
         # 確定済み期間チェック
-        err = check_period_open_for_new(current_user.id, form.date.data.year, period)
+        err = check_period_open_for_new(get_effective_user_id(), form.date.data.year, period)
         if err:
             flash(err, "danger")
             return render_template(
@@ -104,9 +112,35 @@ def new():
                 "description": line.get("description", ""),
             })
 
+        # 本人側: 提出済みロック科目チェック
+        if not is_acting_as_auditor():
+            locked_ids = get_submitted_account_ids(user_id)
+            if locked_ids:
+                used_locked = [p for p in parsed if p["account_id"] in locked_ids]
+                if used_locked:
+                    flash("提出済みの税務科目を含むため仕訳を作成できません。", "danger")
+                    return render_template(
+                        "journal/form.html",
+                        form=form,
+                        grouped_accounts=grouped_accounts,
+                        is_edit=False,
+                    )
+
+        # Lv2監査者: 非公開科目チェック
+        if allowed_ids is not None:
+            for p in parsed:
+                if p["account_id"] not in allowed_ids:
+                    flash("使用できない科目が含まれています。", "danger")
+                    return render_template(
+                        "journal/form.html",
+                        form=form,
+                        grouped_accounts=grouped_accounts,
+                        is_edit=False,
+                    )
+
         try:
             entry = create_journal_entry(
-                user_id=current_user.id,
+                user_id=user_id,
                 date=form.date.data,
                 description=form.description.data,
                 lines_data=parsed,
@@ -129,17 +163,30 @@ def new():
 @login_required
 def edit(entry_id):
     entry = JournalEntry.query.filter_by(
-        id=entry_id, user_id=current_user.id
+        id=entry_id, user_id=get_effective_user_id()
     ).first_or_404()
 
+    user_id = get_effective_user_id()
+    allowed_ids = get_allowed_account_ids()
+
+    # 伝票ロック: 本人側
+    if not is_acting_as_auditor() and is_entry_locked_for_owner(user_id, entry):
+        flash("提出済みの税務科目を含む伝票のため変更できません。", "danger")
+        return redirect(url_for("journal.index"))
+
+    # 伝票ロック: 監査側
+    if is_acting_as_auditor() and allowed_ids is not None and is_entry_locked_for_auditor(entry, allowed_ids):
+        flash("事業主勘定を含む伝票のため変更できません。", "danger")
+        return redirect(url_for("journal.index"))
+
     # 確定済み期間チェック
-    err = check_entry_modifiable(current_user.id, entry)
+    err = check_entry_modifiable(get_effective_user_id(), entry)
     if err:
         flash(err, "danger")
         return redirect(url_for("journal.index"))
 
     form = JournalForm()
-    grouped_accounts = get_grouped_accounts(current_user.id)
+    grouped_accounts = get_grouped_accounts(get_effective_user_id(), allowed_ids)
 
     if request.method == "POST" and form.validate_on_submit():
         lines_json = request.form.get("lines_json", "[]")
@@ -232,9 +279,33 @@ def edit(entry_id):
 @login_required
 def get_json(entry_id):
     """仕訳データをJSON形式で返す（モーダル編集用）"""
+    user_id = get_effective_user_id()
     entry = JournalEntry.query.filter_by(
-        id=entry_id, user_id=current_user.id
+        id=entry_id, user_id=user_id
     ).first_or_404()
+
+    allowed_ids = get_allowed_account_ids()
+    proprietor_id = get_proprietor_account_id(user_id) if allowed_ids is not None else None
+
+    lines = []
+    for line in entry.lines:
+        aid = line.account_id
+        # Lv2: 非公開科目を事業主に差し替え
+        if allowed_ids is not None and aid not in allowed_ids and proprietor_id:
+            aid = proprietor_id
+        lines.append({
+            "account_id": aid,
+            "debit_amount": int(line.debit_amount),
+            "credit_amount": int(line.credit_amount),
+            "description": line.description or "",
+        })
+
+    # ロック判定
+    is_locked = False
+    if is_acting_as_auditor() and allowed_ids is not None:
+        is_locked = is_entry_locked_for_auditor(entry, allowed_ids)
+    elif not is_acting_as_auditor():
+        is_locked = is_entry_locked_for_owner(user_id, entry)
 
     return jsonify({
         "id": entry.id,
@@ -242,15 +313,8 @@ def get_json(entry_id):
         "description": entry.description,
         "entry_number": entry.entry_number,
         "fiscal_period": entry.fiscal_period,
-        "lines": [
-            {
-                "account_id": line.account_id,
-                "debit_amount": int(line.debit_amount),
-                "credit_amount": int(line.credit_amount),
-                "description": line.description or "",
-            }
-            for line in entry.lines
-        ],
+        "is_locked": is_locked,
+        "lines": lines,
     })
 
 
@@ -258,12 +322,22 @@ def get_json(entry_id):
 @login_required
 def edit_api(entry_id):
     """仕訳をJSON APIで更新する（モーダル編集用）"""
+    user_id = get_effective_user_id()
     entry = JournalEntry.query.filter_by(
-        id=entry_id, user_id=current_user.id
+        id=entry_id, user_id=user_id
     ).first_or_404()
 
+    allowed_ids = get_allowed_account_ids()
+
+    # 伝票ロック: 本人側
+    if not is_acting_as_auditor() and is_entry_locked_for_owner(user_id, entry):
+        return jsonify({"error": "提出済みの税務科目を含む伝票のため変更できません。"}), 400
+    # 伝票ロック: 監査側
+    if is_acting_as_auditor() and allowed_ids is not None and is_entry_locked_for_auditor(entry, allowed_ids):
+        return jsonify({"error": "事業主勘定を含む伝票のため変更できません。"}), 400
+
     # 確定済み期間チェック
-    err = check_entry_modifiable(current_user.id, entry)
+    err = check_entry_modifiable(user_id, entry)
     if err:
         return jsonify({"error": err}), 400
 
@@ -325,12 +399,23 @@ def edit_api(entry_id):
 @bp.route("/<int:entry_id>/delete", methods=["POST"])
 @login_required
 def delete(entry_id):
+    user_id = get_effective_user_id()
     entry = JournalEntry.query.filter_by(
-        id=entry_id, user_id=current_user.id
+        id=entry_id, user_id=user_id
     ).first_or_404()
 
+    allowed_ids = get_allowed_account_ids()
+
+    # 伝票ロックチェック
+    if not is_acting_as_auditor() and is_entry_locked_for_owner(user_id, entry):
+        flash("提出済みの税務科目を含む伝票のため削除できません。", "danger")
+        return redirect(url_for("journal.index"))
+    if is_acting_as_auditor() and allowed_ids is not None and is_entry_locked_for_auditor(entry, allowed_ids):
+        flash("事業主勘定を含む伝票のため削除できません。", "danger")
+        return redirect(url_for("journal.index"))
+
     # 確定済み期間チェック
-    err = check_entry_modifiable(current_user.id, entry)
+    err = check_entry_modifiable(user_id, entry)
     if err:
         flash(err, "danger")
         return redirect(url_for("journal.index"))
@@ -355,21 +440,28 @@ def bulk_delete():
 
     entries = JournalEntry.query.filter(
         JournalEntry.id.in_(entry_ids),
-        JournalEntry.user_id == current_user.id,
+        JournalEntry.user_id == get_effective_user_id(),
     ).all()
 
-    # 確定済み期間チェック
+    user_id = get_effective_user_id()
+    allowed_ids = get_allowed_account_ids()
+
+    # 確定済み期間 + 伝票ロックチェック
     locked = []
     deletable = []
     for entry in entries:
-        err = check_entry_modifiable(current_user.id, entry)
+        err = check_entry_modifiable(user_id, entry)
         if err:
+            locked.append(entry)
+        elif not is_acting_as_auditor() and is_entry_locked_for_owner(user_id, entry):
+            locked.append(entry)
+        elif is_acting_as_auditor() and allowed_ids is not None and is_entry_locked_for_auditor(entry, allowed_ids):
             locked.append(entry)
         else:
             deletable.append(entry)
 
     if locked:
-        flash(f"{len(locked)}件の仕訳は確定済み期間のため削除できませんでした。", "warning")
+        flash(f"{len(locked)}件の仕訳は削除できませんでした。", "warning")
 
     count = len(deletable)
     for entry in deletable:
@@ -401,7 +493,7 @@ def batches():
             func.min(JournalEntry.created_at).label("imported_at"),
         )
         .filter(
-            JournalEntry.user_id == current_user.id,
+            JournalEntry.user_id == get_effective_user_id(),
             JournalEntry.batch_id.isnot(None),
         )
         .group_by(JournalEntry.batch_id, JournalEntry.source)
@@ -421,7 +513,7 @@ def batches():
 def delete_batch(batch_id):
     """インポートバッチの一括削除"""
     entries = JournalEntry.query.filter_by(
-        user_id=current_user.id, batch_id=batch_id
+        user_id=get_effective_user_id(), batch_id=batch_id
     ).all()
 
     if not entries:
@@ -432,7 +524,7 @@ def delete_batch(batch_id):
     locked = []
     deletable = []
     for entry in entries:
-        err = check_entry_modifiable(current_user.id, entry)
+        err = check_entry_modifiable(get_effective_user_id(), entry)
         if err:
             locked.append(entry)
         else:

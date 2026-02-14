@@ -11,6 +11,7 @@ from app.views.settings import bp as settings_bp
 from app.views.ai_journal import bp as ai_journal_bp
 from app.views.web_import import bp as web_import_bp
 from app.views.ofx_import import bp as ofx_import_bp
+from app.views.auditor import bp as auditor_bp
 
 
 def register_blueprints(app):
@@ -27,3 +28,4 @@ def register_blueprints(app):
     app.register_blueprint(webauthn_bp)
     app.register_blueprint(settings_bp)
     app.register_blueprint(ai_journal_bp)
+    app.register_blueprint(auditor_bp)

@@ -14,6 +14,7 @@ from app.services.tax import (
     get_tax_summary, get_medical_summary, get_income_expense_summary,
     get_monthly_comparison, get_month_projection,
 )
+from app.services.audit import get_effective_user_id, get_allowed_account_ids, mask_account_name
 from app.views.helpers import get_grouped_accounts
 
 bp = Blueprint("reports", __name__, url_prefix="/reports")
@@ -35,10 +36,15 @@ def balance():
     account_types = AccountType.query.order_by(AccountType.display_order).all()
     accounts = (
         Account.query
-        .filter_by(user_id=current_user.id, is_active=True)
+        .filter_by(user_id=get_effective_user_id(), is_active=True)
         .order_by(Account.code)
         .all()
     )
+
+    # Lv2: 公開科目のみに絞る
+    allowed_ids = get_allowed_account_ids()
+    if allowed_ids is not None:
+        accounts = [a for a in accounts if a.id in allowed_ids]
 
     # 期間の決定
     start_of_year = date(year, 1, 1)
@@ -156,9 +162,9 @@ def pl():
     month = request.args.get("month", 0, type=int)
 
     if month:
-        summary = get_income_expense_summary(current_user.id, year, month)
+        summary = get_income_expense_summary(get_effective_user_id(), year, month)
     else:
-        summary = get_income_expense_summary(current_user.id, year)
+        summary = get_income_expense_summary(get_effective_user_id(), year)
 
     # 科目別内訳
     revenue_type = AccountType.query.filter_by(code="revenue").first()
@@ -182,7 +188,7 @@ def pl():
             .join(JournalEntryLine, JournalEntryLine.account_id == Account.id)
             .join(JournalEntry, JournalEntry.id == JournalEntryLine.journal_entry_id)
             .filter(
-                Account.user_id == current_user.id,
+                Account.user_id == get_effective_user_id(),
                 Account.account_type_id == type_id,
                 JournalEntry.date >= start,
                 JournalEntry.date < end,
@@ -218,8 +224,8 @@ def tax():
     """確定申告用集計"""
     year = request.args.get("year", date.today().year, type=int)
 
-    tax_summary = get_tax_summary(current_user.id, year)
-    medical_summary = get_medical_summary(current_user.id, year)
+    tax_summary = get_tax_summary(get_effective_user_id(), year)
+    medical_summary = get_medical_summary(get_effective_user_id(), year)
 
     return render_template(
         "reports/tax.html",
@@ -234,7 +240,7 @@ def tax():
 def medical_csv():
     """医療費集計フォーム Ver 3.1 準拠CSVダウンロード"""
     year = request.args.get("year", date.today().year, type=int)
-    medical_summary = get_medical_summary(current_user.id, year)
+    medical_summary = get_medical_summary(get_effective_user_id(), year)
 
     output = io.StringIO()
     writer = csv.writer(output)
@@ -286,13 +292,19 @@ def ledger():
     month = request.args.get("month", 0, type=int)
     account_id = request.args.get("account_id", 0, type=int)
 
+    allowed_ids = get_allowed_account_ids()
+
     account_types = AccountType.query.order_by(AccountType.display_order).all()
     accounts = (
         Account.query
-        .filter_by(user_id=current_user.id, is_active=True)
+        .filter_by(user_id=get_effective_user_id(), is_active=True)
         .order_by(Account.code)
         .all()
     )
+
+    # Lv2: 公開科目のみ
+    if allowed_ids is not None:
+        accounts = [a for a in accounts if a.id in allowed_ids]
 
     # 科目区分ごとにグルーピング
     grouped_accounts = {}
@@ -306,8 +318,13 @@ def ledger():
     carry_forward = 0
 
     if account_id:
+        # Lv2: 非公開科目へのアクセスをブロック
+        if allowed_ids is not None and account_id not in allowed_ids:
+            from flask import abort
+            abort(403)
+
         selected_account = Account.query.filter_by(
-            id=account_id, user_id=current_user.id
+            id=account_id, user_id=get_effective_user_id()
         ).first()
 
         if selected_account:
@@ -380,7 +397,8 @@ def ledger():
                     .all()
                 )
                 counter_names = ", ".join(
-                    a.account.name for a in counter_lines
+                    mask_account_name(a.account.name, a.account_id, allowed_ids)
+                    for a in counter_lines
                 ) if counter_lines else ""
 
                 entries.append({
@@ -394,8 +412,8 @@ def ledger():
                     "entry_id": line.entry_id,
                 })
 
-    # モーダル用: 全科目データ
-    all_grouped = get_grouped_accounts(current_user.id)
+    # モーダル用: 全科目データ（Lv2なら公開科目のみ）
+    all_grouped = get_grouped_accounts(get_effective_user_id(), allowed_ids)
 
     return render_template(
         "reports/ledger.html",
@@ -415,14 +433,14 @@ def ledger():
 def monthly():
     """月次比較レポート"""
     year = request.args.get("year", date.today().year, type=int)
-    comparison = get_monthly_comparison(current_user.id, year)
+    comparison = get_monthly_comparison(get_effective_user_id(), year)
 
     projection = None
     today = date.today()
     if year == today.year and today.day < \
             __import__("calendar").monthrange(year, today.month)[1]:
         projection = get_month_projection(
-            current_user.id, year, today.month, comparison
+            get_effective_user_id(), year, today.month, comparison
         )
 
     return render_template(

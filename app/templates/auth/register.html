@@ -37,6 +37,10 @@
             <div class="invalid-feedback d-block">{{ error }}</div>
             {% endfor %}
           </div>
+          <div class="mb-3">
+            {{ form.user_type.label(class="form-label") }}
+            {{ form.user_type(class="form-select") }}
+          </div>
           {{ form.submit(class="btn btn-primary w-100") }}
         </form>
         <div class="text-center mt-3">

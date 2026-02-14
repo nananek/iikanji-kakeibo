@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+{% block title %}監査アクセス管理 - いいかんじ家計簿{% endblock %}
+
+{% block content %}
+<h2><i class="bi bi-shield-check"></i> 監査アクセス管理</h2>
+
+<div class="card mt-3 mb-4">
+  <div class="card-header">アクセスを付与</div>
+  <div class="card-body">
+    <form method="POST" action="{{ url_for('settings.audit_add') }}" class="row g-3 align-items-end">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="col-md-4">
+        <label class="form-label">監査用アカウントのユーザー名</label>
+        <input type="text" name="username" class="form-control" required>
+      </div>
+      <div class="col-md-4">
+        <label class="form-label">権限レベル</label>
+        <select name="permission_level" class="form-select">
+          {% for lv, label in permission_labels.items() %}
+          <option value="{{ lv }}">{{ label }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-4">
+        <button type="submit" class="btn btn-primary">
+          <i class="bi bi-plus-lg"></i> 付与
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
+
+{% if grants %}
+<div class="table-responsive">
+  <table class="table table-hover">
+    <thead class="table-dark">
+      <tr>
+        <th>監査アカウント</th>
+        <th>権限レベル</th>
+        <th>状態</th>
+        <th>付与日</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for grant in grants %}
+      <tr>
+        <td>{{ grant.auditor.username }}</td>
+        <td>{{ permission_labels.get(grant.permission_level, '不明') }}</td>
+        <td>
+          {% if grant.permission_level == 2 %}
+            {% if grant.status == 'submitted' %}
+              <span class="badge bg-success">提出済み</span>
+              <small class="text-muted">{{ grant.submitted_at.strftime('%Y-%m-%d') if grant.submitted_at }}</small>
+            {% else %}
+              <span class="badge bg-secondary">未提出</span>
+            {% endif %}
+          {% else %}
+            <span class="badge bg-primary">有効</span>
+          {% endif %}
+        </td>
+        <td>{{ grant.created_at.strftime('%Y-%m-%d') }}</td>
+        <td>
+          <div class="btn-group btn-group-sm">
+            {% if grant.permission_level == 2 %}
+              <a href="{{ url_for('settings.audit_accounts', grant_id=grant.id) }}"
+                 class="btn btn-outline-info">
+                <i class="bi bi-list-check"></i> 公開科目
+              </a>
+              {% if grant.status == 'draft' %}
+              <form method="POST" action="{{ url_for('settings.audit_submit', grant_id=grant.id) }}" class="d-inline">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button type="submit" class="btn btn-outline-success"
+                        onclick="return confirm('提出しますか？提出後は税務科目を含む伝票が編集不可になります。')">
+                  <i class="bi bi-send"></i> 提出
+                </button>
+              </form>
+              {% else %}
+              <form method="POST" action="{{ url_for('settings.audit_unsubmit', grant_id=grant.id) }}" class="d-inline">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button type="submit" class="btn btn-outline-warning"
+                        onclick="return confirm('提出を取り消しますか？')">
+                  <i class="bi bi-arrow-counterclockwise"></i> 提出取消
+                </button>
+              </form>
+              {% endif %}
+            {% endif %}
+            <form method="POST" action="{{ url_for('settings.audit_delete', grant_id=grant.id) }}" class="d-inline">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <button type="submit" class="btn btn-outline-danger"
+                      onclick="return confirm('アクセスを取り消しますか？')">
+                <i class="bi bi-trash"></i> 取消
+              </button>
+            </form>
+          </div>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<div class="text-center text-muted py-5">
+  <p>監査アクセスはまだ付与されていません。</p>
+</div>
+{% endif %}
+{% endblock %}
