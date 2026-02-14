@@ -68,6 +68,14 @@ def create_app(config_class=Config):
     # Context processor for audit
     @app.context_processor
     def inject_audit_context():
+        from flask_login import current_user as cu
+        if not cu.is_authenticated:
+            return {
+                "is_acting_as": False,
+                "acting_as_user": None,
+                "audit_permission_level": None,
+                "audit_allowed_account_ids": None,
+            }
         from app.services.audit import (
             is_acting_as_auditor, get_acting_as_user,
             get_permission_level, get_allowed_account_ids,
@@ -82,6 +90,9 @@ def create_app(config_class=Config):
     # Template filter for account name masking
     @app.template_filter("mask_account")
     def mask_account_filter(account_name, account_id):
+        from flask_login import current_user as cu
+        if not cu.is_authenticated:
+            return account_name
         from app.services.audit import get_allowed_account_ids, mask_account_name
         allowed = get_allowed_account_ids()
         return mask_account_name(account_name, account_id, allowed)
