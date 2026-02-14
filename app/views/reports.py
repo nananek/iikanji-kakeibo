@@ -30,7 +30,7 @@ def index():
 def balance():
     """残高試算表"""
     year = request.args.get("year", date.today().year, type=int)
-    as_of = date(year, 12, 31)
+    month = request.args.get("month", 0, type=int)
 
     account_types = AccountType.query.order_by(AccountType.display_order).all()
     accounts = (
@@ -40,9 +40,21 @@ def balance():
         .all()
     )
 
-    # P/L科目は当年発生額、B/S科目は累計残高
+    # 期間の決定
     start_of_year = date(year, 1, 1)
     pl_type_codes = {"revenue", "expense"}
+
+    if month:
+        # 月次: P/LもB/Sも当月の発生額
+        period_start = date(year, month, 1)
+        if month == 12:
+            period_end = date(year + 1, 1, 1)
+        else:
+            period_end = date(year, month + 1, 1)
+        as_of = period_end - timedelta(days=1)
+    else:
+        # 年次
+        as_of = date(year, 12, 31)
 
     balances = []
     for account in accounts:
@@ -56,12 +68,22 @@ def balance():
             .join(JournalEntry, JournalEntry.id == JournalEntryLine.journal_entry_id)
             .filter(
                 JournalEntryLine.account_id == account.id,
-                JournalEntry.date <= as_of,
+                # 損益振替仕訳を除外
+                JournalEntry.source != "closing",
             )
         )
 
-        if is_pl:
-            query = query.filter(JournalEntry.date >= start_of_year)
+        if month:
+            # 月次: 当月の発生額のみ
+            query = query.filter(
+                JournalEntry.date >= period_start,
+                JournalEntry.date < period_end,
+            )
+        else:
+            # 年次: B/Sは累計、P/Lは当年
+            query = query.filter(JournalEntry.date <= as_of)
+            if is_pl:
+                query = query.filter(JournalEntry.date >= start_of_year)
 
         result = query.first()
         total_debit = result[0]
@@ -83,6 +105,7 @@ def balance():
     return render_template(
         "reports/balance.html",
         year=year,
+        month=month,
         balances=balances,
         account_types=account_types,
     )
