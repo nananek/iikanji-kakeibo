@@ -29,6 +29,21 @@ body {
   z-index: 1065;
 }
 
+/* 科目選択モーダル: 控えめなアニメーション */
+#accountSelectorModal.fade .modal-dialog {
+  transition: transform 0.15s ease-out, opacity 0.15s ease-out;
+}
+#accountSelectorModal.fade {
+  transition: opacity 0.15s ease-out;
+}
+
+/* 科目選択モーダル: 選択済み科目のハイライト */
+#accountSelectorModal .acct-item.acct-current {
+  background-color: #e8f0fe;
+  border-left: 3px solid #0d6efd;
+  font-weight: 600;
+}
+
 /* AI解析ローディングオーバーレイ */
 .ai-loading-overlay {
   position: fixed;

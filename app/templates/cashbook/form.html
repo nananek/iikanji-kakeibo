@@ -29,7 +29,7 @@
           <input type="hidden" name="payment_account_id" id="paymentAccountId"
                  value="{{ form.payment_account_id.data or '' }}">
           <button type="button" class="form-control text-start" id="paymentAccountBtn"
-                  onclick="openAccountSelector(onPaymentSelected, {filter: 'payment', activeTab: 'bs'})">
+                  onclick="openAccountSelector(onPaymentSelected, {filter: 'payment', activeTab: 'bs', currentId: document.getElementById('paymentAccountId').value})">
             <span id="paymentAccountName" class="{% if not form.payment_account_id.data %}text-muted{% endif %}">
               {{ payment_account_name or '-- 選択 --' }}
             </span>
@@ -43,7 +43,7 @@
           <input type="hidden" name="category_account_id" id="categoryAccountId"
                  value="{{ form.category_account_id.data or '' }}">
           <button type="button" class="form-control text-start" id="categoryAccountBtn"
-                  onclick="openAccountSelector(onCategorySelected, {filter: 'category', activeTab: 'pl'})">
+                  onclick="openAccountSelector(onCategorySelected, {filter: 'category', activeTab: 'pl', currentId: document.getElementById('categoryAccountId').value})">
             <span id="categoryAccountName" class="{% if not form.category_account_id.data %}text-muted{% endif %}">
               {{ category_account_name or '-- 選択 --' }}
             </span>

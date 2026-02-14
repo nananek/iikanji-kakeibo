@@ -27,7 +27,7 @@
             <input type="hidden" name="payment_account_id" id="paymentAccountId"
                    value="{{ payment_account_id if payment_account_id is defined else '' }}">
             <button type="button" class="form-control text-start" id="paymentAccountBtn"
-                    onclick="openAccountSelector(onPaymentSelected, {filter: 'payment'})"
+                    onclick="openAccountSelector(onPaymentSelected, {filter: 'payment', currentId: document.getElementById('paymentAccountId').value})"
                     {% if not has_config %}disabled{% endif %}>
               <span id="paymentAccountName" class="{% if not (payment_account_id is defined and payment_account_id) %}text-muted{% endif %}">
                 {%- if payment_account_id is defined and payment_account_id -%}

@@ -94,7 +94,7 @@
               <input type="hidden" name="category_account_id" id="simpleCategoryId"
                      value="{{ selected.lines[0].account_id if selected.lines else '' }}">
               <button type="button" class="form-control text-start" id="simpleCategoryBtn"
-                      onclick="openAccountSelector(onSimpleCategorySelected, {filter: 'category', activeTab: 'pl'})">
+                      onclick="openAccountSelector(onSimpleCategorySelected, {filter: 'category', activeTab: 'pl', currentId: document.getElementById('simpleCategoryId').value})">
                 <span id="simpleCategoryName" class="text-muted">-- 選択 --</span>
               </button>
             </div>
@@ -103,7 +103,7 @@
               <input type="hidden" name="payment_account_id" id="simplePaymentId"
                      value="{{ selected.lines[1].account_id if selected.lines|length > 1 else '' }}">
               <button type="button" class="form-control text-start" id="simplePaymentBtn"
-                      onclick="openAccountSelector(onSimplePaymentSelected, {filter: 'payment', activeTab: 'bs'})">
+                      onclick="openAccountSelector(onSimplePaymentSelected, {filter: 'payment', activeTab: 'bs', currentId: document.getElementById('simplePaymentId').value})">
                 <span id="simplePaymentName" class="text-muted">-- 選択 --</span>
               </button>
             </div>
@@ -275,12 +275,13 @@ function addLine(data) {
 
   tr.querySelector('.line-account-btn').addEventListener('click', function() {
     var btn = this;
+    var curId = btn.parentElement.querySelector('.line-account-id').value;
     openAccountSelector(function(id, name) {
       btn.parentElement.querySelector('.line-account-id').value = id;
       var span = btn.querySelector('.line-account-name');
       span.textContent = name;
       span.classList.remove('text-muted');
-    }, {filter: 'all'});
+    }, {filter: 'all', currentId: curId});
   });
 
   tbody.appendChild(tr);

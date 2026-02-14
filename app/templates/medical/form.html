@@ -67,7 +67,7 @@
           <input type="hidden" name="payment_account_id" id="paymentAccountId"
                  value="{{ form.payment_account_id.data or '' }}">
           <button type="button" class="form-control text-start"
-                  onclick="openAccountSelector(onPaymentSelected, {filter: 'payment', activeTab: 'bs'})">
+                  onclick="openAccountSelector(onPaymentSelected, {filter: 'payment', activeTab: 'bs', currentId: document.getElementById('paymentAccountId').value})">
             <span id="paymentAccountName" class="{% if not payment_account_name %}text-muted{% endif %}">
               {{ payment_account_name or '-- 選択 --' }}
             </span>

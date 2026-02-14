@@ -102,12 +102,13 @@ function addLine(data) {
 
   tr.querySelector('.line-account-btn').addEventListener('click', function() {
     var btn = this;
+    var curId = btn.parentElement.querySelector('.line-account-id').value;
     openAccountSelector(function(id, name) {
       btn.parentElement.querySelector('.line-account-id').value = id;
       var span = btn.querySelector('.line-account-name');
       span.textContent = name;
       span.classList.remove('text-muted');
-    }, {filter: 'all'});
+    }, {filter: 'all', currentId: curId});
   });
 
   tbody.appendChild(tr);

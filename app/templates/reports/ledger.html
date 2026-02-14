@@ -228,12 +228,13 @@ function modalAddLine(data) {
 
   tr.querySelector('.modal-account-btn').addEventListener('click', function() {
     var btn = this;
+    var curId = btn.parentElement.querySelector('.modal-account-id').value;
     openAccountSelector(function(id, name) {
       btn.parentElement.querySelector('.modal-account-id').value = id;
       var span = btn.querySelector('.modal-account-name');
       span.textContent = name;
       span.classList.remove('text-muted');
-    }, {filter: 'all'});
+    }, {filter: 'all', currentId: curId});
   });
 
   tbody.appendChild(tr);

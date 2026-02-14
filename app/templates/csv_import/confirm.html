@@ -125,13 +125,14 @@ document.querySelectorAll('.category-btn').forEach(function(btn) {
   btn.addEventListener('click', function() {
     var thisBtn = this;
     var thisIdx = thisBtn.dataset.idx;
+    var curId = document.querySelector('.category-id[data-idx="' + thisIdx + '"]').value;
     openAccountSelector(function(id, name) {
       var input = document.querySelector('.category-id[data-idx="' + thisIdx + '"]');
       input.value = id;
       var span = thisBtn.querySelector('.category-name');
       span.textContent = name;
       span.classList.remove('text-muted');
-    }, {filter: 'category_transfer', excludeId: paymentAccountId, activeTab: 'pl'});
+    }, {filter: 'category_transfer', excludeId: paymentAccountId, activeTab: 'pl', currentId: curId});
   });
 });
 

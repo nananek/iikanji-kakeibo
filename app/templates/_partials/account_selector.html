@@ -81,7 +81,7 @@ function _acctEsc(s) {
   return d.innerHTML;
 }
 
-function _acctBuildList(groups, side, containerId) {
+function _acctBuildList(groups, side, containerId, currentId) {
   var container = document.getElementById(containerId);
   container.innerHTML = '';
   var sideGroups = groups.filter(function(g) { return g.normal_balance === side; });
@@ -99,6 +99,9 @@ function _acctBuildList(groups, side, containerId) {
       var btn = document.createElement('button');
       btn.type = 'button';
       btn.className = 'list-group-item list-group-item-action py-1 px-2 acct-item';
+      if (currentId && a.id === currentId) {
+        btn.classList.add('acct-current');
+      }
       btn.dataset.id = a.id;
       btn.dataset.name = a.name;
       btn.dataset.code = a.code;
@@ -117,7 +120,7 @@ function _acctBuildList(groups, side, containerId) {
   });
 }
 
-function _acctRender(filter, excludeId) {
+function _acctRender(filter, excludeId, currentId) {
   var allowedCodes = _acctFilterMap[filter] || _acctFilterMap['all'];
   var filtered = _acctSelectorData.filter(function(g) {
     return allowedCodes.indexOf(g.type_code) !== -1;
@@ -138,10 +141,10 @@ function _acctRender(filter, excludeId) {
   var bsGroups = filtered.filter(function(g) { return _bsTypeCodes.indexOf(g.type_code) !== -1; });
   var plGroups = filtered.filter(function(g) { return _plTypeCodes.indexOf(g.type_code) !== -1; });
 
-  _acctBuildList(bsGroups, 'debit', 'acctBS_debit');
-  _acctBuildList(bsGroups, 'credit', 'acctBS_credit');
-  _acctBuildList(plGroups, 'debit', 'acctPL_debit');
-  _acctBuildList(plGroups, 'credit', 'acctPL_credit');
+  _acctBuildList(bsGroups, 'debit', 'acctBS_debit', currentId);
+  _acctBuildList(bsGroups, 'credit', 'acctBS_credit', currentId);
+  _acctBuildList(plGroups, 'debit', 'acctPL_debit', currentId);
+  _acctBuildList(plGroups, 'credit', 'acctPL_credit', currentId);
 
   // タブの表示/非表示
   var bsTab = document.getElementById('acctTabBS');
@@ -151,8 +154,22 @@ function _acctRender(filter, excludeId) {
   bsTab.parentElement.style.display = hasBs ? '' : 'none';
   plTab.parentElement.style.display = hasPl ? '' : 'none';
 
-  // activeTab の設定
-  var activeTab = (_acctSelectorOptions.activeTab === 'pl' && hasPl) ? 'pl' : 'bs';
+  // currentId がある場合、その科目が属するタブを自動選択
+  var autoTab = null;
+  if (currentId) {
+    for (var i = 0; i < filtered.length; i++) {
+      for (var j = 0; j < filtered[i].accounts.length; j++) {
+        if (filtered[i].accounts[j].id === currentId) {
+          autoTab = _bsTypeCodes.indexOf(filtered[i].type_code) !== -1 ? 'bs' : 'pl';
+          break;
+        }
+      }
+      if (autoTab) break;
+    }
+  }
+
+  // activeTab の設定: currentId のタブ > options.activeTab > デフォルト
+  var activeTab = autoTab || ((_acctSelectorOptions.activeTab === 'pl' && hasPl) ? 'pl' : 'bs');
   if (activeTab === 'pl' || !hasBs) {
     plTab.click();
   } else {
@@ -172,14 +189,15 @@ function _acctApplySearch(query) {
 /**
  * 科目選択モーダルを開く
  * @param {function} callback - callback(id, name, typeCode)
- * @param {object} options - {filter: 'all'|'payment'|'category'|'category_transfer', excludeId: int, activeTab: 'bs'|'pl'}
+ * @param {object} options - {filter, excludeId, activeTab, currentId}
  */
 function openAccountSelector(callback, options) {
   options = options || {};
   _acctSelectorCallback = callback;
   _acctSelectorOptions = options;
 
-  _acctRender(options.filter || 'all', options.excludeId || null);
+  var currentId = options.currentId ? parseInt(options.currentId) : null;
+  _acctRender(options.filter || 'all', options.excludeId || null, currentId);
   document.getElementById('acctSearchInput').value = '';
   _acctApplySearch('');
 
@@ -187,6 +205,18 @@ function openAccountSelector(callback, options) {
     _acctSelectorModal = new bootstrap.Modal(document.getElementById('accountSelectorModal'));
   }
   _acctSelectorModal.show();
+
+  // 選択済み科目が見えるようにスクロール
+  if (currentId) {
+    var modalEl = document.getElementById('accountSelectorModal');
+    modalEl.addEventListener('shown.bs.modal', function _scroll() {
+      modalEl.removeEventListener('shown.bs.modal', _scroll);
+      var cur = modalEl.querySelector('.acct-current');
+      if (cur) {
+        cur.scrollIntoView({ block: 'center', behavior: 'instant' });
+      }
+    });
+  }
 }
 
 document.getElementById('acctSearchInput').addEventListener('input', function() {

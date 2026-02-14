@@ -27,7 +27,7 @@
             <label class="form-label">取込先の口座</label>
             <input type="hidden" name="payment_account_id" id="paymentAccountId" value="">
             <button type="button" class="form-control text-start" id="paymentAccountBtn"
-                    onclick="openAccountSelector(onPaymentSelected, {filter: 'payment'})">
+                    onclick="openAccountSelector(onPaymentSelected, {filter: 'payment', currentId: document.getElementById('paymentAccountId').value})">
               <span id="paymentAccountName" class="text-muted">-- 選択してください --</span>
             </button>
             <div class="form-text">
