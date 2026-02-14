@@ -44,7 +44,14 @@
 <div class="text-muted py-3">控除対象の支出データがありません。</div>
 {% endif %}
 
-<h4 class="mt-5">医療費控除</h4>
+<div class="d-flex justify-content-between align-items-center mt-5">
+  <h4>医療費控除</h4>
+  {% if medical_summary.expenses %}
+  <a href="{{ url_for('reports.medical_csv', year=year) }}" class="btn btn-outline-success btn-sm">
+    <i class="bi bi-download"></i> 医療費集計フォームCSV
+  </a>
+  {% endif %}
+</div>
 
 <div class="card shadow-sm mb-3">
   <div class="card-body">

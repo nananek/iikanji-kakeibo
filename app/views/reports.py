@@ -1,7 +1,9 @@
+import csv
+import io
 from datetime import date, timedelta
 from decimal import Decimal
 
-from flask import Blueprint, render_template, request
+from flask import Blueprint, render_template, request, Response
 from flask_login import login_required, current_user
 from sqlalchemy import func, and_
 
@@ -154,6 +156,58 @@ def tax():
         year=year,
         tax_summary=tax_summary,
         medical_summary=medical_summary,
+    )
+
+
+# provider_type → 医療費集計フォームの区分列マッピング
+_PROVIDER_CATEGORY = {
+    "hospital": "診療・治療",
+    "pharmacy": "医薬品購入",
+    "nursing": "介護保険サービス",
+    "other": "その他の医療費",
+}
+
+
+@bp.route("/tax/medical-csv")
+@login_required
+def medical_csv():
+    """医療費集計フォーム Ver 3.1 準拠CSVダウンロード"""
+    year = request.args.get("year", date.today().year, type=int)
+    medical_summary = get_medical_summary(current_user.id, year)
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+
+    # ヘッダー行（Ver 3.1 準拠）
+    writer.writerow([
+        "医療を受けた人",
+        "病院・薬局などの名称",
+        "医療費の区分",
+        "支払った医療費の金額",
+        "左のうち、補てんされる金額",
+    ])
+
+    for e in medical_summary["expenses"]:
+        category = _PROVIDER_CATEGORY.get(e["provider_type"], "診療・治療")
+        writer.writerow([
+            e["patient_name"],
+            e["hospital_name"],
+            category,
+            e["amount"],
+            e["insurance_reimbursement"] if e["insurance_reimbursement"] else "",
+        ])
+
+    csv_data = output.getvalue()
+    output.close()
+
+    # BOM付きUTF-8でExcel互換
+    bom = "\ufeff"
+    return Response(
+        bom + csv_data,
+        mimetype="text/csv; charset=utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="iryouhi_{year}.csv"',
+        },
     )
 
 
