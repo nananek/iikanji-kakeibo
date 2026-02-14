@@ -17,10 +17,8 @@ services:
     restart: unless-stopped
 
   web:
-    build: .
+    image: ghcr.io/nananek/iikanji-kakeibo:latest
     network_mode: service:tailscale
-    volumes:
-      - .:/app
     env_file:
       - .env
     depends_on:
