@@ -89,10 +89,23 @@ def balance():
         period_debit = int(result[0])
         period_credit = int(result[1])
 
-        # 開始残高（B/S科目のみ: 期間開始日より前の累計）
+        # 開始残高
+        # B/S科目: 期間開始日より前の全累計
+        # P/L科目（月次時）: 年初から前月末までの累計
         opening = 0
         if is_bs:
             ob_result = _query_sum(account.id, [
+                JournalEntry.date < period_start,
+            ])
+            ob_debit = int(ob_result[0])
+            ob_credit = int(ob_result[1])
+            if is_debit_normal:
+                opening = ob_debit - ob_credit
+            else:
+                opening = ob_credit - ob_debit
+        elif is_pl and month:
+            ob_result = _query_sum(account.id, [
+                JournalEntry.date >= start_of_year,
                 JournalEntry.date < period_start,
             ])
             ob_debit = int(ob_result[0])
