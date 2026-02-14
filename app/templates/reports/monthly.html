@@ -84,19 +84,19 @@
           <td colspan="15"><strong>支出</strong></td>
         </tr>
         {% for a in comparison.expense_accounts %}
-        <tr class="{% if a.cost_type == 'fixed' %}table-info{% elif a.cost_type == 'occasional' %}table-light{% endif %}">
-          <td style="position:sticky; left:0; z-index:1; background:{% if a.cost_type == 'fixed' %}#cff4fc{% elif a.cost_type == 'occasional' %}#f8f9fa{% else %}#fff{% endif %};">{{ a.name }}</td>
+        {% set ct = a.cost_type or 'occasional' %}
+        <tr class="{% if ct == 'fixed' %}table-info{% elif ct == 'occasional' %}table-light{% endif %}">
+          <td style="position:sticky; left:0; z-index:1; background:{% if ct == 'fixed' %}#cff4fc{% elif ct == 'occasional' %}#f8f9fa{% else %}#fff{% endif %};">{{ a.name }}</td>
           <td>
-            {% if a.cost_type == 'fixed' %}<span class="badge bg-info text-dark">固定</span>
-            {% elif a.cost_type == 'variable' %}<span class="badge bg-warning text-dark">変動</span>
-            {% elif a.cost_type == 'occasional' %}<span class="badge bg-secondary">随時</span>
-            {% else %}<span class="badge bg-light text-muted">-</span>{% endif %}
+            {% if ct == 'fixed' %}<span class="badge bg-info text-dark">固定</span>
+            {% elif ct == 'variable' %}<span class="badge bg-warning text-dark">変動</span>
+            {% else %}<span class="badge bg-secondary">随時</span>{% endif %}
           </td>
           {% for m in range(12) %}
           <td class="text-end {% if current_month and m + 1 == current_month %}table-warning{% endif %}">
             {% if a.months[m] %}
             &yen;{{ "{:,}".format(a.months[m]) }}
-            {% if projection and m + 1 == current_month and a.cost_type not in ('fixed', 'occasional') %}
+            {% if projection and m + 1 == current_month and ct == 'variable' %}
             {% set proj_item = projection.expense_projected[loop.index0] if loop.index0 < projection.expense_projected|length else none %}
             {% endif %}
             {% elif current_month and m + 1 > current_month %}&nbsp;
@@ -183,19 +183,17 @@
 {% set fixed_total = [] %}
 {% set variable_total = [] %}
 {% set occasional_total = [] %}
-{% set unclassified_total = [] %}
 {% for a in comparison.expense_accounts %}
-  {% if a.cost_type == 'fixed' %}{% if fixed_total.append(a.total) %}{% endif %}
-  {% elif a.cost_type == 'variable' %}{% if variable_total.append(a.total) %}{% endif %}
-  {% elif a.cost_type == 'occasional' %}{% if occasional_total.append(a.total) %}{% endif %}
-  {% else %}{% if unclassified_total.append(a.total) %}{% endif %}
+  {% set ct = a.cost_type or 'occasional' %}
+  {% if ct == 'fixed' %}{% if fixed_total.append(a.total) %}{% endif %}
+  {% elif ct == 'variable' %}{% if variable_total.append(a.total) %}{% endif %}
+  {% else %}{% if occasional_total.append(a.total) %}{% endif %}
   {% endif %}
 {% endfor %}
 {% set ft = fixed_total|sum %}
 {% set vt = variable_total|sum %}
 {% set ot = occasional_total|sum %}
-{% set ut = unclassified_total|sum %}
-{% set expense_grand = ft + vt + ot + ut %}
+{% set expense_grand = ft + vt + ot %}
 
 {% if expense_grand > 0 %}
 <div class="card shadow-sm mb-4">
@@ -228,13 +226,6 @@
               <td class="text-end">&yen;{{ "{:,}".format(ot) }}</td>
               <td class="text-end">{{ "{:.1f}".format(ot / expense_grand * 100) }}%</td>
             </tr>
-            {% if ut > 0 %}
-            <tr>
-              <td><span class="badge bg-light text-muted">未分類</span></td>
-              <td class="text-end">&yen;{{ "{:,}".format(ut) }}</td>
-              <td class="text-end">{{ "{:.1f}".format(ut / expense_grand * 100) }}%</td>
-            </tr>
-            {% endif %}
             <tr class="fw-bold">
               <td>合計</td>
               <td class="text-end">&yen;{{ "{:,}".format(expense_grand) }}</td>
@@ -259,11 +250,6 @@
   var pieLabels = ['固定費', '変動費', '随時費'];
   var pieValues = [{{ ft }}, {{ vt }}, {{ ot }}];
   var pieColors = ['#0dcaf0', '#ffc107', '#6c757d'];
-  {% if ut > 0 %}
-  pieLabels.push('未分類');
-  pieValues.push({{ ut }});
-  pieColors.push('#dee2e6');
-  {% endif %}
 
   new Chart(document.getElementById('costTypeChart'), {
     type: 'doughnut',
@@ -290,13 +276,11 @@
   var fixedMonthly = new Array(12).fill(0);
   var variableMonthly = new Array(12).fill(0);
   var occasionalMonthly = new Array(12).fill(0);
-  var unclassifiedMonthly = new Array(12).fill(0);
   expenseAccounts.forEach(function(a) {
     for (var i = 0; i < 12; i++) {
       if (a.cost_type === 'fixed') fixedMonthly[i] += a.months[i];
       else if (a.cost_type === 'variable') variableMonthly[i] += a.months[i];
-      else if (a.cost_type === 'occasional') occasionalMonthly[i] += a.months[i];
-      else unclassifiedMonthly[i] += a.months[i];
+      else occasionalMonthly[i] += a.months[i];
     }
   });
 
@@ -305,9 +289,6 @@
     { label: '変動費', data: variableMonthly, backgroundColor: 'rgba(255, 193, 7, 0.7)' },
     { label: '随時費', data: occasionalMonthly, backgroundColor: 'rgba(108, 117, 125, 0.7)' },
   ];
-  {% if ut > 0 %}
-  datasets.push({ label: '未分類', data: unclassifiedMonthly, backgroundColor: 'rgba(222, 226, 230, 0.7)' });
-  {% endif %}
 
   new Chart(document.getElementById('costTypeTrendChart'), {
     type: 'bar',

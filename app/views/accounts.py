@@ -38,10 +38,9 @@ TAX_CATEGORIES = [
 ]
 
 COST_TYPES = [
-    ("", "未分類"),
+    ("occasional", "随時費"),
     ("fixed", "固定費"),
     ("variable", "変動費"),
-    ("occasional", "随時費"),
 ]
 
 
