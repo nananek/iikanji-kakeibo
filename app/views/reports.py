@@ -81,6 +81,8 @@ def balance():
     balances = []
     total_revenue = 0
     total_expense = 0
+    ytd_revenue = 0
+    ytd_expense = 0
 
     incl_closing = pt >= 16
     current_filter = period_range_filter(year, pf, pt)
@@ -160,8 +162,10 @@ def balance():
         # 損益集計（P/L科目）
         if account.account_type.code == "revenue":
             total_revenue += period_credit - period_debit
+            ytd_revenue += balance_amount
         elif account.account_type.code == "expense":
             total_expense += period_debit - period_credit
+            ytd_expense += balance_amount
 
         if period_debit != 0 or period_credit != 0 or opening != 0:
             balances.append({
@@ -173,6 +177,7 @@ def balance():
             })
 
     net_income = total_revenue - total_expense
+    ytd_net_income = ytd_revenue - ytd_expense
 
     # 損益振替済みか判定（振替後は純利益が繰越利益に含まれている）
     end_of_year = date(year + 1, 1, 1)
@@ -196,6 +201,7 @@ def balance():
         balances=balances,
         account_types=account_types,
         net_income=net_income,
+        ytd_net_income=ytd_net_income,
         has_closing=has_closing,
     )
 
