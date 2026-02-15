@@ -97,26 +97,25 @@ def new():
                 is_edit=False,
             )
 
-        if not lines_data:
-            flash("仕訳明細を1行以上入力してください。", "danger")
+        def _render_with_lines(msg):
+            flash(msg, "danger")
             return render_template(
                 "journal/form.html",
                 form=form,
                 grouped_accounts=grouped_accounts,
                 is_edit=False,
+                existing_lines=lines_json,
             )
+
+        if not lines_data:
+            return _render_with_lines("仕訳明細を1行以上入力してください。")
 
         # 計上期間の決定
         fiscal_period = None
         if form.fiscal_period.data:
             fiscal_period = int(form.fiscal_period.data)
         if fiscal_period == 16:
-            flash("損益振替期間には手動で仕訳を追加できません。", "danger")
-            return render_template(
-                "journal/form.html",
-                form=form,
-                grouped_accounts=get_grouped_accounts(get_effective_user_id()),
-            )
+            return _render_with_lines("損益振替期間には手動で仕訳を追加できません。")
         # 特殊期間の日付補正
         form.date.data = adjust_date_for_fiscal_period(form.date.data, fiscal_period)
         period = fiscal_period if fiscal_period is not None else form.date.data.month
@@ -124,13 +123,7 @@ def new():
         # 確定済み期間チェック
         err = check_period_open_for_new(get_effective_user_id(), form.date.data.year, period)
         if err:
-            flash(err, "danger")
-            return render_template(
-                "journal/form.html",
-                form=form,
-                grouped_accounts=grouped_accounts,
-                is_edit=False,
-            )
+            return _render_with_lines(err)
 
         parsed = []
         for line in lines_data:
@@ -147,25 +140,13 @@ def new():
             if locked_ids:
                 used_locked = [p for p in parsed if p["account_id"] in locked_ids]
                 if used_locked:
-                    flash("提出済みの税務科目を含むため仕訳を作成できません。", "danger")
-                    return render_template(
-                        "journal/form.html",
-                        form=form,
-                        grouped_accounts=grouped_accounts,
-                        is_edit=False,
-                    )
+                    return _render_with_lines("提出済みの税務科目を含むため仕訳を作成できません。")
 
         # Lv2監査者: 非公開科目チェック
         if allowed_ids is not None:
             for p in parsed:
                 if p["account_id"] not in allowed_ids:
-                    flash("使用できない科目が含まれています。", "danger")
-                    return render_template(
-                        "journal/form.html",
-                        form=form,
-                        grouped_accounts=grouped_accounts,
-                        is_edit=False,
-                    )
+                    return _render_with_lines("使用できない科目が含まれています。")
 
         try:
             entry = create_journal_entry(
@@ -178,7 +159,7 @@ def new():
             flash(f"伝票 #{entry.entry_number} を登録しました。", "success")
             return redirect(url_for("journal.index"))
         except ValueError as e:
-            flash(str(e), "danger")
+            return _render_with_lines(str(e))
 
     return render_template(
         "journal/form.html",

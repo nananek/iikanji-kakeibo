@@ -189,7 +189,7 @@ fpSelect.addEventListener('change', onFiscalPeriodChange);
 onFiscalPeriodChange();
 
 // 初期化
-{% if is_edit and existing_lines is defined %}
+{% if existing_lines is defined %}
 var existingLines = {{ existing_lines | safe }};
 existingLines.forEach(function(l) { addLine(l); });
 {% else %}
