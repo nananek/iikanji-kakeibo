@@ -48,7 +48,7 @@
 | cashbook | `/cashbook` | 出納帳 |
 | journal | `/journal` | 仕訳伝票・一括削除・科目推定API |
 | medical | `/medical` | 医療費管理 |
-| reports | `/reports` | 試算表・元帳・収支計算書・月次比較・確定申告集計 |
+| reports | `/reports` | 試算表・元帳・損益計算書・貸借対照表・月次比較・確定申告集計 |
 | accounts | `/accounts` | 勘定科目管理（JSON API） |
 | csv_import | `/csv-import` | CSV取込 |
 | ofx_import | `/ofx-import` | OFX取込 |
