@@ -113,6 +113,13 @@ iPhone等のスマートフォン縦長画面に最適化されたレスポン�
 
 パスワードに加え、指紋認証や Face ID などの **Passkey** でログイン可能。設定画面から Passkey の追加・管理・削除ができます。WebAuthn 対応ブラウザで自動的にボタンが表示されます。
 
+### REST API
+
+外部プログラムから仕訳を起票できる REST API を提供。API キーによる Bearer 認証で、設定画面からキーの発行・管理が可能です。Python クライアントライブラリ [`iikanji`](https://github.com/nananek/iikanji-kakeibo-client-py) も利用できます。
+
+- `POST /api/v1/journals` — 仕訳起票（日付・摘要・明細行を指定）
+- 貸借一致チェック・期間ロック・提出ロック等のバリデーション付き
+
 ### 勘定科目管理
 
 ユーザー登録時に約 40 科目の標準勘定科目を自動投入。確定申告用の税区分（`tax_category`）付き。独自科目の追加・編集・無効化が可能。無効化時は残高を指定科目に振替えます。
@@ -194,6 +201,7 @@ app/
 │   ├── fiscal.py        #   FiscalClose (月次確定・年度開設)
 │   ├── medical.py       #   MedicalExpense
 │   ├── audit.py         #   AuditGrant, AuditGrantAccount
+│   ├── api_key.py       #   APIKey (REST API 認証)
 │   ├── ai_config.py     #   UserAIConfig
 │   └── webauthn.py      #   WebAuthnCredential
 ├── views/               # Blueprint (ルーティング)
@@ -208,10 +216,11 @@ app/
 │   ├── medical.py       #   医療費管理
 │   ├── reports.py       #   レポート
 │   ├── accounts.py      #   勘定科目管理 (JSON API)
+│   ├── api.py           #   REST API (仕訳起票・Bearer認証)
 │   ├── auditor.py       #   監査ダッシュボード・代理閲覧
 │   ├── webauthn.py      #   Passkey WebAuthn API
 │   ├── helpers.py       #   ビュー共通ヘルパー
-│   └── settings.py      #   設定 (Passkey・AI API・月次確定・年度管理・監査アクセス管理)
+│   └── settings.py      #   設定 (Passkey・AI API・APIキー・月次確定・年度管理・監査アクセス管理)
 ├── services/            # ビジネスロジック
 │   ├── accounting.py    #   仕訳自動生成
 │   ├── csv_import.py    #   CSVパース
