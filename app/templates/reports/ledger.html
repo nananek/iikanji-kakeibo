@@ -206,7 +206,7 @@
                 <th style="width:35%">勘定科目</th>
                 <th style="width:20%">借方</th>
                 <th style="width:20%">貸方</th>
-                <th style="width:20%">摘要</th>
+                <th style="width:20%" class="d-mobile-none">摘要</th>
                 <th style="width:5%"></th>
               </tr>
             </thead>
@@ -216,7 +216,7 @@
                 <th>合計</th>
                 <th id="modalTotalDebit" class="text-end">0</th>
                 <th id="modalTotalCredit" class="text-end">0</th>
-                <th></th>
+                <th class="d-mobile-none"></th>
                 <th></th>
               </tr>
               <tr id="modalBalanceWarning" class="d-none">
@@ -414,7 +414,7 @@ function modalAddLine(data) {
       '</td>' +
       '<td><input type="number" class="form-control form-control-sm text-end modal-debit bg-light" value="' + (data.debit_amount || 0) + '" readonly tabindex="-1"></td>' +
       '<td><input type="number" class="form-control form-control-sm text-end modal-credit bg-light" value="' + (data.credit_amount || 0) + '" readonly tabindex="-1"></td>' +
-      '<td><input type="text" class="form-control form-control-sm modal-line-desc bg-light" value="" readonly tabindex="-1"></td>' +
+      '<td class="d-mobile-none"><input type="text" class="form-control form-control-sm modal-line-desc bg-light" value="" readonly tabindex="-1"></td>' +
       '<td></td>';
   } else {
     tr.innerHTML =
@@ -426,7 +426,7 @@ function modalAddLine(data) {
       '</td>' +
       '<td><input type="number" class="form-control form-control-sm text-end modal-debit" value="' + (data.debit_amount || 0) + '" min="0" onchange="modalUpdateTotals()"></td>' +
       '<td><input type="number" class="form-control form-control-sm text-end modal-credit" value="' + (data.credit_amount || 0) + '" min="0" onchange="modalUpdateTotals()"></td>' +
-      '<td><input type="text" class="form-control form-control-sm modal-line-desc" value="' + (data.description || '').replace(/"/g, '&quot;') + '"></td>' +
+      '<td class="d-mobile-none"><input type="text" class="form-control form-control-sm modal-line-desc" value="' + (data.description || '').replace(/"/g, '&quot;') + '"></td>' +
       '<td><button type="button" class="btn btn-outline-danger btn-sm" onclick="this.closest(\'tr\').remove(); modalUpdateTotals()"><i class="bi bi-x"></i></button></td>';
 
     tr.querySelector('.modal-account-btn').addEventListener('click', function() {

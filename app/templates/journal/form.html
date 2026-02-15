@@ -33,7 +33,7 @@
               <th style="width:35%">勘定科目</th>
               <th style="width:20%">借方</th>
               <th style="width:20%">貸方</th>
-              <th style="width:20%">摘要</th>
+              <th style="width:20%" class="d-mobile-none">摘要</th>
               <th style="width:5%"></th>
             </tr>
           </thead>
@@ -44,7 +44,7 @@
               <th>合計</th>
               <th id="totalDebit" class="text-end">0</th>
               <th id="totalCredit" class="text-end">0</th>
-              <th></th>
+              <th class="d-mobile-none"></th>
               <th></th>
             </tr>
             <tr id="balanceWarning" class="d-none">
@@ -74,12 +74,16 @@
 {% block scripts %}
 <script>
 var lineCount = 0;
+var _isMobile = window.innerWidth <= 576;
 
 function _acctNameById(id) {
   for (var i = 0; i < _acctSelectorData.length; i++) {
     var g = _acctSelectorData[i];
     for (var j = 0; j < g.accounts.length; j++) {
-      if (g.accounts[j].id === id) return g.accounts[j].code + ' ' + g.accounts[j].name;
+      if (g.accounts[j].id === id) {
+        if (_isMobile) return g.accounts[j].name;
+        return g.accounts[j].code + ' ' + g.accounts[j].name;
+      }
     }
   }
   return '';
@@ -104,7 +108,7 @@ function addLine(data) {
       '</td>' +
       '<td><input type="number" class="form-control form-control-sm text-end debit-input bg-light" value="' + (data.debit_amount || 0) + '" readonly tabindex="-1"></td>' +
       '<td><input type="number" class="form-control form-control-sm text-end credit-input bg-light" value="' + (data.credit_amount || 0) + '" readonly tabindex="-1"></td>' +
-      '<td><input type="text" class="form-control form-control-sm line-desc bg-light" value="" readonly tabindex="-1"></td>' +
+      '<td class="d-mobile-none"><input type="text" class="form-control form-control-sm line-desc bg-light" value="" readonly tabindex="-1"></td>' +
       '<td></td>';
   } else {
     tr.innerHTML =
@@ -116,7 +120,7 @@ function addLine(data) {
       '</td>' +
       '<td><input type="number" class="form-control form-control-sm text-end debit-input" value="' + (data.debit_amount || 0) + '" min="0" onchange="updateTotals()"></td>' +
       '<td><input type="number" class="form-control form-control-sm text-end credit-input" value="' + (data.credit_amount || 0) + '" min="0" onchange="updateTotals()"></td>' +
-      '<td><input type="text" class="form-control form-control-sm line-desc" value="' + ((data.description || '').replace(/"/g, '&quot;')) + '"></td>' +
+      '<td class="d-mobile-none"><input type="text" class="form-control form-control-sm line-desc" value="' + ((data.description || '').replace(/"/g, '&quot;')) + '"></td>' +
       '<td><button type="button" class="btn btn-outline-danger btn-sm" onclick="this.closest(\'tr\').remove(); updateTotals()"><i class="bi bi-x"></i></button></td>';
 
     tr.querySelector('.line-account-btn').addEventListener('click', function() {
