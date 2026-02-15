@@ -1,4 +1,5 @@
 import os
+from datetime import timedelta
 
 
 class Config:
@@ -8,6 +9,11 @@ class Config:
     )
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     WTF_CSRF_ENABLED = True
+
+    # セッション永続化（明示的ログアウトまで維持）
+    REMEMBER_COOKIE_DURATION = timedelta(days=365)
+    REMEMBER_COOKIE_HTTPONLY = True
+    REMEMBER_COOKIE_SAMESITE = "Lax"
 
     # WebAuthn / Passkey
     WEBAUTHN_RP_ID = os.environ.get("WEBAUTHN_RP_ID", "localhost")

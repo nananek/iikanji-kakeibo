@@ -18,7 +18,7 @@ def login():
     if form.validate_on_submit():
         user = User.query.filter_by(username=form.username.data).first()
         if user and user.user_type == "personal" and user.check_password(form.password.data):
-            login_user(user)
+            login_user(user, remember=True)
             next_page = request.args.get("next")
             return redirect(next_page or url_for("dashboard.index"))
         flash("ユーザー名またはパスワードが正しくありません。", "danger")
@@ -35,7 +35,7 @@ def login_auditor():
     if form.validate_on_submit():
         user = User.query.filter_by(username=form.username.data).first()
         if user and user.user_type == "auditor" and user.check_password(form.password.data):
-            login_user(user)
+            login_user(user, remember=True)
             next_page = request.args.get("next")
             return redirect(next_page or url_for("auditor.dashboard"))
         flash("ユーザー名またはパスワードが正しくありません。", "danger")

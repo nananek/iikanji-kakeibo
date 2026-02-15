@@ -162,5 +162,5 @@ def authenticate_verify():
     stored.last_used_at = datetime.now(timezone.utc)
     db.session.commit()
 
-    login_user(stored.user)
+    login_user(stored.user, remember=True)
     return jsonify(ok=True, redirect=request.args.get("next", "/"))
