@@ -82,7 +82,9 @@
         {# --- 収入 --- #}
         <tr class="table-secondary">
           <td class="sticky-col" style="background:#e2e3e5 !important;"><strong>収入</strong></td>
-          <td colspan="14"></td>
+          <td class="d-mobile-none"></td>
+          {% for m in range(12) %}<td></td>{% endfor %}
+          <td></td><td></td>
         </tr>
         {% for a in comparison.income_accounts %}
         {% set ct = a.cost_type or 'occasional' %}
@@ -123,7 +125,9 @@
         {# --- 支出 --- #}
         <tr class="table-secondary">
           <td class="sticky-col" style="background:#e2e3e5 !important;"><strong>支出</strong></td>
-          <td colspan="14"></td>
+          <td class="d-mobile-none"></td>
+          {% for m in range(12) %}<td></td>{% endfor %}
+          <td></td><td></td>
         </tr>
         {% for a in comparison.expense_accounts %}
         {% set ct = a.cost_type or 'occasional' %}
