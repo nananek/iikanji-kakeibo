@@ -9,6 +9,7 @@ from app.services.audit import get_effective_user_id
 from app.models.account import Account, AccountType
 from app.models.webauthn import WebAuthnCredential
 from app.models.ai_config import UserAIConfig
+from app.models.api_key import APIKey
 from app.models.audit import AuditGrant, AuditGrantAccount
 from app.services.ai_receipt import (
     encrypt_api_key, PROVIDER_DEFAULTS, PROVIDER_LABELS,
@@ -110,6 +111,65 @@ def ai_config_delete():
         db.session.commit()
         flash("AI API設定を削除しました。", "success")
     return redirect(url_for("settings.ai_config"))
+
+
+# --- API キー ---
+
+
+@bp.route("/api-keys")
+@login_required
+def api_keys():
+    """APIキー管理ページ"""
+    keys = (
+        APIKey.query.filter_by(user_id=current_user.id)
+        .order_by(APIKey.created_at.desc())
+        .all()
+    )
+    return render_template("settings/api_keys.html", keys=keys)
+
+
+@bp.route("/api-keys/create", methods=["POST"])
+@login_required
+def api_key_create():
+    """APIキーの発行"""
+    name = request.form.get("name", "").strip()
+    if not name:
+        flash("キーの名前を入力してください。", "danger")
+        return redirect(url_for("settings.api_keys"))
+
+    raw_key, key_hash, key_prefix = APIKey.generate()
+    api_key = APIKey(
+        user_id=current_user.id,
+        name=name,
+        key_hash=key_hash,
+        key_prefix=key_prefix,
+    )
+    db.session.add(api_key)
+    db.session.commit()
+
+    # 生キーをフラッシュメッセージで1回だけ表示
+    keys = (
+        APIKey.query.filter_by(user_id=current_user.id)
+        .order_by(APIKey.created_at.desc())
+        .all()
+    )
+    return render_template(
+        "settings/api_keys.html", keys=keys, new_key=raw_key, new_key_name=name,
+    )
+
+
+@bp.route("/api-keys/<int:key_id>/delete", methods=["POST"])
+@login_required
+def api_key_delete(key_id):
+    """APIキーの削除"""
+    api_key = APIKey.query.filter_by(
+        id=key_id, user_id=current_user.id
+    ).first_or_404()
+    name = api_key.name
+    db.session.delete(api_key)
+    db.session.commit()
+    flash(f"APIキー「{name}」を削除しました。", "success")
+    return redirect(url_for("settings.api_keys"))
 
 
 # --- 月次確定 ---

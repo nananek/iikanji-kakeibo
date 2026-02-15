@@ -21,9 +21,11 @@ def create_app(config_class=Config):
     from app.views import register_blueprints
     register_blueprints(app)
 
-    # WebAuthn blueprint は JSON API なので CSRF 免除
+    # JSON API は CSRF 免除
     from app.views.webauthn import bp as webauthn_bp
     csrf.exempt(webauthn_bp)
+    from app.views.api import bp as api_bp
+    csrf.exempt(api_bp)
 
     # Before-request hook for audit permission control
     @app.before_request
@@ -39,8 +41,8 @@ def create_app(config_class=Config):
         if perm is None:
             return
         endpoint = request.endpoint or ""
-        # Static files and auth endpoints: always allow
-        if endpoint.startswith("static") or endpoint.startswith("auth."):
+        # Static files, auth, and external API: always allow
+        if endpoint.startswith("static") or endpoint.startswith("auth.") or endpoint.startswith("api."):
             return
         # Auditor exit: always allow
         if endpoint == "auditor.exit_acting":

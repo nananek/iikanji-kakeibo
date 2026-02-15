@@ -1,0 +1,132 @@
+{% extends "base.html" %}
+{% block title %}APIキー管理 - いいかんじ™家計簿{% endblock %}
+
+{% block content %}
+<div class="row">
+  <div class="col-lg-8">
+    <h2><i class="bi bi-plug"></i> APIキー管理</h2>
+    <p class="text-muted">外部ツールから仕訳を起票するためのAPIキーを管理します。</p>
+
+    {% if new_key %}
+    <div class="alert alert-success">
+      <strong><i class="bi bi-check-circle"></i> APIキー「{{ new_key_name }}」を発行しました。</strong>
+      <p class="mt-2 mb-1">このキーは今回のみ表示されます。安全な場所に保存してください。</p>
+      <div class="input-group mt-2">
+        <input type="text" class="form-control font-monospace" id="newKeyValue"
+               value="{{ new_key }}" readonly>
+        <button class="btn btn-outline-secondary" type="button" onclick="copyKey()">
+          <i class="bi bi-clipboard"></i> コピー
+        </button>
+      </div>
+    </div>
+    {% endif %}
+
+    <div class="card mb-4">
+      <div class="card-header">
+        <i class="bi bi-plus-circle"></i> 新しいAPIキーを発行
+      </div>
+      <div class="card-body">
+        <form method="POST" action="{{ url_for('settings.api_key_create') }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <div class="input-group">
+            <input type="text" name="name" class="form-control"
+                   placeholder="キーの名前（例: メールチェッカー）" maxlength="100" required>
+            <button class="btn btn-primary" type="submit">
+              <i class="bi bi-key"></i> 発行
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header">
+        <i class="bi bi-list-ul"></i> 発行済みAPIキー
+      </div>
+      {% if keys %}
+      <div class="table-responsive">
+        <table class="table table-hover mb-0">
+          <thead>
+            <tr>
+              <th>名前</th>
+              <th>キー</th>
+              <th>作成日</th>
+              <th>最終利用</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for key in keys %}
+            <tr>
+              <td>{{ key.name }}</td>
+              <td><code>{{ key.key_prefix }}</code></td>
+              <td>{{ key.created_at.strftime('%Y/%m/%d') }}</td>
+              <td>
+                {% if key.last_used_at %}
+                  {{ key.last_used_at.strftime('%Y/%m/%d %H:%M') }}
+                {% else %}
+                  <span class="text-muted">未使用</span>
+                {% endif %}
+              </td>
+              <td class="text-end">
+                <form method="POST"
+                      action="{{ url_for('settings.api_key_delete', key_id=key.id) }}"
+                      onsubmit="return confirm('このAPIキーを削除しますか？削除すると即座に使えなくなります。')">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <button type="submit" class="btn btn-sm btn-outline-danger">
+                    <i class="bi bi-trash"></i> 削除
+                  </button>
+                </form>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <div class="card-body text-muted text-center py-4">
+        <i class="bi bi-plug" style="font-size: 2rem;"></i>
+        <p class="mt-2 mb-0">APIキーがまだ発行されていません。</p>
+      </div>
+      {% endif %}
+    </div>
+
+    <div class="card mt-4">
+      <div class="card-header">
+        <i class="bi bi-code-square"></i> 使い方
+      </div>
+      <div class="card-body">
+        <pre class="mb-0"><code>curl -X POST {{ request.host_url }}api/v1/journals \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "date": "2026-02-15",
+    "description": "Amazon 書籍購入",
+    "lines": [
+      {"account_id": 42, "debit": 1500, "credit": 0},
+      {"account_id": 10, "debit": 0, "credit": 1500}
+    ]
+  }'</code></pre>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+{% if new_key %}
+<script>
+function copyKey() {
+  var input = document.getElementById('newKeyValue');
+  input.select();
+  navigator.clipboard.writeText(input.value).then(function() {
+    var btn = input.nextElementSibling;
+    btn.innerHTML = '<i class="bi bi-check"></i> コピー済み';
+    setTimeout(function() {
+      btn.innerHTML = '<i class="bi bi-clipboard"></i> コピー';
+    }, 2000);
+  });
+}
+</script>
+{% endif %}
+{% endblock %}

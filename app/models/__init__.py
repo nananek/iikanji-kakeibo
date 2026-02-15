@@ -6,6 +6,7 @@ from app.models.webauthn import WebAuthnCredential
 from app.models.ai_config import UserAIConfig
 from app.models.audit import AuditGrant, AuditGrantAccount
 from app.models.ai_draft import AIDraft
+from app.models.api_key import APIKey
 
 __all__ = [
     "User",
@@ -19,4 +20,5 @@ __all__ = [
     "AuditGrant",
     "AuditGrantAccount",
     "AIDraft",
+    "APIKey",
 ]
