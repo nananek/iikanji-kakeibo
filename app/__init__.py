@@ -67,6 +67,11 @@ def create_app(config_class=Config):
                 flash("この権限レベルでは勘定科目を変更できません。", "warning")
                 return redirect(url_for("accounts.index"))
 
+    # Context processor for dev flag
+    @app.context_processor
+    def inject_dev_flag():
+        return {"is_dev": app.debug}
+
     # Context processor for audit
     @app.context_processor
     def inject_audit_context():

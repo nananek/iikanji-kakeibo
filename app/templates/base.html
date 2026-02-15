@@ -14,6 +14,7 @@
   <link href="{{ url_for('static', filename='css/style.css') }}" rel="stylesheet">
 </head>
 <body>
+  {% if is_dev %}<div class="dev-badge">DEV</div>{% endif %}
   {% if current_user.is_authenticated %}
   {% set perm = audit_permission_level %}
   <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
