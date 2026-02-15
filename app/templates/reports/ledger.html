@@ -381,11 +381,15 @@ var csrfToken = "{{ csrf_token() }}";
 var currentEntryId = null;
 var editModal = null;
 
+var _isMobile = window.innerWidth <= 576;
 function _acctNameById(id) {
   for (var i = 0; i < _acctSelectorData.length; i++) {
     var g = _acctSelectorData[i];
     for (var j = 0; j < g.accounts.length; j++) {
-      if (g.accounts[j].id === id) return g.accounts[j].code + ' ' + g.accounts[j].name;
+      if (g.accounts[j].id === id) {
+        if (_isMobile) return g.accounts[j].name;
+        return g.accounts[j].code + ' ' + g.accounts[j].name;
+      }
     }
   }
   return '';

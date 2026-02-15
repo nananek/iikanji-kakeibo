@@ -106,7 +106,7 @@ function _acctBuildList(groups, side, containerId, currentId) {
       btn.dataset.name = a.name;
       btn.dataset.code = a.code;
       btn.dataset.typeCode = g.type_code;
-      btn.innerHTML = '<small class="text-muted me-1">' + _acctEsc(a.code) + '</small>' + _acctEsc(a.name);
+      btn.innerHTML = '<small class="text-muted me-1 d-mobile-none">' + _acctEsc(a.code) + '</small>' + _acctEsc(a.name);
       btn.addEventListener('click', function() {
         if (_acctSelectorCallback) {
           _acctSelectorCallback(a.id, a.name, g.type_code);
