@@ -95,7 +95,6 @@ def index():
         total_paid=total_paid,
         total_reimbursed=total_reimbursed,
         net_total=net_total,
-        deductible=max(0, net_total - 100000),
     )
 
 

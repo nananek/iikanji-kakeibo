@@ -23,7 +23,7 @@
 </form>
 
 <div class="row mb-4">
-  <div class="col-md-3">
+  <div class="col-md-4">
     <div class="card shadow-sm">
       <div class="card-body text-center">
         <h6 class="text-muted">支払医療費</h6>
@@ -31,7 +31,7 @@
       </div>
     </div>
   </div>
-  <div class="col-md-3">
+  <div class="col-md-4">
     <div class="card shadow-sm">
       <div class="card-body text-center">
         <h6 class="text-muted">保険補填額</h6>
@@ -39,20 +39,11 @@
       </div>
     </div>
   </div>
-  <div class="col-md-3">
+  <div class="col-md-4">
     <div class="card shadow-sm">
       <div class="card-body text-center">
         <h6 class="text-muted">自己負担額</h6>
         <h4>&yen;{{ "{:,}".format(net_total) }}</h4>
-      </div>
-    </div>
-  </div>
-  <div class="col-md-3">
-    <div class="card {% if deductible > 0 %}text-bg-success{% else %}shadow-sm{% endif %}">
-      <div class="card-body text-center">
-        <h6 {% if deductible <= 0 %}class="text-muted"{% endif %}>控除対象額</h6>
-        <h4>&yen;{{ "{:,}".format(deductible) }}</h4>
-        <small>(10万円超過分)</small>
       </div>
     </div>
   </div>

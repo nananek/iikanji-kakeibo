@@ -56,24 +56,17 @@
 <div class="card shadow-sm mb-3">
   <div class="card-body">
     <div class="row text-center">
-      <div class="col-md-3">
+      <div class="col-md-4">
         <h6 class="text-muted">支払医療費合計</h6>
         <h4>&yen;{{ "{:,}".format(medical_summary.total_paid) }}</h4>
       </div>
-      <div class="col-md-3">
+      <div class="col-md-4">
         <h6 class="text-muted">保険補填額</h6>
         <h4>&yen;{{ "{:,}".format(medical_summary.total_reimbursed) }}</h4>
       </div>
-      <div class="col-md-3">
+      <div class="col-md-4">
         <h6 class="text-muted">自己負担額</h6>
         <h4>&yen;{{ "{:,}".format(medical_summary.net_total) }}</h4>
-      </div>
-      <div class="col-md-3">
-        <h6 class="text-muted">控除対象額</h6>
-        <h4 class="{% if medical_summary.deductible > 0 %}text-success{% endif %}">
-          &yen;{{ "{:,}".format(medical_summary.deductible) }}
-        </h4>
-        <small class="text-muted">(10万円超過分)</small>
       </div>
     </div>
   </div>
