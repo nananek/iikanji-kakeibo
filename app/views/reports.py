@@ -5,7 +5,7 @@ from decimal import Decimal
 
 from flask import Blueprint, render_template, request, Response
 from flask_login import login_required, current_user
-from sqlalchemy import func, and_, or_
+from sqlalchemy import func
 
 from app.extensions import db
 from app.models.account import Account, AccountType
@@ -15,7 +15,8 @@ from app.services.tax import (
     get_monthly_comparison, get_month_projection,
 )
 from app.services.audit import get_effective_user_id, get_allowed_account_ids, mask_account_name, is_entry_locked_for_owner
-from app.services.fiscal import check_entry_modifiable
+from app.services.fiscal import check_entry_modifiable, period_range_filter, get_closed_period
+from app.services.balance_cache import get_cached_balances
 from app.views.helpers import get_grouped_accounts
 
 bp = Blueprint("reports", __name__, url_prefix="/reports")
@@ -41,10 +42,11 @@ def balance():
     pf = max(0, min(16, pf))
     pt = max(pf, min(16, pt))
 
+    user_id = get_effective_user_id()
     account_types = AccountType.query.order_by(AccountType.display_order).all()
     accounts = (
         Account.query
-        .filter_by(user_id=get_effective_user_id())
+        .filter_by(user_id=user_id)
         .order_by(Account.code)
         .all()
     )
@@ -59,33 +61,6 @@ def balance():
     start_of_year = date(year, 1, 1)
     pl_type_codes = {"revenue", "expense"}
     bs_type_codes = {"asset", "liability", "equity"}
-
-    def _single_period_condition(p):
-        """単一期間のSQLAlchemy条件を返す"""
-        if p == 0:
-            return JournalEntry.fiscal_period == 0
-        elif 1 <= p <= 12:
-            m_start = date(year, p, 1)
-            m_end = date(year, p + 1, 1) if p < 12 else date(year + 1, 1, 1)
-            return or_(
-                JournalEntry.fiscal_period == p,
-                and_(
-                    JournalEntry.fiscal_period.is_(None),
-                    JournalEntry.date >= m_start,
-                    JournalEntry.date < m_end,
-                ),
-            )
-        else:  # 13-16
-            return and_(
-                JournalEntry.fiscal_period == p,
-                JournalEntry.date >= date(year, 1, 1),
-                JournalEntry.date < date(year + 1, 1, 1),
-            )
-
-    def _range_filter(p_from, p_to):
-        """期間範囲のフィルタ条件リストを返す"""
-        conditions = [_single_period_condition(p) for p in range(p_from, p_to + 1)]
-        return [or_(*conditions)] if conditions else []
 
     def _query_sum(account_id, filters, include_closing=False):
         """指定条件での借方・貸方合計を返す"""
@@ -108,7 +83,14 @@ def balance():
     total_expense = 0
 
     incl_closing = pt >= 16
-    current_filters = _range_filter(pf, pt)
+    current_filter = period_range_filter(year, pf, pt)
+
+    # 開始残高のキャッシュ活用
+    closed = get_closed_period(user_id, year)
+    cache = {}
+    use_cache = pf > 0 and closed >= pf - 1
+    if use_cache:
+        cache = get_cached_balances(user_id, year, pf - 1)
 
     for account in accounts:
         is_pl = account.account_type.code in pl_type_codes
@@ -116,38 +98,50 @@ def balance():
         is_debit_normal = account.account_type.normal_balance == "debit"
 
         # 当期発生額
-        result = _query_sum(account.id, current_filters, include_closing=incl_closing)
+        result = _query_sum(account.id, [current_filter], include_closing=incl_closing)
         period_debit = int(result[0])
         period_credit = int(result[1])
 
         # 開始残高
         opening = 0
-        if pf > 0:
-            prior_incl = pf > 16  # prior range includes 16
-            prior_filters = _range_filter(0, pf - 1)
+        if pf > 0 and use_cache and account.id in cache:
+            # キャッシュから当年累計を取得
+            year_d, year_c = cache[account.id]
             if is_bs:
-                # B/S科目: 当年の範囲開始前 + 前年以前の全累計
-                if prior_filters:
-                    ob_result = _query_sum(account.id, prior_filters, include_closing=prior_incl)
+                # B/S: キャッシュ(当年) + 前年以前
+                before_result = _query_sum(account.id, [JournalEntry.date < start_of_year])
+                before_d, before_c = int(before_result[0]), int(before_result[1])
+                if is_debit_normal:
+                    opening = (year_d + before_d) - (year_c + before_c)
+                else:
+                    opening = (year_c + before_c) - (year_d + before_d)
+            else:
+                # P/L: 当年キャッシュのみ
+                if is_debit_normal:
+                    opening = year_d - year_c
+                else:
+                    opening = year_c - year_d
+        elif pf > 0:
+            # フォールバック: 従来の全計算
+            prior_filter = period_range_filter(year, 0, pf - 1)
+            if is_bs:
+                if prior_filter is not None:
+                    ob_result = _query_sum(account.id, [prior_filter])
                     prior_d, prior_c = int(ob_result[0]), int(ob_result[1])
                 else:
                     prior_d, prior_c = 0, 0
-                before_result = _query_sum(account.id, [JournalEntry.date < start_of_year], include_closing=prior_incl)
+                before_result = _query_sum(account.id, [JournalEntry.date < start_of_year])
                 before_d, before_c = int(before_result[0]), int(before_result[1])
-                ob_debit = prior_d + before_d
-                ob_credit = prior_c + before_c
                 if is_debit_normal:
-                    opening = ob_debit - ob_credit
+                    opening = (prior_d + before_d) - (prior_c + before_c)
                 else:
-                    opening = ob_credit - ob_debit
-            elif is_pl and prior_filters:
-                ob_result = _query_sum(account.id, prior_filters, include_closing=prior_incl)
-                ob_debit = int(ob_result[0])
-                ob_credit = int(ob_result[1])
+                    opening = (prior_c + before_c) - (prior_d + before_d)
+            elif is_pl and prior_filter is not None:
+                ob_result = _query_sum(account.id, [prior_filter])
                 if is_debit_normal:
-                    opening = ob_debit - ob_credit
+                    opening = int(ob_result[0]) - int(ob_result[1])
                 else:
-                    opening = ob_credit - ob_debit
+                    opening = int(ob_result[1]) - int(ob_result[0])
         elif is_bs:
             # pf==0 でも前年以前のB/S残高は必要
             before_result = _query_sum(account.id, [JournalEntry.date < start_of_year])
@@ -337,12 +331,13 @@ def ledger():
     pf = max(0, min(16, pf))
     pt = max(pf, min(16, pt))
 
+    user_id = get_effective_user_id()
     allowed_ids = get_allowed_account_ids()
 
     account_types = AccountType.query.order_by(AccountType.display_order).all()
     accounts = (
         Account.query
-        .filter_by(user_id=get_effective_user_id())
+        .filter_by(user_id=user_id)
         .order_by(Account.code)
         .all()
     )
@@ -364,30 +359,21 @@ def ledger():
     entries = []
     carry_forward = 0
 
-    def _single_period_condition(p):
-        if p == 0:
-            return JournalEntry.fiscal_period == 0
-        elif 1 <= p <= 12:
-            m_start = date(year, p, 1)
-            m_end = date(year, p + 1, 1) if p < 12 else date(year + 1, 1, 1)
-            return or_(
-                JournalEntry.fiscal_period == p,
-                and_(
-                    JournalEntry.fiscal_period.is_(None),
-                    JournalEntry.date >= m_start,
-                    JournalEntry.date < m_end,
-                ),
+    def _query_sum_ledger(acct_id, filter_cond, include_closing=False):
+        """元帳用: 借方・貸方合計を返す"""
+        q = (
+            db.session.query(
+                func.coalesce(func.sum(JournalEntryLine.debit_amount), 0),
+                func.coalesce(func.sum(JournalEntryLine.credit_amount), 0),
             )
-        else:  # 13-16
-            return and_(
-                JournalEntry.fiscal_period == p,
-                JournalEntry.date >= date(year, 1, 1),
-                JournalEntry.date < date(year + 1, 1, 1),
-            )
-
-    def _range_filter(p_from, p_to):
-        conditions = [_single_period_condition(p) for p in range(p_from, p_to + 1)]
-        return [or_(*conditions)] if conditions else []
+            .join(JournalEntry, JournalEntry.id == JournalEntryLine.journal_entry_id)
+            .filter(JournalEntryLine.account_id == acct_id)
+        )
+        if not include_closing:
+            q = q.filter(JournalEntry.source != "closing")
+        if filter_cond is not None:
+            q = q.filter(filter_cond)
+        return q.first()
 
     if account_id:
         # Lv2: 非公開科目へのアクセスをブロック
@@ -396,7 +382,7 @@ def ledger():
             abort(403)
 
         selected_account = Account.query.filter_by(
-            id=account_id, user_id=get_effective_user_id()
+            id=account_id, user_id=user_id,
         ).first()
 
         if selected_account:
@@ -404,64 +390,45 @@ def ledger():
             is_debit_normal = selected_account.account_type.normal_balance == "debit"
             start_of_year = date(year, 1, 1)
 
-            # 前期繰越の計算
+            # 前期繰越の計算（キャッシュ活用）
             carry_forward = 0
-            if pf > 0:
-                prior_filters = _range_filter(0, pf - 1)
+            closed = get_closed_period(user_id, year)
+            use_cache = pf > 0 and closed >= pf - 1
+            cache = get_cached_balances(user_id, year, pf - 1) if use_cache else {}
+
+            if pf > 0 and use_cache and account_id in cache:
+                year_d, year_c = cache[account_id]
                 if is_bs:
-                    if prior_filters:
-                        cf_result = (
-                            db.session.query(
-                                func.coalesce(func.sum(JournalEntryLine.debit_amount), 0),
-                                func.coalesce(func.sum(JournalEntryLine.credit_amount), 0),
-                            )
-                            .join(JournalEntry, JournalEntry.id == JournalEntryLine.journal_entry_id)
-                            .filter(JournalEntryLine.account_id == account_id, *prior_filters)
-                            .first()
-                        )
+                    before_result = _query_sum_ledger(account_id, JournalEntry.date < start_of_year)
+                    before_d, before_c = int(before_result[0]), int(before_result[1])
+                    carry_forward = (year_d + before_d - year_c - before_c) if is_debit_normal else (year_c + before_c - year_d - before_d)
+                else:
+                    carry_forward = (year_d - year_c) if is_debit_normal else (year_c - year_d)
+            elif pf > 0:
+                # フォールバック: 従来の全計算
+                prior_filter = period_range_filter(year, 0, pf - 1)
+                if is_bs:
+                    if prior_filter is not None:
+                        cf_result = _query_sum_ledger(account_id, prior_filter)
                         prior_d, prior_c = int(cf_result[0]), int(cf_result[1])
                     else:
                         prior_d, prior_c = 0, 0
-                    before_result = (
-                        db.session.query(
-                            func.coalesce(func.sum(JournalEntryLine.debit_amount), 0),
-                            func.coalesce(func.sum(JournalEntryLine.credit_amount), 0),
-                        )
-                        .join(JournalEntry, JournalEntry.id == JournalEntryLine.journal_entry_id)
-                        .filter(JournalEntryLine.account_id == account_id, JournalEntry.date < start_of_year)
-                        .first()
-                    )
+                    before_result = _query_sum_ledger(account_id, JournalEntry.date < start_of_year)
                     before_d, before_c = int(before_result[0]), int(before_result[1])
                     total_d, total_c = prior_d + before_d, prior_c + before_c
                     carry_forward = (total_d - total_c) if is_debit_normal else (total_c - total_d)
                 else:
-                    if prior_filters:
-                        cf_result = (
-                            db.session.query(
-                                func.coalesce(func.sum(JournalEntryLine.debit_amount), 0),
-                                func.coalesce(func.sum(JournalEntryLine.credit_amount), 0),
-                            )
-                            .join(JournalEntry, JournalEntry.id == JournalEntryLine.journal_entry_id)
-                            .filter(JournalEntryLine.account_id == account_id, *prior_filters)
-                            .first()
-                        )
+                    if prior_filter is not None:
+                        cf_result = _query_sum_ledger(account_id, prior_filter)
                         d, c = int(cf_result[0]), int(cf_result[1])
                         carry_forward = (d - c) if is_debit_normal else (c - d)
             elif is_bs:
-                before_result = (
-                    db.session.query(
-                        func.coalesce(func.sum(JournalEntryLine.debit_amount), 0),
-                        func.coalesce(func.sum(JournalEntryLine.credit_amount), 0),
-                    )
-                    .join(JournalEntry, JournalEntry.id == JournalEntryLine.journal_entry_id)
-                    .filter(JournalEntryLine.account_id == account_id, JournalEntry.date < start_of_year)
-                    .first()
-                )
+                before_result = _query_sum_ledger(account_id, JournalEntry.date < start_of_year)
                 before_d, before_c = int(before_result[0]), int(before_result[1])
                 carry_forward = (before_d - before_c) if is_debit_normal else (before_c - before_d)
 
             # 当期の仕訳明細を取得
-            current_filters = _range_filter(pf, pt)
+            current_filter = period_range_filter(year, pf, pt)
 
             # effective_period: fiscal_period が NULL なら date の月を使う
             effective_period = case(
@@ -484,7 +451,7 @@ def ledger():
                 .join(JournalEntry, JournalEntry.id == JournalEntryLine.journal_entry_id)
                 .filter(
                     JournalEntryLine.account_id == account_id,
-                    *current_filters,
+                    current_filter,
                 )
                 .order_by(effective_period, JournalEntry.date, JournalEntry.entry_number)
                 .all()
@@ -527,7 +494,6 @@ def ledger():
 
     # 各エントリの編集可否を判定
     if entries:
-        user_id = get_effective_user_id()
         entry_ids = list({e["entry_id"] for e in entries})
         entry_objs = {
             eo.id: eo
@@ -544,7 +510,7 @@ def ledger():
                 e["is_readonly"] = True
 
     # モーダル用: 全科目データ（Lv2なら公開科目のみ）
-    all_grouped = get_grouped_accounts(get_effective_user_id(), allowed_ids)
+    all_grouped = get_grouped_accounts(user_id, allowed_ids)
 
     return render_template(
         "reports/ledger.html",

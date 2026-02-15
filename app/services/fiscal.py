@@ -4,7 +4,7 @@ import uuid
 from datetime import date
 from decimal import Decimal
 
-from sqlalchemy import func
+from sqlalchemy import and_, func, or_
 
 from app.extensions import db
 from app.models.account import Account, AccountType
@@ -22,6 +22,35 @@ PERIOD_LABELS = {
     13: "決算月1", 14: "決算月2", 15: "決算月3",
     16: "損益振替",
 }
+
+
+def period_condition(year, p):
+    """単一期間のSQLAlchemy条件を返す（共通）"""
+    if p == 0:
+        return JournalEntry.fiscal_period == 0
+    elif 1 <= p <= 12:
+        m_start = date(year, p, 1)
+        m_end = date(year, p + 1, 1) if p < 12 else date(year + 1, 1, 1)
+        return or_(
+            JournalEntry.fiscal_period == p,
+            and_(
+                JournalEntry.fiscal_period.is_(None),
+                JournalEntry.date >= m_start,
+                JournalEntry.date < m_end,
+            ),
+        )
+    else:  # 13-16
+        return and_(
+            JournalEntry.fiscal_period == p,
+            JournalEntry.date >= date(year, 1, 1),
+            JournalEntry.date < date(year + 1, 1, 1),
+        )
+
+
+def period_range_filter(year, pf, pt):
+    """期間範囲のOR条件を返す"""
+    conds = [period_condition(year, p) for p in range(pf, pt + 1)]
+    return or_(*conds) if conds else None
 
 
 def adjust_date_for_fiscal_period(entry_date, fiscal_period):
@@ -123,6 +152,8 @@ def get_capital_account_id(user_id):
 
 def close_period(user_id, year, period):
     """月次確定を実行。成功時はNone、エラー時はメッセージを返す"""
+    from app.services.balance_cache import compute_balance_cache
+
     fc = FiscalClose.query.filter_by(user_id=user_id, year=year).first()
     current = fc.closed_period if fc else -1
 
@@ -145,21 +176,42 @@ def close_period(user_id, year, period):
             db.session.rollback()
             return err
 
+    # 残高キャッシュを計算
+    compute_balance_cache(user_id, year, period)
+
     db.session.commit()
     return None
 
 
 def reopen_period(user_id, year, period):
     """月次確定を解除。成功時はNone、エラー時はメッセージを返す"""
+    from app.services.balance_cache import invalidate_balance_cache
+
     fc = FiscalClose.query.filter_by(user_id=user_id, year=year).first()
     if not fc or fc.closed_period < period:
         return "この期間は確定されていません。"
     if fc.closed_period != period:
         return "最後に確定した期間のみ解除できます。"
 
+    # 翌年度以降に確定があれば解除不可
+    later = FiscalClose.query.filter(
+        FiscalClose.user_id == user_id,
+        FiscalClose.year > year,
+        FiscalClose.closed_period >= 0,
+    ).order_by(FiscalClose.year).first()
+    if later:
+        return (
+            f"{later.year}年度に確定済み期間があるため、"
+            f"{year}年の確定を解除できません。"
+            f"先に{later.year}年度の確定を全て解除してください。"
+        )
+
     # 決算月3解除 → 損益振替仕訳を削除
     if period == 15:
         delete_closing_entries(user_id, year)
+
+    # 残高キャッシュを無効化
+    invalidate_balance_cache(user_id, year, period)
 
     fc.closed_period = period - 1
     db.session.commit()
