@@ -5,7 +5,7 @@
 <div class="row">
   <div class="col-lg-8">
     <h2><i class="bi bi-plug"></i> APIキー管理</h2>
-    <p class="text-muted">外部ツールから仕訳を起票するためのAPIキーを管理します。</p>
+    <p class="text-muted">外部ツールからAPIを利用するためのキーを管理します。</p>
 
     {% if new_key %}
     <div class="alert alert-success">
@@ -28,13 +28,28 @@
       <div class="card-body">
         <form method="POST" action="{{ url_for('settings.api_key_create') }}">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-          <div class="input-group">
+          <div class="mb-3">
             <input type="text" name="name" class="form-control"
                    placeholder="キーの名前（例: メールチェッカー）" maxlength="100" required>
-            <button class="btn btn-primary" type="submit">
-              <i class="bi bi-key"></i> 発行
-            </button>
           </div>
+          <div class="mb-3">
+            <label class="form-label fw-semibold">権限</label>
+            {% for scope in all_scopes %}
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" name="scopes"
+                     value="{{ scope }}" id="scope_{{ scope }}"
+                     {% if scope == 'journals:create' %}checked{% endif %}
+                     {% if scope == 'journals:delete' %}data-requires="journals:read"{% endif %}>
+              <label class="form-check-label" for="scope_{{ scope }}">
+                {{ scope_labels[scope] }}
+                <span class="text-muted">({{ scope }})</span>
+              </label>
+            </div>
+            {% endfor %}
+          </div>
+          <button class="btn btn-primary" type="submit">
+            <i class="bi bi-key"></i> 発行
+          </button>
         </form>
       </div>
     </div>
@@ -50,6 +65,7 @@
             <tr>
               <th>名前</th>
               <th>キー</th>
+              <th>権限</th>
               <th>作成日</th>
               <th>最終利用</th>
               <th></th>
@@ -60,6 +76,11 @@
             <tr>
               <td>{{ key.name }}</td>
               <td><code>{{ key.key_prefix }}</code></td>
+              <td>
+                {% for s in key.scope_list %}
+                  <span class="badge bg-secondary">{{ scope_labels.get(s, s) }}</span>
+                {% endfor %}
+              </td>
               <td>{{ key.created_at.strftime('%Y/%m/%d') }}</td>
               <td>
                 {% if key.last_used_at %}
@@ -114,8 +135,8 @@
 {% endblock %}
 
 {% block scripts %}
-{% if new_key %}
 <script>
+{% if new_key %}
 function copyKey() {
   var input = document.getElementById('newKeyValue');
   input.select();
@@ -127,6 +148,23 @@ function copyKey() {
     }, 2000);
   });
 }
-</script>
 {% endif %}
+
+// journals:delete をチェックしたら journals:read も自動チェック
+document.querySelectorAll('[data-requires]').forEach(function(cb) {
+  cb.addEventListener('change', function() {
+    if (this.checked) {
+      var req = document.getElementById('scope_' + this.dataset.requires);
+      if (req) req.checked = true;
+    }
+  });
+});
+// journals:read を外したら journals:delete も外す
+document.getElementById('scope_journals:read')?.addEventListener('change', function() {
+  if (!this.checked) {
+    var del = document.getElementById('scope_journals:delete');
+    if (del) del.checked = false;
+  }
+});
+</script>
 {% endblock %}

@@ -87,6 +87,15 @@
           <li class="mb-1">ヘッダー行も含めてOK（AIが自動で除外します）</li>
           <li class="mb-1">余計なメニュー等が混ざっても大丈夫です</li>
         </ul>
+        <hr class="my-2">
+        <p class="small mb-1 fw-semibold">ブックマークレット</p>
+        <p class="small text-muted mb-2">
+          下のボタンをブックマークバーにドラッグすると、明細ページで要素を選んでHTMLをコピーできます。
+        </p>
+        <a class="btn btn-sm btn-outline-primary" href="javascript:void(function(){if(window.__ikPicker){return}window.__ikPicker=1;var ov=document.createElement('div');ov.id='__ik_ov';ov.style.cssText='position:fixed;inset:0;z-index:2147483646;pointer-events:none;background:rgba(0,0,0,.45);transition:clip-path .15s';document.body.appendChild(ov);var hl=document.createElement('div');hl.id='__ik_hl';hl.style.cssText='position:fixed;z-index:2147483647;pointer-events:none;border:3px solid %230d6efd;border-radius:4px;box-shadow:0 0 0 4px rgba(13,110,253,.25);transition:all .1s';document.body.appendChild(hl);var cur=null;function upd(el){if(!el){hl.style.display='none';ov.style.clipPath='';return}var r=el.getBoundingClientRect();hl.style.display='block';hl.style.left=r.left-3+'px';hl.style.top=r.top-3+'px';hl.style.width=r.width+6+'px';hl.style.height=r.height+6+'px';var iL=r.left,iT=r.top,iR=r.right,iB=r.bottom;ov.style.clipPath='polygon(0%25 0%25,0%25 100%25,'+iL+'px 100%25,'+iL+'px '+iT+'px,'+iR+'px '+iT+'px,'+iR+'px '+iB+'px,'+iL+'px '+iB+'px,'+iL+'px 100%25,100%25 100%25,100%25 0%25)'}function onM(e){var t=document.elementFromPoint(e.clientX,e.clientY);if(t&&t!==ov&&t!==hl&&t.id!=='__ik_ov'&&t.id!=='__ik_hl'){cur=t;upd(t)}}function done(){document.removeEventListener('mousemove',onM,true);document.removeEventListener('click',onClick,true);document.removeEventListener('keydown',onK,true);ov.remove();hl.remove();delete window.__ikPicker}function onClick(e){e.preventDefault();e.stopPropagation();e.stopImmediatePropagation();if(cur){navigator.clipboard.writeText(cur.outerHTML).then(function(){var m=document.createElement('div');m.style.cssText='position:fixed;top:20px;left:50%25;transform:translateX(-50%25);z-index:2147483647;background:%230d6efd;color:white;padding:10px 24px;border-radius:8px;font:bold 14px sans-serif;box-shadow:0 4px 12px rgba(0,0,0,.3)';m.textContent='HTMLをコピーしました（'+cur.outerHTML.length+'文字）';document.body.appendChild(m);setTimeout(function(){m.remove()},2000)})}done()}function onK(e){if(e.key==='Escape'){done()}}document.addEventListener('mousemove',onM,true);document.addEventListener('click',onClick,true);document.addEventListener('keydown',onK,true)}());"
+           onclick="event.preventDefault();alert('このボタンをブックマークバーにドラッグしてください。')">
+          <i class="bi bi-bookmark-plus"></i> 明細ピッカー
+        </a>
       </div>
     </div>
   </div>

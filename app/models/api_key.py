@@ -6,6 +6,14 @@ from app.extensions import db
 
 KEY_PREFIX = "ik_"
 
+ALL_SCOPES = ("journals:create", "journals:read", "journals:delete")
+SCOPE_LABELS = {
+    "journals:create": "仕訳起票",
+    "journals:read": "仕訳閲覧",
+    "journals:delete": "仕訳削除",
+}
+SCOPE_DEPENDENCIES = {"journals:delete": "journals:read"}
+
 
 class APIKey(db.Model):
     """外部 API 認証キー"""
@@ -17,6 +25,7 @@ class APIKey(db.Model):
     name = db.Column(db.String(100), nullable=False)
     key_hash = db.Column(db.String(64), nullable=False, unique=True)
     key_prefix = db.Column(db.String(12), nullable=False)
+    scopes = db.Column(db.String(200), nullable=False, default="journals:create")
     is_active = db.Column(db.Boolean, nullable=False, default=True)
     created_at = db.Column(
         db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc)
@@ -24,6 +33,13 @@ class APIKey(db.Model):
     last_used_at = db.Column(db.DateTime, nullable=True)
 
     user = db.relationship("User", backref=db.backref("api_keys", lazy="dynamic"))
+
+    def has_scope(self, scope: str) -> bool:
+        return scope in self.scopes.split(",")
+
+    @property
+    def scope_list(self) -> list[str]:
+        return [s for s in self.scopes.split(",") if s]
 
     @staticmethod
     def generate():

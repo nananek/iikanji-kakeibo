@@ -7,39 +7,57 @@ from flask import Blueprint, jsonify, request, g
 
 from app.extensions import db
 from app.models.api_key import APIKey
+from app.models.journal import JournalEntry
 from app.services.accounting import create_journal_entry
-from app.services.audit import get_submitted_account_ids
-from app.services.fiscal import check_period_open_for_new
+from app.services.audit import get_submitted_account_ids, is_entry_locked_for_owner
+from app.services.fiscal import check_period_open_for_new, check_entry_modifiable
 
 bp = Blueprint("api", __name__, url_prefix="/api/v1")
 
 
-def api_key_required(f):
-    """Authorization: Bearer ik_xxx ヘッダーで認証するデコレータ"""
+def api_key_required(scope=None):
+    """Authorization: Bearer ik_xxx ヘッダーで認証するデコレータ
 
-    @functools.wraps(f)
-    def decorated(*args, **kwargs):
-        auth = request.headers.get("Authorization", "")
-        if not auth.startswith("Bearer "):
-            return jsonify({"error": "Authorization ヘッダーが必要です。"}), 401
+    scope を指定すると、API キーにそのスコープがあるか追加チェックする。
+    """
 
-        raw_key = auth[7:]
-        key_hash = APIKey.hash_key(raw_key)
-        api_key = APIKey.query.filter_by(key_hash=key_hash, is_active=True).first()
-        if not api_key:
-            return jsonify({"error": "無効な API キーです。"}), 401
+    def decorator(f):
+        @functools.wraps(f)
+        def decorated(*args, **kwargs):
+            auth = request.headers.get("Authorization", "")
+            if not auth.startswith("Bearer "):
+                return jsonify({"error": "Authorization ヘッダーが必要です。"}), 401
 
-        api_key.last_used_at = datetime.now(timezone.utc)
-        db.session.commit()
+            raw_key = auth[7:]
+            key_hash = APIKey.hash_key(raw_key)
+            api_key = APIKey.query.filter_by(key_hash=key_hash, is_active=True).first()
+            if not api_key:
+                return jsonify({"error": "無効な API キーです。"}), 401
 
-        g.api_user_id = api_key.user_id
-        return f(*args, **kwargs)
+            if scope and not api_key.has_scope(scope):
+                return (
+                    jsonify(
+                        {"error": f"この API キーには {scope} 権限がありません。"}
+                    ),
+                    403,
+                )
 
-    return decorated
+            api_key.last_used_at = datetime.now(timezone.utc)
+            db.session.commit()
+
+            g.api_user_id = api_key.user_id
+            return f(*args, **kwargs)
+
+        return decorated
+
+    return decorator
+
+
+# --- 仕訳起票 ---
 
 
 @bp.route("/journals", methods=["POST"])
-@api_key_required
+@api_key_required(scope="journals:create")
 def create_journal():
     """仕訳起票 API"""
     data = request.get_json(silent=True)
@@ -107,3 +125,109 @@ def create_journal():
         "id": entry.id,
         "entry_number": entry.entry_number,
     }), 201
+
+
+# --- 仕訳閲覧 ---
+
+
+def _entry_to_dict(entry):
+    """JournalEntry を API レスポンス用 dict に変換"""
+    return {
+        "id": entry.id,
+        "date": entry.date.isoformat(),
+        "entry_number": entry.entry_number,
+        "description": entry.description,
+        "source": entry.source,
+        "lines": [
+            {
+                "account_id": line.account_id,
+                "debit": line.debit_amount,
+                "credit": line.credit_amount,
+                "description": line.description or "",
+            }
+            for line in entry.lines
+        ],
+    }
+
+
+@bp.route("/journals", methods=["GET"])
+@api_key_required(scope="journals:read")
+def list_journals():
+    """仕訳一覧 API"""
+    user_id = g.api_user_id
+    page = request.args.get("page", 1, type=int)
+    per_page = min(request.args.get("per_page", 20, type=int), 100)
+
+    query = JournalEntry.query.filter_by(user_id=user_id)
+
+    date_from = request.args.get("date_from")
+    if date_from:
+        try:
+            query = query.filter(JournalEntry.date >= date_type.fromisoformat(date_from))
+        except ValueError:
+            return jsonify({"error": "date_from の形式が不正です（YYYY-MM-DD）。"}), 400
+
+    date_to = request.args.get("date_to")
+    if date_to:
+        try:
+            query = query.filter(JournalEntry.date <= date_type.fromisoformat(date_to))
+        except ValueError:
+            return jsonify({"error": "date_to の形式が不正です（YYYY-MM-DD）。"}), 400
+
+    total = query.count()
+    entries = (
+        query.order_by(JournalEntry.date.desc(), JournalEntry.entry_number.desc())
+        .offset((page - 1) * per_page)
+        .limit(per_page)
+        .all()
+    )
+
+    return jsonify({
+        "ok": True,
+        "journals": [_entry_to_dict(e) for e in entries],
+        "total": total,
+        "page": page,
+        "per_page": per_page,
+    })
+
+
+@bp.route("/journals/<int:entry_id>", methods=["GET"])
+@api_key_required(scope="journals:read")
+def get_journal(entry_id):
+    """仕訳詳細 API"""
+    entry = JournalEntry.query.filter_by(
+        id=entry_id, user_id=g.api_user_id
+    ).first()
+    if not entry:
+        return jsonify({"error": "仕訳が見つかりません。"}), 404
+
+    return jsonify({"ok": True, "journal": _entry_to_dict(entry)})
+
+
+# --- 仕訳削除 ---
+
+
+@bp.route("/journals/<int:entry_id>", methods=["DELETE"])
+@api_key_required(scope="journals:delete")
+def delete_journal(entry_id):
+    """仕訳削除 API"""
+    user_id = g.api_user_id
+    entry = JournalEntry.query.filter_by(
+        id=entry_id, user_id=user_id
+    ).first()
+    if not entry:
+        return jsonify({"error": "仕訳が見つかりません。"}), 404
+
+    # 提出済みロック科目チェック
+    if is_entry_locked_for_owner(user_id, entry):
+        return jsonify({"error": "提出済みの税務科目を含む伝票のため削除できません。"}), 400
+
+    # 確定済み期間チェック
+    err = check_entry_modifiable(user_id, entry)
+    if err:
+        return jsonify({"error": err}), 400
+
+    db.session.delete(entry)
+    db.session.commit()
+
+    return jsonify({"ok": True})

@@ -9,7 +9,7 @@ from app.services.audit import get_effective_user_id
 from app.models.account import Account, AccountType
 from app.models.webauthn import WebAuthnCredential
 from app.models.ai_config import UserAIConfig
-from app.models.api_key import APIKey
+from app.models.api_key import APIKey, ALL_SCOPES, SCOPE_LABELS, SCOPE_DEPENDENCIES
 from app.models.audit import AuditGrant, AuditGrantAccount
 from app.services.ai_receipt import (
     encrypt_api_key, PROVIDER_DEFAULTS, PROVIDER_LABELS,
@@ -125,7 +125,12 @@ def api_keys():
         .order_by(APIKey.created_at.desc())
         .all()
     )
-    return render_template("settings/api_keys.html", keys=keys)
+    return render_template(
+        "settings/api_keys.html",
+        keys=keys,
+        all_scopes=ALL_SCOPES,
+        scope_labels=SCOPE_LABELS,
+    )
 
 
 @bp.route("/api-keys/create", methods=["POST"])
@@ -137,12 +142,22 @@ def api_key_create():
         flash("キーの名前を入力してください。", "danger")
         return redirect(url_for("settings.api_keys"))
 
+    # スコープ収集・依存解決
+    selected = set(request.form.getlist("scopes"))
+    for scope, dep in SCOPE_DEPENDENCIES.items():
+        if scope in selected:
+            selected.add(dep)
+    scopes = ",".join(s for s in ALL_SCOPES if s in selected)
+    if not scopes:
+        scopes = "journals:create"
+
     raw_key, key_hash, key_prefix = APIKey.generate()
     api_key = APIKey(
         user_id=current_user.id,
         name=name,
         key_hash=key_hash,
         key_prefix=key_prefix,
+        scopes=scopes,
     )
     db.session.add(api_key)
     db.session.commit()
@@ -154,7 +169,12 @@ def api_key_create():
         .all()
     )
     return render_template(
-        "settings/api_keys.html", keys=keys, new_key=raw_key, new_key_name=name,
+        "settings/api_keys.html",
+        keys=keys,
+        new_key=raw_key,
+        new_key_name=name,
+        all_scopes=ALL_SCOPES,
+        scope_labels=SCOPE_LABELS,
     )
 
 

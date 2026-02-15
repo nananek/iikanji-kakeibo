@@ -42,7 +42,7 @@
 銀行口座やクレジットカードの明細を3つの方法で一括取込:
 - **CSV取込** — 列マッピング UI で日付・摘要・入金・出金を指定。Shift-JIS / UTF-8 自動判定
 - **OFX取込** — 銀行ダウンロードの OFX/QFX ファイルをそのまま読込
-- **Web取込** — Webページのテキストを貼り付けるだけ。AI が明細を自動抽出
+- **Web取込** — Webページのテキストを貼り付けるだけ。AI が明細を自動抽出。ブックマークレット「明細ピッカー」で要素を選んでHTMLコピーも可能
 
 確認画面の共通機能:
 - **科目自動推定** — 過去の仕訳履歴から摘要に応じた費目を自動提案
@@ -115,10 +115,14 @@ iPhone等のスマートフォン縦長画面に最適化されたレスポン�
 
 ### REST API
 
-外部プログラムから仕訳を起票できる REST API を提供。API キーによる Bearer 認証で、設定画面からキーの発行・管理が可能です。Python クライアントライブラリ [`iikanji`](https://github.com/nananek/iikanji-kakeibo-client-py) も利用できます。
+外部プログラムから仕訳の起票・閲覧・削除ができる REST API を提供。API キーによる Bearer 認証で、設定画面からキーの発行・スコープ管理が可能です。Python クライアントライブラリ [`iikanji`](https://github.com/nananek/iikanji-kakeibo-client-py) も利用できます。
 
-- `POST /api/v1/journals` — 仕訳起票（日付・摘要・明細行を指定）
-- 貸借一致チェック・期間ロック・提出ロック等のバリデーション付き
+- `POST /api/v1/journals` — 仕訳起票（スコープ: `journals:create`）
+- `GET /api/v1/journals` — 仕訳一覧（スコープ: `journals:read`）
+- `GET /api/v1/journals/<id>` — 仕訳詳細（スコープ: `journals:read`）
+- `DELETE /api/v1/journals/<id>` — 仕訳削除（スコープ: `journals:delete`）
+
+API キーごとにスコープを設定でき、`journals:delete` は `journals:read` を前提とします。
 
 ### 勘定科目管理
 
