@@ -10,7 +10,7 @@ from app.models.account import Account
 from app.models.journal import JournalEntry, JournalEntryLine
 from app.forms.journal import JournalForm
 from app.services.accounting import create_journal_entry, get_next_entry_number
-from app.services.fiscal import check_entry_modifiable, check_period_open_for_new, get_effective_period, adjust_date_for_fiscal_period
+from app.services.fiscal import check_entry_modifiable, check_period_open_for_new, get_effective_period, adjust_date_for_fiscal_period, get_closed_periods_map
 from app.services.audit import (
     get_effective_user_id, get_allowed_account_ids, get_submitted_account_ids,
     is_entry_locked_for_owner, is_entry_locked_for_auditor,
@@ -20,6 +20,8 @@ from app.services.audit import (
 from app.views.helpers import get_grouped_accounts
 
 bp = Blueprint("journal", __name__, url_prefix="/journal")
+
+
 
 
 @bp.route("/")
@@ -80,6 +82,7 @@ def new():
     user_id = get_effective_user_id()
     allowed_ids = get_allowed_account_ids()
     grouped_accounts = get_grouped_accounts(user_id, allowed_ids)
+    closed_periods = get_closed_periods_map(user_id)
 
     if not form.date.data:
         form.date.data = date.today()
@@ -95,6 +98,7 @@ def new():
                 form=form,
                 grouped_accounts=grouped_accounts,
                 is_edit=False,
+                closed_periods=closed_periods,
             )
 
         def _render_with_lines(msg):
@@ -105,6 +109,7 @@ def new():
                 grouped_accounts=grouped_accounts,
                 is_edit=False,
                 existing_lines=lines_json,
+                closed_periods=closed_periods,
             )
 
         if not lines_data:
@@ -166,6 +171,7 @@ def new():
         form=form,
         grouped_accounts=grouped_accounts,
         is_edit=False,
+        closed_periods=closed_periods,
     )
 
 
@@ -193,6 +199,7 @@ def edit(entry_id):
     form = JournalForm()
     grouped_accounts = get_grouped_accounts(get_effective_user_id(), allowed_ids)
     proprietor_id = get_proprietor_account_id(user_id) if allowed_ids is not None else None
+    closed_periods = get_closed_periods_map(user_id)
 
     if request.method == "POST" and form.validate_on_submit():
         lines_json = request.form.get("lines_json", "[]")
@@ -206,6 +213,7 @@ def edit(entry_id):
                 grouped_accounts=grouped_accounts,
                 is_edit=True,
                 entry=entry,
+                closed_periods=closed_periods,
             )
 
         # Lv2: 事業主行をスキップして公開科目のみ受け入れ
@@ -303,6 +311,7 @@ def edit(entry_id):
                 grouped_accounts=grouped_accounts,
                 is_edit=True,
                 entry=entry,
+                closed_periods=closed_periods,
             )
 
         fiscal_period = None
@@ -316,6 +325,7 @@ def edit(entry_id):
                 grouped_accounts=grouped_accounts,
                 is_edit=True,
                 entry=entry,
+                closed_periods=closed_periods,
             )
         form.date.data = adjust_date_for_fiscal_period(form.date.data, fiscal_period)
 
@@ -330,6 +340,7 @@ def edit(entry_id):
                 grouped_accounts=grouped_accounts,
                 is_edit=True,
                 entry=entry,
+                closed_periods=closed_periods,
             )
 
         entry.date = form.date.data
@@ -400,6 +411,7 @@ def edit(entry_id):
         is_edit=True,
         entry=entry,
         existing_lines=json.dumps(existing_lines),
+        closed_periods=closed_periods,
     )
 
 

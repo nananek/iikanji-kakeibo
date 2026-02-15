@@ -11,7 +11,7 @@ from app.services.accounting import (
     create_cashbook_entry,
     update_cashbook_entry,
 )
-from app.services.fiscal import check_entry_modifiable, check_period_open_for_new, adjust_date_for_fiscal_period
+from app.services.fiscal import check_entry_modifiable, check_period_open_for_new, adjust_date_for_fiscal_period, get_closed_periods_map
 from app.services.audit import (
     get_effective_user_id, get_allowed_account_ids, get_submitted_account_ids,
     is_entry_locked_for_owner, is_entry_locked_for_auditor,
@@ -74,6 +74,7 @@ def new():
     form = CashbookForm()
     user_id = get_effective_user_id()
     allowed_ids = get_allowed_account_ids()
+    closed_periods = get_closed_periods_map(user_id)
 
     if not form.date.data:
         form.date.data = date.today()
@@ -94,6 +95,7 @@ def new():
                         grouped_accounts=grouped_accounts,
                         payment_account_name=payment_account_name,
                         category_account_name=category_account_name,
+                        closed_periods=closed_periods,
                     )
 
         # 計上期間の決定
@@ -118,6 +120,7 @@ def new():
                 grouped_accounts=grouped_accounts,
                 payment_account_name=payment_account_name,
                 category_account_name=category_account_name,
+                closed_periods=closed_periods,
             )
 
         entry = create_cashbook_entry(
@@ -141,6 +144,7 @@ def new():
         grouped_accounts=grouped_accounts,
         payment_account_name=payment_account_name,
         category_account_name=category_account_name,
+        closed_periods=closed_periods,
     )
 
 
@@ -168,6 +172,7 @@ def edit(entry_id):
         return redirect(url_for("cashbook.index"))
 
     form = CashbookForm()
+    closed_periods = get_closed_periods_map(user_id)
 
     if form.validate_on_submit():
         # 計上期間の決定
@@ -190,6 +195,7 @@ def edit(entry_id):
                 grouped_accounts=grouped_accounts,
                 payment_account_name=payment_account_name,
                 category_account_name=category_account_name,
+                closed_periods=closed_periods,
             )
 
         update_cashbook_entry(
@@ -238,6 +244,7 @@ def edit(entry_id):
         grouped_accounts=grouped_accounts,
         payment_account_name=payment_account_name,
         category_account_name=category_account_name,
+        closed_periods=closed_periods,
     )
 
 

@@ -78,6 +78,18 @@ def get_closed_period(user_id, year):
     return fc.closed_period if fc else -1
 
 
+def get_closed_periods_map(user_id):
+    """前後2年分の確定済み期間マップ {year: closed_period} を返す"""
+    from datetime import date as _date
+    current_year = _date.today().year
+    result = {}
+    for y in range(current_year - 2, current_year + 2):
+        cp = get_closed_period(user_id, y)
+        if cp >= 0:
+            result[y] = cp
+    return result
+
+
 def get_closed_periods_for_dates(user_id, dates):
     """日付リストに含まれる年度の確定済み期間を辞書で返す {year: closed_period}"""
     years = set()
