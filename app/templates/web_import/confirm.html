@@ -146,7 +146,7 @@
 <script src="{{ url_for('static', filename='js/import_confirm.js') }}"></script>
 <script>
 var parsedData = {{ parsed | tojson }};
-initImportConfirm(parsedData, {{ payment_account.id }}, {{ restricted_before_year | tojson }});
+initImportConfirm(parsedData, {{ payment_account.id }}, {{ restricted_before_year | tojson }}, {{ closed_periods | tojson }});
 
 function applyBulkDate() {
   var newDate = document.getElementById('bulkDate').value;

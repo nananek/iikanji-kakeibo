@@ -211,7 +211,6 @@
       var year = parseInt(row.date.substring(0, 4));
       if (year < restrictedBeforeYear) {
         hasRestricted = true;
-        // 状態列にバッジ追加
         var statusTd = tr.querySelector('td:last-child');
         if (statusTd) {
           var existing = statusTd.querySelector('.badge');
@@ -222,16 +221,42 @@
         }
       }
     });
-    // 未開設行がある場合、選択肢バーを表示
     var bar = document.getElementById('oldYearBar');
     if (bar && hasRestricted) {
       bar.classList.remove('d-none');
     }
   }
 
+  /* ---------- 確定済み期間の行マーク ---------- */
+
+  function markClosedPeriodRows(closedPeriods) {
+    if (!closedPeriods || typeof closedPeriods !== 'object') return;
+    if (Object.keys(closedPeriods).length === 0) return;
+    document.querySelectorAll('#confirmTable tbody tr').forEach(function (tr) {
+      var idx = parseInt(tr.dataset.idx);
+      var row = _parsedData[idx];
+      if (!row || !row.date) return;
+      var year = parseInt(row.date.substring(0, 4));
+      var month = parseInt(row.date.substring(5, 7));
+      var cp = closedPeriods[year];
+      if (cp === undefined || month > cp) return;
+      // 確定済み期間 → チェックを外してバッジ表示
+      var cb = tr.querySelector('.row-check');
+      if (cb) cb.checked = false;
+      var statusTd = tr.querySelector('td:last-child');
+      if (statusTd) {
+        var existing = statusTd.querySelector('.badge');
+        if (existing && (existing.classList.contains('bg-success') || existing.classList.contains('bg-warning'))) {
+          existing.className = 'badge bg-danger';
+          existing.innerHTML = '<i class="bi bi-lock-fill"></i> 確定済み';
+        }
+      }
+    });
+  }
+
   /* ---------- 初期化 ---------- */
 
-  window.initImportConfirm = function (parsedData, paymentAccountId, restrictedBeforeYear) {
+  window.initImportConfirm = function (parsedData, paymentAccountId, restrictedBeforeYear, closedPeriods) {
     _parsedData = parsedData;
     _paymentAccountId = paymentAccountId;
 
@@ -244,8 +269,9 @@
       cb.addEventListener('change', updateCount);
     });
 
-    updateCount();
     markRestrictedRows(restrictedBeforeYear);
+    markClosedPeriodRows(closedPeriods);
+    updateCount();
     suggestCategories();
   };
 

@@ -14,7 +14,7 @@ from app.services.ofx_import import parse_ofx
 from app.services.accounting import create_cashbook_entry, create_transfer_entry
 from app.services.fiscal import (
     check_period_open_for_new, get_restricted_before_year, is_year_open,
-    get_capital_account_id,
+    get_capital_account_id, get_closed_periods_for_dates,
 )
 from app.views.helpers import (
     get_grouped_accounts, save_import_data, load_import_data, delete_import_data,
@@ -248,6 +248,9 @@ def confirm():
         flash(msg, "success")
         return redirect(url_for("cashbook.index"))
 
+    closed_periods = get_closed_periods_for_dates(
+        user_id, [r.get("date", "") for r in parsed]
+    )
     grouped_accounts = get_grouped_accounts(user_id)
     return render_template(
         "ofx_import/confirm.html",
@@ -258,4 +261,5 @@ def confirm():
         grouped_accounts=grouped_accounts,
         ofx_account_info=session.get("ofx_account_info", ""),
         restricted_before_year=restricted_before,
+        closed_periods=closed_periods,
     )

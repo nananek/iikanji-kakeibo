@@ -48,6 +48,23 @@ def get_closed_period(user_id, year):
     return fc.closed_period if fc else -1
 
 
+def get_closed_periods_for_dates(user_id, dates):
+    """日付リストに含まれる年度の確定済み期間を辞書で返す {year: closed_period}"""
+    years = set()
+    for d in dates:
+        if d:
+            try:
+                years.add(int(d[:4]))
+            except (ValueError, TypeError):
+                pass
+    result = {}
+    for y in years:
+        cp = get_closed_period(user_id, y)
+        if cp >= 0:
+            result[y] = cp
+    return result
+
+
 def is_period_locked(user_id, year, period):
     """指定期間がロック済みか判定"""
     return period <= get_closed_period(user_id, year)
