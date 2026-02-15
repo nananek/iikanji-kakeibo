@@ -67,32 +67,16 @@
             {% set ns.liability_balance = ns.type_balance %}
           {% elif ns.current_type_code == 'equity' %}
             {% set ns.equity_balance = ns.type_balance %}
-            {% if not has_closing %}
+            {% if not has_closing and ytd_net_income != 0 %}
             {% set prior_ni = ytd_net_income - net_income %}
-            {% if prior_ni != 0 %}
-            <tr class="fst-italic text-muted">
+            <tr class="fst-italic">
               <td class="d-mobile-none"></td>
-              <td class="text-end">（純利益 前月繰越）</td>
-              <td class="text-end d-mobile-none"></td>
-              <td class="text-end" colspan="3">&yen;{{ "{:,}".format(prior_ni|int) }}</td>
+              <td>（当期純利益）</td>
+              <td class="text-end d-mobile-none">{% if prior_ni %}&yen;{{ "{:,}".format(prior_ni|int) }}{% endif %}</td>
+              <td class="text-end">{% if net_income > 0 %}&yen;{{ "{:,}".format(net_income|int) }}{% endif %}</td>
+              <td class="text-end">{% if net_income < 0 %}&yen;{{ "{:,}".format((-net_income)|int) }}{% endif %}</td>
+              <td class="text-end">&yen;{{ "{:,}".format(ytd_net_income|int) }}</td>
             </tr>
-            {% endif %}
-            {% if net_income != 0 %}
-            <tr class="fst-italic text-muted">
-              <td class="d-mobile-none"></td>
-              <td class="text-end">（純利益 当月損益）</td>
-              <td class="text-end d-mobile-none"></td>
-              <td class="text-end" colspan="3">&yen;{{ "{:,}".format(net_income|int) }}</td>
-            </tr>
-            {% endif %}
-            {% if ytd_net_income != 0 %}
-            <tr class="table-info fst-italic">
-              <td class="d-mobile-none"></td>
-              <td class="text-end">（当期純利益 累計）</td>
-              <td class="text-end d-mobile-none"></td>
-              <td class="text-end" colspan="3">&yen;{{ "{:,}".format(ytd_net_income|int) }}</td>
-            </tr>
-            {% endif %}
             {% endif %}
             <tr class="table-warning">
               <td class="d-mobile-none"></td>
@@ -216,16 +200,15 @@
         <td class="d-mobile-none"></td>
         <td>
           <strong><i class="bi bi-graph-up-arrow"></i>
-            {% if net_income >= 0 %}利益{% else %}損失{% endif %}
-            {{ year }}年 {{ range_label }}
+            {{ year }}年 {{ range_label }} の損益
           </strong>
         </td>
         <td class="d-mobile-none"></td>
         <td class="text-end">
-          {% if net_income > 0 %}<strong>&yen;{{ "{:,}".format(net_income|int) }}</strong>{% endif %}
+          {% if net_income > 0 %}<strong>利益 &yen;{{ "{:,}".format(net_income|int) }}</strong>{% endif %}
         </td>
         <td class="text-end">
-          {% if net_income < 0 %}<strong>&yen;{{ "{:,}".format((-net_income)|int) }}</strong>{% endif %}
+          {% if net_income < 0 %}<strong>損失 &yen;{{ "{:,}".format((-net_income)|int) }}</strong>{% endif %}
         </td>
         <td></td>
         </td>
