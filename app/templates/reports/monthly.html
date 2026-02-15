@@ -69,7 +69,7 @@
     <table class="table table-sm table-hover mb-0" style="font-size: 0.85rem;">
       <thead class="table-dark">
         <tr>
-          <th style="min-width:120px; position:sticky; left:0; z-index:2; background:#212529;">科目</th>
+          <th class="sticky-col-head" style="min-width:120px;">科目</th>
           <th style="width:50px;" class="d-mobile-none">区分</th>
           {% for m in range(1, 13) %}
           <th class="text-end {% if current_month and m == current_month %}table-warning{% endif %}" style="min-width:80px;">{{ m }}月</th>
@@ -81,12 +81,12 @@
       <tbody>
         {# --- 収入 --- #}
         <tr class="table-secondary">
-          <td colspan="15"><strong>収入</strong></td>
+          <td class="sticky-col" style="background:#e2e3e5 !important;" colspan="15"><strong>収入</strong></td>
         </tr>
         {% for a in comparison.income_accounts %}
         {% set ct = a.cost_type or 'occasional' %}
         <tr class="{% if ct == 'fixed' %}table-info{% elif ct == 'occasional' %}table-light{% endif %}">
-          <td style="position:sticky; left:0; z-index:1; background:{% if ct == 'fixed' %}#cff4fc{% elif ct == 'occasional' %}#f8f9fa{% else %}#fff{% endif %};">{{ a.name }}</td>
+          <td class="sticky-col">{{ a.name }}</td>
           <td class="d-mobile-none">
             {% if ct == 'fixed' %}<span class="badge bg-info text-dark">固定</span>
             {% elif ct == 'variable' %}<span class="badge bg-warning text-dark">変動</span>
@@ -108,7 +108,7 @@
         </tr>
         {% endfor %}
         <tr class="table-dark">
-          <td style="position:sticky; left:0; z-index:1; background:#212529;"><strong>収入合計</strong></td>
+          <td class="sticky-col-head"><strong>収入合計</strong></td>
           <td class="d-mobile-none"></td>
           {% for m in range(12) %}
           <td class="text-end"><strong>{% if comparison.income_totals[m] %}&yen;{{ "{:,}".format(comparison.income_totals[m]) }}{% elif current_month and m + 1 > current_month %}&nbsp;{% else %}0{% endif %}</strong></td>
@@ -121,12 +121,12 @@
 
         {# --- 支出 --- #}
         <tr class="table-secondary">
-          <td colspan="15"><strong>支出</strong></td>
+          <td class="sticky-col" style="background:#e2e3e5 !important;" colspan="15"><strong>支出</strong></td>
         </tr>
         {% for a in comparison.expense_accounts %}
         {% set ct = a.cost_type or 'occasional' %}
         <tr class="{% if ct == 'fixed' %}table-info{% elif ct == 'occasional' %}table-light{% endif %}">
-          <td style="position:sticky; left:0; z-index:1; background:{% if ct == 'fixed' %}#cff4fc{% elif ct == 'occasional' %}#f8f9fa{% else %}#fff{% endif %};">{{ a.name }}</td>
+          <td class="sticky-col">{{ a.name }}</td>
           <td class="d-mobile-none">
             {% if ct == 'fixed' %}<span class="badge bg-info text-dark">固定</span>
             {% elif ct == 'variable' %}<span class="badge bg-warning text-dark">変動</span>
@@ -152,7 +152,7 @@
         </tr>
         {% endfor %}
         <tr class="table-dark">
-          <td style="position:sticky; left:0; z-index:1; background:#212529;"><strong>支出合計</strong></td>
+          <td class="sticky-col-head"><strong>支出合計</strong></td>
           <td class="d-mobile-none"></td>
           {% for m in range(12) %}
           <td class="text-end"><strong>{% if comparison.expense_totals[m] %}&yen;{{ "{:,}".format(comparison.expense_totals[m]) }}{% elif current_month and m + 1 > current_month %}&nbsp;{% else %}0{% endif %}</strong></td>
@@ -165,7 +165,7 @@
 
         {# --- 収支差額 --- #}
         <tr class="table-light fw-bold">
-          <td style="position:sticky; left:0; z-index:1; background:#f8f9fa;"><strong>収支差額</strong></td>
+          <td class="sticky-col" style="background:#f8f9fa;"><strong>収支差額</strong></td>
           <td class="d-mobile-none"></td>
           {% for m in range(12) %}
           {% set bal = comparison.income_totals[m] - comparison.expense_totals[m] %}

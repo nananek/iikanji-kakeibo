@@ -56,6 +56,27 @@ body {
   background-color: #e3edfd !important;
 }
 
+/* 月次比較: sticky科目列 */
+.sticky-col {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: inherit;
+}
+.sticky-col-head {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  background: #212529 !important;
+}
+/* sticky列の行背景を明示（透過防止） */
+.table-info > .sticky-col { background: #cff4fc !important; }
+.table-light > .sticky-col { background: #f8f9fa !important; }
+tr:not(.table-info):not(.table-light):not(.table-dark):not(.table-secondary) > .sticky-col { background: #fff !important; }
+.table-hover > tbody > tr:hover > .sticky-col {
+  background-color: #e3edfd !important;
+}
+
 .table td,
 .table th {
   border-right: 1px solid rgba(0, 0, 0, 0.2);
