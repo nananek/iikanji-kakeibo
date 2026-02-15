@@ -1,6 +1,5 @@
 """AI証憑仕訳ビュー"""
 
-import base64
 import json
 from dataclasses import asdict
 from datetime import date as date_type
@@ -35,6 +34,10 @@ def upload():
     draft_count = AIDraft.query.filter_by(
         user_id=user_id, status="analyzed"
     ).count()
+    # 前回の一時ドラフトをクリーンアップ
+    AIDraft.query.filter_by(user_id=user_id, status="temp").delete()
+    db.session.commit()
+    session.pop("ai_journal_draft_id", None)
     return render_template(
         "ai_journal/upload.html",
         has_config=bool(config),
@@ -74,14 +77,20 @@ def analyze():
         return jsonify({"error": str(e)}), 400
 
     suggestions_data = [asdict(s) for s in suggestions]
+    suggestions_json = json.dumps(suggestions_data, ensure_ascii=False)
 
-    session["ai_journal_suggestions"] = json.dumps(
-        suggestions_data, ensure_ascii=False
+    # 画像・解析結果をDBに一時保存（セッションには小さなIDのみ）
+    draft = AIDraft(
+        user_id=get_effective_user_id(),
+        image_data=image_bytes,
+        image_mime=mime_type,
+        comment=comment,
+        suggestions_json=suggestions_json,
+        status="temp",
     )
-    # 一時保存用に画像・コメントもセッションに退避
-    session["ai_journal_image"] = base64.b64encode(image_bytes).decode("ascii")
-    session["ai_journal_mime"] = mime_type
-    session["ai_journal_comment"] = comment
+    db.session.add(draft)
+    db.session.commit()
+    session["ai_journal_draft_id"] = draft.id
 
     return jsonify({"suggestions": suggestions_data})
 
@@ -91,32 +100,19 @@ def analyze():
 @bp.route("/drafts/save", methods=["POST"])
 @login_required
 def drafts_save():
-    """AJAX: AI解析結果を一時保存する"""
-    suggestions_json = session.get("ai_journal_suggestions")
-    image_b64 = session.get("ai_journal_image")
-    mime_type = session.get("ai_journal_mime")
-    comment = session.get("ai_journal_comment", "")
-
-    if not suggestions_json or not image_b64:
+    """AJAX: AI解析結果を一時保存する（temp → analyzed に昇格）"""
+    draft_id = session.get("ai_journal_draft_id")
+    if not draft_id:
         return jsonify({"error": "保存するデータがありません。"}), 400
 
-    draft = AIDraft(
-        user_id=get_effective_user_id(),
-        image_data=base64.b64decode(image_b64),
-        image_mime=mime_type,
-        comment=comment,
-        suggestions_json=suggestions_json,
-        status="analyzed",
-    )
-    db.session.add(draft)
+    draft = AIDraft.query.get(draft_id)
+    if not draft or draft.user_id != get_effective_user_id():
+        return jsonify({"error": "保存するデータがありません。"}), 400
+
+    draft.status = "analyzed"
     db.session.commit()
 
-    # セッションクリア
-    session.pop("ai_journal_suggestions", None)
-    session.pop("ai_journal_image", None)
-    session.pop("ai_journal_mime", None)
-    session.pop("ai_journal_comment", None)
-
+    session.pop("ai_journal_draft_id", None)
     return jsonify({"ok": True, "draft_id": draft.id})
 
 
@@ -128,6 +124,7 @@ def drafts():
     items = (
         AIDraft.query
         .filter_by(user_id=user_id)
+        .filter(AIDraft.status.in_(["analyzed", "done"]))
         .order_by(AIDraft.created_at.desc())
         .all()
     )
@@ -198,8 +195,6 @@ def drafts_review(draft_id):
         flash("解析データがありません。", "warning")
         return redirect(url_for("ai_journal.drafts"))
 
-    # セッションにドラフトの仕訳案をロード
-    session["ai_journal_suggestions"] = draft.suggestions_json
     session["ai_journal_draft_id"] = draft.id
 
     idx = request.args.get("idx", 0, type=int)
@@ -212,10 +207,19 @@ def drafts_review(draft_id):
 @login_required
 def review():
     """仕訳案の確認・編集・保存"""
-    suggestions_json = session.get("ai_journal_suggestions")
-    if not suggestions_json:
+    draft_id = session.get("ai_journal_draft_id")
+    draft = None
+    if draft_id:
+        draft = AIDraft.query.get(draft_id)
+        if draft and draft.user_id != get_effective_user_id():
+            draft = None
+
+    if not draft or not draft.suggestions_json:
+        session.pop("ai_journal_draft_id", None)
         flash("AI解析データがありません。もう一度アップロードしてください。", "warning")
         return redirect(url_for("ai_journal.upload"))
+
+    suggestions_json = draft.suggestions_json
 
     suggestions = json.loads(suggestions_json)
     suggestion_index = request.args.get("idx", 0, type=int)
@@ -225,7 +229,7 @@ def review():
     selected = suggestions[suggestion_index]
 
     grouped_accounts = get_grouped_accounts(get_effective_user_id())
-    draft_id = session.get("ai_journal_draft_id")
+    is_saved_draft = draft.status == "analyzed"
 
     if request.method == "POST":
         mode = request.form.get("mode", "simple")
@@ -240,7 +244,7 @@ def review():
                 selected=selected,
                 selected_index=suggestion_index,
                 grouped_accounts=grouped_accounts,
-                draft_id=draft_id,
+                draft_id=is_saved_draft,
             )
 
         try:
@@ -253,7 +257,7 @@ def review():
                 selected=selected,
                 selected_index=suggestion_index,
                 grouped_accounts=grouped_accounts,
-                draft_id=draft_id,
+                draft_id=is_saved_draft,
             )
 
         if mode == "simple":
@@ -271,7 +275,7 @@ def review():
                     selected=selected,
                     selected_index=suggestion_index,
                     grouped_accounts=grouped_accounts,
-                    draft_id=draft_id,
+                    draft_id=is_saved_draft,
                 )
 
             lines_data = [
@@ -300,7 +304,7 @@ def review():
                     selected=selected,
                     selected_index=suggestion_index,
                     grouped_accounts=grouped_accounts,
-                    draft_id=draft_id,
+                    draft_id=is_saved_draft,
                 )
 
             lines_data = [
@@ -322,7 +326,7 @@ def review():
                 selected=selected,
                 selected_index=suggestion_index,
                 grouped_accounts=grouped_accounts,
-                draft_id=draft_id,
+                draft_id=is_saved_draft,
             )
 
         # 提出済みロック科目チェック
@@ -337,7 +341,7 @@ def review():
                     selected=selected,
                     selected_index=suggestion_index,
                     grouped_accounts=grouped_accounts,
-                    draft_id=draft_id,
+                    draft_id=is_saved_draft,
                 )
 
         # 確定済み期間チェック
@@ -352,7 +356,7 @@ def review():
                 selected=selected,
                 selected_index=suggestion_index,
                 grouped_accounts=grouped_accounts,
-                draft_id=draft_id,
+                draft_id=is_saved_draft,
             )
 
         try:
@@ -363,19 +367,19 @@ def review():
                 lines_data=lines_data,
                 source="ai_receipt",
             )
-            # ドラフト経由の場合、ステータスを更新
-            if draft_id:
-                draft = AIDraft.query.get(draft_id)
-                if draft and draft.user_id == get_effective_user_id():
-                    draft.status = "done"
-                    db.session.commit()
-                session.pop("ai_journal_draft_id", None)
+            session.pop("ai_journal_draft_id", None)
+            if is_saved_draft:
+                # 一時保存からの仕訳作成 → done に更新
+                draft.status = "done"
+                db.session.commit()
+            else:
+                # 直接フローの一時レコード → 削除
+                db.session.delete(draft)
+                db.session.commit()
 
-            session.pop("ai_journal_suggestions", None)
             flash(f"伝票 #{entry.entry_number} を登録しました。", "success")
 
-            # ドラフト経由ならドラフト一覧に戻る
-            if draft_id:
+            if is_saved_draft:
                 return redirect(url_for("ai_journal.drafts"))
             return redirect(url_for("journal.index"))
         except ValueError as e:
@@ -387,5 +391,5 @@ def review():
         selected=selected,
         selected_index=suggestion_index,
         grouped_accounts=grouped_accounts,
-        draft_id=draft_id,
+        draft_id=is_saved_draft,
     )
