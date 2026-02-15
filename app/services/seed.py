@@ -5,6 +5,7 @@ from app.models.account import AccountType, Account
 
 # system_role: 特殊科目の役割定義
 SYSTEM_ROLES = {
+    "3010": "capital",
     "3020": "retained_earnings",
     "3030": "proprietor",
 }

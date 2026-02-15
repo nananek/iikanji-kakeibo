@@ -5,18 +5,30 @@
 <h2><i class="bi bi-lock"></i> 月次確定</h2>
 <p class="text-muted">確定した期間の仕訳は編集・削除できなくなります。</p>
 
-<form class="row g-3 mb-4 mt-2" method="GET">
+<form class="row g-3 mb-4 mt-2" method="GET" id="yearForm">
   <div class="col-auto">
-    <select name="year" class="form-select">
+    <select name="year" class="form-select" onchange="document.getElementById('yearForm').submit()">
       {% for y in range(year - 2, year + 2) %}
       <option value="{{ y }}" {% if y == year %}selected{% endif %}>{{ y }}年度</option>
       {% endfor %}
     </select>
   </div>
-  <div class="col-auto">
-    <button type="submit" class="btn btn-outline-secondary">表示</button>
-  </div>
 </form>
+
+{% if not year_open %}
+<div class="alert alert-warning">
+  <i class="bi bi-exclamation-triangle"></i>
+  <strong>{{ year }}年度は開設されていません。</strong>
+  この年度に仕訳を入力するには、年度を開設してください。
+  <form method="POST" action="{{ url_for('settings.fiscal_open_year') }}" class="d-inline ms-2">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <input type="hidden" name="year" value="{{ year }}">
+    <button type="submit" class="btn btn-warning btn-sm">
+      <i class="bi bi-folder-plus"></i> {{ year }}年度を開設する
+    </button>
+  </form>
+</div>
+{% endif %}
 
 <div class="card shadow-sm">
   <div class="card-body p-0">
@@ -40,7 +52,9 @@
             {{ p.label }}
           </td>
           <td>
-            {% if p.closed %}
+            {% if not year_open %}
+            <span class="badge bg-light text-muted">-</span>
+            {% elif p.closed %}
             <span class="badge bg-success"><i class="bi bi-lock-fill"></i> 確定済み</span>
             {% else %}
             <span class="badge bg-secondary">未確定</span>

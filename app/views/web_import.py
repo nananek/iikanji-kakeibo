@@ -13,7 +13,10 @@ from app.services.audit import get_effective_user_id, get_submitted_account_ids
 from app.models.ai_config import UserAIConfig
 from app.services.ai_receipt import parse_web_text
 from app.services.accounting import create_cashbook_entry, create_transfer_entry
-from app.services.fiscal import check_period_open_for_new
+from app.services.fiscal import (
+    check_period_open_for_new, get_restricted_before_year, is_year_open,
+    get_capital_account_id,
+)
 from app.views.helpers import (
     get_grouped_accounts, save_import_data, load_import_data, delete_import_data,
 )
@@ -131,6 +134,10 @@ def confirm():
     liability_type = AccountType.query.filter_by(code="liability").first()
     transfer_type_ids = {asset_type.id, liability_type.id}
 
+    user_id = get_effective_user_id()
+    restricted_before = get_restricted_before_year(user_id)
+    capital_id = get_capital_account_id(user_id)
+
     if request.method == "POST":
         import_rows = request.form.get("import_rows", "")
         if not import_rows:
@@ -138,10 +145,13 @@ def confirm():
             return redirect(url_for("web_import.upload"))
 
         rows_data = json.loads(import_rows)
+        old_year_action = request.form.get("old_year_action", "skip")
         imported = 0
         skipped = 0
+        capital_count = 0
         batch_id = str(uuid.uuid4())
-        locked_ids = get_submitted_account_ids(get_effective_user_id())
+        locked_ids = get_submitted_account_ids(user_id)
+        today_year = date_type.today().year
 
         for row in rows_data:
             if not row.get("enabled", True):
@@ -168,10 +178,20 @@ def confirm():
                 skipped += 1
                 continue
 
+            # 未開設年度チェック
+            if restricted_before and row_date.year < restricted_before:
+                if not is_year_open(user_id, row_date.year):
+                    if old_year_action == "capital" and capital_id:
+                        description = f"({row_date_str}) {description}"
+                        row_date = date_type(today_year, 1, 1)
+                        category_id = capital_id
+                        capital_count += 1
+                    else:
+                        skipped += 1
+                        continue
+
             # 確定済み期間チェック
-            err = check_period_open_for_new(
-                get_effective_user_id(), row_date.year, row_date.month
-            )
+            err = check_period_open_for_new(user_id, row_date.year, row_date.month)
             if err:
                 skipped += 1
                 continue
@@ -183,7 +203,7 @@ def confirm():
                 amount = deposit or withdrawal
                 if withdrawal > 0:
                     create_transfer_entry(
-                        user_id=get_effective_user_id(),
+                        user_id=user_id,
                         date=row_date,
                         from_account_id=payment_account_id,
                         to_account_id=category_id,
@@ -193,7 +213,7 @@ def confirm():
                     )
                 else:
                     create_transfer_entry(
-                        user_id=get_effective_user_id(),
+                        user_id=user_id,
                         date=row_date,
                         from_account_id=category_id,
                         to_account_id=payment_account_id,
@@ -204,7 +224,7 @@ def confirm():
                 imported += 1
             elif deposit > 0:
                 create_cashbook_entry(
-                    user_id=get_effective_user_id(),
+                    user_id=user_id,
                     date=row_date,
                     transaction_type="income",
                     payment_account_id=payment_account_id,
@@ -216,7 +236,7 @@ def confirm():
                 imported += 1
             elif withdrawal > 0:
                 create_cashbook_entry(
-                    user_id=get_effective_user_id(),
+                    user_id=user_id,
                     date=row_date,
                     transaction_type="expense",
                     payment_account_id=payment_account_id,
@@ -233,10 +253,13 @@ def confirm():
         session.pop("web_data_key", None)
         session.pop("web_payment_account_id", None)
 
-        flash(f"{imported}件を取り込みました。（スキップ: {skipped}件）", "success")
+        msg = f"{imported}件を取り込みました。（スキップ: {skipped}件）"
+        if capital_count:
+            msg += f"（うち元入金変換: {capital_count}件）"
+        flash(msg, "success")
         return redirect(url_for("cashbook.index"))
 
-    grouped_accounts = get_grouped_accounts(get_effective_user_id())
+    grouped_accounts = get_grouped_accounts(user_id)
     return render_template(
         "web_import/confirm.html",
         parsed=parsed,
@@ -244,4 +267,5 @@ def confirm():
         default_expense_id=default_expense.id if default_expense else 0,
         default_income_id=default_income.id if default_income else 0,
         grouped_accounts=grouped_accounts,
+        restricted_before_year=restricted_before,
     )

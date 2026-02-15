@@ -199,9 +199,39 @@
       .catch(function () { /* 推定失敗は無視 */ });
   }
 
+  /* ---------- 未開設年度の行マーク ---------- */
+
+  function markRestrictedRows(restrictedBeforeYear) {
+    if (!restrictedBeforeYear) return;
+    var hasRestricted = false;
+    document.querySelectorAll('#confirmTable tbody tr').forEach(function (tr) {
+      var idx = parseInt(tr.dataset.idx);
+      var row = _parsedData[idx];
+      if (!row || !row.date) return;
+      var year = parseInt(row.date.substring(0, 4));
+      if (year < restrictedBeforeYear) {
+        hasRestricted = true;
+        // 状態列にバッジ追加
+        var statusTd = tr.querySelector('td:last-child');
+        if (statusTd) {
+          var existing = statusTd.querySelector('.badge');
+          if (existing && existing.classList.contains('bg-success')) {
+            existing.className = 'badge bg-warning text-dark';
+            existing.innerHTML = '<i class="bi bi-exclamation-triangle"></i> 年度未開設';
+          }
+        }
+      }
+    });
+    // 未開設行がある場合、選択肢バーを表示
+    var bar = document.getElementById('oldYearBar');
+    if (bar && hasRestricted) {
+      bar.classList.remove('d-none');
+    }
+  }
+
   /* ---------- 初期化 ---------- */
 
-  window.initImportConfirm = function (parsedData, paymentAccountId) {
+  window.initImportConfirm = function (parsedData, paymentAccountId, restrictedBeforeYear) {
     _parsedData = parsedData;
     _paymentAccountId = paymentAccountId;
 
@@ -215,6 +245,7 @@
     });
 
     updateCount();
+    markRestrictedRows(restrictedBeforeYear);
     suggestCategories();
   };
 

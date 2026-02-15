@@ -28,6 +28,19 @@
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <input type="hidden" name="import_rows" id="importRows">
 
+      <div id="oldYearBar" class="alert alert-warning d-none mb-3">
+        <i class="bi bi-exclamation-triangle"></i>
+        <strong>未開設年度の明細があります。</strong>
+        <div class="form-check form-check-inline ms-3">
+          <input class="form-check-input" type="radio" name="old_year_action" id="oldYearSkip" value="skip" checked>
+          <label class="form-check-label" for="oldYearSkip">無視する</label>
+        </div>
+        <div class="form-check form-check-inline">
+          <input class="form-check-input" type="radio" name="old_year_action" id="oldYearCapital" value="capital">
+          <label class="form-check-label" for="oldYearCapital">元入金にする（当年1/1付）</label>
+        </div>
+      </div>
+
       <div class="table-responsive">
         <table class="table table-sm table-hover" id="confirmTable">
           <thead class="table-light">
@@ -112,6 +125,6 @@
 <script src="{{ url_for('static', filename='js/drag_select.js') }}"></script>
 <script src="{{ url_for('static', filename='js/import_confirm.js') }}"></script>
 <script>
-initImportConfirm({{ parsed | tojson }}, {{ payment_account.id }});
+initImportConfirm({{ parsed | tojson }}, {{ payment_account.id }}, {{ restricted_before_year | tojson }});
 </script>
 {% endblock %}

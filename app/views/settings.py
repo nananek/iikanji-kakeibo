@@ -14,8 +14,9 @@ from app.services.ai_receipt import (
     encrypt_api_key, PROVIDER_DEFAULTS, PROVIDER_LABELS,
 )
 from app.views.accounts import TAX_CATEGORIES
+from app.models.fiscal import FiscalClose
 from app.services.fiscal import (
-    PERIOD_LABELS, get_closed_period, close_period, reopen_period,
+    PERIOD_LABELS, get_closed_period, close_period, reopen_period, is_year_open,
 )
 
 bp = Blueprint("settings", __name__, url_prefix="/settings")
@@ -119,7 +120,9 @@ def ai_config_delete():
 def fiscal():
     """月次確定管理ページ"""
     year = request.args.get("year", date.today().year, type=int)
-    closed = get_closed_period(get_effective_user_id(), year)
+    user_id = get_effective_user_id()
+    year_open = is_year_open(user_id, year)
+    closed = get_closed_period(user_id, year)
 
     periods = []
     for p in range(0, 16):
@@ -127,7 +130,7 @@ def fiscal():
             "number": p,
             "label": PERIOD_LABELS[p],
             "closed": p <= closed,
-            "can_close": p == closed + 1,
+            "can_close": p == closed + 1 and year_open,
             "can_reopen": p == closed,
         })
 
@@ -136,7 +139,29 @@ def fiscal():
         year=year,
         periods=periods,
         closed_period=closed,
+        year_open=year_open,
     )
+
+
+@bp.route("/fiscal/open-year", methods=["POST"])
+@login_required
+def fiscal_open_year():
+    """古い年度を開設する"""
+    year = request.form.get("year", type=int)
+    user_id = get_effective_user_id()
+
+    if is_year_open(user_id, year):
+        flash(f"{year}年度は既に開設済みです。", "info")
+        return redirect(url_for("settings.fiscal", year=year))
+
+    fc = FiscalClose.query.filter_by(user_id=user_id, year=year).first()
+    if not fc:
+        fc = FiscalClose(user_id=user_id, year=year, closed_period=-1)
+        db.session.add(fc)
+        db.session.commit()
+
+    flash(f"{year}年度を開設しました。", "success")
+    return redirect(url_for("settings.fiscal", year=year))
 
 
 @bp.route("/fiscal/close", methods=["POST"])

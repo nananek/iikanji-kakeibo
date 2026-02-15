@@ -10,6 +10,7 @@ from app.extensions import db
 from app.models.account import Account, AccountType
 from app.models.fiscal import FiscalClose
 from app.models.journal import JournalEntry, JournalEntryLine
+from app.models.user import User
 from app.services.accounting import get_next_entry_number
 
 
@@ -64,10 +65,40 @@ def check_entry_modifiable(user_id, entry):
 
 def check_period_open_for_new(user_id, year, period):
     """新規仕訳の対象期間がオープンか判定"""
+    if not is_year_open(user_id, year):
+        return f"{year}年度は開設されていません。月次確定画面で年度を追加してください。"
     if is_period_locked(user_id, year, period):
         label = PERIOD_LABELS.get(period, f"{period}月")
         return f"{year}年{label}は確定済みのため仕訳を追加できません。"
     return None
+
+
+def is_year_open(user_id, year):
+    """年度が仕訳入力可能か判定。前年以降は常にTrue、前々年以前はFiscalCloseレコード要"""
+    user = User.query.get(user_id)
+    if not user:
+        return False
+    created_year = user.created_at.year
+    if year >= created_year - 1:
+        return True
+    fc = FiscalClose.query.filter_by(user_id=user_id, year=year).first()
+    return fc is not None
+
+
+def get_restricted_before_year(user_id):
+    """制限対象となる年度の境界を返す（この年より前が制限対象）"""
+    user = User.query.get(user_id)
+    if not user:
+        return None
+    return user.created_at.year - 1
+
+
+def get_capital_account_id(user_id):
+    """元入金科目のIDを返す"""
+    account = Account.query.filter_by(
+        user_id=user_id, system_role="capital"
+    ).first()
+    return account.id if account else None
 
 
 def close_period(user_id, year, period):
