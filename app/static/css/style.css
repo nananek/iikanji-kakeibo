@@ -174,6 +174,30 @@ body {
   white-space: nowrap;
 }
 
+/* タッチデバイスでホバー効果を無効化 */
+@media (hover: none) {
+  .btn:hover {
+    color: inherit;
+    background-color: inherit;
+    border-color: inherit;
+  }
+  .btn-outline-danger:hover {
+    color: var(--bs-danger);
+    background-color: transparent;
+  }
+  .btn-outline-secondary:hover {
+    color: var(--bs-secondary);
+    background-color: transparent;
+  }
+  .btn-outline-primary:hover {
+    color: var(--bs-primary);
+    background-color: transparent;
+  }
+  .table-hover > tbody > tr:hover > td {
+    background-color: inherit !important;
+  }
+}
+
 /* モバイル専用要素: デフォルト非表示 */
 .d-mobile-row {
   display: none;
