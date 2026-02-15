@@ -109,7 +109,7 @@ def balance():
             year_d, year_c = cache[account.id]
             if is_bs:
                 # B/S: キャッシュ(当年) + 前年以前
-                before_result = _query_sum(account.id, [JournalEntry.date < start_of_year])
+                before_result = _query_sum(account.id, [JournalEntry.date < start_of_year], include_closing=True)
                 before_d, before_c = int(before_result[0]), int(before_result[1])
                 if is_debit_normal:
                     opening = (year_d + before_d) - (year_c + before_c)
@@ -130,7 +130,7 @@ def balance():
                     prior_d, prior_c = int(ob_result[0]), int(ob_result[1])
                 else:
                     prior_d, prior_c = 0, 0
-                before_result = _query_sum(account.id, [JournalEntry.date < start_of_year])
+                before_result = _query_sum(account.id, [JournalEntry.date < start_of_year], include_closing=True)
                 before_d, before_c = int(before_result[0]), int(before_result[1])
                 if is_debit_normal:
                     opening = (prior_d + before_d) - (prior_c + before_c)
@@ -144,7 +144,7 @@ def balance():
                     opening = int(ob_result[1]) - int(ob_result[0])
         elif is_bs:
             # pf==0 でも前年以前のB/S残高は必要
-            before_result = _query_sum(account.id, [JournalEntry.date < start_of_year])
+            before_result = _query_sum(account.id, [JournalEntry.date < start_of_year], include_closing=True)
             before_d, before_c = int(before_result[0]), int(before_result[1])
             if is_debit_normal:
                 opening = before_d - before_c
@@ -174,6 +174,19 @@ def balance():
 
     net_income = total_revenue - total_expense
 
+    # 損益振替済みか判定（振替後は純利益が繰越利益に含まれている）
+    end_of_year = date(year + 1, 1, 1)
+    has_closing = (
+        db.session.query(JournalEntry.id)
+        .filter(
+            JournalEntry.user_id == user_id,
+            JournalEntry.source == "closing",
+            JournalEntry.date >= start_of_year,
+            JournalEntry.date < end_of_year,
+        )
+        .first()
+    ) is not None
+
     return render_template(
         "reports/balance.html",
         year=year,
@@ -183,13 +196,143 @@ def balance():
         balances=balances,
         account_types=account_types,
         net_income=net_income,
+        has_closing=has_closing,
+    )
+
+
+@bp.route("/bs")
+@login_required
+def bs():
+    """貸借対照表"""
+    year = request.args.get("year", date.today().year, type=int)
+    user_id = get_effective_user_id()
+    start_of_year = date(year, 1, 1)
+    end_of_year = date(year + 1, 1, 1)
+
+    allowed_ids = get_allowed_account_ids()
+
+    # B/S科目区分
+    bs_type_codes = {"asset", "liability", "equity"}
+    pl_type_codes = {"revenue", "expense"}
+
+    all_accounts = (
+        Account.query
+        .filter_by(user_id=user_id)
+        .order_by(Account.code)
+        .all()
+    )
+    # 有効 OR 無効化年 >= 表示年
+    all_accounts = [a for a in all_accounts if a.is_active or (a.deactivated_year and a.deactivated_year >= year)]
+
+    if allowed_ids is not None:
+        all_accounts = [a for a in all_accounts if a.id in allowed_ids]
+
+    def _sum(account_id, filters, include_closing=False):
+        q = (
+            db.session.query(
+                func.coalesce(func.sum(JournalEntryLine.debit_amount), 0),
+                func.coalesce(func.sum(JournalEntryLine.credit_amount), 0),
+            )
+            .join(JournalEntry, JournalEntry.id == JournalEntryLine.journal_entry_id)
+            .filter(JournalEntryLine.account_id == account_id)
+        )
+        if not include_closing:
+            q = q.filter(JournalEntry.source != "closing")
+        for f in filters:
+            q = q.filter(f)
+        return q.first()
+
+    # 当年のP/L合計（当期純利益算出用）
+    # 損益振替前: 収益・費用の当年発生額から計算
+    # 損益振替後: 繰越利益に含まれるので別途加算しない
+    # → 振替有無を判定: 当年にsource=closingの仕訳があるか
+    has_closing = (
+        db.session.query(JournalEntry.id)
+        .filter(
+            JournalEntry.user_id == user_id,
+            JournalEntry.source == "closing",
+            JournalEntry.date >= start_of_year,
+            JournalEntry.date < end_of_year,
+        )
+        .first()
+    ) is not None
+
+    net_income = 0
+    if not has_closing:
+        # 損益振替前: P/L科目から当期純利益を計算
+        for acct in all_accounts:
+            if acct.account_type.code not in pl_type_codes:
+                continue
+            result = _sum(acct.id, [
+                JournalEntry.date >= start_of_year,
+                JournalEntry.date < end_of_year,
+            ])
+            d, c = int(result[0]), int(result[1])
+            if acct.account_type.code == "revenue":
+                net_income += c - d
+            else:
+                net_income -= d - c
+
+    # B/S科目の残高を計算（全期間累計）
+    assets = []
+    liabilities = []
+    equities = []
+    total_assets = 0
+    total_liabilities = 0
+    total_equity = 0
+
+    for acct in all_accounts:
+        if acct.account_type.code not in bs_type_codes:
+            continue
+
+        is_debit_normal = acct.account_type.normal_balance == "debit"
+
+        # 全期間の合計（closing含む）
+        result = _sum(acct.id, [JournalEntry.date < end_of_year], include_closing=True)
+        d, c = int(result[0]), int(result[1])
+
+        if is_debit_normal:
+            balance = d - c
+        else:
+            balance = c - d
+
+        if balance == 0:
+            continue
+
+        item = {"account": acct, "balance": balance}
+
+        if acct.account_type.code == "asset":
+            assets.append(item)
+            total_assets += balance
+        elif acct.account_type.code == "liability":
+            liabilities.append(item)
+            total_liabilities += balance
+        elif acct.account_type.code == "equity":
+            equities.append(item)
+            total_equity += balance
+
+    # 損益振替前なら当期純利益を純資産に加算
+    if not has_closing:
+        total_equity += net_income
+
+    return render_template(
+        "reports/bs.html",
+        year=year,
+        assets=assets,
+        liabilities=liabilities,
+        equities=equities,
+        total_assets=total_assets,
+        total_liabilities=total_liabilities,
+        total_equity=total_equity,
+        net_income=net_income,
+        has_closing=has_closing,
     )
 
 
 @bp.route("/pl")
 @login_required
 def pl():
-    """収支計算書"""
+    """損益計算書"""
     year = request.args.get("year", date.today().year, type=int)
     month = request.args.get("month", 0, type=int)
 
@@ -399,7 +542,7 @@ def ledger():
             if pf > 0 and use_cache and account_id in cache:
                 year_d, year_c = cache[account_id]
                 if is_bs:
-                    before_result = _query_sum_ledger(account_id, JournalEntry.date < start_of_year)
+                    before_result = _query_sum_ledger(account_id, JournalEntry.date < start_of_year, include_closing=True)
                     before_d, before_c = int(before_result[0]), int(before_result[1])
                     carry_forward = (year_d + before_d - year_c - before_c) if is_debit_normal else (year_c + before_c - year_d - before_d)
                 else:
@@ -413,7 +556,7 @@ def ledger():
                         prior_d, prior_c = int(cf_result[0]), int(cf_result[1])
                     else:
                         prior_d, prior_c = 0, 0
-                    before_result = _query_sum_ledger(account_id, JournalEntry.date < start_of_year)
+                    before_result = _query_sum_ledger(account_id, JournalEntry.date < start_of_year, include_closing=True)
                     before_d, before_c = int(before_result[0]), int(before_result[1])
                     total_d, total_c = prior_d + before_d, prior_c + before_c
                     carry_forward = (total_d - total_c) if is_debit_normal else (total_c - total_d)
@@ -423,7 +566,7 @@ def ledger():
                         d, c = int(cf_result[0]), int(cf_result[1])
                         carry_forward = (d - c) if is_debit_normal else (c - d)
             elif is_bs:
-                before_result = _query_sum_ledger(account_id, JournalEntry.date < start_of_year)
+                before_result = _query_sum_ledger(account_id, JournalEntry.date < start_of_year, include_closing=True)
                 before_d, before_c = int(before_result[0]), int(before_result[1])
                 carry_forward = (before_d - before_c) if is_debit_normal else (before_c - before_d)
 

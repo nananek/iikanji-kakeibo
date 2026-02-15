@@ -26,9 +26,18 @@
   <div class="col-md-4 mb-3">
     <div class="card shadow-sm h-100">
       <div class="card-body">
-        <h5 class="card-title"><i class="bi bi-graph-up"></i> 収支計算書</h5>
-        <p class="card-text">月次・年次の収入と支出の内訳を確認できます。</p>
+        <h5 class="card-title"><i class="bi bi-graph-up"></i> 損益計算書</h5>
+        <p class="card-text">月次・年次の収益と費用の内訳を確認できます。</p>
         <a href="{{ url_for('reports.pl') }}" class="btn btn-outline-primary">表示</a>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-4 mb-3">
+    <div class="card shadow-sm h-100">
+      <div class="card-body">
+        <h5 class="card-title"><i class="bi bi-clipboard-data"></i> 貸借対照表</h5>
+        <p class="card-text">資産・負債・純資産の残高を確認できます。</p>
+        <a href="{{ url_for('reports.bs') }}" class="btn btn-outline-primary">表示</a>
       </div>
     </div>
   </div>

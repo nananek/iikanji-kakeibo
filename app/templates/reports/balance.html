@@ -32,9 +32,10 @@
 
 {% if balances %}
 {% set ns = namespace(
-  current_type='',
+  current_type='', current_type_code='',
   type_opening=0, type_debit=0, type_credit=0, type_balance=0,
-  grand_debit=0, grand_credit=0
+  grand_debit=0, grand_credit=0,
+  asset_balance=0, liability_balance=0, equity_balance=0
 ) %}
 <div class="table-responsive">
   <table class="table table-hover">
@@ -60,8 +61,38 @@
             <td class="text-end"><strong>&yen;{{ "{:,}".format(ns.type_credit) }}</strong></td>
             <td class="text-end"><strong>&yen;{{ "{:,}".format(ns.type_balance) }}</strong></td>
           </tr>
+          {% if ns.current_type_code == 'asset' %}
+            {% set ns.asset_balance = ns.type_balance %}
+          {% elif ns.current_type_code == 'liability' %}
+            {% set ns.liability_balance = ns.type_balance %}
+          {% elif ns.current_type_code == 'equity' %}
+            {% set ns.equity_balance = ns.type_balance %}
+            {% if not has_closing and net_income != 0 %}
+            <tr class="table-info fst-italic">
+              <td class="d-mobile-none"></td>
+              <td class="text-end">（当期純利益）</td>
+              <td class="text-end d-mobile-none"></td>
+              <td class="text-end" colspan="3">&yen;{{ "{:,}".format(net_income|int) }}</td>
+            </tr>
+            {% endif %}
+            <tr class="table-warning">
+              <td class="d-mobile-none"></td>
+              <td class="text-end"><strong>負債・純資産合計</strong></td>
+              <td class="text-end d-mobile-none"></td>
+              <td class="text-end" colspan="3">
+                {% set le_total = ns.liability_balance + ns.equity_balance + (net_income if not has_closing else 0) %}
+                <strong>&yen;{{ "{:,}".format(le_total) }}</strong>
+                {% if ns.asset_balance == le_total %}
+                <i class="bi bi-check-circle text-success ms-1"></i>
+                {% else %}
+                <i class="bi bi-exclamation-triangle text-danger ms-1"></i>
+                {% endif %}
+              </td>
+            </tr>
+          {% endif %}
           {% endif %}
           {% set ns.current_type = item.account.account_type.name %}
+          {% set ns.current_type_code = item.account.account_type.code %}
           {% set ns.type_opening = 0 %}
           {% set ns.type_debit = 0 %}
           {% set ns.type_credit = 0 %}
@@ -103,6 +134,35 @@
         <td class="text-end"><strong>&yen;{{ "{:,}".format(ns.type_credit) }}</strong></td>
         <td class="text-end"><strong>&yen;{{ "{:,}".format(ns.type_balance) }}</strong></td>
       </tr>
+      {% if ns.current_type_code == 'asset' %}
+        {% set ns.asset_balance = ns.type_balance %}
+      {% elif ns.current_type_code == 'liability' %}
+        {% set ns.liability_balance = ns.type_balance %}
+      {% elif ns.current_type_code == 'equity' %}
+        {% set ns.equity_balance = ns.type_balance %}
+        {% if not has_closing and net_income != 0 %}
+        <tr class="table-info fst-italic">
+          <td class="d-mobile-none"></td>
+          <td class="text-end">（当期純利益）</td>
+          <td class="text-end d-mobile-none"></td>
+          <td class="text-end" colspan="3">&yen;{{ "{:,}".format(net_income|int) }}</td>
+        </tr>
+        {% endif %}
+        <tr class="table-warning">
+          <td class="d-mobile-none"></td>
+          <td class="text-end"><strong>負債・純資産合計</strong></td>
+          <td class="text-end d-mobile-none"></td>
+          <td class="text-end" colspan="3">
+            {% set le_total = ns.liability_balance + ns.equity_balance + (net_income if not has_closing else 0) %}
+            <strong>&yen;{{ "{:,}".format(le_total) }}</strong>
+            {% if ns.asset_balance == le_total %}
+            <i class="bi bi-check-circle text-success ms-1"></i>
+            {% else %}
+            <i class="bi bi-exclamation-triangle text-danger ms-1"></i>
+            {% endif %}
+          </td>
+        </tr>
+      {% endif %}
       {% endif %}
     </tbody>
     <tfoot>

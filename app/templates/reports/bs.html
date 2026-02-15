@@ -1,0 +1,128 @@
+{% extends "base.html" %}
+{% block title %}貸借対照表 - いいかんじ™家計簿{% endblock %}
+
+{% block content %}
+<h2><i class="bi bi-clipboard-data"></i> 貸借対照表</h2>
+
+<form class="row g-3 mb-4 mt-2" method="GET">
+  <div class="col-auto">
+    <select name="year" class="form-select">
+      {% for y in range(year - 2, year + 2) %}
+      <option value="{{ y }}" {% if y == year %}selected{% endif %}>{{ y }}年</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="col-auto">
+    <button type="submit" class="btn btn-outline-secondary">表示</button>
+  </div>
+</form>
+
+{% if not has_closing %}
+<div class="alert alert-info py-2">
+  <i class="bi bi-info-circle"></i> 損益振替前のため、当期純利益を純資産に加算して表示しています。
+</div>
+{% endif %}
+
+<div class="row">
+  <div class="col-md-6 mb-3">
+    <div class="card shadow-sm h-100">
+      <div class="card-header"><strong>資産の部</strong></div>
+      <div class="card-body p-0">
+        {% if assets %}
+        <table class="table table-sm mb-0">
+          <tbody>
+            {% for item in assets %}
+            <tr>
+              <td>{{ item.account.name }}</td>
+              <td class="text-end">&yen;{{ "{:,}".format(item.balance) }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+          <tfoot class="table-light">
+            <tr>
+              <th>資産合計</th>
+              <th class="text-end">&yen;{{ "{:,}".format(total_assets) }}</th>
+            </tr>
+          </tfoot>
+        </table>
+        {% else %}
+        <p class="text-muted text-center py-3 mb-0">データなし</p>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <div class="col-md-6 mb-3">
+    <div class="card shadow-sm mb-3">
+      <div class="card-header"><strong>負債の部</strong></div>
+      <div class="card-body p-0">
+        {% if liabilities %}
+        <table class="table table-sm mb-0">
+          <tbody>
+            {% for item in liabilities %}
+            <tr>
+              <td>{{ item.account.name }}</td>
+              <td class="text-end">&yen;{{ "{:,}".format(item.balance) }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+          <tfoot class="table-light">
+            <tr>
+              <th>負債合計</th>
+              <th class="text-end">&yen;{{ "{:,}".format(total_liabilities) }}</th>
+            </tr>
+          </tfoot>
+        </table>
+        {% else %}
+        <p class="text-muted text-center py-3 mb-0">データなし</p>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="card shadow-sm">
+      <div class="card-header"><strong>純資産の部</strong></div>
+      <div class="card-body p-0">
+        <table class="table table-sm mb-0">
+          <tbody>
+            {% for item in equities %}
+            <tr>
+              <td>{{ item.account.name }}</td>
+              <td class="text-end">&yen;{{ "{:,}".format(item.balance) }}</td>
+            </tr>
+            {% endfor %}
+            {% if not has_closing and net_income != 0 %}
+            <tr class="text-muted fst-italic">
+              <td>（当期純利益）</td>
+              <td class="text-end">&yen;{{ "{:,}".format(net_income) }}</td>
+            </tr>
+            {% endif %}
+          </tbody>
+          <tfoot class="table-light">
+            <tr>
+              <th>純資産合計</th>
+              <th class="text-end">&yen;{{ "{:,}".format(total_equity) }}</th>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="row mt-3">
+  <div class="col-md-6">
+    <div class="card {% if total_assets == total_liabilities + total_equity %}text-bg-success{% else %}text-bg-warning{% endif %} shadow-sm">
+      <div class="card-body text-center py-2">
+        <strong>資産合計:</strong> &yen;{{ "{:,}".format(total_assets) }}
+        &nbsp;|&nbsp;
+        <strong>負債+純資産合計:</strong> &yen;{{ "{:,}".format(total_liabilities + total_equity) }}
+        {% if total_assets == total_liabilities + total_equity %}
+        <i class="bi bi-check-circle ms-1"></i>
+        {% else %}
+        <i class="bi bi-exclamation-triangle ms-1"></i> 差額: &yen;{{ "{:,}".format(total_assets - total_liabilities - total_equity) }}
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
