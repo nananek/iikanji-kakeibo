@@ -65,13 +65,10 @@
             <a href="{{ url_for('cashbook.edit', entry_id=entry.id) }}" class="btn btn-outline-secondary">
               <i class="bi bi-pencil"></i>
             </a>
-            <form method="POST" action="{{ url_for('cashbook.delete', entry_id=entry.id) }}"
-                  onsubmit="return confirm('この仕訳を削除しますか？')" class="d-inline">
-              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-              <button type="submit" class="btn btn-outline-danger">
-                <i class="bi bi-trash"></i>
-              </button>
-            </form>
+            <button type="button" class="btn btn-outline-danger delete-btn"
+                    data-action="{{ url_for('cashbook.delete', entry_id=entry.id) }}">
+              <i class="bi bi-trash"></i>
+            </button>
           </div>
         </td>
       </tr>
@@ -113,4 +110,28 @@
   <a href="{{ url_for('cashbook.new') }}" class="btn btn-primary">最初の記帳をする</a>
 </div>
 {% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function() {
+  var csrfMeta = document.querySelector('meta[name="csrf-token"]');
+  var csrfToken = csrfMeta ? csrfMeta.content : '';
+  document.addEventListener('click', function(e) {
+    var btn = e.target.closest('.delete-btn');
+    if (!btn) return;
+    if (!confirm('この仕訳を削除しますか？')) return;
+    var form = document.createElement('form');
+    form.method = 'POST';
+    form.action = btn.dataset.action;
+    var input = document.createElement('input');
+    input.type = 'hidden';
+    input.name = 'csrf_token';
+    input.value = csrfToken;
+    form.appendChild(input);
+    document.body.appendChild(form);
+    form.submit();
+  });
+})();
+</script>
 {% endblock %}

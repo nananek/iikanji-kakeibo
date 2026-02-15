@@ -92,13 +92,10 @@
                 <i class="bi bi-pencil"></i>
               </a>
               {% endif %}
-              <form method="POST" action="{{ url_for('journal.delete', entry_id=entry.id) }}"
-                    onsubmit="return confirm('この仕訳を削除しますか？')" class="d-inline">
-                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                <button type="submit" class="btn btn-outline-danger">
-                  <i class="bi bi-trash"></i>
-                </button>
-              </form>
+              <button type="button" class="btn btn-outline-danger delete-btn"
+                      data-action="{{ url_for('journal.delete', entry_id=entry.id) }}">
+                <i class="bi bi-trash"></i>
+              </button>
             </div>
           </td>
         </tr>
@@ -183,6 +180,25 @@
   });
 
   initDragSelect('.table', '.entry-cb', updateBar);
+
+  // 個別削除ボタン（ネストform回避）
+  var csrfMeta = document.querySelector('meta[name="csrf-token"]');
+  var csrfToken = csrfMeta ? csrfMeta.content : '';
+  document.addEventListener('click', function(e) {
+    var btn = e.target.closest('.delete-btn');
+    if (!btn) return;
+    if (!confirm('この仕訳を削除しますか？')) return;
+    var form = document.createElement('form');
+    form.method = 'POST';
+    form.action = btn.dataset.action;
+    var input = document.createElement('input');
+    input.type = 'hidden';
+    input.name = 'csrf_token';
+    input.value = csrfToken;
+    form.appendChild(input);
+    document.body.appendChild(form);
+    form.submit();
+  });
 })();
 </script>
 {% endblock %}

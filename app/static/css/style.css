@@ -50,10 +50,6 @@ body {
   border-bottom: 1px solid rgba(0, 0, 0, 0.125);
 }
 
-.btn-group .btn + form .btn {
-  border-top-left-radius: 0;
-  border-bottom-left-radius: 0;
-}
 
 /* 科目選択モーダル（他のモーダルの上に表示） */
 #accountSelectorModal {
