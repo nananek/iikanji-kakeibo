@@ -31,11 +31,11 @@
     <small class="text-muted">ドラッグで範囲を選択 / クリックで単月</small>
   </div>
   <div class="d-flex flex-wrap gap-0" id="periodBar" style="user-select:none">
-    {% set all_periods = [0] + range(1,16)|list %}
-    {% set short_labels = {0:'期首',1:'1月',2:'2月',3:'3月',4:'4月',5:'5月',6:'6月',7:'7月',8:'8月',9:'9月',10:'10月',11:'11月',12:'12月',13:'決1',14:'決2',15:'決3'} %}
+    {% set all_periods = [0] + range(1,17)|list %}
+    {% set short_labels = {0:'期首',1:'1月',2:'2月',3:'3月',4:'4月',5:'5月',6:'6月',7:'7月',8:'8月',9:'9月',10:'10月',11:'11月',12:'12月',13:'決1',14:'決2',15:'決3',16:'振替'} %}
     {% for p in all_periods %}
     <button type="button" class="btn btn-sm period-btn {% if pf <= p and p <= pt %}btn-dark{% else %}btn-outline-secondary{% endif %}"
-            data-period="{{ p }}" style="border-radius:0;min-width:3rem;{% if p == 0 %}border-radius:.25rem 0 0 .25rem{% elif p == 15 %}border-radius:0 .25rem .25rem 0{% endif %}">
+            data-period="{{ p }}" style="border-radius:0;min-width:3rem;{% if p == 0 %}border-radius:.25rem 0 0 .25rem{% elif p == 16 %}border-radius:0 .25rem .25rem 0{% endif %}">
       {{ short_labels[p] }}
     </button>
     {% endfor %}
@@ -106,7 +106,9 @@
           {% set ns.prev_period = e.effective_period %}
           <tr>
             <td>
+              {% if not e.is_readonly %}
               <input type="checkbox" class="form-check-input ledger-cb" name="entry_ids" value="{{ e.entry_id }}">
+              {% endif %}
             </td>
             <td>{{ e.date.strftime('%m/%d') }}</td>
             <td class="d-mobile-none"><small class="text-muted">#{{ e.entry_number }}</small></td>
@@ -123,8 +125,8 @@
             </td>
             <td>
               <button type="button" class="btn btn-outline-secondary btn-sm py-0"
-                      title="仕訳を編集" onclick="openEditModal({{ e.entry_id }})">
-                <i class="bi bi-pencil"></i>
+                      title="{{ '仕訳を閲覧' if e.is_readonly else '仕訳を編集' }}" onclick="openEditModal({{ e.entry_id }})">
+                <i class="bi {{ 'bi-eye' if e.is_readonly else 'bi-pencil' }}"></i>
               </button>
             </td>
           </tr>
@@ -173,7 +175,7 @@
   <div class="modal-dialog modal-lg">
     <div class="modal-content">
       <div class="modal-header">
-        <h5 class="modal-title"><i class="bi bi-pencil"></i> 仕訳編集 <span id="modalEntryNum"></span></h5>
+        <h5 class="modal-title"><span id="modalTitleIcon"><i class="bi bi-pencil"></i></span> <span id="modalTitleText">仕訳編集</span> <span id="modalEntryNum"></span></h5>
         <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
       </div>
       <div class="modal-body">
@@ -227,12 +229,12 @@
             </tfoot>
           </table>
         </div>
-        <button type="button" class="btn btn-outline-secondary btn-sm" onclick="modalAddLine()">
+        <button type="button" class="btn btn-outline-secondary btn-sm" id="modalAddLineBtn" onclick="modalAddLine()">
           <i class="bi bi-plus-lg"></i> 行を追加
         </button>
       </div>
       <div class="modal-footer">
-        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">キャンセル</button>
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">閉じる</button>
         <button type="button" class="btn btn-primary" id="modalSaveBtn" onclick="saveEntry()">
           <i class="bi bi-check-lg"></i> 保存
         </button>
@@ -395,8 +397,9 @@ function _acctNameById(id) {
   return '';
 }
 
-function modalAddLine(data) {
+function modalAddLine(data, readonly) {
   data = data || {};
+  var ro = readonly || false;
   var tbody = document.getElementById('modalLinesBody');
   var tr = document.createElement('tr');
   var isProprietor = data.is_proprietor || false;
@@ -404,17 +407,17 @@ function modalAddLine(data) {
   if (isProprietor && !acctName) acctName = '事業主';
   var acctClass = data.account_id ? '' : 'text-muted';
 
-  if (isProprietor) {
-    tr.classList.add('table-secondary');
+  if (isProprietor || ro) {
+    if (isProprietor) tr.classList.add('table-secondary');
     tr.innerHTML =
       '<td>' +
         '<input type="hidden" class="modal-account-id" value="' + (data.account_id || '') + '">' +
-        '<input type="hidden" class="modal-is-proprietor" value="1">' +
+        (isProprietor ? '<input type="hidden" class="modal-is-proprietor" value="1">' : '') +
         '<span class="form-control form-control-sm text-start bg-light text-muted">' + acctName + '</span>' +
       '</td>' +
       '<td><input type="number" class="form-control form-control-sm text-end modal-debit bg-light" value="' + (data.debit_amount || 0) + '" readonly tabindex="-1"></td>' +
       '<td><input type="number" class="form-control form-control-sm text-end modal-credit bg-light" value="' + (data.credit_amount || 0) + '" readonly tabindex="-1"></td>' +
-      '<td class="d-mobile-none"><input type="text" class="form-control form-control-sm modal-line-desc bg-light" value="" readonly tabindex="-1"></td>' +
+      '<td class="d-mobile-none"><input type="text" class="form-control form-control-sm modal-line-desc bg-light" value="' + (data.description || '').replace(/"/g, '&quot;') + '" readonly tabindex="-1"></td>' +
       '<td></td>';
   } else {
     tr.innerHTML =
@@ -427,7 +430,7 @@ function modalAddLine(data) {
       '<td><input type="number" class="form-control form-control-sm text-end modal-debit" value="' + (data.debit_amount || 0) + '" min="0" onchange="modalUpdateTotals()"></td>' +
       '<td><input type="number" class="form-control form-control-sm text-end modal-credit" value="' + (data.credit_amount || 0) + '" min="0" onchange="modalUpdateTotals()"></td>' +
       '<td class="d-mobile-none"><input type="text" class="form-control form-control-sm modal-line-desc" value="' + (data.description || '').replace(/"/g, '&quot;') + '"></td>' +
-      '<td><button type="button" class="btn btn-outline-danger btn-sm" onclick="this.closest(\'tr\').remove(); modalUpdateTotals()"><i class="bi bi-x"></i></button></td>';
+      '<td><button type="button" class="btn btn-outline-danger btn-sm modal-remove-btn" onclick="this.closest(\'tr\').remove(); modalUpdateTotals()"><i class="bi bi-x"></i></button></td>';
 
     tr.querySelector('.modal-account-btn').addEventListener('click', function() {
       var btn = this;
@@ -459,6 +462,8 @@ function modalUpdateTotals() {
   }
 }
 
+var PERIOD_NAMES = {'0':'期首振戻月','13':'決算月1','14':'決算月2','15':'決算月3','16':'損益振替'};
+
 function openEditModal(entryId) {
   currentEntryId = entryId;
   document.getElementById('modalError').classList.add('d-none');
@@ -467,12 +472,52 @@ function openEditModal(entryId) {
   fetch('/journal/' + entryId + '/json')
     .then(function(r) { return r.json(); })
     .then(function(data) {
+      var ro = data.is_readonly;
+
+      // タイトル切替
+      document.getElementById('modalTitleIcon').innerHTML = ro ? '<i class="bi bi-eye"></i>' : '<i class="bi bi-pencil"></i>';
+      document.getElementById('modalTitleText').textContent = ro ? '仕訳閲覧' : '仕訳編集';
+
       document.getElementById('modalEntryNum').textContent = '#' + data.entry_number;
       document.getElementById('modalDate').value = data.date;
+      document.getElementById('modalDate').disabled = ro;
       document.getElementById('modalDesc').value = data.description;
-      document.getElementById('modalFiscalPeriod').value = (data.fiscal_period !== null && data.fiscal_period !== undefined) ? String(data.fiscal_period) : '';
+      document.getElementById('modalDesc').disabled = ro;
+
+      // 計上期間
+      var fpSelect = document.getElementById('modalFiscalPeriod');
+      var fpStr = (data.fiscal_period !== null && data.fiscal_period !== undefined) ? String(data.fiscal_period) : '';
+      if (ro) {
+        fpSelect.style.display = 'none';
+        var fpText = document.getElementById('modalFiscalPeriodText');
+        if (!fpText) {
+          fpText = document.createElement('input');
+          fpText.type = 'text';
+          fpText.className = 'form-control';
+          fpText.id = 'modalFiscalPeriodText';
+          fpText.readOnly = true;
+          fpSelect.parentNode.appendChild(fpText);
+        }
+        fpText.style.display = '';
+        fpText.value = PERIOD_NAMES[fpStr] || '期中';
+      } else {
+        fpSelect.style.display = '';
+        fpSelect.value = fpStr;
+        var fpText = document.getElementById('modalFiscalPeriodText');
+        if (fpText) fpText.style.display = 'none';
+      }
       modalUpdateDateForPeriod();
-      data.lines.forEach(function(l) { modalAddLine(l); });
+
+      data.lines.forEach(function(l) { modalAddLine(l, ro); });
+
+      // 保存ボタン・行追加ボタンの表示制御
+      document.getElementById('modalSaveBtn').style.display = ro ? 'none' : '';
+      document.getElementById('modalAddLineBtn').style.display = ro ? 'none' : '';
+
+      // 行削除ボタンの表示制御
+      document.querySelectorAll('#modalLinesBody .modal-remove-btn').forEach(function(btn) {
+        btn.style.display = ro ? 'none' : '';
+      });
 
       if (!editModal) {
         editModal = new bootstrap.Modal(document.getElementById('editModal'));
@@ -488,6 +533,7 @@ function openEditModal(entryId) {
 function modalUpdateDateForPeriod() {
   var fp = document.getElementById('modalFiscalPeriod').value;
   var dateEl = document.getElementById('modalDate');
+  if (dateEl.disabled) return; // 閲覧モード時はスキップ
   var current = dateEl.value;
   if (!current) return;
   var year = current.substring(0, 4);

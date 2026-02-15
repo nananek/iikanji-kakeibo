@@ -55,6 +55,15 @@ def index():
         query = query.filter(JournalEntry.description.ilike(f"%{search}%"))
 
     entries = query.paginate(page=page, per_page=20, error_out=False)
+
+    # 各 entry の編集可否フラグを付与
+    user_id = get_effective_user_id()
+    for entry in entries.items:
+        entry._modifiable = (
+            check_entry_modifiable(user_id, entry) is None
+            and not is_entry_locked_for_owner(user_id, entry)
+        )
+
     return render_template(
         "journal/index.html",
         entries=entries,
@@ -101,6 +110,13 @@ def new():
         fiscal_period = None
         if form.fiscal_period.data:
             fiscal_period = int(form.fiscal_period.data)
+        if fiscal_period == 16:
+            flash("損益振替期間には手動で仕訳を追加できません。", "danger")
+            return render_template(
+                "journal/form.html",
+                form=form,
+                grouped_accounts=get_grouped_accounts(get_effective_user_id()),
+            )
         # 特殊期間の日付補正
         form.date.data = adjust_date_for_fiscal_period(form.date.data, fiscal_period)
         period = fiscal_period if fiscal_period is not None else form.date.data.month
@@ -249,6 +265,15 @@ def edit(entry_id):
             fiscal_period = None
             if form.fiscal_period.data:
                 fiscal_period = int(form.fiscal_period.data)
+            if fiscal_period == 16:
+                flash("損益振替期間には手動で仕訳を追加できません。", "danger")
+                return render_template(
+                    "journal/form.html",
+                    form=form,
+                    grouped_accounts=grouped_accounts,
+                    is_edit=True,
+                    entry=entry,
+                )
             form.date.data = adjust_date_for_fiscal_period(form.date.data, fiscal_period)
 
             # 変更先の期間が確定済みでないかチェック
@@ -302,6 +327,15 @@ def edit(entry_id):
         fiscal_period = None
         if form.fiscal_period.data:
             fiscal_period = int(form.fiscal_period.data)
+        if fiscal_period == 16:
+            flash("損益振替期間には手動で仕訳を追加できません。", "danger")
+            return render_template(
+                "journal/form.html",
+                form=form,
+                grouped_accounts=grouped_accounts,
+                is_edit=True,
+                entry=entry,
+            )
         form.date.data = adjust_date_for_fiscal_period(form.date.data, fiscal_period)
 
         # 変更先の期間が確定済みでないかチェック
@@ -433,10 +467,10 @@ def get_json(entry_id):
                 "description": line.description or "",
             })
 
-    # ロック判定
-    is_locked = False
-    if not is_acting_as_auditor():
-        is_locked = is_entry_locked_for_owner(user_id, entry)
+    # ロック判定（確定済み期間・損益振替・提出ロック）
+    is_readonly = check_entry_modifiable(user_id, entry) is not None
+    if not is_readonly and not is_acting_as_auditor():
+        is_readonly = is_entry_locked_for_owner(user_id, entry)
 
     return jsonify({
         "id": entry.id,
@@ -444,7 +478,8 @@ def get_json(entry_id):
         "description": entry.description,
         "entry_number": entry.entry_number,
         "fiscal_period": entry.fiscal_period,
-        "is_locked": is_locked,
+        "is_readonly": is_readonly,
+        "source": entry.source,
         "lines": lines,
     })
 
@@ -524,6 +559,8 @@ def edit_api(entry_id):
         # 計上期間の決定
         raw_period = data.get("fiscal_period")
         fiscal_period = int(raw_period) if raw_period not in (None, "") else None
+        if fiscal_period == 16:
+            return jsonify({"error": "損益振替期間には手動で仕訳を追加できません。"}), 400
         new_date = adjust_date_for_fiscal_period(date.fromisoformat(entry_date), fiscal_period)
 
         # 変更先の期間が確定済みでないかチェック
@@ -566,6 +603,8 @@ def edit_api(entry_id):
     # 計上期間の決定
     raw_period = data.get("fiscal_period")
     fiscal_period = int(raw_period) if raw_period not in (None, "") else None
+    if fiscal_period == 16:
+        return jsonify({"error": "損益振替期間には手動で仕訳を追加できません。"}), 400
     new_date = adjust_date_for_fiscal_period(date.fromisoformat(entry_date), fiscal_period)
 
     # 変更先の期間が確定済みでないかチェック
@@ -598,6 +637,7 @@ def edit_api(entry_id):
 @bp.route("/<int:entry_id>/delete", methods=["POST"])
 @login_required
 def delete(entry_id):
+    is_ajax = request.headers.get("X-Requested-With") == "XMLHttpRequest"
     user_id = get_effective_user_id()
     entry = JournalEntry.query.filter_by(
         id=entry_id, user_id=user_id
@@ -606,23 +646,28 @@ def delete(entry_id):
     allowed_ids = get_allowed_account_ids()
 
     # 伝票ロックチェック
+    err_msg = None
     if not is_acting_as_auditor() and is_entry_locked_for_owner(user_id, entry):
-        flash("提出済みの税務科目を含む伝票のため削除できません。", "danger")
-        return redirect(url_for("journal.index"))
-    if is_acting_as_auditor() and allowed_ids is not None and is_entry_locked_for_auditor(entry, allowed_ids):
-        flash("事業主勘定を含む伝票のため削除できません。", "danger")
-        return redirect(url_for("journal.index"))
+        err_msg = "提出済みの税務科目を含む伝票のため削除できません。"
+    elif is_acting_as_auditor() and allowed_ids is not None and is_entry_locked_for_auditor(entry, allowed_ids):
+        err_msg = "事業主勘定を含む伝票のため削除できません。"
+    else:
+        err_msg = check_entry_modifiable(user_id, entry)
 
-    # 確定済み期間チェック
-    err = check_entry_modifiable(user_id, entry)
-    if err:
-        flash(err, "danger")
+    if err_msg:
+        if is_ajax:
+            return jsonify({"ok": False, "message": err_msg}), 400
+        flash(err_msg, "danger")
         return redirect(url_for("journal.index"))
 
     num = entry.entry_number
     db.session.delete(entry)
     db.session.commit()
-    flash(f"伝票 #{num} を削除しました。", "success")
+
+    msg = f"伝票 #{num} を削除しました。"
+    if is_ajax:
+        return jsonify({"ok": True, "message": msg})
+    flash(msg, "success")
     return redirect(url_for("journal.index"))
 
 

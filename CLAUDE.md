@@ -100,7 +100,7 @@
 
 ### 複式簿記
 - 全取引は debit_amount + credit_amount が一致する仕訳として記録
-- fiscal_period: 0=期首, 1-12=月, 13-15=決算整理
+- fiscal_period: 0=期首, 1-12=月, 13-15=決算整理, 16=損益振替（自動生成専用、手動入力不可）
 
 ### 仕訳の source
 - `journal`: 仕訳帳から直接入力

@@ -1,6 +1,6 @@
 from datetime import date, datetime, timezone
 
-from flask import Blueprint, render_template, redirect, url_for, flash, request
+from flask import Blueprint, render_template, redirect, url_for, flash, request, jsonify
 from flask_login import login_required, current_user
 
 from app.extensions import db
@@ -205,14 +205,25 @@ def fiscal():
     closed = get_closed_period(user_id, year)
 
     periods = []
-    for p in range(0, 16):
-        periods.append({
-            "number": p,
-            "label": PERIOD_LABELS[p],
-            "closed": p <= closed,
-            "can_close": p == closed + 1 and year_open,
-            "can_reopen": p == closed,
-        })
+    for p in range(0, 17):
+        if p == 16:
+            # 損益振替は決算月3確定で自動生成・解除で自動削除
+            periods.append({
+                "number": p,
+                "label": PERIOD_LABELS[p],
+                "closed": closed >= 15,
+                "can_close": False,
+                "can_reopen": False,
+                "auto": True,
+            })
+        else:
+            periods.append({
+                "number": p,
+                "label": PERIOD_LABELS[p],
+                "closed": p <= closed,
+                "can_close": p == closed + 1 and year_open,
+                "can_reopen": p == closed,
+            })
 
     return render_template(
         "settings/fiscal.html",
@@ -248,16 +259,22 @@ def fiscal_open_year():
 @login_required
 def fiscal_close():
     """月次確定を実行"""
+    is_ajax = request.headers.get("X-Requested-With") == "XMLHttpRequest"
     year = request.form.get("year", type=int)
     period = request.form.get("period", type=int)
 
     err = close_period(get_effective_user_id(), year, period)
+    label = PERIOD_LABELS.get(period, f"{period}月")
+
+    if is_ajax:
+        if err:
+            return jsonify({"ok": False, "message": err}), 400
+        return jsonify({"ok": True, "message": f"{year}年{label}を確定しました。"})
+
     if err:
         flash(err, "danger")
     else:
-        label = PERIOD_LABELS.get(period, f"{period}月")
         flash(f"{year}年{label}を確定しました。", "success")
-
     return redirect(url_for("settings.fiscal", year=year))
 
 
@@ -265,16 +282,22 @@ def fiscal_close():
 @login_required
 def fiscal_reopen():
     """月次確定を解除"""
+    is_ajax = request.headers.get("X-Requested-With") == "XMLHttpRequest"
     year = request.form.get("year", type=int)
     period = request.form.get("period", type=int)
 
     err = reopen_period(get_effective_user_id(), year, period)
+    label = PERIOD_LABELS.get(period, f"{period}月")
+
+    if is_ajax:
+        if err:
+            return jsonify({"ok": False, "message": err}), 400
+        return jsonify({"ok": True, "message": f"{year}年{label}の確定を解除しました。"})
+
     if err:
         flash(err, "danger")
     else:
-        label = PERIOD_LABELS.get(period, f"{period}月")
         flash(f"{year}年{label}の確定を解除しました。", "success")
-
     return redirect(url_for("settings.fiscal", year=year))
 
 

@@ -15,7 +15,7 @@ class JournalEntry(db.Model):
     description = db.Column(db.String(255), nullable=False, default="")
     source = db.Column(db.String(20), nullable=False, default="journal")
     batch_id = db.Column(db.String(36), nullable=True, index=True)
-    fiscal_period = db.Column(db.Integer, nullable=True)  # 0=期首振戻, 1-12=通常月, 13-15=決算月1-3
+    fiscal_period = db.Column(db.Integer, nullable=True)  # 0=期首振戻, 1-12=通常月, 13-15=決算月1-3, 16=損益振替
     created_at = db.Column(
         db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc)
     )

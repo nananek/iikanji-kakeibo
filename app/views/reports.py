@@ -14,7 +14,8 @@ from app.services.tax import (
     get_tax_summary, get_medical_summary, get_income_expense_summary,
     get_monthly_comparison, get_month_projection,
 )
-from app.services.audit import get_effective_user_id, get_allowed_account_ids, mask_account_name
+from app.services.audit import get_effective_user_id, get_allowed_account_ids, mask_account_name, is_entry_locked_for_owner
+from app.services.fiscal import check_entry_modifiable
 from app.views.helpers import get_grouped_accounts
 
 bp = Blueprint("reports", __name__, url_prefix="/reports")
@@ -37,8 +38,8 @@ def balance():
     pt = request.args.get("pt", 15, type=int)   # period_to   (default: 決算月3)
 
     # 範囲の正規化
-    pf = max(0, min(15, pf))
-    pt = max(pf, min(15, pt))
+    pf = max(0, min(16, pf))
+    pt = max(pf, min(16, pt))
 
     account_types = AccountType.query.order_by(AccountType.display_order).all()
     accounts = (
@@ -74,15 +75,19 @@ def balance():
                     JournalEntry.date < m_end,
                 ),
             )
-        else:  # 13-15
-            return JournalEntry.fiscal_period == p
+        else:  # 13-16
+            return and_(
+                JournalEntry.fiscal_period == p,
+                JournalEntry.date >= date(year, 1, 1),
+                JournalEntry.date < date(year + 1, 1, 1),
+            )
 
     def _range_filter(p_from, p_to):
         """期間範囲のフィルタ条件リストを返す"""
         conditions = [_single_period_condition(p) for p in range(p_from, p_to + 1)]
         return [or_(*conditions)] if conditions else []
 
-    def _query_sum(account_id, filters):
+    def _query_sum(account_id, filters, include_closing=False):
         """指定条件での借方・貸方合計を返す"""
         q = (
             db.session.query(
@@ -90,11 +95,10 @@ def balance():
                 func.coalesce(func.sum(JournalEntryLine.credit_amount), 0),
             )
             .join(JournalEntry, JournalEntry.id == JournalEntryLine.journal_entry_id)
-            .filter(
-                JournalEntryLine.account_id == account_id,
-                JournalEntry.source != "closing",
-            )
+            .filter(JournalEntryLine.account_id == account_id)
         )
+        if not include_closing:
+            q = q.filter(JournalEntry.source != "closing")
         for f in filters:
             q = q.filter(f)
         return q.first()
@@ -103,6 +107,7 @@ def balance():
     total_revenue = 0
     total_expense = 0
 
+    incl_closing = pt >= 16
     current_filters = _range_filter(pf, pt)
 
     for account in accounts:
@@ -111,22 +116,23 @@ def balance():
         is_debit_normal = account.account_type.normal_balance == "debit"
 
         # 当期発生額
-        result = _query_sum(account.id, current_filters)
+        result = _query_sum(account.id, current_filters, include_closing=incl_closing)
         period_debit = int(result[0])
         period_credit = int(result[1])
 
         # 開始残高
         opening = 0
         if pf > 0:
+            prior_incl = pf > 16  # prior range includes 16
             prior_filters = _range_filter(0, pf - 1)
             if is_bs:
                 # B/S科目: 当年の範囲開始前 + 前年以前の全累計
                 if prior_filters:
-                    ob_result = _query_sum(account.id, prior_filters)
+                    ob_result = _query_sum(account.id, prior_filters, include_closing=prior_incl)
                     prior_d, prior_c = int(ob_result[0]), int(ob_result[1])
                 else:
                     prior_d, prior_c = 0, 0
-                before_result = _query_sum(account.id, [JournalEntry.date < start_of_year])
+                before_result = _query_sum(account.id, [JournalEntry.date < start_of_year], include_closing=prior_incl)
                 before_d, before_c = int(before_result[0]), int(before_result[1])
                 ob_debit = prior_d + before_d
                 ob_credit = prior_c + before_c
@@ -135,7 +141,7 @@ def balance():
                 else:
                     opening = ob_credit - ob_debit
             elif is_pl and prior_filters:
-                ob_result = _query_sum(account.id, prior_filters)
+                ob_result = _query_sum(account.id, prior_filters, include_closing=prior_incl)
                 ob_debit = int(ob_result[0])
                 ob_credit = int(ob_result[1])
                 if is_debit_normal:
@@ -328,8 +334,8 @@ def ledger():
     pt = request.args.get("pt", 15, type=int)
     account_id = request.args.get("account_id", 0, type=int)
 
-    pf = max(0, min(15, pf))
-    pt = max(pf, min(15, pt))
+    pf = max(0, min(16, pf))
+    pt = max(pf, min(16, pt))
 
     allowed_ids = get_allowed_account_ids()
 
@@ -372,8 +378,12 @@ def ledger():
                     JournalEntry.date < m_end,
                 ),
             )
-        else:
-            return JournalEntry.fiscal_period == p
+        else:  # 13-16
+            return and_(
+                JournalEntry.fiscal_period == p,
+                JournalEntry.date >= date(year, 1, 1),
+                JournalEntry.date < date(year + 1, 1, 1),
+            )
 
     def _range_filter(p_from, p_to):
         conditions = [_single_period_condition(p) for p in range(p_from, p_to + 1)]
@@ -514,6 +524,24 @@ def ledger():
                     "entry_id": line.entry_id,
                     "effective_period": line.effective_period,
                 })
+
+    # 各エントリの編集可否を判定
+    if entries:
+        user_id = get_effective_user_id()
+        entry_ids = list({e["entry_id"] for e in entries})
+        entry_objs = {
+            eo.id: eo
+            for eo in JournalEntry.query.filter(JournalEntry.id.in_(entry_ids)).all()
+        }
+        for e in entries:
+            eo = entry_objs.get(e["entry_id"])
+            if eo:
+                e["is_readonly"] = (
+                    check_entry_modifiable(user_id, eo) is not None
+                    or is_entry_locked_for_owner(user_id, eo)
+                )
+            else:
+                e["is_readonly"] = True
 
     # モーダル用: 全科目データ（Lv2なら公開科目のみ）
     all_grouped = get_grouped_accounts(get_effective_user_id(), allowed_ids)

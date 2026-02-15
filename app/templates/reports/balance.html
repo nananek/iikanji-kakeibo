@@ -19,11 +19,11 @@
     <small class="text-muted">ドラッグで範囲を選択 / クリックで単月</small>
   </div>
   <div class="d-flex flex-wrap gap-0" id="periodBar" style="user-select:none">
-    {% set all_periods = [0] + range(1,16)|list %}
-    {% set short_labels = {0:'期首',1:'1月',2:'2月',3:'3月',4:'4月',5:'5月',6:'6月',7:'7月',8:'8月',9:'9月',10:'10月',11:'11月',12:'12月',13:'決1',14:'決2',15:'決3'} %}
+    {% set all_periods = [0] + range(1,17)|list %}
+    {% set short_labels = {0:'期首',1:'1月',2:'2月',3:'3月',4:'4月',5:'5月',6:'6月',7:'7月',8:'8月',9:'9月',10:'10月',11:'11月',12:'12月',13:'決1',14:'決2',15:'決3',16:'振替'} %}
     {% for p in all_periods %}
     <button type="button" class="btn btn-sm period-btn {% if pf <= p and p <= pt %}btn-dark{% else %}btn-outline-secondary{% endif %}"
-            data-period="{{ p }}" style="border-radius:0;min-width:3rem;{% if p == 0 %}border-radius:.25rem 0 0 .25rem{% elif p == 15 %}border-radius:0 .25rem .25rem 0{% endif %}">
+            data-period="{{ p }}" style="border-radius:0;min-width:3rem;{% if p == 0 %}border-radius:.25rem 0 0 .25rem{% elif p == 16 %}border-radius:0 .25rem .25rem 0{% endif %}">
       {{ short_labels[p] }}
     </button>
     {% endfor %}

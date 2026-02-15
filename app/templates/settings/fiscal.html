@@ -46,14 +46,25 @@
           <td>
             {% if p.number == 0 %}
             <i class="bi bi-arrow-counterclockwise"></i>
+            {% elif p.number == 16 %}
+            <i class="bi bi-arrow-repeat"></i>
             {% elif p.number >= 13 %}
             <i class="bi bi-calculator"></i>
             {% endif %}
             {{ p.label }}
+            {% if p.auto is defined and p.auto %}
+            <span class="text-muted small">（自動）</span>
+            {% endif %}
           </td>
           <td>
             {% if not year_open %}
             <span class="badge bg-light text-muted">-</span>
+            {% elif p.auto is defined and p.auto %}
+              {% if p.closed %}
+              <span class="badge bg-info"><i class="bi bi-check-circle"></i> 自動生成済み</span>
+              {% else %}
+              <span class="badge bg-light text-muted">決算月3の確定で自動生成</span>
+              {% endif %}
             {% elif p.closed %}
             <span class="badge bg-success"><i class="bi bi-lock-fill"></i> 確定済み</span>
             {% else %}
@@ -62,8 +73,8 @@
           </td>
           <td class="text-end">
             {% if p.can_close and not p.closed %}
-            <form method="POST" action="{{ url_for('settings.fiscal_close') }}" class="d-inline"
-                  {% if p.number == 15 %}onsubmit="return confirm('決算月3を確定すると損益振替仕訳が自動生成されます。よろしいですか？')"{% endif %}>
+            <form method="POST" action="{{ url_for('settings.fiscal_close') }}" class="d-inline fiscal-form"
+                  {% if p.number == 15 %}data-confirm="決算月3を確定すると損益振替仕訳が自動生成されます。よろしいですか？"{% endif %}>
               <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
               <input type="hidden" name="year" value="{{ year }}">
               <input type="hidden" name="period" value="{{ p.number }}">
@@ -73,8 +84,8 @@
             </form>
             {% endif %}
             {% if p.can_reopen and p.closed %}
-            <form method="POST" action="{{ url_for('settings.fiscal_reopen') }}" class="d-inline"
-                  {% if p.number == 15 %}onsubmit="return confirm('決算月3の確定を解除すると損益振替仕訳が削除されます。よろしいですか？')"{% endif %}>
+            <form method="POST" action="{{ url_for('settings.fiscal_reopen') }}" class="d-inline fiscal-form"
+                  {% if p.number == 15 %}data-confirm="決算月3の確定を解除すると損益振替仕訳が削除されます。よろしいですか？"{% endif %}>
               <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
               <input type="hidden" name="year" value="{{ year }}">
               <input type="hidden" name="period" value="{{ p.number }}">
@@ -90,4 +101,36 @@
     </table>
   </div>
 </div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.querySelectorAll('.fiscal-form').forEach(function(form) {
+  form.addEventListener('submit', function(e) {
+    e.preventDefault();
+    var msg = form.dataset.confirm;
+    if (msg && !confirm(msg)) return;
+    var btn = form.querySelector('button[type="submit"]');
+    btn.disabled = true;
+    fetch(form.action, {
+      method: 'POST',
+      headers: {'X-Requested-With': 'XMLHttpRequest'},
+      body: new FormData(form),
+    })
+    .then(function(r) { return r.json().then(function(d) { return {ok: r.ok, data: d}; }); })
+    .then(function(res) {
+      showToast(res.data.message, res.ok ? 'success' : 'danger');
+      if (res.ok) {
+        setTimeout(function() { location.reload(); }, 500);
+      } else {
+        btn.disabled = false;
+      }
+    })
+    .catch(function() {
+      showToast('通信エラーが発生しました。', 'danger');
+      btn.disabled = false;
+    });
+  });
+});
+</script>
 {% endblock %}

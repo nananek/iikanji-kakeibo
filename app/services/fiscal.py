@@ -20,6 +20,7 @@ PERIOD_LABELS = {
     1: "1月", 2: "2月", 3: "3月", 4: "4月", 5: "5月", 6: "6月",
     7: "7月", 8: "8月", 9: "9月", 10: "10月", 11: "11月", 12: "12月",
     13: "決算月1", 14: "決算月2", 15: "決算月3",
+    16: "損益振替",
 }
 
 
@@ -30,7 +31,7 @@ def adjust_date_for_fiscal_period(entry_date, fiscal_period):
     year = entry_date.year
     if fiscal_period == 0:
         return date(year, 1, 1)
-    if fiscal_period in (13, 14, 15):
+    if fiscal_period in (13, 14, 15, 16):
         return date(year, 12, 31)
     return entry_date
 
@@ -72,6 +73,8 @@ def is_period_locked(user_id, year, period):
 
 def check_entry_modifiable(user_id, entry):
     """仕訳が変更可能か判定。不可ならエラーメッセージを返す"""
+    if entry.source == "closing":
+        return "損益振替仕訳（自動生成）は変更できません。"
     year = entry.date.year
     period = get_effective_period(entry)
     if is_period_locked(user_id, year, period):
@@ -281,7 +284,7 @@ def generate_closing_entries(user_id, year):
         description="損益振替仕訳（自動生成）",
         source="closing",
         batch_id=batch,
-        fiscal_period=15,
+        fiscal_period=16,
     )
     db.session.add(entry)
     db.session.flush()
@@ -302,7 +305,7 @@ def delete_closing_entries(user_id, year):
     entries = JournalEntry.query.filter(
         JournalEntry.user_id == user_id,
         JournalEntry.source == "closing",
-        JournalEntry.fiscal_period == 15,
+        JournalEntry.fiscal_period == 16,
         JournalEntry.date >= date(year, 1, 1),
         JournalEntry.date < date(year + 1, 1, 1),
     ).all()

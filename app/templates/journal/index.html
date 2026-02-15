@@ -56,7 +56,9 @@
         {% for entry in entries.items %}
         <tr>
           <td>
+            {% if entry._modifiable %}
             <input type="checkbox" class="form-check-input entry-cb" name="entry_ids" value="{{ entry.id }}">
+            {% endif %}
           </td>
           <td>{{ entry.entry_number }}</td>
           <td>{{ entry.date.strftime('%Y/%m/%d') }}</td>
@@ -73,7 +75,9 @@
           </td>
           <td class="text-end">&yen;{{ "{:,}".format(entry.total_debit|int) }}</td>
           <td class="d-mobile-none">
-            {% if entry.source == 'cashbook' %}
+            {% if entry.source == 'closing' %}
+            <span class="badge bg-dark">損益振替</span>
+            {% elif entry.source == 'cashbook' %}
             <span class="badge bg-info">出納帳</span>
             {% elif entry.source == 'ai_receipt' %}
             <span class="badge bg-success">AI</span>
@@ -82,6 +86,7 @@
             {% endif %}
           </td>
           <td>
+            {% if entry._modifiable %}
             <div class="btn-group btn-group-sm">
               {% if entry.source == 'cashbook' %}
               <a href="{{ url_for('cashbook.edit', entry_id=entry.id) }}" class="btn btn-outline-secondary">
@@ -97,6 +102,9 @@
                 <i class="bi bi-trash"></i>
               </button>
             </div>
+            {% else %}
+            <i class="bi bi-lock-fill text-muted" title="変更不可"></i>
+            {% endif %}
           </td>
         </tr>
         {% endfor %}
@@ -181,23 +189,34 @@
 
   initDragSelect('.table', '.entry-cb', updateBar);
 
-  // 個別削除ボタン（ネストform回避）
+  // 個別削除ボタン（AJAX）
   var csrfMeta = document.querySelector('meta[name="csrf-token"]');
   var csrfToken = csrfMeta ? csrfMeta.content : '';
   document.addEventListener('click', function(e) {
     var btn = e.target.closest('.delete-btn');
     if (!btn) return;
     if (!confirm('この仕訳を削除しますか？')) return;
-    var form = document.createElement('form');
-    form.method = 'POST';
-    form.action = btn.dataset.action;
-    var input = document.createElement('input');
-    input.type = 'hidden';
-    input.name = 'csrf_token';
-    input.value = csrfToken;
-    form.appendChild(input);
-    document.body.appendChild(form);
-    form.submit();
+    var tr = btn.closest('tr');
+    btn.disabled = true;
+    fetch(btn.dataset.action, {
+      method: 'POST',
+      headers: {'X-Requested-With': 'XMLHttpRequest', 'X-CSRFToken': csrfToken},
+    })
+    .then(function(r) { return r.json().then(function(d) { return {ok: r.ok, data: d}; }); })
+    .then(function(res) {
+      showToast(res.data.message, res.ok ? 'success' : 'danger');
+      if (res.ok) {
+        tr.style.transition = 'opacity 0.3s';
+        tr.style.opacity = '0';
+        setTimeout(function() { tr.remove(); updateBar(); }, 300);
+      } else {
+        btn.disabled = false;
+      }
+    })
+    .catch(function() {
+      showToast('通信エラーが発生しました。', 'danger');
+      btn.disabled = false;
+    });
   });
 })();
 </script>

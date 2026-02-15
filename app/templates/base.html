@@ -179,17 +179,6 @@
   {% endif %}
 
   <div class="container mt-4">
-    {% with messages = get_flashed_messages(with_categories=true) %}
-      {% if messages %}
-        {% for category, message in messages %}
-        <div class="alert alert-{{ category }} alert-dismissible fade show" role="alert">
-          {{ message }}
-          <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
-        </div>
-        {% endfor %}
-      {% endif %}
-    {% endwith %}
-
     {% block content %}{% endblock %}
   </div>
 
@@ -197,12 +186,35 @@
     <small>いいかんじ™家計簿 &copy; {{ now().year if now is defined else 2026 }}</small>
   </footer>
 
+  <div class="toast-container position-fixed bottom-0 end-0 p-3" id="toastContainer"></div>
+
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
   <script>
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('/sw.js');
     }
+    function showToast(message, type) {
+      var c = document.getElementById('toastContainer');
+      var icons = {success:'bi-check-circle-fill',danger:'bi-exclamation-triangle-fill',warning:'bi-exclamation-circle-fill',info:'bi-info-circle-fill'};
+      var t = document.createElement('div');
+      t.className = 'toast align-items-center text-bg-' + type + ' border-0';
+      t.setAttribute('role', 'alert');
+      t.innerHTML = '<div class="d-flex"><div class="toast-body"><i class="bi ' + (icons[type]||'') + '"></i> ' + message + '</div>'
+        + '<button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button></div>';
+      c.appendChild(t);
+      new bootstrap.Toast(t, {delay: 4000}).show();
+      t.addEventListener('hidden.bs.toast', function() { t.remove(); });
+    }
   </script>
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+    <script>
+    {% for category, message in messages %}
+    showToast({{ message|tojson }}, {{ category|tojson }});
+    {% endfor %}
+    </script>
+    {% endif %}
+  {% endwith %}
   <script src="{{ url_for('static', filename='js/app.js') }}"></script>
   {% block scripts %}{% endblock %}
 </body>
