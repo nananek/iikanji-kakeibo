@@ -48,7 +48,7 @@
           <th>借方</th>
           <th>貸方</th>
           <th class="text-end">金額</th>
-          <th>入力元</th>
+          <th class="d-mobile-none">入力元</th>
           <th></th>
         </tr>
       </thead>
@@ -72,7 +72,7 @@
             {% endfor %}
           </td>
           <td class="text-end">&yen;{{ "{:,}".format(entry.total_debit|int) }}</td>
-          <td>
+          <td class="d-mobile-none">
             {% if entry.source == 'cashbook' %}
             <span class="badge bg-info">出納帳</span>
             {% elif entry.source == 'ai_receipt' %}

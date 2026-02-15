@@ -40,9 +40,9 @@
   <table class="table table-hover">
     <thead class="table-dark">
       <tr>
-        <th>コード</th>
+        <th class="d-mobile-none">コード</th>
         <th>勘定科目</th>
-        <th class="text-end">開始残高</th>
+        <th class="text-end d-mobile-none">開始残高</th>
         <th class="text-end">借方合計</th>
         <th class="text-end">貸方合計</th>
         <th class="text-end">残高</th>
@@ -53,9 +53,9 @@
         {% if item.account.account_type.name != ns.current_type %}
           {% if ns.current_type %}
           <tr class="table-info">
-            <td></td>
+            <td class="d-mobile-none"></td>
             <td class="text-end"><strong>{{ ns.current_type }} 小計</strong></td>
-            <td class="text-end">{% if ns.type_opening %}<strong>&yen;{{ "{:,}".format(ns.type_opening) }}</strong>{% endif %}</td>
+            <td class="text-end d-mobile-none">{% if ns.type_opening %}<strong>&yen;{{ "{:,}".format(ns.type_opening) }}</strong>{% endif %}</td>
             <td class="text-end"><strong>&yen;{{ "{:,}".format(ns.type_debit) }}</strong></td>
             <td class="text-end"><strong>&yen;{{ "{:,}".format(ns.type_credit) }}</strong></td>
             <td class="text-end"><strong>&yen;{{ "{:,}".format(ns.type_balance) }}</strong></td>
@@ -71,14 +71,14 @@
           </tr>
         {% endif %}
         <tr>
-          <td>{{ item.account.code }}</td>
+          <td class="d-mobile-none">{{ item.account.code }}</td>
           <td>
             <a href="{{ url_for('reports.ledger', year=year, account_id=item.account.id, pf=pf, pt=pt) }}"
                class="text-decoration-none">
               {{ item.account.name }}
             </a>
           </td>
-          <td class="text-end {% if item.opening < 0 %}text-danger{% endif %}">
+          <td class="text-end d-mobile-none {% if item.opening < 0 %}text-danger{% endif %}">
             {% if item.opening %}&yen;{{ "{:,}".format(item.opening|int) }}{% endif %}
           </td>
           <td class="text-end">&yen;{{ "{:,}".format(item.debit|int) }}</td>
@@ -96,9 +96,9 @@
       {% endfor %}
       {% if ns.current_type %}
       <tr class="table-info">
-        <td></td>
+        <td class="d-mobile-none"></td>
         <td class="text-end"><strong>{{ ns.current_type }} 小計</strong></td>
-        <td class="text-end">{% if ns.type_opening %}<strong>&yen;{{ "{:,}".format(ns.type_opening) }}</strong>{% endif %}</td>
+        <td class="text-end d-mobile-none">{% if ns.type_opening %}<strong>&yen;{{ "{:,}".format(ns.type_opening) }}</strong>{% endif %}</td>
         <td class="text-end"><strong>&yen;{{ "{:,}".format(ns.type_debit) }}</strong></td>
         <td class="text-end"><strong>&yen;{{ "{:,}".format(ns.type_credit) }}</strong></td>
         <td class="text-end"><strong>&yen;{{ "{:,}".format(ns.type_balance) }}</strong></td>
@@ -107,17 +107,21 @@
     </tbody>
     <tfoot>
       <tr class="table-dark">
-        <td colspan="3"><strong>総合計</strong></td>
+        <td class="d-mobile-none"></td>
+        <td><strong>総合計</strong></td>
+        <td class="d-mobile-none"></td>
         <td class="text-end"><strong>&yen;{{ "{:,}".format(ns.grand_debit) }}</strong></td>
         <td class="text-end"><strong>&yen;{{ "{:,}".format(ns.grand_credit) }}</strong></td>
         <td></td>
       </tr>
       <tr class="{% if net_income >= 0 %}table-success{% else %}table-danger{% endif %}">
-        <td colspan="3">
+        <td class="d-mobile-none"></td>
+        <td>
           <strong><i class="bi bi-graph-up-arrow"></i>
             {{ year }}年 {{ range_label }} の損益
           </strong>
         </td>
+        <td class="d-mobile-none"></td>
         <td colspan="3" class="text-end">
           <strong>&yen;{{ "{:,}".format(net_income|int) }}</strong>
           {% if net_income >= 0 %}（黒字）{% else %}（赤字）{% endif %}

@@ -61,12 +61,12 @@
               <input type="checkbox" class="form-check-input" id="ledgerSelectAll">
             </th>
             <th style="width:8%">日付</th>
-            <th style="width:6%">伝票</th>
-            <th style="width:22%">摘要</th>
-            <th style="width:15%">相手科目</th>
-            <th style="width:11%" class="text-end">借方</th>
-            <th style="width:11%" class="text-end">貸方</th>
-            <th style="width:13%" class="text-end">残高</th>
+            <th style="width:6%" class="d-mobile-none">伝票</th>
+            <th>摘要</th>
+            <th class="d-mobile-none">相手科目</th>
+            <th class="text-end">借方</th>
+            <th class="text-end">貸方</th>
+            <th class="text-end">残高</th>
             <th style="width:4%"></th>
           </tr>
         </thead>
@@ -74,9 +74,9 @@
           <tr class="table-secondary">
             <td></td>
             <td></td>
-            <td></td>
+            <td class="d-mobile-none"></td>
             <td><strong>前期繰越</strong></td>
-            <td></td>
+            <td class="d-mobile-none"></td>
             <td></td>
             <td></td>
             <td class="text-end {% if carry_forward < 0 %}text-danger{% endif %}">
@@ -97,9 +97,9 @@
               <input type="checkbox" class="form-check-input ledger-cb" name="entry_ids" value="{{ e.entry_id }}">
             </td>
             <td>{{ e.date.strftime('%m/%d') }}</td>
-            <td><small class="text-muted">#{{ e.entry_number }}</small></td>
+            <td class="d-mobile-none"><small class="text-muted">#{{ e.entry_number }}</small></td>
             <td>{{ e.description }}</td>
-            <td><small>{{ e.counter_account }}</small></td>
+            <td class="d-mobile-none"><small>{{ e.counter_account }}</small></td>
             <td class="text-end">
               {% if e.debit %}&yen;{{ "{:,}".format(e.debit) }}{% endif %}
             </td>
@@ -121,7 +121,9 @@
           {% endfor %}
           <tr class="table-dark">
             <td></td>
-            <td colspan="4"><strong>合計</strong></td>
+            <td><strong>合計</strong></td>
+            <td class="d-mobile-none"></td>
+            <td class="d-mobile-none"></td>
             <td class="text-end"><strong>&yen;{{ "{:,}".format(ns.total_debit) }}</strong></td>
             <td class="text-end"><strong>&yen;{{ "{:,}".format(ns.total_credit) }}</strong></td>
             <td class="text-end">

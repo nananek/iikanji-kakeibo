@@ -173,3 +173,55 @@ body {
 .suggestion-line .amount {
   white-space: nowrap;
 }
+
+/* ===== モバイル最適化 (iPhone縦長 ≤ 576px) ===== */
+@media (max-width: 576px) {
+  .table th {
+    white-space: normal;
+  }
+
+  .table {
+    font-size: 0.8rem;
+  }
+
+  .period-btn {
+    min-width: 2.2rem !important;
+    font-size: 0.7rem;
+    padding: 0.15rem 0.25rem;
+  }
+
+  .d-mobile-none {
+    display: none !important;
+  }
+
+  /* 見出し縮小 */
+  h2 {
+    font-size: 1.2rem;
+  }
+
+  /* 出納帳・仕訳帳の科目列を切り詰め */
+  .table td {
+    max-width: 120px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* 金額列・摘要列は折り返し許可 */
+  .table td.text-end {
+    white-space: nowrap;
+    max-width: none;
+  }
+
+  /* 取込ツールバーのボタン縮小 */
+  .import-toolbar .btn {
+    font-size: 0.75rem;
+    padding: 0.2rem 0.4rem;
+  }
+  .import-toolbar .form-control-sm {
+    font-size: 0.75rem;
+  }
+  .import-toolbar .form-check-label {
+    font-size: 0.7rem;
+  }
+}

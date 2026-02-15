@@ -65,7 +65,7 @@
                 <input type="checkbox" class="form-check-input" id="checkAll"
                        checked onchange="toggleAll(this.checked)">
               </th>
-              <th style="width:5%" class="sortable" data-sort-key="row_num">行<span class="sort-icon"></span></th>
+              <th style="width:5%" class="sortable d-mobile-none" data-sort-key="row_num">行<span class="sort-icon"></span></th>
               <th style="width:12%" class="sortable" data-sort-key="date">日付<span class="sort-icon"></span></th>
               <th style="width:30%" class="sortable" data-sort-key="description">摘要<span class="sort-icon"></span></th>
               <th style="width:10%" class="text-end sortable" data-sort-key="deposit">入金<span class="sort-icon"></span></th>
@@ -83,7 +83,7 @@
                        data-idx="{{ loop.index0 }}"
                        {% if row.date and (row.deposit or row.withdrawal) %}checked{% endif %}>
               </td>
-              <td>{{ row.row_num }}</td>
+              <td class="d-mobile-none">{{ row.row_num }}</td>
               <td class="date-cell" data-idx="{{ loop.index0 }}">{{ row.date if row.date else '(不明)' }}</td>
               <td class="desc-cell">{{ row.description }}</td>
               <td class="text-end {% if row.deposit %}text-primary fw-bold{% endif %}">
