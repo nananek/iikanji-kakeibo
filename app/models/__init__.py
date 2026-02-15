@@ -5,6 +5,7 @@ from app.models.medical import MedicalExpense
 from app.models.webauthn import WebAuthnCredential
 from app.models.ai_config import UserAIConfig
 from app.models.audit import AuditGrant, AuditGrantAccount
+from app.models.ai_draft import AIDraft
 
 __all__ = [
     "User",
@@ -17,4 +18,5 @@ __all__ = [
     "UserAIConfig",
     "AuditGrant",
     "AuditGrantAccount",
+    "AIDraft",
 ]

@@ -545,7 +545,8 @@ def analyze_receipt(user_id: int, image_bytes: bytes,
 
 
 def analyze_and_suggest(user_id: int, image_bytes: bytes,
-                        mime_type: str) -> list[JournalSuggestion]:
+                        mime_type: str,
+                        comment: str = "") -> list[JournalSuggestion]:
     """証憑画像を解析し、複数の仕訳案を生成する
 
     1. 第1ラウンド: 書類解析（種別判定、内訳抽出、元帳参照要否判定）
@@ -562,8 +563,11 @@ def analyze_and_suggest(user_id: int, image_bytes: bytes,
     api_key, provider, model, handler = _get_ai_config(user_id)
 
     # 第1ラウンド: 書類解析
+    prompt = DOCUMENT_PROMPT
+    if comment:
+        prompt += f"\n\nユーザーからのコメント: {comment}"
     round1 = _call_ai(handler, api_key, model, image_bytes, mime_type,
-                      DOCUMENT_PROMPT, 1000, user_id)
+                      prompt, 1000, user_id)
 
     analysis = DocumentAnalysis(
         date=round1.get("date"),

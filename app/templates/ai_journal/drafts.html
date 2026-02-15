@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+{% block title %}一時保存一覧 - AI証憑仕訳 - いいかんじ™家計簿{% endblock %}
+
+{% block content %}
+<h2><i class="bi bi-archive"></i> AI証憑 一時保存</h2>
+
+<div class="d-flex justify-content-between align-items-center mt-3 mb-3">
+  <span class="text-muted">{{ draft_list|length }} 件</span>
+  <a href="{{ url_for('ai_journal.upload') }}" class="btn btn-primary btn-sm">
+    <i class="bi bi-plus-lg"></i> 新規アップロード
+  </a>
+</div>
+
+{% if not draft_list %}
+<div class="alert alert-info">
+  一時保存されたデータはありません。
+</div>
+{% else %}
+<div class="row g-3">
+  {% for item in draft_list %}
+  {% set d = item.draft %}
+  {% set s = item.summary %}
+  <div class="col-md-6 col-lg-4">
+    <div class="card shadow-sm h-100 {% if d.status == 'done' %}border-success{% endif %}">
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <small class="text-muted">{{ d.created_at.strftime('%Y-%m-%d %H:%M') }}</small>
+        {% if d.status == 'done' %}
+        <span class="badge bg-success">仕訳済み</span>
+        {% else %}
+        <span class="badge bg-info">未処理</span>
+        {% endif %}
+      </div>
+      <div class="card-body">
+        <div class="text-center mb-2">
+          <img src="{{ url_for('ai_journal.draft_image', draft_id=d.id) }}"
+               class="img-fluid rounded" style="max-height: 150px;" alt="証憑画像"
+               loading="lazy">
+        </div>
+        {% if d.comment %}
+        <p class="text-muted mb-2" style="font-size: 0.85rem;">
+          <i class="bi bi-chat-left-text"></i> {{ d.comment }}
+        </p>
+        {% endif %}
+        {% if s %}
+        <div style="font-size: 0.85rem;">
+          {% if s.title %}<div><strong>{{ s.title }}</strong></div>{% endif %}
+          {% if s.date %}<div class="text-muted">{{ s.date }}</div>{% endif %}
+          {% if s.description %}<div>{{ s.description }}</div>{% endif %}
+          {% if s.amount %}<div class="text-primary">&yen;{{ '{:,}'.format(s.amount) }}</div>{% endif %}
+          {% if s.count and s.count > 1 %}
+          <div class="text-muted">他 {{ s.count - 1 }} 件の仕訳案</div>
+          {% endif %}
+        </div>
+        {% endif %}
+      </div>
+      <div class="card-footer d-flex gap-2">
+        {% if d.status != 'done' %}
+        <a href="{{ url_for('ai_journal.drafts_review', draft_id=d.id) }}"
+           class="btn btn-primary btn-sm flex-fill">
+          <i class="bi bi-journal-text"></i> 仕訳を作成
+        </a>
+        {% else %}
+        <a href="{{ url_for('ai_journal.drafts_review', draft_id=d.id) }}"
+           class="btn btn-outline-secondary btn-sm flex-fill">
+          <i class="bi bi-eye"></i> 内容を確認
+        </a>
+        {% endif %}
+        <form method="POST" action="{{ url_for('ai_journal.drafts_delete', draft_id=d.id) }}"
+              onsubmit="return confirm('この下書きを削除しますか？')">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button type="submit" class="btn btn-outline-danger btn-sm">
+            <i class="bi bi-trash"></i>
+          </button>
+        </form>
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+{% endblock %}

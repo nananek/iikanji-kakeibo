@@ -35,6 +35,15 @@
                  style="max-height: 300px;" alt="プレビュー">
           </div>
 
+          <div class="mb-3">
+            <label class="form-label" for="comment">コメント（任意）</label>
+            <textarea class="form-control" name="comment" id="comment" rows="2"
+                      maxlength="500"
+                      placeholder="会社の懇親会、出張のタクシー代 など"
+                      {% if not has_config %}disabled{% endif %}></textarea>
+            <div class="form-text">AIの解析精度を上げるヒントになります</div>
+          </div>
+
           <div id="errorAlert" class="alert alert-danger d-none"></div>
 
           <button type="submit" class="btn btn-primary" id="submitBtn"
@@ -51,12 +60,28 @@
           <h5><i class="bi bi-lightbulb"></i> AIが提案する仕訳案</h5>
           <p class="text-muted">使用する仕訳案を選んでください。次の画面で編集できます。</p>
           <div id="suggestionsContainer" class="row g-3"></div>
+          <div class="text-center mt-3">
+            <button type="button" class="btn btn-outline-secondary" id="saveDraftBtn" onclick="saveDraft()">
+              <i class="bi bi-archive"></i> 一時保存する
+            </button>
+          </div>
         </div>
       </div>
     </div>
   </div>
 
   <div class="col-lg-4">
+    {% if draft_count > 0 %}
+    <div class="card shadow-sm mb-3 border-info">
+      <div class="card-body text-center">
+        <a href="{{ url_for('ai_journal.drafts') }}" class="text-decoration-none">
+          <i class="bi bi-archive"></i>
+          一時保存 <span class="badge bg-info">{{ draft_count }}</span> 件
+        </a>
+      </div>
+    </div>
+    {% endif %}
+
     <div class="card shadow-sm">
       <div class="card-header">AI証憑仕訳の流れ</div>
       <div class="card-body">
@@ -123,6 +148,9 @@
   var suggestionsContainer = document.getElementById('suggestionsContainer');
   var reviewUrl = "{{ url_for('ai_journal.review') }}";
   var analyzeUrl = "{{ url_for('ai_journal.analyze') }}";
+  var saveDraftUrl = "{{ url_for('ai_journal.drafts_save') }}";
+  var draftsUrl = "{{ url_for('ai_journal.drafts') }}";
+  var csrfToken = "{{ csrf_token() }}";
 
   // 画像プレビュー
   fileInput.addEventListener('change', function(e) {
@@ -295,6 +323,35 @@
     div.appendChild(document.createTextNode(text || ''));
     return div.innerHTML;
   }
+
+  // 一時保存
+  window.saveDraft = function() {
+    var btn = document.getElementById('saveDraftBtn');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> 保存中...';
+
+    fetch(saveDraftUrl, {
+      method: 'POST',
+      headers: { 'X-CSRFToken': csrfToken },
+    })
+    .then(function(resp) { return resp.json(); })
+    .then(function(data) {
+      if (data.ok) {
+        window.location.href = draftsUrl;
+      } else {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-archive"></i> 一時保存する';
+        errorAlert.textContent = data.error || '保存に失敗しました。';
+        errorAlert.classList.remove('d-none');
+      }
+    })
+    .catch(function() {
+      btn.disabled = false;
+      btn.innerHTML = '<i class="bi bi-archive"></i> 一時保存する';
+      errorAlert.textContent = '通信エラーが発生しました。';
+      errorAlert.classList.remove('d-none');
+    });
+  };
 })();
 </script>
 {% endblock %}
