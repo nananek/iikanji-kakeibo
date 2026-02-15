@@ -3,10 +3,10 @@
  *
  * 使い方: initDragSelect(tableSelector, checkboxSelector, onChangeCallback)
  *
- * - 行のどこをドラッグしても（チェックボックス含む）範囲選択できる
+ * - チェックボックス列からドラッグすると範囲選択できる
  * - ドラッグ開始行〜現在行の範囲にdragValueを適用
  * - 範囲外に出た行はドラッグ前の状態に戻る
- * - タッチ対応
+ * - タッチ対応（チェックボックス列以外のタップはスルー）
  */
 (function () {
   window.initDragSelect = function (tableSelector, checkboxSelector, onChange) {
@@ -40,6 +40,12 @@
       allRows = Array.from(tbody.querySelectorAll('tr'));
     }
 
+    function isInCheckboxCell(target, cb) {
+      // タップ/クリック対象がチェックボックスを含む<td>内かを判定
+      var td = target.closest('td');
+      return td && td.contains(cb);
+    }
+
     function applyRange(curIdx) {
       if (startIdx < 0 || curIdx < 0) return;
       var lo = Math.min(startIdx, curIdx);
@@ -63,6 +69,7 @@
       var idx = getRowIndex(e.target);
       var cb = getCheckboxAt(idx);
       if (!cb) return;
+      if (!isInCheckboxCell(e.target, cb)) return;
 
       e.preventDefault();
       dragging = true;
@@ -98,6 +105,7 @@
       var idx = getRowIndex(e.target);
       var cb = getCheckboxAt(idx);
       if (!cb) return;
+      if (!isInCheckboxCell(e.target, cb)) return;
 
       e.preventDefault();
       dragging = true;
