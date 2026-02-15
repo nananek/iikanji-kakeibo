@@ -245,6 +245,21 @@ def fiscal_open_year():
         flash(f"{year}年度は既に開設済みです。", "info")
         return redirect(url_for("settings.fiscal", year=year))
 
+    # 開設済み最古の年度の期首が確定済みなら、それ以前は開設不可
+    earliest_fc = (
+        FiscalClose.query
+        .filter(FiscalClose.user_id == user_id, FiscalClose.closed_period >= 0)
+        .order_by(FiscalClose.year)
+        .first()
+    )
+    if earliest_fc and year < earliest_fc.year and earliest_fc.closed_period >= 0:
+        flash(
+            f"{earliest_fc.year}年度の期首振戻が確定済みのため、"
+            f"{year}年度は開設できません。",
+            "danger",
+        )
+        return redirect(url_for("settings.fiscal", year=year))
+
     fc = FiscalClose.query.filter_by(user_id=user_id, year=year).first()
     if not fc:
         fc = FiscalClose(user_id=user_id, year=year, closed_period=-1)

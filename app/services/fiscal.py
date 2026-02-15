@@ -79,15 +79,25 @@ def get_closed_period(user_id, year):
 
 
 def get_closed_periods_map(user_id):
-    """前後2年分の確定済み期間マップ {year: closed_period} を返す"""
-    from datetime import date as _date
-    current_year = _date.today().year
-    result = {}
-    for y in range(current_year - 2, current_year + 2):
-        cp = get_closed_period(user_id, y)
-        if cp >= 0:
-            result[y] = cp
-    return result
+    """全確定済み年度の期間マップ {year: closed_period} を返す"""
+    rows = FiscalClose.query.filter(
+        FiscalClose.user_id == user_id,
+        FiscalClose.closed_period >= 0,
+    ).all()
+    return {fc.year: fc.closed_period for fc in rows}
+
+
+def get_last_closed(user_id):
+    """確定済みの最後の年+期間を返す。未確定なら None"""
+    fc = (
+        FiscalClose.query
+        .filter(FiscalClose.user_id == user_id, FiscalClose.closed_period >= 0)
+        .order_by(FiscalClose.year.desc())
+        .first()
+    )
+    if not fc:
+        return None
+    return {"year": fc.year, "period": fc.closed_period}
 
 
 def get_closed_periods_for_dates(user_id, dates):

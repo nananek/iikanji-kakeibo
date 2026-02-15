@@ -99,20 +99,32 @@ var dateInput = document.getElementById('date');
 
 // 確定済み期間チェック
 var _closedPeriods = {{ (closed_periods or {})|tojson }};
+var _restrictedBefore = {{ restricted_before_year|tojson }};
 var _warningEl = document.getElementById('closedPeriodWarning');
 var _warningMsg = document.getElementById('closedPeriodMsg');
 var _submitBtn = document.getElementById('submitBtn');
 
 function checkClosedPeriod() {
-  if (!dateInput.value) { _warningEl.classList.add('d-none'); return; }
+  if (!dateInput.value) { _warningEl.classList.add('d-none'); _submitBtn.disabled = false; return; }
   var year = parseInt(dateInput.value.substring(0, 4));
   var month = parseInt(dateInput.value.substring(5, 7));
   var fp = fpSelect.value;
   var period = fp ? parseInt(fp) : month;
+  var msg = null;
+
+  // 未開設年度チェック
+  if (_restrictedBefore && year < _restrictedBefore && _closedPeriods[year] === undefined) {
+    msg = year + '年度は開設されていません。';
+  }
+  // 確定済み期間チェック
   var closed = _closedPeriods[year];
-  if (closed !== undefined && period <= closed) {
+  if (!msg && closed !== undefined && period <= closed) {
     var label = period === 0 ? '期首' : period <= 12 ? period + '月' : '決算整理' + (period - 12);
-    _warningMsg.textContent = year + '年 ' + label + ' は月次確定済みです。この日付では保存できません。';
+    msg = year + '年 ' + label + ' は月次確定済みです。この日付では保存できません。';
+  }
+
+  if (msg) {
+    _warningMsg.textContent = msg;
     _warningEl.classList.remove('d-none');
     _submitBtn.disabled = true;
   } else {
