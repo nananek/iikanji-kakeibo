@@ -28,9 +28,6 @@ body {
   white-space: nowrap;
 }
 
-.table > tbody > tr:nth-child(even):not([class*="table-"]) > td {
-  background-color: rgba(0, 0, 0, 0.015);
-}
 
 .table-hover > tbody > tr:hover > td {
   background-color: #e3edfd !important;
@@ -43,6 +40,14 @@ body {
 .table td:last-child,
 .table th:last-child {
   border-right: none;
+}
+
+.import-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 1020;
+  background-color: #f8f9fa;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.125);
 }
 
 .btn-group .btn + form .btn {

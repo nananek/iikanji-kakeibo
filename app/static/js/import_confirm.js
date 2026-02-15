@@ -7,6 +7,8 @@
 (function () {
   var _parsedData;
   var _paymentAccountId;
+  var _closedPeriods;
+  var _restrictedBeforeYear;
 
   /* ---------- ユーティリティ ---------- */
 
@@ -99,41 +101,70 @@
     }, { filter: 'category_transfer', excludeId: _paymentAccountId, activeTab: 'pl' });
   }
 
-  /* ---------- 摘要ソート ---------- */
+  /* ---------- ソート ---------- */
 
   function initSort() {
-    var th = document.getElementById('sortDescription');
-    if (!th) return;
-
-    var sortState = 0; // 0=元順, 1=昇順, 2=降順
     var tbody = document.querySelector('#confirmTable tbody');
+    if (!tbody) return;
     var originalOrder = Array.from(tbody.querySelectorAll('tr'));
+    var activeTh = null;
+    var activeState = 0;
 
-    th.style.cursor = 'pointer';
-    th.title = 'クリックでソート';
-
-    th.addEventListener('click', function () {
-      sortState = (sortState + 1) % 3;
-      var rows = Array.from(tbody.querySelectorAll('tr'));
-
-      if (sortState === 0) {
-        // 元の順序に戻す
-        originalOrder.forEach(function (tr) { tbody.appendChild(tr); });
-      } else {
-        rows.sort(function (a, b) {
-          var idxA = parseInt(a.dataset.idx);
-          var idxB = parseInt(b.dataset.idx);
-          var descA = (_parsedData[idxA].description || '').toLowerCase();
-          var descB = (_parsedData[idxB].description || '').toLowerCase();
-          var cmp = descA < descB ? -1 : (descA > descB ? 1 : 0);
-          return sortState === 2 ? -cmp : cmp;
-        });
-        rows.forEach(function (tr) { tbody.appendChild(tr); });
+    function getValue(idx, key) {
+      var row = _parsedData[idx];
+      if (!row) return '';
+      switch (key) {
+        case 'row_num': return row.row_num || idx;
+        case 'date': return row.date || '';
+        case 'description': return (row.description || '').toLowerCase();
+        case 'deposit': return row.deposit || 0;
+        case 'withdrawal': return row.withdrawal || 0;
+        default: return '';
       }
+    }
 
-      // アイコン更新
-      var icon = th.querySelector('.sort-icon');
-      if (icon) icon.textContent = sortState === 1 ? ' \u25B2' : (sortState === 2 ? ' \u25BC' : '');
+    document.querySelectorAll('#confirmTable thead .sortable').forEach(function (th) {
+      th.style.cursor = 'pointer';
+      th.title = 'クリックでソート';
+
+      th.addEventListener('click', function () {
+        var key = th.dataset.sortKey;
+        var isNumeric = (key === 'row_num' || key === 'deposit' || key === 'withdrawal');
+
+        // 同じ列なら状態を進める、違う列なら昇順から
+        if (activeTh === th) {
+          activeState = (activeState + 1) % 3;
+        } else {
+          // 前の列のアイコンをリセット
+          if (activeTh) {
+            var prevIcon = activeTh.querySelector('.sort-icon');
+            if (prevIcon) prevIcon.textContent = '';
+          }
+          activeTh = th;
+          activeState = 1;
+        }
+
+        if (activeState === 0) {
+          originalOrder.forEach(function (tr) { tbody.appendChild(tr); });
+        } else {
+          var rows = Array.from(tbody.querySelectorAll('tr'));
+          rows.sort(function (a, b) {
+            var va = getValue(parseInt(a.dataset.idx), key);
+            var vb = getValue(parseInt(b.dataset.idx), key);
+            var cmp;
+            if (isNumeric) {
+              cmp = va - vb;
+            } else {
+              cmp = va < vb ? -1 : (va > vb ? 1 : 0);
+            }
+            return activeState === 2 ? -cmp : cmp;
+          });
+          rows.forEach(function (tr) { tbody.appendChild(tr); });
+        }
+
+        var icon = th.querySelector('.sort-icon');
+        if (icon) icon.textContent = activeState === 1 ? ' \u25B2' : (activeState === 2 ? ' \u25BC' : '');
+      });
     });
   }
 
@@ -159,6 +190,55 @@
       });
       document.getElementById('importRows').value = JSON.stringify(rows);
     });
+  }
+
+  /* ---------- 日付一括設定 ---------- */
+
+  function bulkSetDate(selectedOnly) {
+    var newDate = document.getElementById('bulkDate').value;
+    if (!newDate) {
+      alert('日付を入力してください。');
+      return;
+    }
+    if (selectedOnly) {
+      var checked = document.querySelectorAll('.row-check:checked');
+      if (checked.length === 0) {
+        alert('行を選択してください。');
+        return;
+      }
+    }
+    var appendOrig = document.getElementById('appendOriginalDate').checked;
+
+    document.querySelectorAll('#confirmTable tbody tr').forEach(function (tr) {
+      var idx = parseInt(tr.dataset.idx);
+      var cb = tr.querySelector('.row-check');
+      if (selectedOnly && (!cb || !cb.checked)) return;
+
+      var origDate = _parsedData[idx].date;
+
+      if (appendOrig && origDate) {
+        var origFormatted = origDate.replace(/-/g, '/');
+        var desc = _parsedData[idx].description;
+        if (desc.indexOf('(' + origDate + ')') === -1 && desc.indexOf('（取引日:') === -1) {
+          _parsedData[idx].description = desc + '（取引日: ' + origFormatted + '）';
+          var descCell = tr.querySelector('.desc-cell');
+          if (descCell) descCell.textContent = _parsedData[idx].description;
+        }
+      }
+
+      _parsedData[idx].date = newDate;
+      var dateCell = tr.querySelector('.date-cell');
+      if (dateCell) dateCell.textContent = newDate;
+      tr.classList.remove('table-warning');
+
+      var status = getRowStatus(idx);
+      if (status && !status.problem && (_parsedData[idx].deposit || _parsedData[idx].withdrawal)) {
+        if (cb) cb.checked = true;
+      }
+      applyRowStatus(tr);
+    });
+
+    updateCount();
   }
 
   /* ---------- 科目自動推定 ---------- */
@@ -199,26 +279,55 @@
       .catch(function () { /* 推定失敗は無視 */ });
   }
 
-  /* ---------- 未開設年度の行マーク ---------- */
+  /* ---------- 行ステータス判定・更新 ---------- */
 
-  function markRestrictedRows(restrictedBeforeYear) {
-    if (!restrictedBeforeYear) return;
+  function getRowStatus(idx) {
+    var row = _parsedData[idx];
+    if (!row) return null;
+    if (!row.date) return { cls: 'bg-warning text-dark', html: '日付なし' };
+    if (!row.deposit && !row.withdrawal) return { cls: 'bg-secondary', html: '金額なし' };
+    var year = parseInt(row.date.substring(0, 4));
+    var month = parseInt(row.date.substring(5, 7));
+    // 未開設年度チェック
+    if (_restrictedBeforeYear && year < _restrictedBeforeYear) {
+      return { cls: 'bg-warning text-dark', html: '<i class="bi bi-exclamation-triangle"></i> 年度未開設', problem: true };
+    }
+    // 確定済み期間チェック
+    if (_closedPeriods && _closedPeriods[year] !== undefined && month <= _closedPeriods[year]) {
+      return { cls: 'bg-danger', html: '<i class="bi bi-lock-fill"></i> 確定済み', problem: true };
+    }
+    return { cls: 'bg-success', html: 'OK' };
+  }
+
+  function applyRowStatus(tr) {
+    var idx = parseInt(tr.dataset.idx);
+    var status = getRowStatus(idx);
+    if (!status) return;
+    var statusTd = tr.querySelector('td:last-child');
+    if (statusTd) {
+      var badge = statusTd.querySelector('.badge');
+      if (!badge) {
+        badge = document.createElement('span');
+        badge.className = 'badge';
+        statusTd.innerHTML = '';
+        statusTd.appendChild(badge);
+      }
+      badge.className = 'badge ' + status.cls;
+      badge.innerHTML = status.html;
+    }
+    // 問題行はチェックを外す（初期マーク時のみ）
+    return status;
+  }
+
+  function markAllRowStatuses() {
     var hasRestricted = false;
     document.querySelectorAll('#confirmTable tbody tr').forEach(function (tr) {
-      var idx = parseInt(tr.dataset.idx);
-      var row = _parsedData[idx];
-      if (!row || !row.date) return;
-      var year = parseInt(row.date.substring(0, 4));
-      if (year < restrictedBeforeYear) {
-        hasRestricted = true;
-        var statusTd = tr.querySelector('td:last-child');
-        if (statusTd) {
-          var existing = statusTd.querySelector('.badge');
-          if (existing && existing.classList.contains('bg-success')) {
-            existing.className = 'badge bg-warning text-dark';
-            existing.innerHTML = '<i class="bi bi-exclamation-triangle"></i> 年度未開設';
-          }
-        }
+      var status = applyRowStatus(tr);
+      if (!status) return;
+      if (status.problem) {
+        var cb = tr.querySelector('.row-check');
+        if (cb) cb.checked = false;
+        if (status.html.indexOf('年度未開設') !== -1) hasRestricted = true;
       }
     });
     var bar = document.getElementById('oldYearBar');
@@ -227,30 +336,59 @@
     }
   }
 
-  /* ---------- 確定済み期間の行マーク ---------- */
+  /* ---------- 日付クリック編集 ---------- */
 
-  function markClosedPeriodRows(closedPeriods) {
-    if (!closedPeriods || typeof closedPeriods !== 'object') return;
-    if (Object.keys(closedPeriods).length === 0) return;
-    document.querySelectorAll('#confirmTable tbody tr').forEach(function (tr) {
-      var idx = parseInt(tr.dataset.idx);
-      var row = _parsedData[idx];
-      if (!row || !row.date) return;
-      var year = parseInt(row.date.substring(0, 4));
-      var month = parseInt(row.date.substring(5, 7));
-      var cp = closedPeriods[year];
-      if (cp === undefined || month > cp) return;
-      // 確定済み期間 → チェックを外してバッジ表示
-      var cb = tr.querySelector('.row-check');
-      if (cb) cb.checked = false;
-      var statusTd = tr.querySelector('td:last-child');
-      if (statusTd) {
-        var existing = statusTd.querySelector('.badge');
-        if (existing && (existing.classList.contains('bg-success') || existing.classList.contains('bg-warning'))) {
-          existing.className = 'badge bg-danger';
-          existing.innerHTML = '<i class="bi bi-lock-fill"></i> 確定済み';
+  function initDateEdit() {
+    document.querySelectorAll('#confirmTable .date-cell').forEach(function (td) {
+      td.style.cursor = 'pointer';
+      td.title = 'クリックで日付を変更';
+      td.addEventListener('click', function () {
+        if (td.querySelector('input')) return; // 既に編集中
+        var idx = parseInt(td.dataset.idx);
+        var currentDate = _parsedData[idx].date || '';
+        var input = document.createElement('input');
+        input.type = 'date';
+        input.className = 'form-control form-control-sm';
+        input.value = currentDate;
+        td.textContent = '';
+        td.appendChild(input);
+        input.focus();
+
+        function commit() {
+          var newDate = input.value;
+          if (newDate && newDate !== currentDate) {
+            _parsedData[idx].date = newDate;
+            td.textContent = newDate;
+            // ステータス再評価
+            var tr = td.closest('tr');
+            applyRowStatus(tr);
+            // 日付ありになったらチェックを入れる（問題なければ）
+            var status = getRowStatus(idx);
+            if (status && !status.problem) {
+              var cb = tr.querySelector('.row-check');
+              if (cb && !cb.checked && (_parsedData[idx].deposit || _parsedData[idx].withdrawal)) {
+                cb.checked = true;
+              }
+            }
+            updateCount();
+          } else {
+            td.textContent = currentDate || '(不明)';
+          }
         }
-      }
+
+        input.addEventListener('change', commit);
+        input.addEventListener('blur', function () {
+          // changeの後にblurが来る場合があるので少し遅延
+          setTimeout(function () {
+            if (td.querySelector('input')) commit();
+          }, 100);
+        });
+        input.addEventListener('keydown', function (e) {
+          if (e.key === 'Escape') {
+            td.textContent = currentDate || '(不明)';
+          }
+        });
+      });
     });
   }
 
@@ -259,25 +397,27 @@
   window.initImportConfirm = function (parsedData, paymentAccountId, restrictedBeforeYear, closedPeriods) {
     _parsedData = parsedData;
     _paymentAccountId = paymentAccountId;
+    _closedPeriods = closedPeriods || {};
+    _restrictedBeforeYear = restrictedBeforeYear;
 
     initCategoryButtons();
     initSort();
     initDragSelect('#confirmTable', '.row-check', updateCount);
     initFormSubmit();
+    initDateEdit();
 
     document.querySelectorAll('.row-check').forEach(function (cb) {
       cb.addEventListener('change', updateCount);
     });
 
-    markRestrictedRows(restrictedBeforeYear);
-    markClosedPeriodRows(closedPeriods);
+    markAllRowStatuses();
     updateCount();
     suggestCategories();
   };
 
   window.toggleAll = toggleAll;
   window.bulkSetCategory = bulkSetCategory;
+  window.bulkSetDate = bulkSetDate;
   window.updateCount = updateCount;
-  // parsedData への参照を外部から取得できるようにする（Web取込の日付一括変更用）
   window.getImportParsedData = function () { return _parsedData; };
 })();

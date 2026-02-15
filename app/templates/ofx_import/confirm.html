@@ -5,21 +5,37 @@
 <h2><i class="bi bi-file-earmark-binary"></i> OFX明細取込</h2>
 
 <div class="card shadow-sm mt-4">
-  <div class="card-header d-flex justify-content-between align-items-center">
-    <div>
-      <strong>Step 2:</strong> 確認して取込
-      <span class="text-muted ms-2">
-        取込先: {{ payment_account.name }} / {{ parsed|length }}件
-        {% if ofx_account_info %}
-        <small>(OFX口座: {{ ofx_account_info }})</small>
-        {% endif %}
-      </span>
+  <div class="card-header import-toolbar">
+    <div class="d-flex justify-content-between align-items-center">
+      <div>
+        <strong>Step 2:</strong> 確認して取込
+        <span class="text-muted ms-2">
+          取込先: {{ payment_account.name }} / {{ parsed|length }}件
+          {% if ofx_account_info %}
+          <small>(OFX口座: {{ ofx_account_info }})</small>
+          {% endif %}
+        </span>
+      </div>
+      <div class="d-flex gap-1">
+        <button type="button" class="btn btn-sm btn-outline-secondary" onclick="toggleAll(true)">全選択</button>
+        <button type="button" class="btn btn-sm btn-outline-secondary" onclick="toggleAll(false)">全解除</button>
+      </div>
     </div>
-    <div class="d-flex gap-1">
-      <button type="button" class="btn btn-sm btn-outline-secondary" onclick="toggleAll(true)">全選択</button>
-      <button type="button" class="btn btn-sm btn-outline-secondary" onclick="toggleAll(false)">全解除</button>
+    <div class="d-flex gap-1 flex-wrap align-items-center mt-2">
       <button type="button" class="btn btn-sm btn-outline-primary" onclick="bulkSetCategory()">
         <i class="bi bi-tags"></i> 選択行に科目を設定
+      </button>
+      <div class="vr mx-1"></div>
+      <input type="date" class="form-control form-control-sm" id="bulkDate" style="width:auto">
+      <div class="form-check form-check-inline mb-0 ms-1">
+        <input class="form-check-input" type="checkbox" id="appendOriginalDate" checked>
+        <label class="form-check-label small" for="appendOriginalDate">元の日付を摘要に付記</label>
+      </div>
+      <button type="button" class="btn btn-sm btn-outline-secondary" onclick="bulkSetDate(false)">
+        <i class="bi bi-calendar-check"></i> 全行に適用
+      </button>
+      <button type="button" class="btn btn-sm btn-outline-primary" onclick="bulkSetDate(true)">
+        <i class="bi bi-calendar-check"></i> 選択行に日付を設定
       </button>
     </div>
   </div>
@@ -49,11 +65,11 @@
                 <input type="checkbox" class="form-check-input" id="checkAll"
                        checked onchange="toggleAll(this.checked)">
               </th>
-              <th style="width:5%">行</th>
-              <th style="width:12%">日付</th>
-              <th style="width:30%" id="sortDescription">摘要<span class="sort-icon"></span></th>
-              <th style="width:10%" class="text-end">入金</th>
-              <th style="width:10%" class="text-end">出金</th>
+              <th style="width:5%" class="sortable" data-sort-key="row_num">行<span class="sort-icon"></span></th>
+              <th style="width:12%" class="sortable" data-sort-key="date">日付<span class="sort-icon"></span></th>
+              <th style="width:30%" class="sortable" data-sort-key="description">摘要<span class="sort-icon"></span></th>
+              <th style="width:10%" class="text-end sortable" data-sort-key="deposit">入金<span class="sort-icon"></span></th>
+              <th style="width:10%" class="text-end sortable" data-sort-key="withdrawal">出金<span class="sort-icon"></span></th>
               <th style="width:25%">費目</th>
               <th style="width:5%">状態</th>
             </tr>
@@ -68,8 +84,8 @@
                        {% if row.date and (row.deposit or row.withdrawal) %}checked{% endif %}>
               </td>
               <td>{{ row.row_num }}</td>
-              <td>{{ row.date if row.date else '(不明)' }}</td>
-              <td>{{ row.description }}</td>
+              <td class="date-cell" data-idx="{{ loop.index0 }}">{{ row.date if row.date else '(不明)' }}</td>
+              <td class="desc-cell">{{ row.description }}</td>
               <td class="text-end {% if row.deposit %}text-primary fw-bold{% endif %}">
                 {% if row.deposit %}&yen;{{ "{:,}".format(row.deposit) }}{% endif %}
               </td>
