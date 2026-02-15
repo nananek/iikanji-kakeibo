@@ -176,22 +176,25 @@ body {
 
 /* タッチデバイスでホバー効果を無効化 */
 @media (hover: none) {
-  .btn:hover {
-    color: inherit;
-    background-color: inherit;
-    border-color: inherit;
-  }
   .btn-outline-danger:hover {
     color: var(--bs-danger);
     background-color: transparent;
+    border-color: var(--bs-danger);
   }
   .btn-outline-secondary:hover {
     color: var(--bs-secondary);
     background-color: transparent;
+    border-color: var(--bs-secondary);
   }
   .btn-outline-primary:hover {
     color: var(--bs-primary);
     background-color: transparent;
+    border-color: var(--bs-primary);
+  }
+  .btn-outline-success:hover {
+    color: var(--bs-success);
+    background-color: transparent;
+    border-color: var(--bs-success);
   }
   .table-hover > tbody > tr:hover > td {
     background-color: inherit !important;
