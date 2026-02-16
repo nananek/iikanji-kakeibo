@@ -20,6 +20,11 @@
       <button type="button" class="btn btn-sm btn-outline-primary" onclick="bulkSetCategory()">
         <i class="bi bi-tags"></i> 選択行に科目を設定
       </button>
+      {% if has_ai_config %}
+      <button type="button" class="btn btn-sm btn-outline-success" onclick="aiSuggestCategories()" id="aiSuggestBtn">
+        <i class="bi bi-stars"></i> AI科目推定
+      </button>
+      {% endif %}
       <div class="vr mx-1"></div>
       <input type="date" class="form-control form-control-sm" id="bulkDate" style="width:auto">
       <div class="form-check form-check-inline mb-0 ms-1">

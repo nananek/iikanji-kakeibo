@@ -702,6 +702,159 @@ def parse_web_text(user_id: int, raw_text: str,
     return parsed
 
 
+AI_SUGGEST_CATEGORIES_PROMPT = """あなたは日本の複式簿記の家計簿アプリのアシスタントです。
+以下は取込先口座「{payment_account_name}」の元帳（過去の取引履歴）です。
+各行の「相手科目」は、その取引で使われた費目（勘定科目）です。
+
+{ledger_context}
+
+以下はユーザーの勘定科目一覧です。科目IDを使って回答してください。
+{account_list}
+
+以下の新規取引それぞれに、元帳のパターンを参考にして最も適切な勘定科目IDを推定してください。
+- 出金は通常「費用」科目、入金は通常「収益」科目ですが、振替（資産・負債間の移動）の場合もあります。
+- 元帳に似た摘要の取引がある場合は、その相手科目と同じ科目を優先してください。
+- 該当なしの場合は account_id を null にしてください。
+
+{rows_text}
+
+必ず以下のJSON形式のみを返してください。余計なテキストは不要です。
+{{"results": [{{"index": 0, "account_id": 科目ID}}, ...]}}"""
+
+
+def _get_payment_ledger_context(user_id: int, account_id: int,
+                                limit: int = 100) -> str:
+    """支払口座の元帳データをテキスト形式で返す（相手科目名つき）"""
+    account = Account.query.get(account_id)
+    if not account:
+        return ""
+
+    entries = (
+        db.session.query(
+            JournalEntry.date,
+            JournalEntry.description,
+            JournalEntryLine.debit_amount,
+            JournalEntryLine.credit_amount,
+            JournalEntry.id.label("entry_id"),
+        )
+        .join(JournalEntry, JournalEntry.id == JournalEntryLine.journal_entry_id)
+        .filter(
+            JournalEntryLine.account_id == account_id,
+            JournalEntry.user_id == user_id,
+        )
+        .order_by(JournalEntry.date.desc())
+        .limit(limit)
+        .all()
+    )
+
+    if not entries:
+        return "(元帳データなし)"
+
+    lines = [f"【{account.name}】の元帳（直近{len(entries)}件）"]
+    lines.append("日付 | 摘要 | 相手科目 | 入金 | 出金")
+    lines.append("-" * 60)
+
+    for e in entries:
+        counter_lines = (
+            JournalEntryLine.query
+            .filter(
+                JournalEntryLine.journal_entry_id == e.entry_id,
+                JournalEntryLine.account_id != account_id,
+            )
+            .all()
+        )
+        counter_names = ", ".join(
+            a.account.name for a in counter_lines if a.account
+        ) if counter_lines else "?"
+
+        d = int(e.debit_amount)
+        c = int(e.credit_amount)
+        lines.append(
+            f"{e.date} | {e.description} | {counter_names} | "
+            f"{'¥' + f'{d:,}' if d else '-'} | "
+            f"{'¥' + f'{c:,}' if c else '-'}"
+        )
+
+    return "\n".join(lines)
+
+
+def suggest_categories_by_ai(user_id: int, payment_account_id: int,
+                              rows: list[dict]) -> dict:
+    """元帳データをAIに渡して科目を推定する
+
+    Args:
+        rows: [{"description": "...", "deposit": 0, "withdrawal": 5000}, ...]
+
+    Returns:
+        {"摘要": {"account_id": N, "account_name": "..."}, ...}
+    """
+    api_key, provider, model, _ = _get_ai_config(user_id)
+    text_handler = _TEXT_PROVIDER_HANDLERS.get(provider)
+    if not text_handler:
+        raise ValueError(f"未対応のAIプロバイダーです: {provider}")
+
+    account = Account.query.get(payment_account_id)
+    payment_name = account.name if account else "不明"
+
+    ledger_context = _get_payment_ledger_context(user_id, payment_account_id)
+    account_list = _get_account_list_text(user_id)
+
+    rows_lines = []
+    for i, row in enumerate(rows):
+        dep = row.get("deposit", 0)
+        wd = row.get("withdrawal", 0)
+        rows_lines.append(
+            f"{i}. {row.get('description', '')} "
+            f"(入金: ¥{dep:,}, 出金: ¥{wd:,})"
+        )
+    rows_text = "\n".join(rows_lines)
+
+    prompt = AI_SUGGEST_CATEGORIES_PROMPT.format(
+        payment_account_name=payment_name,
+        ledger_context=ledger_context,
+        account_list=account_list,
+        rows_text=rows_text,
+    )
+
+    try:
+        result = text_handler(api_key, model, prompt, max_tokens=4000)
+    except httpx.HTTPStatusError as e:
+        logger.error("AI API HTTP error for user %s: %s", user_id, e)
+        raise RuntimeError(
+            f"AI APIエラー（HTTP {e.response.status_code}）: "
+            "APIキーやモデル名を確認してください。"
+        )
+    except Exception as e:
+        logger.error("AI API call failed for user %s: %s", user_id, e)
+        raise RuntimeError(f"AI APIの呼び出しに失敗しました: {e}")
+
+    # レスポンスを既存の suggest_categories と同じ形式に変換
+    ai_results = result.get("results", [])
+    accounts_cache = {}
+    output = {}
+
+    for item in ai_results:
+        idx = item.get("index")
+        aid = item.get("account_id")
+        if idx is None or aid is None or idx >= len(rows):
+            continue
+        desc = rows[idx].get("description", "")
+        if not desc or desc in output:
+            continue
+
+        if aid not in accounts_cache:
+            acct = Account.query.filter_by(
+                id=aid, user_id=user_id, is_active=True
+            ).first()
+            accounts_cache[aid] = acct
+
+        acct = accounts_cache.get(aid)
+        if acct:
+            output[desc] = {"account_id": acct.id, "account_name": acct.name}
+
+    return output
+
+
 def match_account(user_id: int, category_name: str) -> int | None:
     """AI推測カテゴリ名をユーザーの勘定科目IDにマッチング"""
     expense_type = AccountType.query.filter_by(code="expense").first()

@@ -263,6 +263,7 @@ def confirm():
         user_id, [r.get("date", "") for r in parsed]
     )
     grouped_accounts = get_grouped_accounts(user_id)
+    has_ai_config = UserAIConfig.query.filter_by(user_id=user_id).first() is not None
     return render_template(
         "web_import/confirm.html",
         parsed=parsed,
@@ -272,4 +273,5 @@ def confirm():
         grouped_accounts=grouped_accounts,
         restricted_before_year=restricted_before,
         closed_periods=closed_periods,
+        has_ai_config=has_ai_config,
     )

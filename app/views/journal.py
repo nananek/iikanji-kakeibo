@@ -844,3 +844,32 @@ def suggest_categories():
                 break
 
     return jsonify(result)
+
+
+@bp.route("/api/ai-suggest-categories", methods=["POST"])
+@login_required
+def ai_suggest_categories():
+    """元帳データをAIに渡して科目を推定する
+
+    POST: {"payment_account_id": 123, "rows": [{"description": "...", "deposit": 0, "withdrawal": 5000}, ...]}
+    Response: {"摘要1": {"account_id": 456, "account_name": "食費"}, ...}
+    """
+    from app.services.ai_receipt import suggest_categories_by_ai
+
+    data = request.get_json()
+    if not data:
+        return jsonify({"error": "リクエストが不正です。"}), 400
+
+    payment_account_id = data.get("payment_account_id")
+    rows = data.get("rows", [])
+    if not payment_account_id or not rows:
+        return jsonify({"error": "取込先口座と取引データが必要です。"}), 400
+
+    user_id = get_effective_user_id()
+    try:
+        result = suggest_categories_by_ai(user_id, payment_account_id, rows)
+        return jsonify(result)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    except RuntimeError as e:
+        return jsonify({"error": str(e)}), 500

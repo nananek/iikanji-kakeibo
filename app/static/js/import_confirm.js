@@ -279,6 +279,77 @@
       .catch(function () { /* 推定失敗は無視 */ });
   }
 
+  /* ---------- AI科目推定 ---------- */
+
+  function aiSuggestCategories() {
+    var btn = document.getElementById('aiSuggestBtn');
+    if (!btn) return;
+
+    // 科目未設定の行だけ収集
+    var rows = [];
+    var indices = [];
+    document.querySelectorAll('.category-id').forEach(function (input) {
+      var idx = parseInt(input.dataset.idx);
+      if (input.value) return; // 既に設定済みならスキップ
+      var row = _parsedData[idx];
+      if (!row || !row.description) return;
+      rows.push({
+        description: row.description,
+        deposit: row.deposit || 0,
+        withdrawal: row.withdrawal || 0,
+      });
+      indices.push(idx);
+    });
+
+    if (rows.length === 0) {
+      alert('未設定の行がありません。');
+      return;
+    }
+
+    // スピナー表示
+    var origHtml = btn.innerHTML;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> 推定中…';
+    btn.disabled = true;
+
+    var csrfToken = document.querySelector('meta[name="csrf-token"]');
+    fetch('/journal/api/ai-suggest-categories', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-CSRFToken': csrfToken ? csrfToken.content : '',
+      },
+      body: JSON.stringify({
+        payment_account_id: _paymentAccountId,
+        rows: rows,
+      }),
+    })
+      .then(function (res) { return res.json(); })
+      .then(function (data) {
+        if (data.error) {
+          alert(data.error);
+          return;
+        }
+        document.querySelectorAll('.category-btn').forEach(function (catBtn) {
+          var idx = parseInt(catBtn.dataset.idx);
+          var desc = _parsedData[idx] && _parsedData[idx].description;
+          if (!desc || !data[desc]) return;
+          // 既に設定済みならスキップ
+          var input = document.querySelector('.category-id[data-idx="' + idx + '"]');
+          if (input && input.value) return;
+          setCategoryDisplay(catBtn, data[desc].account_id, data[desc].account_name);
+        });
+        markAllRowStatuses();
+        updateCount();
+      })
+      .catch(function (err) {
+        alert('AI科目推定に失敗しました: ' + err.message);
+      })
+      .finally(function () {
+        btn.innerHTML = origHtml;
+        btn.disabled = false;
+      });
+  }
+
   /* ---------- 行ステータス判定・更新 ---------- */
 
   function getRowStatus(idx) {
@@ -419,5 +490,6 @@
   window.bulkSetCategory = bulkSetCategory;
   window.bulkSetDate = bulkSetDate;
   window.updateCount = updateCount;
+  window.aiSuggestCategories = aiSuggestCategories;
   window.getImportParsedData = function () { return _parsedData; };
 })();
