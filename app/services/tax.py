@@ -32,7 +32,8 @@ def get_tax_summary(user_id, year):
         db.session.query(
             Account.tax_category,
             Account.name,
-            func.sum(JournalEntryLine.debit_amount).label("total"),
+            (func.coalesce(func.sum(JournalEntryLine.debit_amount), 0)
+             - func.coalesce(func.sum(JournalEntryLine.credit_amount), 0)).label("total"),
         )
         .join(JournalEntryLine, JournalEntryLine.account_id == Account.id)
         .join(JournalEntry, JournalEntry.id == JournalEntryLine.journal_entry_id)
@@ -178,7 +179,7 @@ def get_monthly_comparison(user_id, year):
             "expense_totals": [0] * 12, "income_totals": [0] * 12,
         }
 
-    # 費用: 月別の借方合計
+    # 費用: 月別の正味発生額（借方 - 貸方）
     expense_rows = (
         db.session.query(
             Account.id,
@@ -186,7 +187,8 @@ def get_monthly_comparison(user_id, year):
             Account.name,
             Account.cost_type,
             func.extract("month", JournalEntry.date).label("m"),
-            func.coalesce(func.sum(JournalEntryLine.debit_amount), 0).label("total"),
+            (func.coalesce(func.sum(JournalEntryLine.debit_amount), 0)
+             - func.coalesce(func.sum(JournalEntryLine.credit_amount), 0)).label("total"),
         )
         .join(JournalEntryLine, JournalEntryLine.account_id == Account.id)
         .join(JournalEntry, JournalEntry.id == JournalEntryLine.journal_entry_id)
@@ -201,7 +203,7 @@ def get_monthly_comparison(user_id, year):
         .all()
     )
 
-    # 収益: 月別の貸方合計
+    # 収益: 月別の正味発生額（貸方 - 借方）
     income_rows = (
         db.session.query(
             Account.id,
@@ -209,7 +211,8 @@ def get_monthly_comparison(user_id, year):
             Account.name,
             Account.cost_type,
             func.extract("month", JournalEntry.date).label("m"),
-            func.coalesce(func.sum(JournalEntryLine.credit_amount), 0).label("total"),
+            (func.coalesce(func.sum(JournalEntryLine.credit_amount), 0)
+             - func.coalesce(func.sum(JournalEntryLine.debit_amount), 0)).label("total"),
         )
         .join(JournalEntryLine, JournalEntryLine.account_id == Account.id)
         .join(JournalEntry, JournalEntry.id == JournalEntryLine.journal_entry_id)
@@ -331,7 +334,10 @@ def get_income_expense_summary(user_id, year, month=None):
         return {"income": Decimal(0), "expense": Decimal(0), "balance": Decimal(0)}
 
     income = (
-        db.session.query(func.coalesce(func.sum(JournalEntryLine.credit_amount), 0))
+        db.session.query(
+            func.coalesce(func.sum(JournalEntryLine.credit_amount), 0)
+            - func.coalesce(func.sum(JournalEntryLine.debit_amount), 0)
+        )
         .join(JournalEntry, JournalEntry.id == JournalEntryLine.journal_entry_id)
         .join(Account, Account.id == JournalEntryLine.account_id)
         .filter(
@@ -344,7 +350,10 @@ def get_income_expense_summary(user_id, year, month=None):
     )
 
     expense = (
-        db.session.query(func.coalesce(func.sum(JournalEntryLine.debit_amount), 0))
+        db.session.query(
+            func.coalesce(func.sum(JournalEntryLine.debit_amount), 0)
+            - func.coalesce(func.sum(JournalEntryLine.credit_amount), 0)
+        )
         .join(JournalEntry, JournalEntry.id == JournalEntryLine.journal_entry_id)
         .join(Account, Account.id == JournalEntryLine.account_id)
         .filter(
