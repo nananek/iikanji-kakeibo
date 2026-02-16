@@ -234,6 +234,9 @@
         </button>
       </div>
       <div class="modal-footer">
+        <button type="button" class="btn btn-outline-danger me-auto" id="modalDeleteBtn" onclick="deleteEntry()">
+          <i class="bi bi-trash"></i> 削除
+        </button>
         <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">閉じる</button>
         <button type="button" class="btn btn-primary" id="modalSaveBtn" onclick="saveEntry()">
           <i class="bi bi-check-lg"></i> 保存
@@ -510,8 +513,9 @@ function openEditModal(entryId) {
 
       data.lines.forEach(function(l) { modalAddLine(l, ro); });
 
-      // 保存ボタン・行追加ボタンの表示制御
+      // 保存・削除・行追加ボタンの表示制御
       document.getElementById('modalSaveBtn').style.display = ro ? 'none' : '';
+      document.getElementById('modalDeleteBtn').style.display = ro ? 'none' : '';
       document.getElementById('modalAddLineBtn').style.display = ro ? 'none' : '';
 
       // 行削除ボタンの表示制御
@@ -548,6 +552,37 @@ function modalUpdateDateForPeriod() {
   }
 }
 document.getElementById('modalFiscalPeriod').addEventListener('change', modalUpdateDateForPeriod);
+
+function deleteEntry() {
+  if (!confirm('この仕訳を削除しますか？')) return;
+
+  var deleteBtn = document.getElementById('modalDeleteBtn');
+  deleteBtn.disabled = true;
+
+  fetch('/journal/' + currentEntryId + '/delete', {
+    method: 'POST',
+    headers: {
+      'X-CSRFToken': csrfToken,
+      'X-Requested-With': 'XMLHttpRequest',
+    },
+  })
+  .then(function(r) { return r.json().then(function(d) { return { ok: r.ok, data: d }; }); })
+  .then(function(result) {
+    deleteBtn.disabled = false;
+    if (!result.ok || !result.data.ok) {
+      document.getElementById('modalError').textContent = result.data.message || 'エラーが発生しました。';
+      document.getElementById('modalError').classList.remove('d-none');
+      return;
+    }
+    editModal.hide();
+    window.location.reload();
+  })
+  .catch(function() {
+    deleteBtn.disabled = false;
+    document.getElementById('modalError').textContent = '通信エラーが発生しました。';
+    document.getElementById('modalError').classList.remove('d-none');
+  });
+}
 
 function saveEntry() {
   var lines = [];

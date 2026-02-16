@@ -16,7 +16,7 @@ from app.models.ai_draft import AIDraft
 from app.services.audit import get_effective_user_id, get_submitted_account_ids
 from app.services.ai_receipt import analyze_and_suggest
 from app.services.accounting import create_journal_entry
-from app.services.fiscal import check_period_open_for_new
+from app.services.fiscal import check_period_open_for_new, get_closed_periods_map, get_restricted_before_year
 from app.views.helpers import get_grouped_accounts
 
 bp = Blueprint("ai_journal", __name__, url_prefix="/ai-journal")
@@ -228,7 +228,10 @@ def review():
 
     selected = suggestions[suggestion_index]
 
-    grouped_accounts = get_grouped_accounts(get_effective_user_id())
+    user_id = get_effective_user_id()
+    grouped_accounts = get_grouped_accounts(user_id)
+    closed_periods = get_closed_periods_map(user_id)
+    restricted_before = get_restricted_before_year(user_id)
     is_saved_draft = draft.status == "analyzed"
 
     if request.method == "POST":
@@ -245,6 +248,8 @@ def review():
                 selected_index=suggestion_index,
                 grouped_accounts=grouped_accounts,
                 draft_id=is_saved_draft,
+                closed_periods=closed_periods,
+                restricted_before_year=restricted_before,
             )
 
         try:
@@ -258,6 +263,8 @@ def review():
                 selected_index=suggestion_index,
                 grouped_accounts=grouped_accounts,
                 draft_id=is_saved_draft,
+                closed_periods=closed_periods,
+                restricted_before_year=restricted_before,
             )
 
         if mode == "simple":
@@ -327,6 +334,8 @@ def review():
                 selected_index=suggestion_index,
                 grouped_accounts=grouped_accounts,
                 draft_id=is_saved_draft,
+                closed_periods=closed_periods,
+                restricted_before_year=restricted_before,
             )
 
         # 提出済みロック科目チェック
@@ -357,6 +366,8 @@ def review():
                 selected_index=suggestion_index,
                 grouped_accounts=grouped_accounts,
                 draft_id=is_saved_draft,
+                closed_periods=closed_periods,
+                restricted_before_year=restricted_before,
             )
 
         try:
@@ -392,4 +403,6 @@ def review():
         selected_index=suggestion_index,
         grouped_accounts=grouped_accounts,
         draft_id=is_saved_draft,
+        closed_periods=closed_periods,
+        restricted_before_year=restricted_before,
     )

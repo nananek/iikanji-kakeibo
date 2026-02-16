@@ -109,9 +109,13 @@
             </div>
           </div>
 
+          <div id="simpleClosedWarning" class="alert alert-warning d-none mt-3">
+            <i class="bi bi-lock-fill"></i> <span id="simpleClosedMsg"></span>
+          </div>
+
           <hr>
           <div class="d-flex gap-2">
-            <button type="submit" class="btn btn-primary">
+            <button type="submit" class="btn btn-primary" id="simpleSubmitBtn">
               <i class="bi bi-check-lg"></i> 仕訳を登録
             </button>
             {% if draft_id %}
@@ -180,9 +184,13 @@
             <i class="bi bi-plus-lg"></i> 行を追加
           </button>
 
+          <div id="advancedClosedWarning" class="alert alert-warning d-none mt-3">
+            <i class="bi bi-lock-fill"></i> <span id="advancedClosedMsg"></span>
+          </div>
+
           <hr>
           <div class="d-flex gap-2">
-            <button type="submit" class="btn btn-primary">
+            <button type="submit" class="btn btn-primary" id="advancedSubmitBtn">
               <i class="bi bi-check-lg"></i> 仕訳を登録
             </button>
             {% if draft_id %}
@@ -335,6 +343,53 @@ document.getElementById('advancedForm').addEventListener('submit', function() {
   });
   document.getElementById('linesJson').value = JSON.stringify(lines);
 });
+
+// 確定済み期間チェック
+var _closedPeriods = {{ (closed_periods or {})|tojson }};
+var _restrictedBefore = {{ restricted_before_year|tojson }};
+
+function checkClosedPeriodFor(dateInput, warningEl, msgEl, submitBtn) {
+  if (!dateInput.value) { warningEl.classList.add('d-none'); submitBtn.disabled = false; return; }
+  var year = parseInt(dateInput.value.substring(0, 4));
+  var month = parseInt(dateInput.value.substring(5, 7));
+  var msg = null;
+  if (_restrictedBefore && year < _restrictedBefore && _closedPeriods[year] === undefined) {
+    msg = year + '年度は開設されていません。';
+  }
+  var closed = _closedPeriods[year];
+  if (!msg && closed !== undefined && month <= closed) {
+    var label = month + '月';
+    msg = year + '年 ' + label + ' は月次確定済みです。この日付では保存できません。';
+  }
+  if (msg) {
+    msgEl.textContent = msg;
+    warningEl.classList.remove('d-none');
+    submitBtn.disabled = true;
+  } else {
+    warningEl.classList.add('d-none');
+    submitBtn.disabled = false;
+  }
+}
+
+// かんたんモードの日付チェック
+var _simpleDateInput = document.querySelector('#simpleForm input[name="date"]');
+var _simpleWarning = document.getElementById('simpleClosedWarning');
+var _simpleMsg = document.getElementById('simpleClosedMsg');
+var _simpleSubmit = document.getElementById('simpleSubmitBtn');
+_simpleDateInput.addEventListener('change', function() {
+  checkClosedPeriodFor(_simpleDateInput, _simpleWarning, _simpleMsg, _simpleSubmit);
+});
+checkClosedPeriodFor(_simpleDateInput, _simpleWarning, _simpleMsg, _simpleSubmit);
+
+// 仕訳モードの日付チェック
+var _advDateInput = document.querySelector('#advancedForm input[name="date"]');
+var _advWarning = document.getElementById('advancedClosedWarning');
+var _advMsg = document.getElementById('advancedClosedMsg');
+var _advSubmit = document.getElementById('advancedSubmitBtn');
+_advDateInput.addEventListener('change', function() {
+  checkClosedPeriodFor(_advDateInput, _advWarning, _advMsg, _advSubmit);
+});
+checkClosedPeriodFor(_advDateInput, _advWarning, _advMsg, _advSubmit);
 
 // AI結果で初期化
 var selected = {{ selected | tojson }};
