@@ -1,28 +1,29 @@
 services:
-  # tailscale:
-  #   image: tailscale/tailscale:latest
-  #   hostname: iikanji-account
-  #   cap_add:
-  #     - NET_ADMIN
-  #     - SYS_MODULE
-  #   devices:
-  #     - /dev/net/tun:/dev/net/tun
-  #   volumes:
-  #     - tailscale-state:/var/lib/tailscale
-  #   environment:
-  #     - TS_USERSPACE=false
-  #     - TS_STATE_DIR=/var/lib/tailscale
-  #   networks:
-  #     - internal
-  #   restart: unless-stopped
+  tailscale:
+    image: tailscale/tailscale:latest
+    hostname: iikanji-account
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    volumes:
+      - tailscale-state:/var/lib/tailscale
+    environment:
+      - TS_USERSPACE=false
+      - TS_STATE_DIR=/var/lib/tailscale
+    networks:
+      - internal
+    restart: unless-stopped
 
   web:
     image: ghcr.io/nananek/iikanji-kakeibo:1.6.7
-    ports:
-      - "5000:5000"
+    network_mode: service:tailscale
     env_file:
       - .env
     depends_on:
+      tailscale:
+        condition: service_started
       db:
         condition: service_healthy
 
@@ -32,11 +33,17 @@ services:
       - pgdata:/var/lib/postgresql/data
     env_file:
       - .env
+    networks:
+      - internal
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
       timeout: 3s
       retries: 5
 
+networks:
+  internal:
+
 volumes:
   pgdata:
+  tailscale-state:

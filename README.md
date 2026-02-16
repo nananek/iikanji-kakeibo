@@ -181,10 +181,11 @@ API キーごとにスコープを設定でき、`journals:delete` は `journals
 git clone https://github.com/nananek/iikanji-kakeibo.git
 cd iikanji-kakeibo
 
-# 設定ファイルを作成
-cp docker-compose.yml.example docker-compose.yml
+# 設定ファイルを作成（開発用は docker-compose.dev.yml.example を使用）
+cp docker-compose.dev.yml.example docker-compose.yml
 cp .env.example .env
 # 必要に応じて .env の SECRET_KEY やポート番号を変更
+# 本番環境（Tailscale経由）は docker-compose.yml.example を使用
 
 # 起動（初回はマイグレーションと勘定科目区分の投入を自動実行）
 docker compose up -d
