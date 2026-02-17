@@ -169,7 +169,7 @@ API キーごとにスコープを設定でき、`journals:delete` は `journals
 - Python 3.12 / Flask 3.x
 - PostgreSQL 16
 - SQLAlchemy 2.x / Alembic (Flask-Migrate)
-- Flask-Login / Flask-WTF
+- Flask-Login / Flask-WTF / Flask-Limiter
 - py_webauthn (Passkey / WebAuthn)
 - Bootstrap 5.3 (CDN)
 - Docker Compose
@@ -181,11 +181,15 @@ API キーごとにスコープを設定でき、`journals:delete` は `journals
 git clone https://github.com/nananek/iikanji-kakeibo.git
 cd iikanji-kakeibo
 
-# 設定ファイルを作成（開発用は docker-compose.dev.yml.example を使用）
+# Docker Compose 設定をコピー
+#   開発用（ポート 5000 直接公開）:
 cp docker-compose.dev.yml.example docker-compose.yml
-cp .env.example .env
-# 必要に応じて .env の SECRET_KEY やポート番号を変更
-# 本番環境（Tailscale経由）は docker-compose.yml.example を使用
+#   本番用（Tailscale 経由でアクセス）:
+#   cp docker-compose.yml.example docker-compose.yml
+
+# .env を生成（SECRET_KEY・POSTGRES_PASSWORD をランダム値で初期化）
+./setup-env.sh
+# WEBAUTHN_RP_ID / WEBAUTHN_ORIGIN は環境に合わせて .env を編集してください
 
 # 起動（初回はマイグレーションと勘定科目区分の投入を自動実行）
 docker compose up -d
@@ -193,13 +197,15 @@ docker compose up -d
 
 ブラウザで http://localhost:5000 を開き、ユーザー登録してください。登録時に標準勘定科目が自動で投入されます。
 
+> **Note:** CAPTCHA を有効にする場合は `.env` に `CAPTCHA_PROVIDER` / `CAPTCHA_SITE_KEY` / `CAPTCHA_SECRET_KEY` を設定してください。詳細は `.env.example` のコメントを参照。
+
 ## プロジェクト構成
 
 ```
 app/
 ├── __init__.py          # Flask app factory
 ├── config.py            # 設定
-├── extensions.py        # db, migrate, login_manager
+├── extensions.py        # db, migrate, login_manager, limiter
 ├── models/              # SQLAlchemy モデル
 │   ├── user.py          #   User (user_type: personal/auditor)
 │   ├── account.py       #   AccountType, Account
@@ -237,7 +243,8 @@ app/
 │   ├── fiscal.py        #   月次確定・期間チェック・残高キャッシュ
 │   ├── balance_cache.py #   確定済み残高キャッシュ管理
 │   ├── seed.py          #   標準科目の初期データ
-│   └── tax.py           #   確定申告集計・月次比較・着地予測
+│   ├── tax.py           #   確定申告集計・月次比較・着地予測
+│   └── captcha.py       #   CAPTCHA 検証 (hCaptcha/reCAPTCHA/Turnstile/mCaptcha)
 ├── forms/               # Flask-WTF フォーム
 ├── templates/           # Jinja2 テンプレート
 └── static/              # CSS / JS
