@@ -110,7 +110,7 @@ def new():
                 form=form,
                 grouped_accounts=grouped_accounts,
                 is_edit=False,
-                existing_lines=lines_json,
+                existing_lines=lines_data,
                 closed_periods=closed_periods,
                 restricted_before_year=restricted_before,
             )
@@ -425,7 +425,7 @@ def edit(entry_id):
         grouped_accounts=grouped_accounts,
         is_edit=True,
         entry=entry,
-        existing_lines=json.dumps(existing_lines),
+        existing_lines=existing_lines,
         closed_periods=closed_periods,
         restricted_before_year=restricted_before,
     )
@@ -835,7 +835,7 @@ def suggest_categories():
         for line in entry.lines:
             if payment_account_id and line.account_id == payment_account_id:
                 continue
-            account = Account.query.get(line.account_id)
+            account = Account.query.filter_by(id=line.account_id, user_id=user_id).first()
             if account and account.is_active:
                 result[desc] = {
                     "account_id": account.id,

@@ -101,7 +101,7 @@ def confirm():
         flash("データがありません。もう一度アップロードしてください。", "warning")
         return redirect(url_for("ofx_import.upload"))
 
-    payment_account = Account.query.get(payment_account_id)
+    payment_account = Account.query.filter_by(id=payment_account_id, user_id=get_effective_user_id()).first()
 
     expense_type = AccountType.query.filter_by(code="expense").first()
     default_expense = (
@@ -185,7 +185,7 @@ def confirm():
                 skipped += 1
                 continue
 
-            cat_account = Account.query.get(category_id)
+            cat_account = Account.query.filter_by(id=category_id, user_id=user_id).first()
             is_transfer = cat_account and cat_account.account_type_id in transfer_type_ids
 
             if is_transfer:

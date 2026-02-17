@@ -1,7 +1,7 @@
 from flask import Flask
 
 from app.config import Config
-from app.extensions import db, migrate, login_manager, csrf
+from app.extensions import db, migrate, login_manager, csrf, limiter
 
 
 def create_app(config_class=Config):
@@ -13,6 +13,7 @@ def create_app(config_class=Config):
     migrate.init_app(app, db)
     login_manager.init_app(app)
     csrf.init_app(app)
+    limiter.init_app(app)
 
     # Models (import so Alembic can detect them)
     from app import models  # noqa: F401
@@ -110,6 +111,18 @@ def create_app(config_class=Config):
         from flask import send_from_directory
         return send_from_directory(app.static_folder, "sw.js",
                                    mimetype="application/javascript")
+
+    # Security headers
+    @app.after_request
+    def set_security_headers(response):
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "SAMEORIGIN"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        if not app.debug:
+            response.headers["Strict-Transport-Security"] = (
+                "max-age=31536000; includeSubDomains"
+            )
+        return response
 
     # CLI commands
     register_cli(app)

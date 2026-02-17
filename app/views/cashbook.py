@@ -22,11 +22,11 @@ from app.views.helpers import get_grouped_accounts
 bp = Blueprint("cashbook", __name__, url_prefix="/cashbook")
 
 
-def _account_name(account_id):
+def _account_name(account_id, user_id):
     """科目IDから名前を取得"""
     if not account_id:
         return None
-    a = Account.query.get(account_id)
+    a = Account.query.filter_by(id=account_id, user_id=user_id).first()
     return a.name if a else None
 
 
@@ -89,8 +89,8 @@ def new():
                 if used & locked_ids:
                     flash("提出済みの税務科目を含むため登録できません。", "danger")
                     grouped_accounts = get_grouped_accounts(user_id, allowed_ids)
-                    payment_account_name = _account_name(form.payment_account_id.data)
-                    category_account_name = _account_name(form.category_account_id.data)
+                    payment_account_name = _account_name(form.payment_account_id.data, get_effective_user_id())
+                    category_account_name = _account_name(form.category_account_id.data, get_effective_user_id())
                     return render_template(
                         "cashbook/form.html", form=form, is_edit=False,
                         grouped_accounts=grouped_accounts,
@@ -115,8 +115,8 @@ def new():
         if err:
             flash(err, "danger")
             grouped_accounts = get_grouped_accounts(user_id, allowed_ids)
-            payment_account_name = _account_name(form.payment_account_id.data)
-            category_account_name = _account_name(form.category_account_id.data)
+            payment_account_name = _account_name(form.payment_account_id.data, get_effective_user_id())
+            category_account_name = _account_name(form.category_account_id.data, get_effective_user_id())
             return render_template(
                 "cashbook/form.html", form=form, is_edit=False,
                 grouped_accounts=grouped_accounts,
@@ -140,8 +140,8 @@ def new():
         return redirect(url_for("cashbook.index"))
 
     grouped_accounts = get_grouped_accounts(user_id, allowed_ids)
-    payment_account_name = _account_name(form.payment_account_id.data)
-    category_account_name = _account_name(form.category_account_id.data)
+    payment_account_name = _account_name(form.payment_account_id.data, get_effective_user_id())
+    category_account_name = _account_name(form.category_account_id.data, get_effective_user_id())
     return render_template(
         "cashbook/form.html", form=form, is_edit=False,
         grouped_accounts=grouped_accounts,
@@ -193,8 +193,8 @@ def edit(entry_id):
         if err:
             flash(err, "danger")
             grouped_accounts = get_grouped_accounts(user_id, allowed_ids)
-            payment_account_name = _account_name(form.payment_account_id.data)
-            category_account_name = _account_name(form.category_account_id.data)
+            payment_account_name = _account_name(form.payment_account_id.data, get_effective_user_id())
+            category_account_name = _account_name(form.category_account_id.data, get_effective_user_id())
             return render_template(
                 "cashbook/form.html", form=form, is_edit=True, entry=entry,
                 grouped_accounts=grouped_accounts,
@@ -228,7 +228,7 @@ def edit(entry_id):
             debit_line = [l for l in lines if l.debit_amount > 0][0]
             credit_line = [l for l in lines if l.credit_amount > 0][0]
 
-            debit_account = Account.query.get(debit_line.account_id)
+            debit_account = Account.query.filter_by(id=debit_line.account_id, user_id=user_id).first()
             if debit_account and debit_account.account_type.code in ("asset", "liability"):
                 # 収入パターン: 借方=資産、貸方=収益
                 form.transaction_type.data = "income"
@@ -243,8 +243,8 @@ def edit(entry_id):
                 form.amount.data = int(debit_line.debit_amount)
 
     grouped_accounts = get_grouped_accounts(get_effective_user_id(), allowed_ids)
-    payment_account_name = _account_name(form.payment_account_id.data)
-    category_account_name = _account_name(form.category_account_id.data)
+    payment_account_name = _account_name(form.payment_account_id.data, get_effective_user_id())
+    category_account_name = _account_name(form.category_account_id.data, get_effective_user_id())
     return render_template(
         "cashbook/form.html", form=form, is_edit=True, entry=entry,
         grouped_accounts=grouped_accounts,

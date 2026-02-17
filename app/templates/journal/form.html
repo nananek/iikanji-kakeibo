@@ -233,7 +233,7 @@ onFiscalPeriodChange();
 
 // 初期化
 {% if existing_lines is defined %}
-var existingLines = {{ existing_lines | safe }};
+var existingLines = {{ existing_lines | tojson }};
 existingLines.forEach(function(l) { addLine(l); });
 {% else %}
 addLine();

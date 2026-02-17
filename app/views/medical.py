@@ -176,7 +176,7 @@ def new():
     grouped_accounts = get_grouped_accounts(get_effective_user_id())
     payment_account_name = None
     if form.payment_account_id.data:
-        a = Account.query.get(form.payment_account_id.data)
+        a = Account.query.filter_by(id=form.payment_account_id.data, user_id=get_effective_user_id()).first()
         payment_account_name = a.name if a else None
     return render_template(
         "medical/form.html", form=form, is_edit=False,
@@ -216,7 +216,7 @@ def edit(expense_id):
     grouped_accounts = get_grouped_accounts(get_effective_user_id())
     payment_account_name = None
     if form.payment_account_id.data:
-        a = Account.query.get(form.payment_account_id.data)
+        a = Account.query.filter_by(id=form.payment_account_id.data, user_id=get_effective_user_id()).first()
         payment_account_name = a.name if a else None
     return render_template(
         "medical/form.html", form=form, is_edit=True, expense=expense,

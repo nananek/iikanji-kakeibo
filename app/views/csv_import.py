@@ -97,7 +97,7 @@ def mapping():
     headers = preview["headers"]
     col_indices = list(range(len(headers)))
 
-    payment_account = Account.query.get(payment_account_id)
+    payment_account = Account.query.filter_by(id=payment_account_id, user_id=get_effective_user_id()).first()
 
     if request.method == "POST":
         date_col = request.form.get("date_col", type=int)
@@ -188,7 +188,7 @@ def confirm():
     if not parsed or not payment_account_id:
         flash("データがありません。もう一度アップロードしてください。", "warning")
         return redirect(url_for("csv_import.upload"))
-    payment_account = Account.query.get(payment_account_id)
+    payment_account = Account.query.filter_by(id=payment_account_id, user_id=get_effective_user_id()).first()
 
     # デフォルト費目を取得
     expense_type = AccountType.query.filter_by(code="expense").first()
@@ -274,7 +274,7 @@ def confirm():
                 continue
 
             # 振替かどうか判定
-            cat_account = Account.query.get(category_id)
+            cat_account = Account.query.filter_by(id=category_id, user_id=user_id).first()
             is_transfer = cat_account and cat_account.account_type_id in transfer_type_ids
 
             if is_transfer:

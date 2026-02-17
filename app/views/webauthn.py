@@ -163,4 +163,8 @@ def authenticate_verify():
     db.session.commit()
 
     login_user(stored.user, remember=True)
-    return jsonify(ok=True, redirect=request.args.get("next", "/"))
+    next_page = request.args.get("next", "/")
+    parsed = urlparse(next_page)
+    if parsed.netloc or parsed.scheme:
+        next_page = "/"
+    return jsonify(ok=True, redirect=next_page)
