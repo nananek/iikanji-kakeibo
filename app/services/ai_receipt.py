@@ -72,8 +72,14 @@ def encrypt_api_key(plain_key: str) -> bytes:
 
 
 def decrypt_api_key(encrypted: bytes) -> str:
-    """暗号化されたAPIキーを復号"""
-    return _get_fernet().decrypt(encrypted).decode()
+    """暗号化されたAPIキーを復号。SECRET_KEY 変更時は InvalidToken になる。"""
+    try:
+        return _get_fernet().decrypt(encrypted).decode()
+    except Exception:
+        raise ValueError(
+            "APIキーの復号に失敗しました。SECRET_KEYが変更された可能性があります。"
+            "設定画面でAPIキーを再登録してください。"
+        )
 
 
 # --- プロバイダー設定 ---
