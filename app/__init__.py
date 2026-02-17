@@ -73,6 +73,15 @@ def create_app(config_class=Config):
     def inject_dev_flag():
         return {"is_dev": app.debug}
 
+    # Context processor for CAPTCHA
+    @app.context_processor
+    def inject_captcha_config():
+        return {
+            "captcha_provider": app.config.get("CAPTCHA_PROVIDER"),
+            "captcha_site_key": app.config.get("CAPTCHA_SITE_KEY"),
+            "captcha_api_url": app.config.get("CAPTCHA_API_URL"),
+        }
+
     # Context processor for audit
     @app.context_processor
     def inject_audit_context():

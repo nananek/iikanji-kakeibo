@@ -15,6 +15,12 @@ class Config:
     REMEMBER_COOKIE_HTTPONLY = True
     REMEMBER_COOKIE_SAMESITE = "Lax"
 
+    # CAPTCHA (optional)
+    CAPTCHA_PROVIDER = os.environ.get("CAPTCHA_PROVIDER")       # hcaptcha|recaptcha|turnstile|mcaptcha
+    CAPTCHA_SITE_KEY = os.environ.get("CAPTCHA_SITE_KEY")
+    CAPTCHA_SECRET_KEY = os.environ.get("CAPTCHA_SECRET_KEY")
+    CAPTCHA_API_URL = os.environ.get("CAPTCHA_API_URL")         # mCaptcha only
+
     # WebAuthn / Passkey
     WEBAUTHN_RP_ID = os.environ.get("WEBAUTHN_RP_ID", "localhost")
     WEBAUTHN_RP_NAME = os.environ.get("WEBAUTHN_RP_NAME", "いいかんじ™家計簿")

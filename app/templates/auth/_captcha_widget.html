@@ -1,0 +1,23 @@
+{% if captcha_provider and captcha_site_key %}
+{% if captcha_provider == 'hcaptcha' %}
+<div class="mb-3">
+  <script src="https://js.hcaptcha.com/1/api.js" async defer></script>
+  <div class="h-captcha" data-sitekey="{{ captcha_site_key }}"></div>
+</div>
+{% elif captcha_provider == 'recaptcha' %}
+<div class="mb-3">
+  <script src="https://www.google.com/recaptcha/api.js" async defer></script>
+  <div class="g-recaptcha" data-sitekey="{{ captcha_site_key }}"></div>
+</div>
+{% elif captcha_provider == 'turnstile' %}
+<div class="mb-3">
+  <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
+  <div class="cf-turnstile" data-sitekey="{{ captcha_site_key }}"></div>
+</div>
+{% elif captcha_provider == 'mcaptcha' and captcha_api_url %}
+<div class="mb-3">
+  <div class="mcaptcha__widget" data-sitekey="{{ captcha_site_key }}"></div>
+  <script src="{{ captcha_api_url }}/widget.js" async defer></script>
+</div>
+{% endif %}
+{% endif %}

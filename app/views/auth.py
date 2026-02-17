@@ -6,6 +6,19 @@ from app.extensions import db, limiter
 from app.models.user import User
 from app.forms.auth import LoginForm, RegisterForm
 from app.services.seed import seed_accounts_for_user
+from app.services.captcha import is_captcha_enabled, get_captcha_response_field, verify_captcha_token
+
+
+def _check_captcha() -> bool:
+    """CAPTCHA 検証。未設定時は常に True。"""
+    if not is_captcha_enabled():
+        return True
+    field = get_captcha_response_field()
+    token = request.form.get(field, "")
+    if not token or not verify_captcha_token(token):
+        flash("CAPTCHA認証に失敗しました。もう一度お試しください。", "danger")
+        return False
+    return True
 
 
 def _safe_next_url(fallback):
@@ -28,6 +41,8 @@ def login():
 
     form = LoginForm()
     if form.validate_on_submit():
+        if not _check_captcha():
+            return render_template("auth/login.html", form=form)
         user = User.query.filter_by(username=form.username.data).first()
         if user and user.user_type == "personal" and user.check_password(form.password.data):
             login_user(user, remember=True)
@@ -45,6 +60,8 @@ def login_auditor():
 
     form = LoginForm()
     if form.validate_on_submit():
+        if not _check_captcha():
+            return render_template("auth/login_auditor.html", form=form)
         user = User.query.filter_by(username=form.username.data).first()
         if user and user.user_type == "auditor" and user.check_password(form.password.data):
             login_user(user, remember=True)
@@ -62,6 +79,8 @@ def register():
 
     form = RegisterForm()
     if form.validate_on_submit():
+        if not _check_captcha():
+            return render_template("auth/register.html", form=form)
         user = User(
             username=form.username.data,
             email=form.email.data,
@@ -87,6 +106,8 @@ def register_auditor():
 
     form = RegisterForm()
     if form.validate_on_submit():
+        if not _check_captcha():
+            return render_template("auth/register_auditor.html", form=form)
         user = User(
             username=form.username.data,
             email=form.email.data,

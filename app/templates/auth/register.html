@@ -37,6 +37,7 @@
             <div class="invalid-feedback d-block">{{ error }}</div>
             {% endfor %}
           </div>
+          {% include "auth/_captcha_widget.html" %}
           {{ form.submit(class="btn btn-primary w-100") }}
         </form>
         <div class="text-center mt-3">
