@@ -1,6 +1,6 @@
 services:
   web:
-    image: ghcr.io/nananek/iikanji-kakeibo:1.6.9
+    image: ghcr.io/nananek/iikanji-kakeibo:2.0.0
     ports:
       - "5000:5000"
     env_file:
