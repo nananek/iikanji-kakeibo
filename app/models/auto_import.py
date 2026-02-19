@@ -44,7 +44,7 @@ class ProcessedFile(db.Model):
     file_path = db.Column(db.String(500), nullable=False)
     etag = db.Column(db.String(100), nullable=True)
     draft_id = db.Column(
-        db.Integer, db.ForeignKey("ai_drafts.id"), nullable=True
+        db.Integer, db.ForeignKey("ai_drafts.id", ondelete="SET NULL"), nullable=True
     )
     status = db.Column(db.String(20), nullable=False, default="success")
     error_message = db.Column(db.Text, nullable=True)
