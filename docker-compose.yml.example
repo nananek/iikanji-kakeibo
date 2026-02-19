@@ -17,7 +17,7 @@ services:
     restart: unless-stopped
 
   web:
-    image: ghcr.io/nananek/iikanji-kakeibo:2.3.0
+    image: ghcr.io/nananek/iikanji-kakeibo:2.4.0
     network_mode: service:tailscale
     env_file:
       - .env
@@ -28,7 +28,7 @@ services:
         condition: service_healthy
 
   worker:
-    image: ghcr.io/nananek/iikanji-kakeibo-worker:2.3.0
+    image: ghcr.io/nananek/iikanji-kakeibo-worker:2.4.0
     network_mode: service:tailscale
     env_file:
       - .env

@@ -116,12 +116,21 @@ iPhone等のスマートフォン縦長画面に最適化されたレスポン�
 
 ### REST API
 
-外部プログラムから仕訳の起票・閲覧・削除ができる REST API を提供。API キーによる Bearer 認証で、設定画面からキーの発行・スコープ管理が可能です。Python クライアントライブラリ [`iikanji`](https://github.com/nananek/iikanji-kakeibo-client-py) も利用できます。
+外部プログラムから仕訳の起票・閲覧・削除、AI 証憑仕訳ができる REST API を提供。API キーによる Bearer 認証で、設定画面からキーの発行・スコープ管理が可能です。Python クライアントライブラリ [`iikanji`](https://github.com/nananek/iikanji-kakeibo-client-py) も利用できます。
 
-- `POST /api/v1/journals` — 仕訳起票（スコープ: `journals:create`）
-- `GET /api/v1/journals` — 仕訳一覧（スコープ: `journals:read`）
-- `GET /api/v1/journals/<id>` — 仕訳詳細（スコープ: `journals:read`）
-- `DELETE /api/v1/journals/<id>` — 仕訳削除（スコープ: `journals:delete`）
+**仕訳 API** (`journals:create` / `journals:read` / `journals:delete`):
+
+- `POST /api/v1/journals` — 仕訳起票（`draft_id` 指定で下書きを確定）
+- `GET /api/v1/journals` — 仕訳一覧
+- `GET /api/v1/journals/<id>` — 仕訳詳細
+- `DELETE /api/v1/journals/<id>` — 仕訳削除
+
+**AI 証憑仕訳 API** (`ai:analyze`):
+
+- `POST /api/v1/ai/analyze` — 画像+メモを送信し、AI 解析して下書きを作成（`notify=1` で Webhook 通知）
+- `GET /api/v1/ai/drafts` — 下書き一覧（`?status=analyzed/done/all`）
+- `GET /api/v1/ai/drafts/<id>` — 下書き詳細（候補データ含む）
+- `DELETE /api/v1/ai/drafts/<id>` — 下書き削除
 
 API キーごとにスコープを設定でき、`journals:delete` は `journals:read` を前提とします。
 
@@ -248,7 +257,7 @@ app/
 │   ├── medical.py       #   医療費管理
 │   ├── reports.py       #   レポート
 │   ├── accounts.py      #   勘定科目管理 (JSON API)
-│   ├── api.py           #   REST API (仕訳起票・Bearer認証)
+│   ├── api.py           #   REST API (仕訳・AI証憑仕訳・Bearer認証)
 │   ├── auditor.py       #   監査ダッシュボード・代理閲覧
 │   ├── webauthn.py      #   Passkey WebAuthn API
 │   ├── helpers.py       #   ビュー共通ヘルパー
