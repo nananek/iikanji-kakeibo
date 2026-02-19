@@ -128,11 +128,11 @@ iPhone等のスマートフォン縦長画面に最適化されたレスポン�
 **AI 証憑仕訳 API** (`ai:analyze`):
 
 - `POST /api/v1/ai/analyze` — 画像+メモを送信し、AI 解析して下書きを作成（`notify=1` で Webhook 通知）
-- `GET /api/v1/ai/drafts` — 下書き一覧（`?status=analyzed/done/all`）
+- `GET /api/v1/ai/drafts` — 下書き一覧（`?status=analyzed/done/all&page=1&per_page=50`）
 - `GET /api/v1/ai/drafts/<id>` — 下書き詳細（候補データ含む）
 - `DELETE /api/v1/ai/drafts/<id>` — 下書き削除
 
-API キーごとにスコープを設定でき、`journals:delete` は `journals:read` を前提とします。
+AI 解析 API にはレート制限（30リクエスト/時間）があります。API キーごとにスコープを設定でき、`journals:delete` は `journals:read` を前提とします。
 
 ### 勘定科目管理
 
