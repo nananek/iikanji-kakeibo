@@ -40,8 +40,10 @@ def get_tax_summary(user_id, year):
         .filter(
             Account.user_id == user_id,
             Account.tax_category.isnot(None),
+            Account.tax_category.notin_(["medical", "resident_tax"]),
             JournalEntry.date >= start,
             JournalEntry.date <= end,
+            JournalEntry.source != "closing",
         )
         .group_by(Account.tax_category, Account.name)
         .order_by(Account.tax_category, Account.name)
