@@ -199,6 +199,44 @@ docker compose up -d
 
 > **Note:** CAPTCHA を有効にする場合は `.env` に `CAPTCHA_PROVIDER` / `CAPTCHA_SITE_KEY` / `CAPTCHA_SECRET_KEY` を設定してください。詳細は `.env.example` のコメントを参照。
 
+## 自動取込
+
+Nextcloud 等の WebDAV ストレージからレシート画像を定期取得し、AI で自動仕訳して下書きに保存する機能です。ユーザーは設定画面からインポート元（WebDAV）と Webhook 通知（Discord 等）を設定します。
+
+### 定期実行の設定（systemd timer）
+
+```ini
+# /etc/systemd/system/iikanji-auto-import.service
+[Unit]
+Description=いいかんじ家計簿 自動取込
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/docker exec iikanji-web flask auto-import
+```
+
+```ini
+# /etc/systemd/system/iikanji-auto-import.timer
+[Unit]
+Description=いいかんじ家計簿 自動取込タイマー
+
+[Timer]
+OnCalendar=*:0/30
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+```
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now iikanji-auto-import.timer
+```
+
+`flask auto-import --user-id N` で特定ユーザーのみ、`--dry-run` で動作確認が可能です。
+
 ## プロジェクト構成
 
 ```
@@ -216,6 +254,7 @@ app/
 │   ├── audit.py         #   AuditGrant, AuditGrantAccount
 │   ├── api_key.py       #   APIKey (REST API 認証)
 │   ├── ai_config.py     #   UserAIConfig
+│   ├── auto_import.py   #   AutoImportSource, ProcessedFile, WebhookConfig
 │   └── webauthn.py      #   WebAuthnCredential
 ├── views/               # Blueprint (ルーティング)
 │   ├── auth.py          #   認証 (個人/監査用ログイン・登録)
@@ -244,7 +283,11 @@ app/
 │   ├── balance_cache.py #   確定済み残高キャッシュ管理
 │   ├── seed.py          #   標準科目の初期データ
 │   ├── tax.py           #   確定申告集計・月次比較・着地予測
-│   └── captcha.py       #   CAPTCHA 検証 (hCaptcha/reCAPTCHA/Turnstile/mCaptcha)
+│   ├── captcha.py       #   CAPTCHA 検証 (hCaptcha/reCAPTCHA/Turnstile/mCaptcha)
+│   ├── notify.py        #   Webhook 通知 (Discord 等)
+│   ├── auto_import.py   #   自動取込オーケストレーター
+│   └── sources/         #   外部ソースプロバイダー
+│       └── webdav.py    #     WebDAV (Nextcloud 等)
 ├── forms/               # Flask-WTF フォーム
 ├── templates/           # Jinja2 テンプレート
 └── static/              # CSS / JS

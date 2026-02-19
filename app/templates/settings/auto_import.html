@@ -103,23 +103,11 @@
       <div class="card-body">
         <h6>1. インポート元を追加</h6>
         <p class="small">Nextcloud 等の WebDAV URL とフォルダを設定します。</p>
-        <h6>2. 定期実行を設定</h6>
-        <p class="small">
-          cron 等で <code>flask auto-import</code> を定期実行すると、
-          新しいレシート画像を自動でAI解析し下書きに保存します。
-        </p>
-        <h6>3. 下書きを確認</h6>
+        <h6>2. 下書きを確認</h6>
         <p class="small">
           <a href="{{ url_for('ai_journal.drafts') }}">AI証憑仕訳の下書き一覧</a>
           から仕訳を確認・登録できます。
         </p>
-      </div>
-    </div>
-    <div class="card shadow-sm">
-      <div class="card-header">cron 設定例</div>
-      <div class="card-body">
-        <code class="small d-block">*/30 * * * * docker exec iikanji-web flask auto-import</code>
-        <p class="small text-muted mt-2 mb-0">30分ごとに自動取込を実行</p>
       </div>
     </div>
   </div>
