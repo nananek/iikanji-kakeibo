@@ -37,6 +37,10 @@
               </small>
             </div>
             <div class="btn-group btn-group-sm">
+              <button type="button" class="btn btn-outline-primary test-source-btn"
+                      data-source-id="{{ source.id }}" title="接続テスト">
+                <i class="bi bi-plug"></i>
+              </button>
               <form method="POST" action="{{ url_for('settings.auto_import_source_toggle', source_id=source.id) }}" class="d-inline">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <button type="submit" class="btn btn-outline-secondary"
@@ -112,4 +116,43 @@
     </div>
   </div>
 </div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.querySelectorAll('.test-source-btn').forEach(function(btn) {
+  btn.addEventListener('click', async function() {
+    const sourceId = this.dataset.sourceId;
+    const icon = this.querySelector('i');
+    const item = this.closest('.list-group-item');
+
+    this.disabled = true;
+    icon.className = 'spinner-border spinner-border-sm';
+
+    // 既存の結果を消す
+    const old = item.querySelector('.test-result');
+    if (old) old.remove();
+
+    try {
+      const resp = await fetch(`{{ url_for('settings.auto_import') }}sources/${sourceId}/test`, {
+        method: 'POST',
+        headers: {'X-CSRFToken': '{{ csrf_token() }}'},
+      });
+      const json = await resp.json();
+      const div = document.createElement('div');
+      div.className = 'test-result small mt-1 text-' + (json.ok ? 'success' : 'danger');
+      div.textContent = json.message;
+      item.querySelector('div').appendChild(div);
+    } catch (e) {
+      const div = document.createElement('div');
+      div.className = 'test-result small mt-1 text-danger';
+      div.textContent = '接続テストに失敗しました。';
+      item.querySelector('div').appendChild(div);
+    } finally {
+      this.disabled = false;
+      icon.className = 'bi bi-plug';
+    }
+  });
+});
+</script>
 {% endblock %}

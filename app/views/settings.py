@@ -599,6 +599,52 @@ def auto_import_source_add():
     return render_template("settings/auto_import_source_form.html")
 
 
+@bp.route("/auto-import/sources/test", methods=["POST"])
+@login_required
+def auto_import_source_test():
+    """フォーム入力値で接続テスト（AJAX）"""
+    url = request.form.get("url", "").strip()
+    username = request.form.get("username", "").strip()
+    password = request.form.get("password", "").strip()
+
+    if not all([url, username, password]):
+        return jsonify({"ok": False, "message": "必須項目を入力してください。"}), 400
+
+    from app.services.sources import validate_external_url
+    ok, err = validate_external_url(url)
+    if not ok:
+        return jsonify({"ok": False, "message": f"URL が不正です: {err}"}), 400
+
+    from app.services.sources.webdav import WebDAVProvider
+    provider = WebDAVProvider(url, username, password)
+    ok, err = provider.test_connection()
+    if ok:
+        files = provider.list_files()
+        return jsonify({"ok": True, "message": f"接続成功（{len(files)}件のファイルを検出）"})
+    return jsonify({"ok": False, "message": f"接続失敗: {err}"}), 400
+
+
+@bp.route("/auto-import/sources/<int:source_id>/test", methods=["POST"])
+@login_required
+def auto_import_source_test_existing(source_id):
+    """既存ソースの接続テスト（AJAX）"""
+    source = AutoImportSource.query.filter_by(
+        id=source_id, user_id=current_user.id
+    ).first_or_404()
+
+    from app.services.auto_import import _build_provider
+    try:
+        provider = _build_provider(source)
+    except ValueError as e:
+        return jsonify({"ok": False, "message": str(e)}), 400
+
+    ok, err = provider.test_connection()
+    if ok:
+        files = provider.list_files()
+        return jsonify({"ok": True, "message": f"接続成功（{len(files)}件のファイルを検出）"})
+    return jsonify({"ok": False, "message": f"接続失敗: {err}"}), 400
+
+
 @bp.route("/auto-import/sources/<int:source_id>/toggle", methods=["POST"])
 @login_required
 def auto_import_source_toggle(source_id):
