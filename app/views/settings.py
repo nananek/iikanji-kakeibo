@@ -1,3 +1,4 @@
+import json
 from datetime import date, datetime, timezone
 
 from flask import Blueprint, render_template, redirect, url_for, flash, request, jsonify
@@ -11,6 +12,7 @@ from app.models.webauthn import WebAuthnCredential
 from app.models.ai_config import UserAIConfig
 from app.models.api_key import APIKey, ALL_SCOPES, SCOPE_LABELS, SCOPE_DEPENDENCIES
 from app.models.audit import AuditGrant, AuditGrantAccount
+from app.models.auto_import import AutoImportSource, WebhookConfig
 from app.services.ai_receipt import (
     encrypt_api_key, PROVIDER_DEFAULTS, PROVIDER_LABELS,
 )
@@ -506,3 +508,155 @@ def audit_accounts_save(grant_id):
     db.session.commit()
     flash("公開科目を保存しました。", "success")
     return redirect(url_for("settings.audit_accounts", grant_id=grant_id))
+
+
+# --- 自動取込 ---
+
+
+@bp.route("/auto-import")
+@login_required
+def auto_import():
+    """自動取込設定ページ"""
+    sources = (
+        AutoImportSource.query
+        .filter_by(user_id=current_user.id)
+        .order_by(AutoImportSource.created_at.desc())
+        .all()
+    )
+    webhooks = (
+        WebhookConfig.query
+        .filter_by(user_id=current_user.id)
+        .order_by(WebhookConfig.created_at.desc())
+        .all()
+    )
+    # config_json をパースして表示用に展開
+    for s in sources:
+        s._config = json.loads(s.config_json)
+    return render_template(
+        "settings/auto_import.html",
+        sources=sources,
+        webhooks=webhooks,
+    )
+
+
+@bp.route("/auto-import/sources/add", methods=["GET", "POST"])
+@login_required
+def auto_import_source_add():
+    """インポート元の追加"""
+    if request.method == "POST":
+        from app.services.auto_import import encrypt_credentials
+
+        name = request.form.get("name", "").strip()
+        provider = request.form.get("provider", "webdav")
+        url = request.form.get("url", "").strip()
+        username = request.form.get("username", "").strip()
+        password = request.form.get("password", "").strip()
+        folder_path = request.form.get("folder_path", "/").strip()
+
+        if not all([name, url, username, password]):
+            flash("必須項目を入力してください。", "danger")
+            return render_template("settings/auto_import_source_form.html")
+
+        # 接続テスト
+        from app.services.sources.webdav import WebDAVProvider
+        test_provider = WebDAVProvider(url, username, password)
+        ok, err = test_provider.test_connection()
+        if not ok:
+            flash(f"接続テストに失敗しました: {err}", "danger")
+            return render_template("settings/auto_import_source_form.html")
+
+        config = {
+            "url": url,
+            "username": username,
+            "folder_path": folder_path,
+            "file_extensions": ["jpg", "jpeg", "png", "webp"],
+        }
+
+        source = AutoImportSource(
+            user_id=current_user.id,
+            name=name,
+            provider=provider,
+            config_json=json.dumps(config, ensure_ascii=False),
+            credentials_encrypted=encrypt_credentials({"password": password}),
+        )
+        db.session.add(source)
+        db.session.commit()
+
+        flash(f"インポート元「{name}」を追加しました。", "success")
+        return redirect(url_for("settings.auto_import"))
+
+    return render_template("settings/auto_import_source_form.html")
+
+
+@bp.route("/auto-import/sources/<int:source_id>/toggle", methods=["POST"])
+@login_required
+def auto_import_source_toggle(source_id):
+    """インポート元の有効/無効切り替え"""
+    source = AutoImportSource.query.filter_by(
+        id=source_id, user_id=current_user.id
+    ).first_or_404()
+    source.is_active = not source.is_active
+    db.session.commit()
+    status = "有効" if source.is_active else "無効"
+    flash(f"「{source.name}」を{status}にしました。", "success")
+    return redirect(url_for("settings.auto_import"))
+
+
+@bp.route("/auto-import/sources/<int:source_id>/delete", methods=["POST"])
+@login_required
+def auto_import_source_delete(source_id):
+    """インポート元の削除"""
+    source = AutoImportSource.query.filter_by(
+        id=source_id, user_id=current_user.id
+    ).first_or_404()
+    name = source.name
+    db.session.delete(source)
+    db.session.commit()
+    flash(f"インポート元「{name}」を削除しました。", "success")
+    return redirect(url_for("settings.auto_import"))
+
+
+@bp.route("/auto-import/webhooks/add", methods=["GET", "POST"])
+@login_required
+def auto_import_webhook_add():
+    """Webhook 通知の追加"""
+    if request.method == "POST":
+        name = request.form.get("name", "").strip()
+        provider = request.form.get("provider", "discord")
+        webhook_url = request.form.get("webhook_url", "").strip()
+        events = request.form.getlist("events")
+
+        if not all([name, webhook_url]):
+            flash("必須項目を入力してください。", "danger")
+            return render_template("settings/auto_import_webhook_form.html")
+        if not events:
+            events = ["import_success"]
+
+        webhook = WebhookConfig(
+            user_id=current_user.id,
+            name=name,
+            provider=provider,
+            webhook_url=webhook_url,
+            events_json=json.dumps(events),
+        )
+        db.session.add(webhook)
+        db.session.commit()
+
+        flash(f"通知設定「{name}」を追加しました。", "success")
+        return redirect(url_for("settings.auto_import"))
+
+    return render_template("settings/auto_import_webhook_form.html")
+
+
+@bp.route("/auto-import/webhooks/<int:webhook_id>/delete", methods=["POST"])
+@login_required
+def auto_import_webhook_delete(webhook_id):
+    """Webhook 通知の削除"""
+    webhook = WebhookConfig.query.filter_by(
+        id=webhook_id, user_id=current_user.id
+    ).first_or_404()
+    name = webhook.name
+    db.session.delete(webhook)
+    db.session.commit()
+    flash(f"通知設定「{name}」を削除しました。", "success")
+    return redirect(url_for("settings.auto_import"))

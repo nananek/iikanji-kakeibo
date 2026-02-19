@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block title %}Webhook 通知の追加 - いいかんじ™家計簿{% endblock %}
+
+{% block content %}
+<div class="row">
+  <div class="col-lg-8">
+    <h2><i class="bi bi-bell-fill"></i> Webhook 通知の追加</h2>
+
+    <div class="card">
+      <div class="card-body">
+        <form method="POST">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+          <div class="mb-3">
+            <label class="form-label" for="nameInput">名前</label>
+            <input type="text" class="form-control" name="name" id="nameInput"
+                   placeholder="例: Discord 家計簿通知" required>
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label" for="providerSelect">プロバイダー</label>
+            <select class="form-select" name="provider" id="providerSelect">
+              <option value="discord" selected>Discord</option>
+            </select>
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label" for="webhookUrlInput">Webhook URL</label>
+            <input type="url" class="form-control" name="webhook_url" id="webhookUrlInput"
+                   placeholder="https://discord.com/api/webhooks/..." required>
+            <div class="form-text">
+              Discord: サーバー設定 → 連携サービス → ウェブフック → 新しいウェブフック
+            </div>
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label">通知イベント</label>
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" name="events"
+                     value="import_success" id="eventSuccess" checked>
+              <label class="form-check-label" for="eventSuccess">
+                取込成功（下書きが作成されたとき）
+              </label>
+            </div>
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" name="events"
+                     value="import_error" id="eventError" checked>
+              <label class="form-check-label" for="eventError">
+                エラー発生
+              </label>
+            </div>
+          </div>
+
+          <div class="d-flex gap-2">
+            <button type="submit" class="btn btn-primary">
+              <i class="bi bi-check-lg"></i> 保存
+            </button>
+            <a href="{{ url_for('settings.auto_import') }}" class="btn btn-outline-secondary">キャンセル</a>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

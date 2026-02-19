@@ -1,0 +1,127 @@
+{% extends "base.html" %}
+{% block title %}自動取込設定 - いいかんじ™家計簿{% endblock %}
+
+{% block content %}
+<div class="row">
+  <div class="col-lg-8">
+    <h2><i class="bi bi-cloud-download"></i> 自動取込設定</h2>
+    <p class="text-muted">
+      外部ストレージのレシート画像を定期的に取得し、AIで自動仕訳して下書きに保存します。
+    </p>
+
+    <!-- インポート元 -->
+    <div class="card mb-4">
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <span><i class="bi bi-folder2-open"></i> インポート元</span>
+        <a href="{{ url_for('settings.auto_import_source_add') }}" class="btn btn-sm btn-primary">
+          <i class="bi bi-plus-lg"></i> 追加
+        </a>
+      </div>
+      <div class="card-body">
+        {% if sources %}
+        <div class="list-group list-group-flush">
+          {% for source in sources %}
+          <div class="list-group-item d-flex justify-content-between align-items-start">
+            <div>
+              <h6 class="mb-1">
+                {{ source.name }}
+                {% if source.is_active %}
+                <span class="badge bg-success">有効</span>
+                {% else %}
+                <span class="badge bg-secondary">無効</span>
+                {% endif %}
+              </h6>
+              <small class="text-muted">
+                <i class="bi bi-hdd-network"></i> {{ source.provider | upper }}
+                — {{ source._config.url }}
+              </small>
+            </div>
+            <div class="btn-group btn-group-sm">
+              <form method="POST" action="{{ url_for('settings.auto_import_source_toggle', source_id=source.id) }}" class="d-inline">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button type="submit" class="btn btn-outline-secondary"
+                        title="{{ '無効にする' if source.is_active else '有効にする' }}">
+                  <i class="bi bi-{{ 'pause' if source.is_active else 'play' }}"></i>
+                </button>
+              </form>
+              <form method="POST" action="{{ url_for('settings.auto_import_source_delete', source_id=source.id) }}"
+                    class="d-inline" onsubmit="return confirm('インポート元「{{ source.name }}」を削除しますか？')">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button type="submit" class="btn btn-outline-danger">
+                  <i class="bi bi-trash"></i>
+                </button>
+              </form>
+            </div>
+          </div>
+          {% endfor %}
+        </div>
+        {% else %}
+        <p class="text-muted mb-0">インポート元が設定されていません。</p>
+        {% endif %}
+      </div>
+    </div>
+
+    <!-- Webhook 通知 -->
+    <div class="card mb-4">
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <span><i class="bi bi-bell"></i> Webhook 通知</span>
+        <a href="{{ url_for('settings.auto_import_webhook_add') }}" class="btn btn-sm btn-primary">
+          <i class="bi bi-plus-lg"></i> 追加
+        </a>
+      </div>
+      <div class="card-body">
+        {% if webhooks %}
+        <div class="list-group list-group-flush">
+          {% for webhook in webhooks %}
+          <div class="list-group-item d-flex justify-content-between align-items-start">
+            <div>
+              <h6 class="mb-1">{{ webhook.name }}</h6>
+              <small class="text-muted">
+                <i class="bi bi-broadcast"></i> {{ webhook.provider | capitalize }}
+              </small>
+            </div>
+            <form method="POST" action="{{ url_for('settings.auto_import_webhook_delete', webhook_id=webhook.id) }}"
+                  onsubmit="return confirm('通知設定「{{ webhook.name }}」を削除しますか？')">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <button type="submit" class="btn btn-sm btn-outline-danger">
+                <i class="bi bi-trash"></i>
+              </button>
+            </form>
+          </div>
+          {% endfor %}
+        </div>
+        {% else %}
+        <p class="text-muted mb-0">Webhook 通知が設定されていません。</p>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <div class="col-lg-4">
+    <div class="card shadow-sm mb-3">
+      <div class="card-header">使い方</div>
+      <div class="card-body">
+        <h6>1. インポート元を追加</h6>
+        <p class="small">Nextcloud 等の WebDAV URL とフォルダを設定します。</p>
+        <h6>2. 定期実行を設定</h6>
+        <p class="small">
+          cron 等で <code>flask auto-import</code> を定期実行すると、
+          新しいレシート画像を自動でAI解析し下書きに保存します。
+        </p>
+        <h6>3. 下書きを確認</h6>
+        <p class="small">
+          <a href="{{ url_for('ai_journal.drafts') }}">AI証憑仕訳の下書き一覧</a>
+          から仕訳を確認・登録できます。
+        </p>
+      </div>
+    </div>
+    <div class="card shadow-sm">
+      <div class="card-header">cron 設定例</div>
+      <div class="card-body">
+        <code class="small d-block">*/30 * * * * docker exec iikanji-web flask auto-import</code>
+        <p class="small text-muted mt-2 mb-0">30分ごとに自動取込を実行</p>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
