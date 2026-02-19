@@ -203,7 +203,7 @@ docker compose up -d
 
 Nextcloud 等の WebDAV ストレージからレシート画像を定期取得し、AI で自動仕訳して下書きに保存する機能です。ユーザーは設定画面からインポート元（WebDAV）と Webhook 通知（Discord 等）を設定します。
 
-docker-compose に含まれる `scheduler` サービスがデフォルト30分間隔で自動取込を実行します。間隔は `.env` で変更可能です:
+docker-compose に含まれる `worker` サービス（軽量な専用イメージ）がデフォルト30分間隔で自動取込を実行します。間隔は `.env` で変更可能です:
 
 ```bash
 # 自動取込の実行間隔（秒）。デフォルト: 1800（30分）
