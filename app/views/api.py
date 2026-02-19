@@ -7,7 +7,7 @@ from datetime import date as date_type, datetime, timezone
 
 from flask import Blueprint, jsonify, request, g
 
-from app.extensions import db
+from app.extensions import db, limiter
 from app.models.api_key import APIKey
 from app.models.ai_config import UserAIConfig
 from app.models.ai_draft import AIDraft
@@ -128,8 +128,12 @@ def create_journal():
     draft_id = data.get("draft_id")
     draft_done = None
     if draft_id:
+        try:
+            draft_id = int(draft_id)
+        except (TypeError, ValueError):
+            return jsonify({"error": "draft_id は整数で指定してください。"}), 400
         draft = AIDraft.query.filter_by(
-            id=int(draft_id), user_id=user_id, status="analyzed"
+            id=draft_id, user_id=user_id, status="analyzed"
         ).first()
         if not draft:
             return jsonify({
@@ -263,6 +267,7 @@ _ALLOWED_MIME_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
 
 
 @bp.route("/ai/analyze", methods=["POST"])
+@limiter.limit("30/hour")
 @api_key_required(scope="ai:analyze")
 def ai_analyze():
     """画像を AI 解析して下書きを作成する。
@@ -366,17 +371,29 @@ def ai_drafts():
     if status not in ("analyzed", "done", "all"):
         return jsonify({"error": "status は analyzed / done / all のいずれかです。"}), 400
 
+    page = request.args.get("page", 1, type=int)
+    per_page = min(request.args.get("per_page", 50, type=int), 100)
+
     query = AIDraft.query.filter_by(user_id=user_id)
     if status != "all":
         query = query.filter_by(status=status)
     else:
         query = query.filter(AIDraft.status.in_(["analyzed", "done"]))
 
-    drafts = query.order_by(AIDraft.created_at.desc()).all()
+    total = query.count()
+    drafts = (
+        query.order_by(AIDraft.created_at.desc())
+        .offset((page - 1) * per_page)
+        .limit(per_page)
+        .all()
+    )
 
     return jsonify({
         "ok": True,
         "drafts": [_draft_to_dict(d) for d in drafts],
+        "total": total,
+        "page": page,
+        "per_page": per_page,
     })
 
 
