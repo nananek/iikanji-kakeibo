@@ -16,6 +16,7 @@ logger = logging.getLogger(__name__)
 
 ALLOWED_MIME_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
 MAX_IMAGE_SIZE = 10 * 1024 * 1024  # 10 MB
+MAX_FILES_PER_SOURCE = 100
 
 
 def encrypt_credentials(credentials: dict) -> bytes:
@@ -105,6 +106,12 @@ def _process_source(
     """1つのソースを処理する"""
     provider = _build_provider(source)
     files = provider.list_files()
+    if len(files) > MAX_FILES_PER_SOURCE:
+        logger.warning(
+            "Source '%s' has %d files, limiting to %d",
+            source.name, len(files), MAX_FILES_PER_SOURCE,
+        )
+        files = files[:MAX_FILES_PER_SOURCE]
     stats["files_found"] += len(files)
 
     for file_info in files:

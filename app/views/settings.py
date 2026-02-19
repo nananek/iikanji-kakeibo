@@ -557,6 +557,17 @@ def auto_import_source_add():
             flash("必須項目を入力してください。", "danger")
             return render_template("settings/auto_import_source_form.html")
 
+        if len(name) > 100 or len(url) > 500 or len(username) > 100:
+            flash("入力値が長すぎます。", "danger")
+            return render_template("settings/auto_import_source_form.html")
+
+        # SSRF 対策: URL バリデーション
+        from app.services.sources import validate_external_url
+        ok, err = validate_external_url(url)
+        if not ok:
+            flash(f"URL が不正です: {err}", "danger")
+            return render_template("settings/auto_import_source_form.html")
+
         # 接続テスト
         from app.services.sources.webdav import WebDAVProvider
         test_provider = WebDAVProvider(url, username, password)
@@ -629,6 +640,26 @@ def auto_import_webhook_add():
         if not all([name, webhook_url]):
             flash("必須項目を入力してください。", "danger")
             return render_template("settings/auto_import_webhook_form.html")
+
+        if len(name) > 100 or len(webhook_url) > 500:
+            flash("入力値が長すぎます。", "danger")
+            return render_template("settings/auto_import_webhook_form.html")
+
+        # Webhook URL バリデーション
+        _WEBHOOK_PREFIXES = {
+            "discord": "https://discord.com/api/webhooks/",
+        }
+        expected = _WEBHOOK_PREFIXES.get(provider)
+        if expected and not webhook_url.startswith(expected):
+            flash(f"Webhook URL は {expected} で始まる必要があります。", "danger")
+            return render_template("settings/auto_import_webhook_form.html")
+
+        from app.services.sources import validate_external_url
+        ok, err = validate_external_url(webhook_url)
+        if not ok:
+            flash(f"Webhook URL が不正です: {err}", "danger")
+            return render_template("settings/auto_import_webhook_form.html")
+
         if not events:
             events = ["import_success"]
 

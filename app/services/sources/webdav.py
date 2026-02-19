@@ -111,14 +111,16 @@ class WebDAVProvider:
         return files
 
     def download_file(self, path: str) -> bytes:
+        if ".." in path:
+            raise ValueError(f"不正なファイルパス: {path}")
+
         if path.startswith("http"):
             url = path
         elif path.startswith("/"):
-            # href が絶対パスの場合、ベースURLのホスト部分と結合
             url = urljoin(self.url, path)
         else:
             url = self.url + path.lstrip("/")
 
-        resp = httpx.get(url, auth=self.auth, timeout=60.0)
+        resp = httpx.get(url, auth=self.auth, timeout=30.0)
         resp.raise_for_status()
         return resp.content
