@@ -25,7 +25,7 @@ class APIKey(db.Model):
     user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
     name = db.Column(db.String(100), nullable=False)
     key_hash = db.Column(db.String(64), nullable=False, unique=True)
-    key_prefix = db.Column(db.String(12), nullable=False)
+    key_prefix = db.Column(db.String(20), nullable=False)
     scopes = db.Column(db.String(200), nullable=False, default="journals:create")
     is_active = db.Column(db.Boolean, nullable=False, default=True)
     created_at = db.Column(
