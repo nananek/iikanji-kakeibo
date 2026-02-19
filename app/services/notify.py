@@ -13,13 +13,14 @@ def send_webhook(
     title: str,
     message: str,
     details: dict | None = None,
+    link_url: str | None = None,
 ) -> bool:
     """Webhook 通知を送信する。成功時 True を返す。"""
     sender = _SENDERS.get(provider)
     if not sender:
         logger.warning("Unknown notification provider: %s", provider)
         return False
-    return sender(url, title, message, details)
+    return sender(url, title, message, details, link_url)
 
 
 def _send_discord(
@@ -27,6 +28,7 @@ def _send_discord(
     title: str,
     message: str,
     details: dict | None = None,
+    link_url: str | None = None,
 ) -> bool:
     """Discord Webhook (embed 形式)"""
     embed: dict = {
@@ -34,6 +36,8 @@ def _send_discord(
         "description": message,
         "color": 0x4CAF50,  # green
     }
+    if link_url:
+        embed["url"] = link_url
     if details:
         embed["fields"] = [
             {"name": k, "value": str(v), "inline": True}

@@ -209,9 +209,14 @@ def _process_file(source, provider, file_info, user_id, mime_type, dry_run, stat
 
 def _notify_user(user_id: int, stats: dict):
     """ユーザーの Webhook 通知を送信"""
+    from flask import current_app
+
     webhooks = WebhookConfig.query.filter_by(
         user_id=user_id, is_active=True
     ).all()
+
+    base_url = current_app.config.get("WEBAUTHN_ORIGIN", "").rstrip("/")
+    drafts_url = f"{base_url}/ai-journal/drafts" if base_url else None
 
     for webhook in webhooks:
         events = json.loads(webhook.events_json)
@@ -242,4 +247,5 @@ def _notify_user(user_id: int, stats: dict):
                 "新規": stats["files_new"],
                 "下書き作成": stats["drafts_created"],
             },
+            link_url=drafts_url,
         )
