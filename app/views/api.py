@@ -1,12 +1,16 @@
 """外部 API (Bearer APIキー認証)"""
 
 import functools
+import json
+from dataclasses import asdict
 from datetime import date as date_type, datetime, timezone
 
 from flask import Blueprint, jsonify, request, g
 
 from app.extensions import db
 from app.models.api_key import APIKey
+from app.models.ai_config import UserAIConfig
+from app.models.ai_draft import AIDraft
 from app.models.journal import JournalEntry
 from app.services.accounting import create_journal_entry
 from app.services.audit import get_submitted_account_ids, is_entry_locked_for_owner
@@ -231,3 +235,119 @@ def delete_journal(entry_id):
     db.session.commit()
 
     return jsonify({"ok": True})
+
+
+# --- AI 証憑仕訳 ---
+
+
+_MAX_IMAGE_SIZE = 10 * 1024 * 1024  # 10 MB
+_ALLOWED_MIME_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
+
+
+@bp.route("/ai/analyze", methods=["POST"])
+@api_key_required(scope="ai:analyze")
+def ai_analyze():
+    """画像を AI 解析して下書きを作成する。
+
+    multipart/form-data:
+      image: 画像ファイル (必須)
+      comment: メモ (任意, 最大500文字)
+      notify: "1" でWebhook通知を送信 (任意)
+    """
+    from app.services.ai_receipt import analyze_and_suggest
+
+    user_id = g.api_user_id
+
+    config = UserAIConfig.query.filter_by(user_id=user_id).first()
+    if not config:
+        return jsonify({"error": "AI API設定が未登録です。"}), 400
+
+    image_file = request.files.get("image")
+    if not image_file or not image_file.filename:
+        return jsonify({"error": "image は必須です。"}), 400
+
+    image_bytes = image_file.read()
+    if len(image_bytes) > _MAX_IMAGE_SIZE:
+        return jsonify({"error": "ファイルサイズが大きすぎます（上限10MB）。"}), 400
+
+    mime_type = image_file.content_type
+    if mime_type not in _ALLOWED_MIME_TYPES:
+        return jsonify({
+            "error": "対応していないファイル形式です。JPEG/PNG/WebP/GIF を使用してください。"
+        }), 400
+
+    comment = (request.form.get("comment") or "").strip()[:500]
+
+    try:
+        suggestions = analyze_and_suggest(
+            user_id, image_bytes, mime_type, comment=comment or None,
+        )
+    except (ValueError, RuntimeError) as e:
+        return jsonify({"error": str(e)}), 400
+
+    suggestions_data = [asdict(s) for s in suggestions]
+    suggestions_json = json.dumps(suggestions_data, ensure_ascii=False)
+
+    draft = AIDraft(
+        user_id=user_id,
+        image_data=image_bytes,
+        image_mime=mime_type,
+        comment=comment or None,
+        suggestions_json=suggestions_json,
+        status="analyzed",
+    )
+    db.session.add(draft)
+    db.session.commit()
+
+    # オプション: Webhook 通知
+    if request.form.get("notify") == "1":
+        _send_draft_notification(user_id, draft, suggestions_data)
+
+    return jsonify({
+        "ok": True,
+        "draft_id": draft.id,
+        "suggestions": suggestions_data,
+    }), 201
+
+
+def _send_draft_notification(user_id: int, draft: AIDraft, suggestions: list):
+    """下書き作成をWebhookで通知する"""
+    from flask import current_app
+    from app.models.auto_import import WebhookConfig
+    from app.services.notify import send_webhook
+
+    webhooks = WebhookConfig.query.filter_by(
+        user_id=user_id, is_active=True
+    ).all()
+    if not webhooks:
+        return
+
+    base_url = current_app.config.get("WEBAUTHN_ORIGIN", "").rstrip("/")
+    drafts_url = f"{base_url}/ai-journal/drafts" if base_url else None
+
+    # 最初の候補からサマリーを生成
+    title_parts = []
+    if suggestions:
+        s = suggestions[0]
+        if s.get("date"):
+            title_parts.append(s["date"])
+        if s.get("entry_description"):
+            title_parts.append(s["entry_description"])
+    summary = " ".join(title_parts) if title_parts else "新しい下書き"
+
+    message = f"AI証憑仕訳の下書きを作成しました。\n{summary}"
+
+    for webhook in webhooks:
+        events = json.loads(webhook.events_json)
+        if "import_success" in events:
+            send_webhook(
+                provider=webhook.provider,
+                url=webhook.webhook_url,
+                title="いいかんじ™家計簿 AI仕訳",
+                message=message,
+                details={
+                    "候補数": len(suggestions),
+                    "メモ": draft.comment or "—",
+                },
+                link_url=drafts_url,
+            )

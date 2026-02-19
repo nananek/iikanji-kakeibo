@@ -6,11 +6,12 @@ from app.extensions import db
 
 KEY_PREFIX = "ik_"
 
-ALL_SCOPES = ("journals:create", "journals:read", "journals:delete")
+ALL_SCOPES = ("journals:create", "journals:read", "journals:delete", "ai:analyze")
 SCOPE_LABELS = {
     "journals:create": "仕訳起票",
     "journals:read": "仕訳閲覧",
     "journals:delete": "仕訳削除",
+    "ai:analyze": "AI証憑仕訳",
 }
 SCOPE_DEPENDENCIES = {"journals:delete": "journals:read"}
 
