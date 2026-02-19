@@ -5,7 +5,7 @@ title: "Python クライアント: はじめに"
 
 # はじめに
 
-[`iikanji`](https://github.com/nananek/iikanji-kakiebo-client-py) は、いいかんじ家計簿サーバーの REST API を Python から呼び出すためのクライアントライブラリです。仕訳の起票・閲覧・削除、AI 証憑仕訳（画像解析・下書き管理）に対応しています。
+[`iikanji`](https://github.com/nananek/iikanji-kakeibo-client-py) は、いいかんじ家計簿サーバーの REST API を Python から呼び出すためのクライアントライブラリです。仕訳の起票・閲覧・削除、AI 証憑仕訳（画像解析・下書き管理）に対応しています。
 
 ## インストール
 

@@ -56,7 +56,7 @@ AIが証憑を読み取って仕訳を提案。
 
 ## Python クライアント
 
-[`iikanji`](https://github.com/nananek/iikanji-kakiebo-client-py) パッケージで REST API を Python から簡単に呼び出せます。
+[`iikanji`](https://github.com/nananek/iikanji-kakeibo-client-py) パッケージで REST API を Python から簡単に呼び出せます。
 
 ```python
 from iikanji import KakeiboClient, JournalLine
@@ -86,5 +86,5 @@ with KakeiboClient("https://your-server.example.com", "ik_your_api_key") as clie
 ## リンク
 
 - [GitHub リポジトリ (サーバー)](https://github.com/nananek/iikanji-kakeibo)
-- [GitHub リポジトリ (Python クライアント)](https://github.com/nananek/iikanji-kakiebo-client-py)
+- [GitHub リポジトリ (Python クライアント)](https://github.com/nananek/iikanji-kakeibo-client-py)
 - [いいかんじ™ライセンス (IKL)](https://github.com/nananek/iikanji-kakeibo/blob/master/LICENSE) — MIT 互換
