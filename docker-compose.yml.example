@@ -27,6 +27,20 @@ services:
       db:
         condition: service_healthy
 
+  scheduler:
+    image: ghcr.io/nananek/iikanji-kakeibo:2.1.0
+    entrypoint: []
+    command: ["sh", "-c", "while true; do sleep ${AUTO_IMPORT_INTERVAL:-1800}; flask auto-import; done"]
+    network_mode: service:tailscale
+    env_file:
+      - .env
+    depends_on:
+      tailscale:
+        condition: service_started
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
   db:
     image: postgres:16-alpine
     volumes:

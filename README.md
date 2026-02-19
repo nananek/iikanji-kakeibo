@@ -203,39 +203,19 @@ docker compose up -d
 
 Nextcloud 等の WebDAV ストレージからレシート画像を定期取得し、AI で自動仕訳して下書きに保存する機能です。ユーザーは設定画面からインポート元（WebDAV）と Webhook 通知（Discord 等）を設定します。
 
-### 定期実行の設定（systemd timer）
-
-```ini
-# /etc/systemd/system/iikanji-auto-import.service
-[Unit]
-Description=いいかんじ家計簿 自動取込
-Requires=docker.service
-After=docker.service
-
-[Service]
-Type=oneshot
-ExecStart=/usr/bin/docker exec iikanji-web flask auto-import
-```
-
-```ini
-# /etc/systemd/system/iikanji-auto-import.timer
-[Unit]
-Description=いいかんじ家計簿 自動取込タイマー
-
-[Timer]
-OnCalendar=*:0/30
-Persistent=true
-
-[Install]
-WantedBy=timers.target
-```
+docker-compose に含まれる `scheduler` サービスがデフォルト30分間隔で自動取込を実行します。間隔は `.env` で変更可能です:
 
 ```bash
-sudo systemctl daemon-reload
-sudo systemctl enable --now iikanji-auto-import.timer
+# 自動取込の実行間隔（秒）。デフォルト: 1800（30分）
+AUTO_IMPORT_INTERVAL=900
 ```
 
-`flask auto-import --user-id N` で特定ユーザーのみ、`--dry-run` で動作確認が可能です。
+手動実行やデバッグ:
+```bash
+docker exec iikanji-web flask auto-import            # 全ユーザー
+docker exec iikanji-web flask auto-import --user-id 1 # 特定ユーザー
+docker exec iikanji-web flask auto-import --dry-run   # 動作確認
+```
 
 ## プロジェクト構成
 
