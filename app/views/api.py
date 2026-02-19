@@ -126,19 +126,27 @@ def create_journal():
 
     # draft_id が指定されていれば下書きを完了にする
     draft_id = data.get("draft_id")
+    draft_done = None
     if draft_id:
         draft = AIDraft.query.filter_by(
             id=int(draft_id), user_id=user_id, status="analyzed"
         ).first()
-        if draft:
-            draft.status = "done"
-            db.session.commit()
+        if not draft:
+            return jsonify({
+                "error": f"下書き(id={draft_id})が見つからないか、既に確定済みです。"
+            }), 400
+        draft.status = "done"
+        db.session.commit()
+        draft_done = draft.id
 
-    return jsonify({
+    resp = {
         "ok": True,
         "id": entry.id,
         "entry_number": entry.entry_number,
-    }), 201
+    }
+    if draft_done:
+        resp["draft_id"] = draft_done
+    return jsonify(resp), 201
 
 
 # --- 仕訳閲覧 ---
