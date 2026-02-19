@@ -124,6 +124,16 @@ def create_journal():
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
 
+    # draft_id が指定されていれば下書きを完了にする
+    draft_id = data.get("draft_id")
+    if draft_id:
+        draft = AIDraft.query.filter_by(
+            id=int(draft_id), user_id=user_id, status="analyzed"
+        ).first()
+        if draft:
+            draft.status = "done"
+            db.session.commit()
+
     return jsonify({
         "ok": True,
         "id": entry.id,
@@ -308,6 +318,90 @@ def ai_analyze():
         "draft_id": draft.id,
         "suggestions": suggestions_data,
     }), 201
+
+
+def _draft_to_dict(draft: AIDraft, include_suggestions: bool = False) -> dict:
+    """AIDraft を API レスポンス用 dict に変換"""
+    result: dict = {
+        "id": draft.id,
+        "status": draft.status,
+        "comment": draft.comment or "",
+        "created_at": draft.created_at.isoformat(),
+    }
+    if draft.suggestions_json:
+        try:
+            suggestions = json.loads(draft.suggestions_json)
+            if suggestions:
+                s = suggestions[0]
+                result["summary"] = {
+                    "title": s.get("title", ""),
+                    "date": s.get("date", ""),
+                    "description": s.get("entry_description", ""),
+                    "amount": sum(
+                        l.get("debit_amount", 0) for l in s.get("lines", [])
+                    ),
+                    "suggestion_count": len(suggestions),
+                }
+            if include_suggestions:
+                result["suggestions"] = suggestions
+        except (json.JSONDecodeError, IndexError):
+            pass
+    return result
+
+
+@bp.route("/ai/drafts", methods=["GET"])
+@api_key_required(scope="ai:analyze")
+def ai_drafts():
+    """下書き一覧 API"""
+    user_id = g.api_user_id
+    status = request.args.get("status", "analyzed")
+    if status not in ("analyzed", "done", "all"):
+        return jsonify({"error": "status は analyzed / done / all のいずれかです。"}), 400
+
+    query = AIDraft.query.filter_by(user_id=user_id)
+    if status != "all":
+        query = query.filter_by(status=status)
+    else:
+        query = query.filter(AIDraft.status.in_(["analyzed", "done"]))
+
+    drafts = query.order_by(AIDraft.created_at.desc()).all()
+
+    return jsonify({
+        "ok": True,
+        "drafts": [_draft_to_dict(d) for d in drafts],
+    })
+
+
+@bp.route("/ai/drafts/<int:draft_id>", methods=["GET"])
+@api_key_required(scope="ai:analyze")
+def ai_draft_detail(draft_id):
+    """下書き詳細 API（候補含む）"""
+    draft = AIDraft.query.filter_by(
+        id=draft_id, user_id=g.api_user_id
+    ).first()
+    if not draft or draft.status == "temp":
+        return jsonify({"error": "下書きが見つかりません。"}), 404
+
+    return jsonify({
+        "ok": True,
+        "draft": _draft_to_dict(draft, include_suggestions=True),
+    })
+
+
+@bp.route("/ai/drafts/<int:draft_id>", methods=["DELETE"])
+@api_key_required(scope="ai:analyze")
+def ai_draft_delete(draft_id):
+    """下書き削除 API"""
+    draft = AIDraft.query.filter_by(
+        id=draft_id, user_id=g.api_user_id
+    ).first()
+    if not draft or draft.status == "temp":
+        return jsonify({"error": "下書きが見つかりません。"}), 404
+
+    db.session.delete(draft)
+    db.session.commit()
+
+    return jsonify({"ok": True})
 
 
 def _send_draft_notification(user_id: int, draft: AIDraft, suggestions: list):
