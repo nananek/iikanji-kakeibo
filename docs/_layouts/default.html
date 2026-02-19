@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% if page.title %}{{ page.title }} — {% endif %}{{ site.title }}</title>
+  <meta name="description" content="{{ page.description | default: site.description }}">
+  <link rel="stylesheet" href="{{ '/assets/css/style.css' | relative_url }}">
+</head>
+<body>
+  <header class="site-header">
+    <div class="header-inner">
+      <a href="{{ '/' | relative_url }}" class="site-title">{{ site.title }}</a>
+      <nav class="site-nav">
+        <a href="{{ '/api/' | relative_url }}"{% if page.url contains '/api/' %} class="active"{% endif %}>REST API</a>
+        <a href="{{ '/client-py/' | relative_url }}"{% if page.url contains '/client-py/' %} class="active"{% endif %}>Python Client</a>
+        <a href="https://github.com/nananek/iikanji-kakeibo" class="github-link">GitHub</a>
+      </nav>
+    </div>
+  </header>
+
+  <div class="page-wrapper">
+    {% if page.url contains '/api/' or page.url contains '/client-py/' %}
+    <aside class="sidebar">
+      {% if page.url contains '/api/' %}
+      <h3>REST API</h3>
+      <ul>
+        <li><a href="{{ '/api/' | relative_url }}"{% if page.url == '/api/' or page.url == '/api/index.html' %} class="active"{% endif %}>概要</a></li>
+        <li><a href="{{ '/api/journals.html' | relative_url }}"{% if page.url contains 'journals' %} class="active"{% endif %}>仕訳 API</a></li>
+        <li><a href="{{ '/api/ai-drafts.html' | relative_url }}"{% if page.url contains 'ai-drafts' %} class="active"{% endif %}>AI 証憑仕訳 API</a></li>
+      </ul>
+      {% elsif page.url contains '/client-py/' %}
+      <h3>Python Client</h3>
+      <ul>
+        <li><a href="{{ '/client-py/' | relative_url }}"{% if page.url == '/client-py/' or page.url == '/client-py/index.html' %} class="active"{% endif %}>はじめに</a></li>
+        <li><a href="{{ '/client-py/api-reference.html' | relative_url }}"{% if page.url contains 'api-reference' %} class="active"{% endif %}>API リファレンス</a></li>
+        <li><a href="{{ '/client-py/examples.html' | relative_url }}"{% if page.url contains 'examples' %} class="active"{% endif %}>使用例</a></li>
+      </ul>
+      {% endif %}
+    </aside>
+    {% endif %}
+
+    <main class="content{% if page.url == '/' or page.url == '/index.html' %} content-full{% endif %}">
+      {{ content }}
+    </main>
+  </div>
+
+  <footer class="site-footer">
+    <div class="footer-inner">
+      <p>{{ site.title }} &mdash; <a href="https://github.com/nananek/iikanji-kakeibo">GitHub</a></p>
+    </div>
+  </footer>
+</body>
+</html>

@@ -1,0 +1,9 @@
+title: いいかんじ™家計簿
+description: 家計簿なのに、ちゃんと複式簿記。
+url: https://nananek.github.io
+baseurl: /iikanji-kakeibo
+markdown: kramdown
+highlighter: rouge
+exclude:
+  - Gemfile
+  - Gemfile.lock
