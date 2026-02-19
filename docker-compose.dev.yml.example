@@ -1,6 +1,6 @@
 services:
   web:
-    image: ghcr.io/nananek/iikanji-kakeibo:2.1.1
+    image: ghcr.io/nananek/iikanji-kakeibo:2.1.2
     ports:
       - "5000:5000"
     env_file:
@@ -10,7 +10,7 @@ services:
         condition: service_healthy
 
   worker:
-    image: ghcr.io/nananek/iikanji-kakeibo-worker:2.1.1
+    image: ghcr.io/nananek/iikanji-kakeibo-worker:2.1.2
     env_file:
       - .env
     depends_on:
