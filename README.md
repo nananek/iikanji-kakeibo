@@ -95,7 +95,7 @@
 | 損益計算書 | 月次 / 年次の収入・支出を科目別に内訳表示 |
 | 貸借対照表 | 資産・負債・純資産の残高を2カラムで表示。損益振替前は当期純利益を自動加算 |
 | 月次比較 | 12ヶ月の科目別推移・着地予測・区分分析グラフ |
-| 確定申告用集計 | 社会保険料・生命保険料・地震保険料・医療費・寄附金・iDeCo・源泉所得税・住民税を税区分ごとに集計 |
+| 確定申告用集計 | 社会保険料・生命保険料・地震保険料・寄附金・iDeCo・源泉所得税を税区分ごとに集計。医療費控除は受診者別・医療機関別の階層集計と CSV エクスポート |
 
 ### モバイル対応
 
@@ -287,6 +287,23 @@ app/
         ├── import_confirm.js # 取込確認画面の共通ロジック
         └── webauthn.js   #   Passkey 認証
 ```
+
+## テスト
+
+```bash
+# Docker 環境でテスト実行
+docker exec -w /app server-web-1 python -m pytest tests/ -v
+
+# GitHub Actions でも push/PR 時に自動実行されます
+```
+
+## ドキュメント
+
+GitHub Pages でドキュメントサイトを公開しています: [https://nananek.github.io/iikanji-kakeibo/](https://nananek.github.io/iikanji-kakeibo/)
+
+- プロダクト紹介
+- REST API 仕様
+- Python クライアントライブラリ
 
 ## ライセンス
 

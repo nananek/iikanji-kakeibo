@@ -33,7 +33,7 @@
 
 ### App Factory (`app/__init__.py`)
 - `create_app()` で Flask アプリを生成
-- 14個の Blueprint を登録
+- 15個の Blueprint を登録
 - WebAuthn API は CSRF を免除 (`csrf.exempt`)
 - before_request フックで監査権限を制御
 - テンプレートフィルタ `mask_account` で監査時の科目隠蔽
@@ -57,6 +57,7 @@
 | settings | `/settings` | 設定（AI API・Passkey・月次確定・年度管理・監査アクセス） |
 | webauthn | `/webauthn` | Passkey API（JSON、CSRF免除） |
 | auditor | `/auditor` | 監査ダッシュボード・代理閲覧 |
+| api | `/api/v1` | REST API（仕訳CRUD・AI証憑仕訳・Bearer認証） |
 
 ### モデル (`app/models/`)
 
@@ -71,7 +72,12 @@
 | MedicalExpense | medical_expenses | patient_name, hospital_name, amount_paid, insurance_reimbursement, provider_type |
 | AuditGrant | audit_grants | owner_user_id, auditor_user_id, permission_level (1/2/3), status |
 | AuditGrantAccount | audit_grant_accounts | audit_grant_id, account_id（Lv2の可視科目） |
+| AIDraft | ai_drafts | user_id, status (pending/analyzed/done), image_path, suggestions (JSON) |
 | UserAIConfig | user_ai_configs | provider, api_key_encrypted, model_name |
+| AutoImportSource | auto_import_sources | user_id, source_type (webdav), config (JSON暗号化) |
+| ProcessedFile | auto_import_processed_files | source_id, filename, draft_id |
+| WebhookConfig | webhook_configs | user_id, url, events |
+| BalanceCache | balance_caches | user_id, year, period, account_id, debit_total, credit_total |
 | WebAuthnCredential | webauthn_credentials | credential_id, credential_public_key, current_sign_count |
 
 ### サービス (`app/services/`)
@@ -85,6 +91,10 @@
 | ofx_import.py | OFX/QFXパース |
 | ai_receipt.py | AI証憑解析・Web明細抽出（OpenAI/Gemini/Claude対応） |
 | tax.py | 確定申告集計・月次比較・着地予測 |
+| balance_cache.py | 確定済み残高キャッシュの保存・取得 |
+| captcha.py | CAPTCHA 検証（hCaptcha/reCAPTCHA/Turnstile/mCaptcha） |
+| notify.py | Webhook 通知（Discord等） |
+| auto_import.py | 自動取込オーケストレーター（WebDAV→AI解析→下書き） |
 | seed.py | 標準科目の初期データ・system_role定義 |
 
 ### JS (`app/static/js/`)
@@ -149,8 +159,16 @@
 
 ### テスト
 - `tests/conftest.py` に SQLite in-memory のフィクスチャあり
-- テストカバレッジは限定的
+- pytest で実行: `docker exec -w /app server-web-1 python -m pytest tests/ -v`
+- GitHub Actions (`.github/workflows/test.yml`) で push/PR 時に自動実行
+- 166テスト: accounting(16), api(28), fiscal(20), models(17), tax(42), audit(43)
+- 税務集計・プライバシー権限は重点テスト項目
 
 ### Docker
 - `entrypoint.sh`: `flask db upgrade` → `flask seed` → `flask run`
 - 本番は Tailscale 経由でアクセス
+
+### GitHub Actions
+- `.github/workflows/test.yml`: push/PR 時に pytest 自動実行
+- `.github/workflows/build-and-push.yml`: GHCR へ Docker イメージをビルド・プッシュ
+- `.github/workflows/pages.yml`: docs/ 配下変更時に GitHub Pages をデプロイ
