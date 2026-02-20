@@ -124,7 +124,7 @@ def drafts():
     items = (
         AIDraft.query
         .filter_by(user_id=user_id)
-        .filter(AIDraft.status.in_(["analyzed", "done"]))
+        .filter_by(status="analyzed")
         .order_by(AIDraft.created_at.desc())
         .all()
     )
@@ -379,14 +379,8 @@ def review():
                 source="ai_receipt",
             )
             session.pop("ai_journal_draft_id", None)
-            if is_saved_draft:
-                # 一時保存からの仕訳作成 → done に更新
-                draft.status = "done"
-                db.session.commit()
-            else:
-                # 直接フローの一時レコード → 削除
-                db.session.delete(draft)
-                db.session.commit()
+            db.session.delete(draft)
+            db.session.commit()
 
             flash(f"伝票 #{entry.entry_number} を登録しました。", "success")
 

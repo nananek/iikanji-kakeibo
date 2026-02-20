@@ -124,9 +124,8 @@ def create_journal():
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
 
-    # draft_id が指定されていれば下書きを完了にする
+    # draft_id が指定されていれば下書きを削除する
     draft_id = data.get("draft_id")
-    draft_done = None
     if draft_id:
         try:
             draft_id = int(draft_id)
@@ -137,20 +136,16 @@ def create_journal():
         ).first()
         if not draft:
             return jsonify({
-                "error": f"下書き(id={draft_id})が見つからないか、既に確定済みです。"
+                "error": f"下書き(id={draft_id})が見つからないか、既に削除済みです。"
             }), 400
-        draft.status = "done"
+        db.session.delete(draft)
         db.session.commit()
-        draft_done = draft.id
 
-    resp = {
+    return jsonify({
         "ok": True,
         "id": entry.id,
         "entry_number": entry.entry_number,
-    }
-    if draft_done:
-        resp["draft_id"] = draft_done
-    return jsonify(resp), 201
+    }), 201
 
 
 # --- 仕訳閲覧 ---
