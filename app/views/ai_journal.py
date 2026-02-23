@@ -379,6 +379,7 @@ def review():
                 source="ai_receipt",
             )
             session.pop("ai_journal_draft_id", None)
+            _update_discord_done(draft, entry.entry_number)
             db.session.delete(draft)
             db.session.commit()
 
@@ -399,4 +400,38 @@ def review():
         draft_id=is_saved_draft,
         closed_periods=closed_periods,
         restricted_before_year=restricted_before,
+    )
+
+
+def _update_discord_done(draft, entry_number):
+    """仕訳登録後に Discord 通知を完了マークに更新する"""
+    if not draft.discord_message_id or not draft.discord_webhook_url:
+        return
+    from app.services.notify import update_discord_message
+
+    original_desc = ""
+    if draft.suggestions_json:
+        try:
+            suggestions = json.loads(draft.suggestions_json)
+            if suggestions:
+                s = suggestions[0]
+                parts = []
+                if s.get("date"):
+                    parts.append(s["date"])
+                if s.get("entry_description"):
+                    parts.append(s["entry_description"])
+                original_desc = " ".join(parts)
+        except (json.JSONDecodeError, IndexError):
+            pass
+
+    msg = ""
+    if original_desc:
+        msg += f"~~{original_desc}~~\n"
+    msg += f"仕訳を登録しました（伝票 #{entry_number}）"
+
+    update_discord_message(
+        webhook_url=draft.discord_webhook_url,
+        message_id=draft.discord_message_id,
+        title="✅ いいかんじ™家計簿 AI仕訳",
+        message=msg,
     )

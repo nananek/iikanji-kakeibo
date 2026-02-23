@@ -17,6 +17,8 @@ class AIDraft(db.Model):
     status = db.Column(
         db.String(20), nullable=False, default="analyzed"
     )  # analyzed / done
+    discord_webhook_url = db.Column(db.String(500), nullable=True)
+    discord_message_id = db.Column(db.String(30), nullable=True)
     created_at = db.Column(
         db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc)
     )

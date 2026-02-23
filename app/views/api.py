@@ -138,6 +138,7 @@ def create_journal():
             return jsonify({
                 "error": f"下書き(id={draft_id})が見つからないか、既に削除済みです。"
             }), 400
+        _mark_draft_done(draft, entry.entry_number)
         db.session.delete(draft)
         db.session.commit()
 
@@ -454,7 +455,7 @@ def _send_draft_notification(user_id: int, draft: AIDraft, suggestions: list):
     for webhook in webhooks:
         events = json.loads(webhook.events_json)
         if "import_success" in events:
-            send_webhook(
+            message_id = send_webhook(
                 provider=webhook.provider,
                 url=webhook.webhook_url,
                 title="いいかんじ™家計簿 AI仕訳",
@@ -465,3 +466,41 @@ def _send_draft_notification(user_id: int, draft: AIDraft, suggestions: list):
                 },
                 link_url=drafts_url,
             )
+            if message_id and webhook.provider == "discord":
+                draft.discord_webhook_url = webhook.webhook_url
+                draft.discord_message_id = message_id
+                db.session.commit()
+
+
+def _mark_draft_done(draft: AIDraft, entry_number: int):
+    """仕訳登録後に Discord 通知を完了マークに更新する"""
+    if not draft.discord_message_id or not draft.discord_webhook_url:
+        return
+    from app.services.notify import update_discord_message
+
+    original_desc = ""
+    if draft.suggestions_json:
+        try:
+            suggestions = json.loads(draft.suggestions_json)
+            if suggestions:
+                s = suggestions[0]
+                parts = []
+                if s.get("date"):
+                    parts.append(s["date"])
+                if s.get("entry_description"):
+                    parts.append(s["entry_description"])
+                original_desc = " ".join(parts)
+        except (json.JSONDecodeError, IndexError):
+            pass
+
+    message = ""
+    if original_desc:
+        message += f"~~{original_desc}~~\n"
+    message += f"仕訳を登録しました（伝票 #{entry_number}）"
+
+    update_discord_message(
+        webhook_url=draft.discord_webhook_url,
+        message_id=draft.discord_message_id,
+        title="✅ いいかんじ™家計簿 AI仕訳",
+        message=message,
+    )
