@@ -54,7 +54,7 @@
 
 ### AI 証憑仕訳
 
-領収書・給与明細・請求書の画像をアップロードすると、AI が内容を解析して複数の仕訳案を提案。OpenAI / Google Gemini / Anthropic Claude に対応。コメント欄で「会社の懇親会」等のヒントを付けると解析精度が向上。定型プロンプトを設定すれば、決済手段の対応関係や摘要の書き方ルールなどを毎回自動で AI に指示できます。仕訳登録後は下書きが自動削除され、Discord Webhook 通知には完了マークが付きます。
+領収書・給与明細・請求書の画像をアップロードすると、AI が内容を解析して複数の仕訳案を提案。OpenAI / Google Gemini / Anthropic Claude / Ollama (ローカル) に対応。コメント欄で「会社の懇親会」等のヒントを付けると解析精度が向上。定型プロンプトを設定すれば、決済手段の対応関係や摘要の書き方ルールなどを毎回自動で AI に指示できます。仕訳登録後は下書きが自動削除され、Discord Webhook 通知には完了マークが付きます。
 
 ### 月次比較・着地予測
 
@@ -224,7 +224,7 @@ app/
 │   ├── medical.py       #   MedicalExpense
 │   ├── audit.py         #   AuditGrant, AuditGrantAccount
 │   ├── api_key.py       #   APIKey (REST API 認証)
-│   ├── ai_config.py     #   UserAIConfig (定型プロンプト含む)
+│   ├── ai_config.py     #   UserAIConfig (定型プロンプト・base_url含む)
 │   ├── auto_import.py   #   AutoImportSource, ProcessedFile, WebhookConfig
 │   └── webauthn.py      #   WebAuthnCredential
 ├── views/               # Blueprint (ルーティング)
@@ -248,7 +248,7 @@ app/
 │   ├── accounting.py    #   仕訳自動生成
 │   ├── csv_import.py    #   CSVパース
 │   ├── ofx_import.py    #   OFXパース
-│   ├── ai_receipt.py    #   AI証憑解析・Web明細抽出
+│   ├── ai_receipt.py    #   AI証憑解析・Web明細抽出 (OpenAI/Gemini/Claude/Ollama)
 │   ├── audit.py         #   監査用アカウント (代理閲覧・権限・ロック・隠蔽)
 │   ├── fiscal.py        #   月次確定・期間チェック・残高キャッシュ
 │   ├── balance_cache.py #   確定済み残高キャッシュ管理
