@@ -69,20 +69,43 @@
   <div class="col-md-6">
     <div class="card shadow-sm">
       <div class="card-body">
-        <h5 class="card-title">クイック入力</h5>
-        <div class="d-grid gap-2">
-          <a href="{{ url_for('cashbook.new') }}" class="btn btn-outline-primary">
-            <i class="bi bi-wallet2"></i> 出納帳に記帳
-          </a>
-          <a href="{{ url_for('journal.new') }}" class="btn btn-outline-secondary">
-            <i class="bi bi-journal-bookmark"></i> 仕訳伝票を作成
-          </a>
-          <a href="{{ url_for('medical.new') }}" class="btn btn-outline-info">
-            <i class="bi bi-hospital"></i> 医療費を記録
-          </a>
-          <a href="{{ url_for('csv_import.upload') }}" class="btn btn-outline-success">
-            <i class="bi bi-filetype-csv"></i> CSV明細を取込
-          </a>
+        <h5 class="card-title"><i class="bi bi-pencil-square"></i> 入力</h5>
+        <div class="row row-cols-2 g-2">
+          <div class="col">
+            <a href="{{ url_for('cashbook.new') }}" class="btn btn-outline-primary btn-lg py-3 w-100">
+              <i class="bi bi-wallet2 fs-4 d-block mb-1"></i> 出納帳
+            </a>
+          </div>
+          <div class="col">
+            <a href="{{ url_for('journal.new') }}" class="btn btn-outline-secondary btn-lg py-3 w-100">
+              <i class="bi bi-journal-bookmark fs-4 d-block mb-1"></i> 仕訳伝票
+            </a>
+          </div>
+          <div class="col">
+            <a href="{{ url_for('medical.new') }}" class="btn btn-outline-info btn-lg py-3 w-100">
+              <i class="bi bi-hospital fs-4 d-block mb-1"></i> 医療費
+            </a>
+          </div>
+          <div class="col">
+            <a href="{{ url_for('ai_journal.upload') }}" class="btn btn-outline-warning btn-lg py-3 w-100">
+              <i class="bi bi-robot fs-4 d-block mb-1"></i> AI証憑仕訳
+            </a>
+          </div>
+          <div class="col">
+            <a href="{{ url_for('csv_import.upload') }}" class="btn btn-outline-success btn-lg py-3 w-100">
+              <i class="bi bi-filetype-csv fs-4 d-block mb-1"></i> CSV取込
+            </a>
+          </div>
+          <div class="col">
+            <a href="{{ url_for('ofx_import.upload') }}" class="btn btn-outline-success btn-lg py-3 w-100">
+              <i class="bi bi-bank fs-4 d-block mb-1"></i> OFX取込
+            </a>
+          </div>
+          <div class="col">
+            <a href="{{ url_for('web_import.upload') }}" class="btn btn-outline-success btn-lg py-3 w-100">
+              <i class="bi bi-globe fs-4 d-block mb-1"></i> Web取込
+            </a>
+          </div>
         </div>
       </div>
     </div>
@@ -90,17 +113,38 @@
   <div class="col-md-6">
     <div class="card shadow-sm">
       <div class="card-body">
-        <h5 class="card-title">レポート</h5>
-        <div class="d-grid gap-2">
-          <a href="{{ url_for('reports.balance') }}" class="btn btn-outline-dark">
-            <i class="bi bi-table"></i> 残高試算表
-          </a>
-          <a href="{{ url_for('reports.pl') }}" class="btn btn-outline-dark">
-            <i class="bi bi-graph-up"></i> 損益計算書
-          </a>
-          <a href="{{ url_for('reports.tax') }}" class="btn btn-outline-dark">
-            <i class="bi bi-file-earmark-text"></i> 確定申告用集計
-          </a>
+        <h5 class="card-title"><i class="bi bi-bar-chart"></i> レポート</h5>
+        <div class="row row-cols-2 g-2">
+          <div class="col">
+            <a href="{{ url_for('reports.balance') }}" class="btn btn-outline-dark btn-lg py-3 w-100">
+              <i class="bi bi-table fs-4 d-block mb-1"></i> 残高試算表
+            </a>
+          </div>
+          <div class="col">
+            <a href="{{ url_for('reports.ledger') }}" class="btn btn-outline-dark btn-lg py-3 w-100">
+              <i class="bi bi-book fs-4 d-block mb-1"></i> 総勘定元帳
+            </a>
+          </div>
+          <div class="col">
+            <a href="{{ url_for('reports.pl') }}" class="btn btn-outline-dark btn-lg py-3 w-100">
+              <i class="bi bi-graph-up fs-4 d-block mb-1"></i> 損益計算書
+            </a>
+          </div>
+          <div class="col">
+            <a href="{{ url_for('reports.bs') }}" class="btn btn-outline-dark btn-lg py-3 w-100">
+              <i class="bi bi-layout-split fs-4 d-block mb-1"></i> 貸借対照表
+            </a>
+          </div>
+          <div class="col">
+            <a href="{{ url_for('reports.monthly') }}" class="btn btn-outline-dark btn-lg py-3 w-100">
+              <i class="bi bi-calendar3 fs-4 d-block mb-1"></i> 月次比較
+            </a>
+          </div>
+          <div class="col">
+            <a href="{{ url_for('reports.tax') }}" class="btn btn-outline-dark btn-lg py-3 w-100">
+              <i class="bi bi-file-earmark-text fs-4 d-block mb-1"></i> 確定申告
+            </a>
+          </div>
         </div>
       </div>
     </div>
