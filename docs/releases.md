@@ -5,6 +5,21 @@ title: リリースノート
 
 # リリースノート
 
+## v2.7.0
+
+**Ollama (ローカルAI) 対応**
+
+- AIプロバイダーに Ollama を追加（OpenAI互換API経由）
+- `base_url` 設定でカスタムエンドポイントに対応（Tailnet上の別マシン等）
+- APIキー不要で利用可能
+- UserAIConfig に `base_url` カラム追加（マイグレーション 022）
+
+## v2.6.1
+
+**Worker サービス削除**
+
+- WebDAV UI オプトアウトに伴い worker サービスを docker-compose / Dockerfile / CI から削除
+
 ## v2.6.0
 
 **設定メニューリファクタリング**
