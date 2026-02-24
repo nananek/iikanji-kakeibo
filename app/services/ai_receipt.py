@@ -592,16 +592,21 @@ def _get_ai_config(user_id: int):
     if not handler:
         raise ValueError(f"未対応のAIプロバイダーです: {provider}")
 
-    return api_key, provider, model, handler, custom_prompt, base_url
+    # base_url は Ollama のみで使用
+    extra_kwargs = {}
+    if base_url and provider == "ollama":
+        extra_kwargs["base_url"] = base_url
+
+    return api_key, provider, model, handler, custom_prompt, extra_kwargs
 
 
 def _call_ai(handler, api_key, model, image_bytes, mime_type,
-             prompt, max_tokens, user_id, *, base_url=""):
+             prompt, max_tokens, user_id, extra_kwargs=None):
     """AI APIを呼び出す共通ラッパー"""
     try:
         kwargs = {"prompt": prompt, "max_tokens": max_tokens}
-        if base_url:
-            kwargs["base_url"] = base_url
+        if extra_kwargs:
+            kwargs.update(extra_kwargs)
         return handler(api_key, model, image_bytes, mime_type, **kwargs)
     except httpx.HTTPStatusError as e:
         logger.error("AI API HTTP error for user %s: %s", user_id, e)
@@ -617,9 +622,9 @@ def _call_ai(handler, api_key, model, image_bytes, mime_type,
 def analyze_receipt(user_id: int, image_bytes: bytes,
                     mime_type: str) -> ReceiptData:
     """領収書画像をAIで解析する（後方互換）"""
-    api_key, provider, model, handler, _, base_url = _get_ai_config(user_id)
+    api_key, provider, model, handler, _, extra_kw = _get_ai_config(user_id)
     result = _call_ai(handler, api_key, model, image_bytes, mime_type,
-                      RECEIPT_PROMPT, 500, user_id, base_url=base_url)
+                      RECEIPT_PROMPT, 500, user_id, extra_kw)
 
     return ReceiptData(
         date=result.get("date"),
@@ -646,7 +651,7 @@ def analyze_and_suggest(user_id: int, image_bytes: bytes,
         ValueError: AI設定未登録またはプロバイダー未対応
         RuntimeError: API呼出し失敗
     """
-    api_key, provider, model, handler, custom_prompt, base_url = _get_ai_config(user_id)
+    api_key, provider, model, handler, custom_prompt, extra_kw = _get_ai_config(user_id)
 
     # 第1ラウンド: 書類解析
     prompt = DOCUMENT_PROMPT
@@ -655,7 +660,7 @@ def analyze_and_suggest(user_id: int, image_bytes: bytes,
     if comment:
         prompt += f"\n\nユーザーからのコメント: {comment}"
     round1 = _call_ai(handler, api_key, model, image_bytes, mime_type,
-                      prompt, 1000, user_id, base_url=base_url)
+                      prompt, 1000, user_id, extra_kw)
 
     analysis = DocumentAnalysis(
         date=round1.get("date"),
@@ -679,7 +684,7 @@ def analyze_and_suggest(user_id: int, image_bytes: bytes,
     )
 
     round2 = _call_ai(handler, api_key, model, image_bytes, mime_type,
-                      suggestion_prompt, 2000, user_id, base_url=base_url)
+                      suggestion_prompt, 2000, user_id, extra_kw)
 
     suggestions_raw = round2.get("suggestions", [])
 
@@ -754,7 +759,7 @@ WEB_IMPORT_PROMPT = """あなたは日本の家計簿アプリのアシスタン
 def parse_web_text(user_id: int, raw_text: str,
                    payment_account_name: str) -> list[dict]:
     """Webページのテキストからai経由で明細を抽出する"""
-    api_key, provider, model, _, __, base_url = _get_ai_config(user_id)
+    api_key, provider, model, _, __, extra_kw = _get_ai_config(user_id)
 
     text_handler = _TEXT_PROVIDER_HANDLERS.get(provider)
     if not text_handler:
@@ -766,10 +771,8 @@ def parse_web_text(user_id: int, raw_text: str,
     )
 
     try:
-        kwargs = {"max_tokens": 16000}
-        if base_url:
-            kwargs["base_url"] = base_url
-        result = text_handler(api_key, model, prompt, **kwargs)
+        text_kw = {"max_tokens": 16000, **extra_kw}
+        result = text_handler(api_key, model, prompt, **text_kw)
     except httpx.HTTPStatusError as e:
         logger.error("AI API HTTP error for user %s: %s", user_id, e)
         raise RuntimeError(
@@ -881,7 +884,7 @@ def suggest_categories_by_ai(user_id: int, payment_account_id: int,
     Returns:
         {"摘要": {"account_id": N, "account_name": "..."}, ...}
     """
-    api_key, provider, model, _, __, base_url = _get_ai_config(user_id)
+    api_key, provider, model, _, __, extra_kw = _get_ai_config(user_id)
     text_handler = _TEXT_PROVIDER_HANDLERS.get(provider)
     if not text_handler:
         raise ValueError(f"未対応のAIプロバイダーです: {provider}")
@@ -910,10 +913,8 @@ def suggest_categories_by_ai(user_id: int, payment_account_id: int,
     )
 
     try:
-        kwargs = {"max_tokens": 4000}
-        if base_url:
-            kwargs["base_url"] = base_url
-        result = text_handler(api_key, model, prompt, **kwargs)
+        text_kw = {"max_tokens": 4000, **extra_kw}
+        result = text_handler(api_key, model, prompt, **text_kw)
     except httpx.HTTPStatusError as e:
         logger.error("AI API HTTP error for user %s: %s", user_id, e)
         raise RuntimeError(
