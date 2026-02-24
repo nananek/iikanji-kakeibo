@@ -1,69 +1,13 @@
 {% extends "base.html" %}
-{% block title %}自動取込設定 - いいかんじ™家計簿{% endblock %}
+{% block title %}通知設定 - いいかんじ™家計簿{% endblock %}
 
 {% block content %}
 <div class="row">
   <div class="col-lg-8">
-    <h2><i class="bi bi-cloud-download"></i> 自動取込設定</h2>
+    <h2><i class="bi bi-bell"></i> 通知設定</h2>
     <p class="text-muted">
-      外部ストレージのレシート画像を定期的に取得し、AIで自動仕訳して下書きに保存します。
+      AI証憑仕訳の下書き作成時などにWebhookで通知を送ります。
     </p>
-
-    <!-- インポート元 -->
-    <div class="card mb-4">
-      <div class="card-header d-flex justify-content-between align-items-center">
-        <span><i class="bi bi-folder2-open"></i> インポート元</span>
-        <a href="{{ url_for('settings.auto_import_source_add') }}" class="btn btn-sm btn-primary">
-          <i class="bi bi-plus-lg"></i> 追加
-        </a>
-      </div>
-      <div class="card-body">
-        {% if sources %}
-        <div class="list-group list-group-flush">
-          {% for source in sources %}
-          <div class="list-group-item d-flex justify-content-between align-items-start">
-            <div>
-              <h6 class="mb-1">
-                {{ source.name }}
-                {% if source.is_active %}
-                <span class="badge bg-success">有効</span>
-                {% else %}
-                <span class="badge bg-secondary">無効</span>
-                {% endif %}
-              </h6>
-              <small class="text-muted">
-                <i class="bi bi-hdd-network"></i> {{ source.provider | upper }}
-                — {{ source._config.url }}
-              </small>
-            </div>
-            <div class="btn-group btn-group-sm">
-              <button type="button" class="btn btn-outline-primary test-source-btn"
-                      data-source-id="{{ source.id }}" title="接続テスト">
-                <i class="bi bi-plug"></i>
-              </button>
-              <form method="POST" action="{{ url_for('settings.auto_import_source_toggle', source_id=source.id) }}" class="d-inline">
-                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                <button type="submit" class="btn btn-outline-secondary"
-                        title="{{ '無効にする' if source.is_active else '有効にする' }}">
-                  <i class="bi bi-{{ 'pause' if source.is_active else 'play' }}"></i>
-                </button>
-              </form>
-              <form method="POST" action="{{ url_for('settings.auto_import_source_delete', source_id=source.id) }}"
-                    class="d-inline" onsubmit="return confirm('インポート元「{{ source.name }}」を削除しますか？')">
-                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                <button type="submit" class="btn btn-outline-danger">
-                  <i class="bi bi-trash"></i>
-                </button>
-              </form>
-            </div>
-          </div>
-          {% endfor %}
-        </div>
-        {% else %}
-        <p class="text-muted mb-0">インポート元が設定されていません。</p>
-        {% endif %}
-      </div>
-    </div>
 
     <!-- Webhook 通知 -->
     <div class="card mb-4">
@@ -100,59 +44,5 @@
       </div>
     </div>
   </div>
-
-  <div class="col-lg-4">
-    <div class="card shadow-sm mb-3">
-      <div class="card-header">使い方</div>
-      <div class="card-body">
-        <h6>1. インポート元を追加</h6>
-        <p class="small">Nextcloud 等の WebDAV URL とフォルダを設定します。</p>
-        <h6>2. 下書きを確認</h6>
-        <p class="small">
-          <a href="{{ url_for('ai_journal.drafts') }}">AI証憑仕訳の下書き一覧</a>
-          から仕訳を確認・登録できます。
-        </p>
-      </div>
-    </div>
-  </div>
 </div>
-{% endblock %}
-
-{% block scripts %}
-<script>
-document.querySelectorAll('.test-source-btn').forEach(function(btn) {
-  btn.addEventListener('click', async function() {
-    const sourceId = this.dataset.sourceId;
-    const icon = this.querySelector('i');
-    const item = this.closest('.list-group-item');
-
-    this.disabled = true;
-    icon.className = 'spinner-border spinner-border-sm';
-
-    // 既存の結果を消す
-    const old = item.querySelector('.test-result');
-    if (old) old.remove();
-
-    try {
-      const resp = await fetch(`{{ url_for('settings.auto_import') }}sources/${sourceId}/test`, {
-        method: 'POST',
-        headers: {'X-CSRFToken': '{{ csrf_token() }}'},
-      });
-      const json = await resp.json();
-      const div = document.createElement('div');
-      div.className = 'test-result small mt-1 text-' + (json.ok ? 'success' : 'danger');
-      div.textContent = json.message;
-      item.querySelector('div').appendChild(div);
-    } catch (e) {
-      const div = document.createElement('div');
-      div.className = 'test-result small mt-1 text-danger';
-      div.textContent = '接続テストに失敗しました。';
-      item.querySelector('div').appendChild(div);
-    } finally {
-      this.disabled = false;
-      icon.className = 'bi bi-plug';
-    }
-  });
-});
-</script>
 {% endblock %}

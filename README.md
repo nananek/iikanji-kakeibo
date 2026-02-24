@@ -261,7 +261,7 @@ app/
 │   ├── auditor.py       #   監査ダッシュボード・代理閲覧
 │   ├── webauthn.py      #   Passkey WebAuthn API
 │   ├── helpers.py       #   ビュー共通ヘルパー
-│   └── settings.py      #   設定トップ・Passkey・AI API・APIキー・月次確定・自動取込・監査アクセス管理
+│   └── settings.py      #   設定トップ・Passkey・外部AI・APIキー・月次確定・通知・監査アクセス管理
 ├── services/            # ビジネスロジック
 │   ├── accounting.py    #   仕訳自動生成
 │   ├── csv_import.py    #   CSVパース

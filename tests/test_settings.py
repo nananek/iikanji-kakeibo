@@ -32,6 +32,15 @@ class TestSettingsIndex:
         assert "AI・連携" in html
         assert "セキュリティ" in html
 
+    def test_contains_renamed_labels(self, db, logged_in_client):
+        resp = logged_in_client.get("/settings/")
+        html = resp.data.decode()
+        assert "外部AI" in html
+        assert "通知" in html
+        # 旧名称が使われていないこと
+        assert "AI API設定" not in html
+        assert "自動取込" not in html
+
     def test_contains_all_links(self, db, logged_in_client):
         resp = logged_in_client.get("/settings/")
         html = resp.data.decode()

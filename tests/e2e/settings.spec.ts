@@ -38,8 +38,8 @@ test.describe("設定トップページ", () => {
     for (const label of [
       "勘定科目",
       "月次確定",
-      "AI API設定",
-      "自動取込",
+      "外部AI",
+      "通知",
       "APIキー管理",
       "Passkey管理",
     ]) {
