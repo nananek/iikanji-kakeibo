@@ -88,12 +88,14 @@ PROVIDER_DEFAULTS = {
     "openai": "gpt-4o",
     "google": "gemini-2.0-flash",
     "anthropic": "claude-sonnet-4-20250514",
+    "ollama": "llama3.2-vision",
 }
 
 PROVIDER_LABELS = {
     "openai": "OpenAI (GPT-4o)",
     "google": "Google Gemini",
     "anthropic": "Anthropic Claude",
+    "ollama": "Ollama (ローカル)",
 }
 
 RECEIPT_PROMPT = """あなたは日本の家計簿アプリのアシスタントです。
@@ -326,10 +328,47 @@ def _call_anthropic(api_key: str, model: str, image_bytes: bytes,
     return _extract_json(content)
 
 
+def _call_ollama(api_key: str, model: str, image_bytes: bytes,
+                 mime_type: str, prompt: str = RECEIPT_PROMPT,
+                 max_tokens: int = 500, *, base_url: str = "") -> dict:
+    url = (base_url.rstrip("/") if base_url else "http://localhost:11434")
+    b64_image = base64.b64encode(image_bytes).decode()
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    response = httpx.post(
+        f"{url}/v1/chat/completions",
+        headers=headers,
+        json={
+            "model": model,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt},
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:{mime_type};base64,{b64_image}"
+                            },
+                        },
+                    ],
+                }
+            ],
+            "max_tokens": max_tokens,
+        },
+        timeout=120.0,
+    )
+    response.raise_for_status()
+    content = response.json()["choices"][0]["message"]["content"]
+    return _extract_json(content)
+
+
 _PROVIDER_HANDLERS = {
     "openai": _call_openai,
     "google": _call_google,
     "anthropic": _call_anthropic,
+    "ollama": _call_ollama,
 }
 
 
@@ -397,10 +436,32 @@ def _call_anthropic_text(api_key: str, model: str, prompt: str,
     return _extract_json(content)
 
 
+def _call_ollama_text(api_key: str, model: str, prompt: str,
+                      max_tokens: int = 2000, *, base_url: str = "") -> dict:
+    url = (base_url.rstrip("/") if base_url else "http://localhost:11434")
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    response = httpx.post(
+        f"{url}/v1/chat/completions",
+        headers=headers,
+        json={
+            "model": model,
+            "messages": [{"role": "user", "content": prompt}],
+            "max_tokens": max_tokens,
+        },
+        timeout=120.0,
+    )
+    response.raise_for_status()
+    content = response.json()["choices"][0]["message"]["content"]
+    return _extract_json(content)
+
+
 _TEXT_PROVIDER_HANDLERS = {
     "openai": _call_openai_text,
     "google": _call_google_text,
     "anthropic": _call_anthropic_text,
+    "ollama": _call_ollama_text,
 }
 
 
@@ -513,30 +574,35 @@ def _get_ai_config(user_id: int):
     """AI設定を取得してバリデーション
 
     Returns:
-        (api_key, provider, model, handler, custom_prompt)
+        (api_key, provider, model, handler, custom_prompt, base_url)
     """
     config = UserAIConfig.query.filter_by(user_id=user_id).first()
     if not config:
         raise ValueError("AI API設定が登録されていません。設定画面で登録してください。")
 
-    api_key = decrypt_api_key(config.api_key_encrypted)
+    raw_key = decrypt_api_key(config.api_key_encrypted)
+    # Ollama はダミーキー "_" で保存されるので空文字に戻す
+    api_key = "" if raw_key == "_" else raw_key
     provider = config.provider
     model = config.model_name or PROVIDER_DEFAULTS.get(provider, "")
     custom_prompt = getattr(config, "custom_prompt", "") or ""
+    base_url = getattr(config, "base_url", "") or ""
 
     handler = _PROVIDER_HANDLERS.get(provider)
     if not handler:
         raise ValueError(f"未対応のAIプロバイダーです: {provider}")
 
-    return api_key, provider, model, handler, custom_prompt
+    return api_key, provider, model, handler, custom_prompt, base_url
 
 
 def _call_ai(handler, api_key, model, image_bytes, mime_type,
-             prompt, max_tokens, user_id):
+             prompt, max_tokens, user_id, *, base_url=""):
     """AI APIを呼び出す共通ラッパー"""
     try:
-        return handler(api_key, model, image_bytes, mime_type,
-                       prompt=prompt, max_tokens=max_tokens)
+        kwargs = {"prompt": prompt, "max_tokens": max_tokens}
+        if base_url:
+            kwargs["base_url"] = base_url
+        return handler(api_key, model, image_bytes, mime_type, **kwargs)
     except httpx.HTTPStatusError as e:
         logger.error("AI API HTTP error for user %s: %s", user_id, e)
         raise RuntimeError(
@@ -551,9 +617,9 @@ def _call_ai(handler, api_key, model, image_bytes, mime_type,
 def analyze_receipt(user_id: int, image_bytes: bytes,
                     mime_type: str) -> ReceiptData:
     """領収書画像をAIで解析する（後方互換）"""
-    api_key, provider, model, handler, _ = _get_ai_config(user_id)
+    api_key, provider, model, handler, _, base_url = _get_ai_config(user_id)
     result = _call_ai(handler, api_key, model, image_bytes, mime_type,
-                      RECEIPT_PROMPT, 500, user_id)
+                      RECEIPT_PROMPT, 500, user_id, base_url=base_url)
 
     return ReceiptData(
         date=result.get("date"),
@@ -580,7 +646,7 @@ def analyze_and_suggest(user_id: int, image_bytes: bytes,
         ValueError: AI設定未登録またはプロバイダー未対応
         RuntimeError: API呼出し失敗
     """
-    api_key, provider, model, handler, custom_prompt = _get_ai_config(user_id)
+    api_key, provider, model, handler, custom_prompt, base_url = _get_ai_config(user_id)
 
     # 第1ラウンド: 書類解析
     prompt = DOCUMENT_PROMPT
@@ -589,7 +655,7 @@ def analyze_and_suggest(user_id: int, image_bytes: bytes,
     if comment:
         prompt += f"\n\nユーザーからのコメント: {comment}"
     round1 = _call_ai(handler, api_key, model, image_bytes, mime_type,
-                      prompt, 1000, user_id)
+                      prompt, 1000, user_id, base_url=base_url)
 
     analysis = DocumentAnalysis(
         date=round1.get("date"),
@@ -613,7 +679,7 @@ def analyze_and_suggest(user_id: int, image_bytes: bytes,
     )
 
     round2 = _call_ai(handler, api_key, model, image_bytes, mime_type,
-                      suggestion_prompt, 2000, user_id)
+                      suggestion_prompt, 2000, user_id, base_url=base_url)
 
     suggestions_raw = round2.get("suggestions", [])
 
@@ -688,7 +754,7 @@ WEB_IMPORT_PROMPT = """あなたは日本の家計簿アプリのアシスタン
 def parse_web_text(user_id: int, raw_text: str,
                    payment_account_name: str) -> list[dict]:
     """Webページのテキストからai経由で明細を抽出する"""
-    api_key, provider, model, _, __ = _get_ai_config(user_id)
+    api_key, provider, model, _, __, base_url = _get_ai_config(user_id)
 
     text_handler = _TEXT_PROVIDER_HANDLERS.get(provider)
     if not text_handler:
@@ -700,7 +766,10 @@ def parse_web_text(user_id: int, raw_text: str,
     )
 
     try:
-        result = text_handler(api_key, model, prompt, max_tokens=16000)
+        kwargs = {"max_tokens": 16000}
+        if base_url:
+            kwargs["base_url"] = base_url
+        result = text_handler(api_key, model, prompt, **kwargs)
     except httpx.HTTPStatusError as e:
         logger.error("AI API HTTP error for user %s: %s", user_id, e)
         raise RuntimeError(
@@ -812,7 +881,7 @@ def suggest_categories_by_ai(user_id: int, payment_account_id: int,
     Returns:
         {"摘要": {"account_id": N, "account_name": "..."}, ...}
     """
-    api_key, provider, model, _, __ = _get_ai_config(user_id)
+    api_key, provider, model, _, __, base_url = _get_ai_config(user_id)
     text_handler = _TEXT_PROVIDER_HANDLERS.get(provider)
     if not text_handler:
         raise ValueError(f"未対応のAIプロバイダーです: {provider}")
@@ -841,7 +910,10 @@ def suggest_categories_by_ai(user_id: int, payment_account_id: int,
     )
 
     try:
-        result = text_handler(api_key, model, prompt, max_tokens=4000)
+        kwargs = {"max_tokens": 4000}
+        if base_url:
+            kwargs["base_url"] = base_url
+        result = text_handler(api_key, model, prompt, **kwargs)
     except httpx.HTTPStatusError as e:
         logger.error("AI API HTTP error for user %s: %s", user_id, e)
         raise RuntimeError(

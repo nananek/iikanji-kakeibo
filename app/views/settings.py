@@ -82,10 +82,15 @@ def ai_config_save():
     api_key = request.form.get("api_key", "").strip()
     model_name = request.form.get("model_name", "").strip()
     custom_prompt = request.form.get("custom_prompt", "").strip()
+    base_url = request.form.get("base_url", "").strip()
 
     if provider not in PROVIDER_DEFAULTS:
         flash("無効なプロバイダーです。", "danger")
         return redirect(url_for("settings.ai_config"))
+
+    # Ollama は API キー不要、それ以外は新規時に必須
+    is_ollama = provider == "ollama"
+    effective_key = api_key or ("_" if is_ollama else "")
 
     config = UserAIConfig.query.filter_by(user_id=current_user.id).first()
 
@@ -93,18 +98,23 @@ def ai_config_save():
         config.provider = provider
         config.model_name = model_name
         config.custom_prompt = custom_prompt
+        config.base_url = base_url
         if api_key:
             config.api_key_encrypted = encrypt_api_key(api_key)
+        elif is_ollama and not api_key:
+            # Ollama でキー未入力なら既存キーがなければダミーを保存
+            config.api_key_encrypted = encrypt_api_key("_")
     else:
-        if not api_key:
+        if not effective_key:
             flash("APIキーを入力してください。", "danger")
             return redirect(url_for("settings.ai_config"))
         config = UserAIConfig(
             user_id=current_user.id,
             provider=provider,
-            api_key_encrypted=encrypt_api_key(api_key),
+            api_key_encrypted=encrypt_api_key(effective_key),
             model_name=model_name,
             custom_prompt=custom_prompt,
+            base_url=base_url,
         )
         db.session.add(config)
 

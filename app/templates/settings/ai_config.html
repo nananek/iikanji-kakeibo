@@ -31,8 +31,20 @@
             </select>
           </div>
 
+          <div class="mb-3" id="baseUrlGroup" style="display:none;">
+            <label class="form-label" for="baseUrlInput">ベースURL</label>
+            <input type="url" class="form-control" name="base_url" id="baseUrlInput"
+                   value="{{ config.base_url if config else '' }}"
+                   placeholder="http://localhost:11434">
+            <div class="form-text">
+              Ollamaサーバーのアドレスを入力してください。省略時は http://localhost:11434 が使われます。
+            </div>
+          </div>
+
           <div class="mb-3">
-            <label class="form-label" for="apiKeyInput">APIキー</label>
+            <label class="form-label" for="apiKeyInput">
+              APIキー<span id="apiKeyOptional" style="display:none;" class="text-muted">（省略可）</span>
+            </label>
             <input type="password" class="form-control" name="api_key" id="apiKeyInput"
                    placeholder="{% if config %}(設定済み・変更する場合のみ入力){% else %}sk-... / AIza... 等{% endif %}"
                    {% if not config %}required{% endif %}>
@@ -106,6 +118,12 @@
             console.anthropic.com
           </a> でAPIキーを作成
         </p>
+        <h6>Ollama (ローカル)</h6>
+        <p class="small">
+          <a href="https://ollama.com/" target="_blank" rel="noopener">
+            ollama.com
+          </a> からインストール。APIキー不要で、ローカルまたはネットワーク上のOllamaサーバーを利用できます。
+        </p>
       </div>
     </div>
   </div>
@@ -117,11 +135,21 @@
 const defaults = {{ provider_defaults | tojson }};
 const select = document.getElementById('providerSelect');
 const hint = document.getElementById('defaultModelHint');
+const baseUrlGroup = document.getElementById('baseUrlGroup');
+const apiKeyInput = document.getElementById('apiKeyInput');
+const apiKeyOptional = document.getElementById('apiKeyOptional');
 
-function updateHint() {
+function updateProvider() {
+  const isOllama = select.value === 'ollama';
   hint.textContent = 'デフォルト: ' + (defaults[select.value] || '');
+  baseUrlGroup.style.display = isOllama ? '' : 'none';
+  apiKeyOptional.style.display = isOllama ? '' : 'none';
+  // 新規登録時のみ required 制御（既存設定時は常に optional）
+  {% if not config %}
+  apiKeyInput.required = !isOllama;
+  {% endif %}
 }
-select.addEventListener('change', updateHint);
-updateHint();
+select.addEventListener('change', updateProvider);
+updateProvider();
 </script>
 {% endblock %}

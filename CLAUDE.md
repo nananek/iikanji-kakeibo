@@ -73,7 +73,7 @@
 | AuditGrant | audit_grants | owner_user_id, auditor_user_id, permission_level (1/2/3), status |
 | AuditGrantAccount | audit_grant_accounts | audit_grant_id, account_id（Lv2の可視科目） |
 | AIDraft | ai_drafts | user_id, status (pending/analyzed), image_path, suggestions (JSON), discord_webhook_url, discord_message_id |
-| UserAIConfig | user_ai_configs | provider, api_key_encrypted, model_name, custom_prompt |
+| UserAIConfig | user_ai_configs | provider, api_key_encrypted, model_name, custom_prompt, base_url |
 | AutoImportSource | auto_import_sources | user_id, source_type (webdav), config (JSON暗号化) |
 | ProcessedFile | auto_import_processed_files | source_id, filename, draft_id |
 | WebhookConfig | webhook_configs | user_id, url, events |
@@ -89,7 +89,7 @@
 | audit.py | 監査権限・代理閲覧・科目隠蔽・提出ロック |
 | csv_import.py | CSVパース（エンコーディング自動判定・日付/金額パース） |
 | ofx_import.py | OFX/QFXパース |
-| ai_receipt.py | AI証憑解析・Web明細抽出（OpenAI/Gemini/Claude対応） |
+| ai_receipt.py | AI証憑解析・Web明細抽出（OpenAI/Gemini/Claude/Ollama対応） |
 | tax.py | 確定申告集計・月次比較・着地予測 |
 | balance_cache.py | 確定済み残高キャッシュの保存・取得 |
 | captcha.py | CAPTCHA 検証（hCaptcha/reCAPTCHA/Turnstile/mCaptcha） |
