@@ -74,6 +74,7 @@ def ai_config_save():
     provider = request.form.get("provider", "openai")
     api_key = request.form.get("api_key", "").strip()
     model_name = request.form.get("model_name", "").strip()
+    custom_prompt = request.form.get("custom_prompt", "").strip()
 
     if provider not in PROVIDER_DEFAULTS:
         flash("無効なプロバイダーです。", "danger")
@@ -84,6 +85,7 @@ def ai_config_save():
     if config:
         config.provider = provider
         config.model_name = model_name
+        config.custom_prompt = custom_prompt
         if api_key:
             config.api_key_encrypted = encrypt_api_key(api_key)
     else:
@@ -95,6 +97,7 @@ def ai_config_save():
             provider=provider,
             api_key_encrypted=encrypt_api_key(api_key),
             model_name=model_name,
+            custom_prompt=custom_prompt,
         )
         db.session.add(config)
 

@@ -17,6 +17,7 @@ class UserAIConfig(db.Model):
     provider = db.Column(db.String(20), nullable=False, default="openai")
     api_key_encrypted = db.Column(db.LargeBinary, nullable=False)
     model_name = db.Column(db.String(100), nullable=False, default="")
+    custom_prompt = db.Column(db.Text, nullable=False, default="")
     created_at = db.Column(
         db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc)
     )

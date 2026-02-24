@@ -49,6 +49,15 @@
             <div class="form-text" id="defaultModelHint"></div>
           </div>
 
+          <div class="mb-3">
+            <label class="form-label" for="customPromptInput">定型プロンプト（省略可）</label>
+            <textarea class="form-control" name="custom_prompt" id="customPromptInput"
+                      rows="4" placeholder="例: QUICPayはJCB CARD Wのこと&#10;Suicaチャージは交通費に分類">{{ config.custom_prompt if config else '' }}</textarea>
+            <div class="form-text">
+              証憑解析時にAIへ追加で伝える情報です。決済手段の対応関係や分類ルールなどを記述できます。
+            </div>
+          </div>
+
           <button type="submit" class="btn btn-primary">
             <i class="bi bi-check-lg"></i> 保存
           </button>

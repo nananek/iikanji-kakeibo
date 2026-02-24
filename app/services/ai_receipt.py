@@ -501,7 +501,11 @@ def _get_account_list_text(user_id: int) -> str:
 
 
 def _get_ai_config(user_id: int):
-    """AI設定を取得してバリデーション"""
+    """AI設定を取得してバリデーション
+
+    Returns:
+        (api_key, provider, model, handler, custom_prompt)
+    """
     config = UserAIConfig.query.filter_by(user_id=user_id).first()
     if not config:
         raise ValueError("AI API設定が登録されていません。設定画面で登録してください。")
@@ -509,12 +513,13 @@ def _get_ai_config(user_id: int):
     api_key = decrypt_api_key(config.api_key_encrypted)
     provider = config.provider
     model = config.model_name or PROVIDER_DEFAULTS.get(provider, "")
+    custom_prompt = getattr(config, "custom_prompt", "") or ""
 
     handler = _PROVIDER_HANDLERS.get(provider)
     if not handler:
         raise ValueError(f"未対応のAIプロバイダーです: {provider}")
 
-    return api_key, provider, model, handler
+    return api_key, provider, model, handler, custom_prompt
 
 
 def _call_ai(handler, api_key, model, image_bytes, mime_type,
@@ -537,7 +542,7 @@ def _call_ai(handler, api_key, model, image_bytes, mime_type,
 def analyze_receipt(user_id: int, image_bytes: bytes,
                     mime_type: str) -> ReceiptData:
     """領収書画像をAIで解析する（後方互換）"""
-    api_key, provider, model, handler = _get_ai_config(user_id)
+    api_key, provider, model, handler, _ = _get_ai_config(user_id)
     result = _call_ai(handler, api_key, model, image_bytes, mime_type,
                       RECEIPT_PROMPT, 500, user_id)
 
@@ -566,10 +571,12 @@ def analyze_and_suggest(user_id: int, image_bytes: bytes,
         ValueError: AI設定未登録またはプロバイダー未対応
         RuntimeError: API呼出し失敗
     """
-    api_key, provider, model, handler = _get_ai_config(user_id)
+    api_key, provider, model, handler, custom_prompt = _get_ai_config(user_id)
 
     # 第1ラウンド: 書類解析
     prompt = DOCUMENT_PROMPT
+    if custom_prompt:
+        prompt += f"\n\n## ユーザー定型情報\n{custom_prompt}"
     if comment:
         prompt += f"\n\nユーザーからのコメント: {comment}"
     round1 = _call_ai(handler, api_key, model, image_bytes, mime_type,
@@ -670,7 +677,7 @@ WEB_IMPORT_PROMPT = """あなたは日本の家計簿アプリのアシスタン
 def parse_web_text(user_id: int, raw_text: str,
                    payment_account_name: str) -> list[dict]:
     """Webページのテキストからai経由で明細を抽出する"""
-    api_key, provider, model, _ = _get_ai_config(user_id)
+    api_key, provider, model, _, __ = _get_ai_config(user_id)
 
     text_handler = _TEXT_PROVIDER_HANDLERS.get(provider)
     if not text_handler:
@@ -794,7 +801,7 @@ def suggest_categories_by_ai(user_id: int, payment_account_id: int,
     Returns:
         {"摘要": {"account_id": N, "account_name": "..."}, ...}
     """
-    api_key, provider, model, _ = _get_ai_config(user_id)
+    api_key, provider, model, _, __ = _get_ai_config(user_id)
     text_handler = _TEXT_PROVIDER_HANDLERS.get(provider)
     if not text_handler:
         raise ValueError(f"未対応のAIプロバイダーです: {provider}")
