@@ -150,13 +150,22 @@ DOCUMENT_PROMPT = """あなたは日本の家計簿アプリのアシスタン�
   - 例: ["給料手当", "法定福利費", "預り金"]"""
 
 
-def _build_suggestion_prompt(account_list_text, ledger_text=""):
+def _build_suggestion_prompt(account_list_text, ledger_text="",
+                             custom_prompt=""):
     """第2ラウンド用プロンプトを組み立てる"""
     ledger_section = ""
     if ledger_text:
         ledger_section = f"""
 以下は関連する勘定科目の元帳データ（直近の取引）です：
 {ledger_text}
+"""
+
+    custom_section = ""
+    if custom_prompt:
+        custom_section = f"""
+
+## ユーザー定型ルール（必ず従ってください）
+{custom_prompt}
 """
 
     return f"""あなたは日本の家計簿（複式簿記）アプリのアシスタントです。
@@ -182,7 +191,7 @@ def _build_suggestion_prompt(account_list_text, ledger_text=""):
 {ledger_section}
 利用可能な勘定科目一覧（この中のIDと名前を使ってください）：
 {account_list_text}
-
+{custom_section}
 注意事項:
 - 各仕訳案の借方合計と貸方合計は必ず一致させてください
 - account_id は上記一覧のIDを使ってください
@@ -599,7 +608,9 @@ def analyze_and_suggest(user_id: int, image_bytes: bytes,
 
     # 第2ラウンド: 仕訳案生成
     account_list_text = _get_account_list_text(user_id)
-    suggestion_prompt = _build_suggestion_prompt(account_list_text, ledger_text)
+    suggestion_prompt = _build_suggestion_prompt(
+        account_list_text, ledger_text, custom_prompt
+    )
 
     round2 = _call_ai(handler, api_key, model, image_bytes, mime_type,
                       suggestion_prompt, 2000, user_id)
