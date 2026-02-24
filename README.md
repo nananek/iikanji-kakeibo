@@ -54,7 +54,7 @@
 
 ### AI 証憑仕訳
 
-領収書・給与明細・請求書の画像をアップロードすると、AI が内容を解析して複数の仕訳案を提案。OpenAI / Google Gemini / Anthropic Claude に対応。コメント欄で「会社の懇親会」等のヒントを付けると解析精度が向上。一時保存機能でまとめて後から仕訳処理することも可能。
+領収書・給与明細・請求書の画像をアップロードすると、AI が内容を解析して複数の仕訳案を提案。OpenAI / Google Gemini / Anthropic Claude に対応。コメント欄で「会社の懇親会」等のヒントを付けると解析精度が向上。定型プロンプトを設定すれば、決済手段の対応関係や摘要の書き方ルールなどを毎回自動で AI に指示できます。仕訳登録後は下書きが自動削除され、Discord Webhook 通知には完了マークが付きます。
 
 ### 月次比較・着地予測
 
@@ -128,7 +128,7 @@ iPhone等のスマートフォン縦長画面に最適化されたレスポン�
 **AI 証憑仕訳 API** (`ai:analyze`):
 
 - `POST /api/v1/ai/analyze` — 画像+メモを送信し、AI 解析して下書きを作成（`notify=1` で Webhook 通知）
-- `GET /api/v1/ai/drafts` — 下書き一覧（`?status=analyzed/done/all&page=1&per_page=50`）
+- `GET /api/v1/ai/drafts` — 下書き一覧（`?status=analyzed/all&page=1&per_page=50`）
 - `GET /api/v1/ai/drafts/<id>` — 下書き詳細（候補データ含む）
 - `DELETE /api/v1/ai/drafts/<id>` — 下書き削除
 
@@ -242,7 +242,7 @@ app/
 │   ├── medical.py       #   MedicalExpense
 │   ├── audit.py         #   AuditGrant, AuditGrantAccount
 │   ├── api_key.py       #   APIKey (REST API 認証)
-│   ├── ai_config.py     #   UserAIConfig
+│   ├── ai_config.py     #   UserAIConfig (定型プロンプト含む)
 │   ├── auto_import.py   #   AutoImportSource, ProcessedFile, WebhookConfig
 │   └── webauthn.py      #   WebAuthnCredential
 ├── views/               # Blueprint (ルーティング)
@@ -261,7 +261,7 @@ app/
 │   ├── auditor.py       #   監査ダッシュボード・代理閲覧
 │   ├── webauthn.py      #   Passkey WebAuthn API
 │   ├── helpers.py       #   ビュー共通ヘルパー
-│   └── settings.py      #   設定 (Passkey・AI API・APIキー・月次確定・年度管理・監査アクセス管理)
+│   └── settings.py      #   設定トップ・Passkey・AI API・APIキー・月次確定・自動取込・監査アクセス管理
 ├── services/            # ビジネスロジック
 │   ├── accounting.py    #   仕訳自動生成
 │   ├── csv_import.py    #   CSVパース

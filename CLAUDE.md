@@ -54,7 +54,7 @@
 | ofx_import | `/ofx-import` | OFX取込 |
 | web_import | `/web-import` | Web貼り付け取込 |
 | ai_journal | `/ai-journal` | AI証憑仕訳 |
-| settings | `/settings` | 設定（AI API・Passkey・月次確定・年度管理・監査アクセス） |
+| settings | `/settings` | 設定トップ・AI API・Passkey・月次確定・自動取込・APIキー管理・監査アクセス |
 | webauthn | `/webauthn` | Passkey API（JSON、CSRF免除） |
 | auditor | `/auditor` | 監査ダッシュボード・代理閲覧 |
 | api | `/api/v1` | REST API（仕訳CRUD・AI証憑仕訳・Bearer認証） |
@@ -72,8 +72,8 @@
 | MedicalExpense | medical_expenses | patient_name, hospital_name, amount_paid, insurance_reimbursement, provider_type |
 | AuditGrant | audit_grants | owner_user_id, auditor_user_id, permission_level (1/2/3), status |
 | AuditGrantAccount | audit_grant_accounts | audit_grant_id, account_id（Lv2の可視科目） |
-| AIDraft | ai_drafts | user_id, status (pending/analyzed/done), image_path, suggestions (JSON) |
-| UserAIConfig | user_ai_configs | provider, api_key_encrypted, model_name |
+| AIDraft | ai_drafts | user_id, status (pending/analyzed), image_path, suggestions (JSON), discord_webhook_url, discord_message_id |
+| UserAIConfig | user_ai_configs | provider, api_key_encrypted, model_name, custom_prompt |
 | AutoImportSource | auto_import_sources | user_id, source_type (webdav), config (JSON暗号化) |
 | ProcessedFile | auto_import_processed_files | source_id, filename, draft_id |
 | WebhookConfig | webhook_configs | user_id, url, events |
