@@ -310,10 +310,7 @@
 </div>
 {% endif %}
 
-{% endblock %}
-
-{% block scripts %}
-{% set need_charts = (expense_grand is defined and expense_grand > 0) or (income_grand is defined and income_grand > 0) %}
+{% set need_charts = (expense_grand > 0) or (income_grand > 0) %}
 {% if need_charts %}
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
 <script>
@@ -342,7 +339,7 @@
     return {fixed: f, variable: v, occasional: o};
   }
 
-  {% if expense_grand is defined and expense_grand > 0 %}
+  {% if expense_grand > 0 %}
   // 支出ドーナツ
   new Chart(document.getElementById('costTypeChart'), {
     type: 'doughnut',
@@ -373,7 +370,7 @@
   });
   {% endif %}
 
-  {% if income_grand is defined and income_grand > 0 %}
+  {% if income_grand > 0 %}
   // 収入ドーナツ
   new Chart(document.getElementById('incomeTypeChart'), {
     type: 'doughnut',
@@ -406,4 +403,5 @@
 })();
 </script>
 {% endif %}
+
 {% endblock %}

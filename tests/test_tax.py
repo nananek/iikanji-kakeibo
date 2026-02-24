@@ -445,6 +445,49 @@ class TestGetMonthlyComparison:
         result = get_monthly_comparison(user.id, 2026)
         assert result["expense_accounts"][0]["total"] == 2000
 
+    def test_income_cost_type_preserved(self, db, user, accounts):
+        """収入科目の cost_type がレスポンスに含まれる"""
+        accounts["4010"].cost_type = "fixed"
+        db.session.commit()
+        make_journal(db, user.id, accounts["1020"].id, accounts["4010"].id,
+                     300000, entry_date=date(2026, 1, 25))
+        result = get_monthly_comparison(user.id, 2026)
+        assert len(result["income_accounts"]) == 1
+        assert result["income_accounts"][0]["cost_type"] == "fixed"
+
+    def test_income_cost_type_none_default(self, db, user, accounts):
+        """cost_type 未設定の収入科目は None で返される"""
+        make_journal(db, user.id, accounts["1020"].id, accounts["4010"].id,
+                     300000, entry_date=date(2026, 1, 25))
+        result = get_monthly_comparison(user.id, 2026)
+        assert result["income_accounts"][0]["cost_type"] is None
+
+    def test_income_by_cost_type_breakdown(self, db, user, accounts, account_types):
+        """収入の区分別集計が正しく分類される"""
+        bonus = Account(
+            user_id=user.id, account_type_id=account_types["revenue"].id,
+            code="4050", name="雑収入", cost_type="occasional",
+            is_active=True, display_order=75,
+        )
+        db.session.add(bonus)
+        accounts["4010"].cost_type = "fixed"
+        db.session.commit()
+
+        make_journal(db, user.id, accounts["1020"].id, accounts["4010"].id,
+                     300000, entry_date=date(2026, 1, 25))
+        make_journal(db, user.id, accounts["1020"].id, bonus.id,
+                     50000, entry_date=date(2026, 1, 15))
+
+        result = get_monthly_comparison(user.id, 2026)
+        by_type = {}
+        for a in result["income_accounts"]:
+            ct = a["cost_type"] or "occasional"
+            by_type[ct] = by_type.get(ct, 0) + a["total"]
+
+        assert by_type["fixed"] == 300000
+        assert by_type["occasional"] == 50000
+        assert sum(result["income_totals"]) == 350000
+
 
 # =================================================================
 # get_month_projection

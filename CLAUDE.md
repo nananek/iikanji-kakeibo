@@ -161,7 +161,7 @@
 - `tests/conftest.py` に SQLite in-memory のフィクスチャあり
 - pytest で実行: `docker exec -w /app server-web-1 python -m pytest tests/ -v`
 - GitHub Actions (`.github/workflows/test.yml`) で push/PR 時に自動実行
-- 256テスト: accounting(16), api(27), audit(43), balance_cache(15), csv_import(53), fiscal(26), models(12), ofx_import(15), settings(7), tax(42)
+- 267テスト: accounting(16), api(27), audit(43), balance_cache(15), csv_import(53), fiscal(26), models(12), monthly_report(8), ofx_import(15), settings(7), tax(45)
 - E2Eテスト (Playwright/Firefox): `npx playwright test tests/e2e/` — 設定画面の表示・遷移テスト(10)
 - 税務集計・プライバシー権限は重点テスト項目
 
