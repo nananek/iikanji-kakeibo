@@ -83,6 +83,10 @@ with KakeiboClient("https://your-server.example.com", "ik_your_api_key") as clie
 - Bootstrap 5.3 / Chart.js / PWA
 - Docker Compose
 
+## リリースノート
+
+[リリースノート]({{ '/releases.html' | relative_url }}) — 各バージョンの変更履歴
+
 ## リンク
 
 - [GitHub リポジトリ (サーバー)](https://github.com/nananek/iikanji-kakeibo)
