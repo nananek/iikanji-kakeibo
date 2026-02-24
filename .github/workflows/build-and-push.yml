@@ -16,14 +16,6 @@ jobs:
       contents: read
       packages: write
 
-    strategy:
-      matrix:
-        include:
-          - target: web
-            suffix: ""
-          - target: worker
-            suffix: "-worker"
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -39,7 +31,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}${{ matrix.suffix }}
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
             type=ref,event=branch
             type=semver,pattern={{version}}
@@ -50,7 +42,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          target: ${{ matrix.target }}
+          target: web
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}

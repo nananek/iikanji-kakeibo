@@ -22,8 +22,3 @@ FROM base AS web
 RUN chmod +x entrypoint.sh
 EXPOSE 5000
 CMD ["./entrypoint.sh"]
-
-# === Worker (auto-import scheduler) ===
-FROM base AS worker
-
-CMD ["sh", "-c", "while true; do sleep ${AUTO_IMPORT_INTERVAL:-1800}; flask auto-import; done"]

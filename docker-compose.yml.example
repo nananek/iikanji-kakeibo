@@ -27,18 +27,6 @@ services:
       db:
         condition: service_healthy
 
-  worker:
-    image: ghcr.io/nananek/iikanji-kakeibo-worker:2.4.0
-    network_mode: service:tailscale
-    env_file:
-      - .env
-    depends_on:
-      tailscale:
-        condition: service_started
-      db:
-        condition: service_healthy
-    restart: unless-stopped
-
   db:
     image: postgres:16-alpine
     volumes:
