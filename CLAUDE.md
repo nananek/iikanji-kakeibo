@@ -94,7 +94,7 @@
 | balance_cache.py | 確定済み残高キャッシュの保存・取得 |
 | captcha.py | CAPTCHA 検証（hCaptcha/reCAPTCHA/Turnstile/mCaptcha） |
 | notify.py | Webhook 通知（Discord等） |
-| auto_import.py | 自動取込オーケストレーター（WebDAV→AI解析→下書き） |
+| auto_import.py | 自動取込オーケストレーター（内部利用、UIはオプトアウト済み） |
 | seed.py | 標準科目の初期データ・system_role定義 |
 
 ### JS (`app/static/js/`)

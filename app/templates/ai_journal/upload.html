@@ -14,8 +14,8 @@
         {% if not has_config %}
         <div class="alert alert-warning">
           <i class="bi bi-exclamation-triangle"></i>
-          AI API設定が登録されていません。
-          <a href="{{ url_for('settings.ai_config') }}">設定画面</a>でAPIキーを登録してください。
+          外部AI設定が登録されていません。
+          <a href="{{ url_for('settings.ai_config') }}">外部AI設定</a>でAPIキーを登録してください。
         </div>
         {% endif %}
 

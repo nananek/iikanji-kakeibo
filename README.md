@@ -208,24 +208,6 @@ docker compose up -d
 
 > **Note:** CAPTCHA を有効にする場合は `.env` に `CAPTCHA_PROVIDER` / `CAPTCHA_SITE_KEY` / `CAPTCHA_SECRET_KEY` を設定してください。詳細は `.env.example` のコメントを参照。
 
-## 自動取込
-
-Nextcloud 等の WebDAV ストレージからレシート画像を定期取得し、AI で自動仕訳して下書きに保存する機能です。ユーザーは設定画面からインポート元（WebDAV）と Webhook 通知（Discord 等）を設定します。
-
-docker-compose に含まれる `worker` サービス（軽量な専用イメージ）がデフォルト30分間隔で自動取込を実行します。間隔は `.env` で変更可能です:
-
-```bash
-# 自動取込の実行間隔（秒）。デフォルト: 1800（30分）
-AUTO_IMPORT_INTERVAL=900
-```
-
-手動実行やデバッグ:
-```bash
-docker exec iikanji-web flask auto-import            # 全ユーザー
-docker exec iikanji-web flask auto-import --user-id 1 # 特定ユーザー
-docker exec iikanji-web flask auto-import --dry-run   # 動作確認
-```
-
 ## プロジェクト構成
 
 ```
@@ -274,7 +256,7 @@ app/
 │   ├── tax.py           #   確定申告集計・月次比較・着地予測
 │   ├── captcha.py       #   CAPTCHA 検証 (hCaptcha/reCAPTCHA/Turnstile/mCaptcha)
 │   ├── notify.py        #   Webhook 通知 (Discord 等)
-│   ├── auto_import.py   #   自動取込オーケストレーター
+│   ├── auto_import.py   #   自動取込オーケストレーター（内部利用）
 │   └── sources/         #   外部ソースプロバイダー
 │       └── webdav.py    #     WebDAV (Nextcloud 等)
 ├── forms/               # Flask-WTF フォーム
