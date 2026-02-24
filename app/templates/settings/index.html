@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% block title %}設定 - いいかんじ™家計簿{% endblock %}
+
+{% block content %}
+<h2><i class="bi bi-gear"></i> 設定</h2>
+
+<h5 class="mt-4 mb-3 text-muted"><i class="bi bi-journal-text"></i> 帳簿</h5>
+<div class="row row-cols-1 row-cols-md-2 row-cols-lg-3 g-3 mb-4">
+  <div class="col">
+    <a href="{{ url_for('accounts.index') }}" class="card h-100 text-decoration-none shadow-sm">
+      <div class="card-body">
+        <h6 class="card-title"><i class="bi bi-list-ul text-primary"></i> 勘定科目</h6>
+        <p class="card-text text-muted small mb-0">勘定科目の追加・編集・並び替え</p>
+      </div>
+    </a>
+  </div>
+  <div class="col">
+    <a href="{{ url_for('settings.fiscal') }}" class="card h-100 text-decoration-none shadow-sm">
+      <div class="card-body">
+        <h6 class="card-title"><i class="bi bi-lock text-primary"></i> 月次確定</h6>
+        <p class="card-text text-muted small mb-0">月次・年度の確定と解除</p>
+      </div>
+    </a>
+  </div>
+</div>
+
+<h5 class="mt-4 mb-3 text-muted"><i class="bi bi-cpu"></i> AI・連携</h5>
+<div class="row row-cols-1 row-cols-md-2 row-cols-lg-3 g-3 mb-4">
+  <div class="col">
+    <a href="{{ url_for('settings.ai_config') }}" class="card h-100 text-decoration-none shadow-sm">
+      <div class="card-body">
+        <h6 class="card-title"><i class="bi bi-robot text-primary"></i> AI API設定</h6>
+        <p class="card-text text-muted small mb-0">AIプロバイダー・モデル・定型プロンプト</p>
+      </div>
+    </a>
+  </div>
+  <div class="col">
+    <a href="{{ url_for('settings.auto_import') }}" class="card h-100 text-decoration-none shadow-sm">
+      <div class="card-body">
+        <h6 class="card-title"><i class="bi bi-cloud-download text-primary"></i> 自動取込</h6>
+        <p class="card-text text-muted small mb-0">外部ストレージからの自動取込・Webhook通知</p>
+      </div>
+    </a>
+  </div>
+  <div class="col">
+    <a href="{{ url_for('settings.api_keys') }}" class="card h-100 text-decoration-none shadow-sm">
+      <div class="card-body">
+        <h6 class="card-title"><i class="bi bi-plug text-primary"></i> APIキー管理</h6>
+        <p class="card-text text-muted small mb-0">外部ツール連携用のAPIキーを管理</p>
+      </div>
+    </a>
+  </div>
+</div>
+
+<h5 class="mt-4 mb-3 text-muted"><i class="bi bi-shield-lock"></i> セキュリティ</h5>
+<div class="row row-cols-1 row-cols-md-2 row-cols-lg-3 g-3 mb-4">
+  <div class="col">
+    <a href="{{ url_for('settings.passkeys') }}" class="card h-100 text-decoration-none shadow-sm">
+      <div class="card-body">
+        <h6 class="card-title"><i class="bi bi-key text-primary"></i> Passkey管理</h6>
+        <p class="card-text text-muted small mb-0">指紋認証・Face IDでのログイン設定</p>
+      </div>
+    </a>
+  </div>
+  {% if current_user.user_type == 'personal' %}
+  <div class="col">
+    <a href="{{ url_for('settings.audit') }}" class="card h-100 text-decoration-none shadow-sm">
+      <div class="card-body">
+        <h6 class="card-title"><i class="bi bi-shield-check text-primary"></i> 監査アクセス管理</h6>
+        <p class="card-text text-muted small mb-0">税理士・会計士への閲覧権限の付与</p>
+      </div>
+    </a>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

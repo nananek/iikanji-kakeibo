@@ -25,6 +25,13 @@ from app.services.fiscal import (
 bp = Blueprint("settings", __name__, url_prefix="/settings")
 
 
+@bp.route("/")
+@login_required
+def index():
+    """設定トップページ"""
+    return render_template("settings/index.html")
+
+
 @bp.route("/passkeys")
 @login_required
 def passkeys():
