@@ -63,6 +63,15 @@
       onUpdate();
     }
 
+    // チェックボックスの click イベントによる二重トグルを防止
+    // (mousedown で手動設定した後、click のデフォルト動作で戻るのを防ぐ)
+    tbody.addEventListener('click', function (e) {
+      var target = e.target;
+      if (target.matches && target.matches(checkboxSelector)) {
+        e.preventDefault();
+      }
+    });
+
     // マウス
     tbody.addEventListener('mousedown', function (e) {
       refreshRows();
