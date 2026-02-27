@@ -285,12 +285,16 @@
     var btn = document.getElementById('aiSuggestBtn');
     if (!btn) return;
 
-    // 科目未設定の行だけ収集
+    // 対象行を収集: 科目未設定の行 + チェック済みの設定済み行
     var rows = [];
     var indices = [];
     document.querySelectorAll('.category-id').forEach(function (input) {
       var idx = parseInt(input.dataset.idx);
-      if (input.value) return; // 既に設定済みならスキップ
+      if (input.value) {
+        // 設定済みの場合、チェックされていれば対象にする（上書き）
+        var cb = document.querySelector('.row-check[data-idx="' + idx + '"]');
+        if (!cb || !cb.checked) return;
+      }
       var row = _parsedData[idx];
       if (!row || !row.description) return;
       rows.push({
@@ -302,7 +306,7 @@
     });
 
     if (rows.length === 0) {
-      alert('未設定の行がありません。');
+      alert('対象の行がありません。科目未設定の行、またはチェックした行が必要です。');
       return;
     }
 
@@ -333,9 +337,8 @@
           var idx = parseInt(catBtn.dataset.idx);
           var desc = _parsedData[idx] && _parsedData[idx].description;
           if (!desc || !data[desc]) return;
-          // 既に設定済みならスキップ
-          var input = document.querySelector('.category-id[data-idx="' + idx + '"]');
-          if (input && input.value) return;
+          // 送信対象に含まれた行のみ適用
+          if (indices.indexOf(idx) === -1) return;
           setCategoryDisplay(catBtn, data[desc].account_id, data[desc].account_name);
         });
         markAllRowStatuses();
