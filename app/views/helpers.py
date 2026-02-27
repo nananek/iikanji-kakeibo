@@ -21,12 +21,21 @@ def save_import_data(data):
     return key
 
 
-def load_import_data(key):
-    """キーからインポートデータを読み込む。なければNoneを返す"""
+def _safe_temp_path(key):
+    """キーから安全な一時ファイルパスを返す。パストラバーサルならNone"""
     if not key:
         return None
     path = os.path.join(_TEMP_DIR, key + ".json")
-    if not os.path.exists(path):
+    resolved = os.path.realpath(path)
+    if not resolved.startswith(os.path.realpath(_TEMP_DIR) + os.sep):
+        return None
+    return resolved
+
+
+def load_import_data(key):
+    """キーからインポートデータを読み込む。なければNoneを返す"""
+    path = _safe_temp_path(key)
+    if not path or not os.path.exists(path):
         return None
     with open(path, "r", encoding="utf-8") as f:
         return json.load(f)
@@ -34,9 +43,9 @@ def load_import_data(key):
 
 def delete_import_data(key):
     """インポートデータの一時ファイルを削除する"""
-    if not key:
+    path = _safe_temp_path(key)
+    if not path:
         return
-    path = os.path.join(_TEMP_DIR, key + ".json")
     if os.path.exists(path):
         os.remove(path)
 

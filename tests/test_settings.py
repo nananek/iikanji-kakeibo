@@ -1,16 +1,6 @@
 """設定ビューのテスト"""
 
 import pytest
-from flask_login import login_user
-
-
-@pytest.fixture
-def logged_in_client(app, client, user):
-    """ログイン済みのテストクライアント"""
-    with client.session_transaction() as sess:
-        # Flask-Login のセッションキーを直接セット
-        sess["_user_id"] = str(user.id)
-    return client
 
 
 class TestSettingsIndex:

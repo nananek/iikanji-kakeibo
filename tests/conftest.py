@@ -18,6 +18,22 @@ class TestConfig(Config):
     RATELIMIT_ENABLED = False
 
 
+class CsrfTestConfig(Config):
+    """CSRF 有効 — CSRF検証テスト用"""
+    TESTING = True
+    SQLALCHEMY_DATABASE_URI = "sqlite:///:memory:"
+    WTF_CSRF_ENABLED = True
+    RATELIMIT_ENABLED = False
+
+
+class RateLimitTestConfig(Config):
+    """レート制限有効 — レート制限テスト用"""
+    TESTING = True
+    SQLALCHEMY_DATABASE_URI = "sqlite:///:memory:"
+    WTF_CSRF_ENABLED = False
+    RATELIMIT_ENABLED = True
+
+
 @pytest.fixture(scope="session")
 def app():
     app = create_app(TestConfig)
@@ -155,6 +171,85 @@ def _auth_header(raw_key):
 def auth_header(api_key_raw):
     raw_key, _ = api_key_raw
     return _auth_header(raw_key)
+
+
+# --- ヘルパー ---
+
+
+@pytest.fixture
+def logged_in_client(app, client, user):
+    """ログイン済みのテストクライアント"""
+    with client.session_transaction() as sess:
+        sess["_user_id"] = str(user.id)
+    return client
+
+
+@pytest.fixture
+def second_user(db):
+    """IDOR テスト用の別ユーザー"""
+    u = User(
+        username="otheruser",
+        email="other@example.com",
+        user_type="personal",
+        created_at=datetime(2025, 1, 1, tzinfo=timezone.utc),
+    )
+    u.set_password("password123")
+    db.session.add(u)
+    db.session.commit()
+    return u
+
+
+@pytest.fixture
+def second_user_accounts(db, second_user, account_types):
+    """second_user に属する科目セット"""
+    accts = [
+        Account(user_id=second_user.id, account_type_id=account_types["asset"].id,
+                code="1010", name="現金", is_active=True, display_order=10),
+        Account(user_id=second_user.id, account_type_id=account_types["expense"].id,
+                code="5010", name="食費", is_active=True, display_order=80),
+    ]
+    db.session.add_all(accts)
+    db.session.commit()
+    return {a.code: a for a in accts}
+
+
+# --- CSRF / RateLimit テスト用 app ---
+
+
+@pytest.fixture
+def csrf_app():
+    app = create_app(CsrfTestConfig)
+    with app.app_context():
+        _db.create_all()
+        yield app
+        _db.session.rollback()
+        for table in reversed(_db.metadata.sorted_tables):
+            _db.session.execute(table.delete())
+        _db.session.commit()
+        _db.drop_all()
+
+
+@pytest.fixture
+def csrf_client(csrf_app):
+    return csrf_app.test_client()
+
+
+@pytest.fixture
+def ratelimit_app():
+    app = create_app(RateLimitTestConfig)
+    with app.app_context():
+        _db.create_all()
+        yield app
+        _db.session.rollback()
+        for table in reversed(_db.metadata.sorted_tables):
+            _db.session.execute(table.delete())
+        _db.session.commit()
+        _db.drop_all()
+
+
+@pytest.fixture
+def ratelimit_client(ratelimit_app):
+    return ratelimit_app.test_client()
 
 
 # --- ヘルパー ---

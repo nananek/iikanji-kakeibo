@@ -143,7 +143,7 @@
 ### CSRF
 - `CSRFProtect()` でグローバル有効
 - メタタグ `<meta name="csrf-token">` で JS から取得可能
-- WebAuthn API のみ免除
+- WebAuthn API と REST API (`/api/v1`) は免除
 
 ## コーディング規約・注意事項
 
@@ -161,8 +161,8 @@
 - `tests/conftest.py` に SQLite in-memory のフィクスチャあり
 - pytest で実行: `docker exec -w /app server-web-1 python -m pytest tests/ -v`
 - GitHub Actions (`.github/workflows/test.yml`) で push/PR 時に自動実行
-- 267テスト: accounting(16), api(27), audit(43), balance_cache(15), csv_import(53), fiscal(26), models(12), monthly_report(8), ofx_import(15), settings(7), tax(45)
-- E2Eテスト (Playwright/Firefox): `npx playwright test tests/e2e/` — 設定画面の表示・遷移テスト(10)
+- 337テスト: accounting(16), api(27), audit(43), balance_cache(15), csv_import(53), fiscal(26), models(12), monthly_report(8), ofx_import(15), settings(7), tax(45), security_auth(27), security_idor(12), security_input(12), security_csrf(9), security_headers(7), security_ratelimit(3)
+- E2Eテスト (Playwright/Firefox): `npx playwright test tests/e2e/` — 設定画面の表示・遷移(10), ドラッグ選択(15)
 - 税務集計・プライバシー権限は重点テスト項目
 
 ### Docker
