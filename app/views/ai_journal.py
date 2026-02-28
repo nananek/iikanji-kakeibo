@@ -175,6 +175,7 @@ def drafts():
                     if isinstance(compliance, dict):
                         summary["compliance_status"] = compliance.get("status")
                         summary["compliance_warnings"] = compliance.get("warnings", [])
+                        summary["compliance_details"] = compliance.get("details", [])
                     # 入力期限チェック
                     if summary.get("date"):
                         try:
@@ -337,6 +338,8 @@ def review():
                     selected_index=suggestion_index,
                     grouped_accounts=grouped_accounts,
                     draft_id=is_saved_draft,
+                    closed_periods=closed_periods,
+                    restricted_before_year=restricted_before,
                 )
 
             lines_data = [
@@ -366,6 +369,8 @@ def review():
                     selected_index=suggestion_index,
                     grouped_accounts=grouped_accounts,
                     draft_id=is_saved_draft,
+                    closed_periods=closed_periods,
+                    restricted_before_year=restricted_before,
                 )
 
             lines_data = [
@@ -405,6 +410,8 @@ def review():
                     selected_index=suggestion_index,
                     grouped_accounts=grouped_accounts,
                     draft_id=is_saved_draft,
+                    closed_periods=closed_periods,
+                    restricted_before_year=restricted_before,
                 )
 
         # 確定済み期間チェック

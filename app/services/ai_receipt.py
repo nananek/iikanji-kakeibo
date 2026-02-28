@@ -160,7 +160,8 @@ COMPLIANCE_CHECK_PROMPT = """
 
 "compliance": {
   "status": "pass" または "warn" または "fail",
-  "warnings": ["警告メッセージ1", "警告メッセージ2"]
+  "warnings": ["警告メッセージ1", "警告メッセージ2"],
+  "details": ["チェック項目1の結果", "チェック項目2の結果", ...]
 }
 
 チェック項目:
@@ -178,6 +179,9 @@ status の判定:
 - "pass": 全チェック項目に問題なし
 - "warn": 軽微な問題あり（登録は可能だが撮り直し推奨）
 - "fail": 重大な問題あり（証憑として不適格の可能性）
+
+details には、status に関わらず全チェック項目の結果を簡潔に1行ずつ記載してください。
+例: ["画像品質: 鮮明で読み取り可能", "必須情報: 日付・金額・取引先を確認", "書類妥当性: 領収書として有効"]
 
 warnings が空の場合は status を "pass" にしてください。"""
 
@@ -717,9 +721,14 @@ def analyze_and_suggest(user_id: int, image_bytes: bytes,
             warnings = raw_compliance.get("warnings", [])
             if not isinstance(warnings, list):
                 warnings = []
-            compliance_result = {"status": status, "warnings": warnings}
+            details = raw_compliance.get("details", [])
+            if not isinstance(details, list):
+                details = []
+            compliance_result = {
+                "status": status, "warnings": warnings, "details": details,
+            }
         else:
-            compliance_result = {"status": "pass", "warnings": []}
+            compliance_result = {"status": "pass", "warnings": [], "details": []}
 
     # 元帳データ取得（必要な場合）
     ledger_text = ""

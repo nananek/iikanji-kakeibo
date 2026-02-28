@@ -187,7 +187,10 @@ class TestCompliancePromptInjection:
                 "amount": 1000, "document_type": "receipt",
                 "items": [], "needs_ledger": False,
                 "requested_accounts": [],
-                "compliance": {"status": "pass", "warnings": []},
+                "compliance": {
+                    "status": "pass", "warnings": [],
+                    "details": ["画像品質: 鮮明", "必須情報: 確認済み", "書類妥当性: 有効"],
+                },
             },
             {
                 "suggestions": [{
@@ -209,6 +212,7 @@ class TestCompliancePromptInjection:
         suggestions = analyze_and_suggest(user.id, b"fake", "image/jpeg")
         assert suggestions[0].compliance["status"] == "pass"
         assert suggestions[0].compliance["warnings"] == []
+        assert len(suggestions[0].compliance["details"]) == 3
 
     @patch("app.services.ai_receipt._call_ai")
     def test_compliance_fail_result(self, mock_call, db, user, accounts):
@@ -281,6 +285,7 @@ class TestCompliancePromptInjection:
         suggestions = analyze_and_suggest(user.id, b"fake", "image/jpeg")
         # フォールバック: pass として扱う
         assert suggestions[0].compliance["status"] == "pass"
+        assert suggestions[0].compliance["details"] == []
 
 
 class TestSettingsComplianceToggle:
@@ -332,6 +337,73 @@ class TestSettingsComplianceToggle:
         assert updated.compliance_check is False
 
 
+class TestReviewComplianceDisplay:
+    """レビュー画面でコンプライアンス結果が表示されること"""
+
+    def _setup_draft(self, db_sess, user_id, compliance):
+        from app.models.ai_draft import AIDraft
+        suggestions = [{
+            "title": "テスト", "description": "desc",
+            "date": "2025-01-15", "entry_description": "テスト",
+            "lines": [
+                {"account_id": 1, "account_name": "消耗品費",
+                 "debit_amount": 1000, "credit_amount": 0},
+                {"account_id": 2, "account_name": "現金",
+                 "debit_amount": 0, "credit_amount": 1000},
+            ],
+            "compliance": compliance,
+        }]
+        draft = AIDraft(
+            user_id=user_id,
+            image_key="test/key",
+            image_mime="image/jpeg",
+            suggestions_json=json.dumps(suggestions, ensure_ascii=False),
+            status="analyzed",
+        )
+        db_sess.session.add(draft)
+        db_sess.session.commit()
+        return draft
+
+    def test_review_pass_shows_ok_message(self, db, logged_in_client, user):
+        compliance = {
+            "status": "pass", "warnings": [],
+            "details": ["画像品質: 鮮明", "必須情報: 確認済み"],
+        }
+        draft = self._setup_draft(db, user.id, compliance)
+        resp = logged_in_client.get(
+            f"/ai-journal/drafts/{draft.id}/review", follow_redirects=True,
+        )
+        html = resp.data.decode()
+        assert "電帳法チェックOK" in html
+
+    def test_review_pass_shows_detail_modal(self, db, logged_in_client, user):
+        compliance = {
+            "status": "pass", "warnings": [],
+            "details": ["画像品質: 鮮明"],
+        }
+        draft = self._setup_draft(db, user.id, compliance)
+        resp = logged_in_client.get(
+            f"/ai-journal/drafts/{draft.id}/review", follow_redirects=True,
+        )
+        html = resp.data.decode()
+        assert "complianceDetailModal" in html
+        assert "画像品質: 鮮明" in html
+
+    def test_review_warn_shows_detail_button(self, db, logged_in_client, user):
+        compliance = {
+            "status": "warn",
+            "warnings": ["影あり"],
+            "details": ["画像品質: 影あり", "必須情報: 確認済み"],
+        }
+        draft = self._setup_draft(db, user.id, compliance)
+        resp = logged_in_client.get(
+            f"/ai-journal/drafts/{draft.id}/review", follow_redirects=True,
+        )
+        html = resp.data.decode()
+        assert "complianceDetailModal" in html
+        assert "bi-info-circle" in html
+
+
 class TestDraftsComplianceDisplay:
     """下書き一覧でコンプライアンスステータスが表示されること"""
 
@@ -361,3 +433,30 @@ class TestDraftsComplianceDisplay:
         assert resp.status_code == 200
         # 警告バッジが表示される
         assert "警告" in resp.data.decode()
+
+    def test_drafts_shows_pass_badge(self, db, logged_in_client, user):
+        from app.models.ai_draft import AIDraft
+        suggestions = [{
+            "title": "テスト",
+            "description": "desc",
+            "date": "2025-01-15",
+            "entry_description": "テスト",
+            "lines": [
+                {"account_id": 1, "debit_amount": 1000, "credit_amount": 0},
+            ],
+            "compliance": {"status": "pass", "warnings": [], "details": ["OK"]},
+        }]
+        draft = AIDraft(
+            user_id=user.id,
+            image_key="test/key",
+            image_mime="image/jpeg",
+            suggestions_json=json.dumps(suggestions, ensure_ascii=False),
+            status="analyzed",
+        )
+        db.session.add(draft)
+        db.session.commit()
+
+        resp = logged_in_client.get("/ai-journal/drafts")
+        assert resp.status_code == 200
+        html = resp.data.decode()
+        assert "bi-check-circle" in html
