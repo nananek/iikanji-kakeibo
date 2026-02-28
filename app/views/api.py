@@ -444,6 +444,113 @@ def ai_draft_delete(draft_id):
     return jsonify({"ok": True})
 
 
+@bp.route("/vouchers", methods=["GET"])
+@api_key_required(scope="journals:read")
+def list_vouchers():
+    """証憑一覧 API"""
+    from sqlalchemy import func
+    from app.models.journal import JournalEntryLine
+
+    user_id = g.api_user_id
+    page = request.args.get("page", 1, type=int)
+    per_page = min(request.args.get("per_page", 20, type=int), 100)
+
+    query = (
+        Voucher.query
+        .outerjoin(JournalEntry, Voucher.journal_entry_id == JournalEntry.id)
+        .filter(Voucher.user_id == user_id)
+    )
+
+    date_from = request.args.get("date_from")
+    if date_from:
+        try:
+            d = date_type.fromisoformat(date_from)
+            query = query.filter(
+                db.or_(
+                    JournalEntry.date >= d,
+                    db.and_(Voucher.journal_entry_id.is_(None),
+                            func.date(Voucher.uploaded_at) >= date_from),
+                )
+            )
+        except ValueError:
+            return jsonify({"error": "date_from の形式が不正です。"}), 400
+
+    date_to = request.args.get("date_to")
+    if date_to:
+        try:
+            d = date_type.fromisoformat(date_to)
+            query = query.filter(
+                db.or_(
+                    JournalEntry.date <= d,
+                    db.and_(Voucher.journal_entry_id.is_(None),
+                            func.date(Voucher.uploaded_at) <= date_to),
+                )
+            )
+        except ValueError:
+            return jsonify({"error": "date_to の形式が不正です。"}), 400
+
+    search = request.args.get("search")
+    if search:
+        query = query.filter(JournalEntry.description.ilike(f"%{search}%"))
+
+    amount_from = request.args.get("amount_from", type=int)
+    amount_to = request.args.get("amount_to", type=int)
+    if amount_from is not None or amount_to is not None:
+        amount_subq = (
+            db.session.query(
+                JournalEntryLine.journal_entry_id,
+                func.sum(JournalEntryLine.debit_amount).label("total"),
+            )
+            .group_by(JournalEntryLine.journal_entry_id)
+            .subquery()
+        )
+        query = query.outerjoin(
+            amount_subq, JournalEntry.id == amount_subq.c.journal_entry_id
+        )
+        if amount_from is not None:
+            query = query.filter(amount_subq.c.total >= amount_from)
+        if amount_to is not None:
+            query = query.filter(amount_subq.c.total <= amount_to)
+
+    total = query.count()
+    vouchers = (
+        query.order_by(
+            func.coalesce(JournalEntry.date, func.date(Voucher.uploaded_at)).desc(),
+            Voucher.id.desc(),
+        )
+        .offset((page - 1) * per_page)
+        .limit(per_page)
+        .all()
+    )
+
+    result = []
+    for v in vouchers:
+        entry = v.journal_entry
+        d = {
+            "id": v.id,
+            "journal_entry_id": v.journal_entry_id,
+            "image_mime": v.image_mime,
+            "uploaded_at": v.uploaded_at.isoformat() if v.uploaded_at else None,
+        }
+        if entry:
+            d["journal"] = {
+                "date": entry.date.isoformat(),
+                "description": entry.description,
+                "amount": int(entry.total_debit),
+            }
+        else:
+            d["journal"] = None
+        result.append(d)
+
+    return jsonify({
+        "ok": True,
+        "vouchers": result,
+        "total": total,
+        "page": page,
+        "per_page": per_page,
+    })
+
+
 @bp.route("/vouchers/<int:voucher_id>/image", methods=["GET"])
 @api_key_required(scope="journals:read")
 def api_voucher_image(voucher_id):
