@@ -7,6 +7,7 @@ from app.models.ai_config import UserAIConfig
 from app.models.audit import AuditGrant, AuditGrantAccount
 from app.models.ai_draft import AIDraft
 from app.models.voucher import Voucher
+from app.models.voucher_audit_log import VoucherAuditLog
 from app.models.api_key import APIKey
 from app.models.auto_import import AutoImportSource, ProcessedFile, WebhookConfig
 
@@ -23,6 +24,7 @@ __all__ = [
     "AuditGrantAccount",
     "AIDraft",
     "Voucher",
+    "VoucherAuditLog",
     "APIKey",
     "AutoImportSource",
     "ProcessedFile",

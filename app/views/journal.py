@@ -9,6 +9,8 @@ from sqlalchemy.orm import joinedload
 from app.extensions import db
 from app.models.account import Account
 from app.models.journal import JournalEntry, JournalEntryLine
+from app.models.voucher import Voucher
+from app.models.voucher_audit_log import VoucherAuditLog
 from app.forms.journal import JournalForm
 from app.services.accounting import create_journal_entry, get_next_entry_number
 from app.services.fiscal import check_entry_modifiable, check_period_open_for_new, get_effective_period, adjust_date_for_fiscal_period, get_closed_periods_map, get_restricted_before_year
@@ -649,6 +651,22 @@ def edit_api(entry_id):
     return jsonify({"ok": True, "entry_number": entry.entry_number})
 
 
+def log_voucher_orphan(entry, user_id):
+    """仕訳削除前に紐づく証憑の孤立化ログを記録する。"""
+    vouchers = Voucher.query.filter_by(journal_entry_id=entry.id).all()
+    for v in vouchers:
+        db.session.add(VoucherAuditLog(
+            voucher_id=v.id,
+            user_id=user_id,
+            action="orphaned",
+            detail=json.dumps({
+                "journal_entry_id": entry.id,
+                "entry_number": entry.entry_number,
+                "description": entry.description,
+            }, ensure_ascii=False),
+        ))
+
+
 @bp.route("/<int:entry_id>/delete", methods=["POST"])
 @login_required
 def delete(entry_id):
@@ -676,6 +694,7 @@ def delete(entry_id):
         return redirect(url_for("journal.index"))
 
     num = entry.entry_number
+    log_voucher_orphan(entry, user_id)
     db.session.delete(entry)
     db.session.commit()
 
@@ -724,6 +743,7 @@ def bulk_delete():
 
     count = len(deletable)
     for entry in deletable:
+        log_voucher_orphan(entry, user_id)
         db.session.delete(entry)
     db.session.commit()
     flash(f"{count}件の仕訳を削除しました。", "success")
@@ -793,7 +813,9 @@ def delete_batch(batch_id):
         flash(f"{len(locked)}件の仕訳は確定済み期間のため削除できませんでした。", "warning")
 
     count = len(deletable)
+    user_id = get_effective_user_id()
     for entry in deletable:
+        log_voucher_orphan(entry, user_id)
         db.session.delete(entry)
     db.session.commit()
     flash(f"{count}件の仕訳を削除しました。", "success")

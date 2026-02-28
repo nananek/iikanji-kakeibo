@@ -19,6 +19,7 @@ from app.services.fiscal import check_period_open_for_new, check_entry_modifiabl
 from app.services.storage import get_storage_backend, make_storage_key
 from app.services.voucher import create_voucher_from_draft
 from app.models.voucher import Voucher
+from app.models.voucher_audit_log import VoucherAuditLog
 
 bp = Blueprint("api", __name__, url_prefix="/api/v1")
 
@@ -260,6 +261,8 @@ def delete_journal(entry_id):
     if err:
         return jsonify({"error": err}), 400
 
+    from app.views.journal import log_voucher_orphan
+    log_voucher_orphan(entry, user_id)
     db.session.delete(entry)
     db.session.commit()
 
@@ -566,6 +569,74 @@ def api_voucher_image(voucher_id):
     except FileNotFoundError:
         return jsonify({"error": "画像ファイルが見つかりません。"}), 404
     return Response(image_data, mimetype=voucher.image_mime)
+
+
+@bp.route("/vouchers/<int:voucher_id>/verify", methods=["GET"])
+@api_key_required(scope="journals:read")
+def api_voucher_verify(voucher_id):
+    """証憑ハッシュ検証 API"""
+    voucher = Voucher.query.filter_by(
+        id=voucher_id, user_id=g.api_user_id
+    ).first()
+    if not voucher:
+        return jsonify({"error": "証憑が見つかりません。"}), 404
+
+    if not voucher.file_hash:
+        return jsonify({"ok": True, "verified": None, "message": "ハッシュ未記録"})
+
+    try:
+        image_data = get_storage_backend().get(voucher.image_key)
+    except FileNotFoundError:
+        return jsonify({"error": "画像ファイルが見つかりません。"}), 404
+
+    computed = hashlib.sha256(image_data).hexdigest()
+    verified = computed == voucher.file_hash
+
+    db.session.add(VoucherAuditLog(
+        voucher_id=voucher.id,
+        user_id=g.api_user_id,
+        action="hash_verified" if verified else "hash_mismatch",
+    ))
+    db.session.commit()
+
+    return jsonify({
+        "ok": True,
+        "verified": verified,
+        "stored_hash": voucher.file_hash,
+        "computed_hash": computed,
+    })
+
+
+@bp.route("/vouchers/<int:voucher_id>/logs", methods=["GET"])
+@api_key_required(scope="journals:read")
+def api_voucher_logs(voucher_id):
+    """証憑操作ログ API"""
+    voucher = Voucher.query.filter_by(
+        id=voucher_id, user_id=g.api_user_id
+    ).first()
+    if not voucher:
+        return jsonify({"error": "証憑が見つかりません。"}), 404
+
+    logs = (
+        VoucherAuditLog.query
+        .filter_by(voucher_id=voucher.id)
+        .order_by(VoucherAuditLog.created_at.desc())
+        .all()
+    )
+
+    return jsonify({
+        "ok": True,
+        "logs": [
+            {
+                "id": log.id,
+                "action": log.action,
+                "detail": log.detail,
+                "created_at": log.created_at.isoformat(),
+                "user_id": log.user_id,
+            }
+            for log in logs
+        ],
+    })
 
 
 def _send_draft_notification(user_id: int, draft: AIDraft, suggestions: list):

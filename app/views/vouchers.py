@@ -1,14 +1,18 @@
 """証憑一覧ビュー — 電帳法検索要件対応"""
 
-from flask import Blueprint, render_template, request
+import hashlib
+
+from flask import Blueprint, render_template, request, flash, redirect, url_for
 from flask_login import login_required
 from sqlalchemy import func
 from sqlalchemy.orm import joinedload
 
 from app.extensions import db
 from app.models.voucher import Voucher
+from app.models.voucher_audit_log import VoucherAuditLog
 from app.models.journal import JournalEntry, JournalEntryLine
 from app.services.audit import get_effective_user_id
+from app.services.storage import get_storage_backend
 
 bp = Blueprint("vouchers", __name__, url_prefix="/vouchers")
 
@@ -93,3 +97,37 @@ def index():
         amount_to=amount_to,
         search=search,
     )
+
+
+@bp.route("/<int:voucher_id>/verify", methods=["POST"])
+@login_required
+def verify(voucher_id):
+    """証憑ハッシュ検証"""
+    user_id = get_effective_user_id()
+    voucher = Voucher.query.filter_by(id=voucher_id, user_id=user_id).first_or_404()
+
+    if not voucher.file_hash:
+        flash("この証憑にはハッシュが記録されていません。", "warning")
+        return redirect(url_for("vouchers.index"))
+
+    try:
+        image_data = get_storage_backend().get(voucher.image_key)
+    except FileNotFoundError:
+        flash("証憑画像がストレージに見つかりません。", "danger")
+        return redirect(url_for("vouchers.index"))
+
+    computed = hashlib.sha256(image_data).hexdigest()
+    verified = computed == voucher.file_hash
+
+    db.session.add(VoucherAuditLog(
+        voucher_id=voucher.id,
+        user_id=user_id,
+        action="hash_verified" if verified else "hash_mismatch",
+    ))
+    db.session.commit()
+
+    if verified:
+        flash("ハッシュ検証に成功しました。証憑は改ざんされていません。", "success")
+    else:
+        flash("ハッシュ不一致！証憑が改ざんされている可能性があります。", "danger")
+    return redirect(url_for("vouchers.index"))
