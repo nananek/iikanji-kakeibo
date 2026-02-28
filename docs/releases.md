@@ -5,6 +5,26 @@ title: リリースノート
 
 # リリースノート
 
+## v2.12.0
+
+**画像配信最適化 — キャッシュ・サムネイル・Gunicorn**
+
+証憑画像の読み込み速度を大幅に改善。
+
+- **HTTP キャッシュ** — `Cache-Control: immutable` + ETag/304 で、2回目以降のアクセスはネットワーク転送ゼロ
+- **サムネイル自動生成** — アップロード時に Pillow で 400px サムネイルを生成。一覧画面の転送量を数MB→数十KBに削減
+- **send_file() ストリーミング** — ローカルストレージはメモリに全読みせずファイルから直接配信。Range リクエスト対応
+- **S3 presigned URL** — S3 使用時は Flask を経由せずブラウザが直接ダウンロード
+- **serve_image() ヘルパー** — 3つの画像エンドポイントの配信ロジックを統一
+- **Gunicorn 本番サーバー** — 2ワーカーで AI 処理中も画像配信がブロックされない（`FLASK_DEBUG=1` 時は Flask dev server 維持）
+- **`flask generate-thumbnails`** — 既存画像の一括サムネイル生成コマンド
+- pytest 445件 + E2E 25件
+
+### アップグレード手順
+
+1. コンテナを再ビルド・再作成（Pillow / Gunicorn が新規依存）
+2. 既存画像のサムネイルを生成: `docker exec -w /app <container> flask generate-thumbnails`
+
 ## v2.11.0
 
 **htmx + Alpine.js によるフロントエンド刷新**
