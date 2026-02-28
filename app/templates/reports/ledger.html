@@ -75,6 +75,36 @@
           </tr>
         </thead>
         <tbody>
+          {# --- 集計用 namespace --- #}
+          {% set ns = namespace(total_debit=0, total_credit=0, prev_period=-1, last_balance=carry_forward) %}
+          {% for e in entries %}
+          {% set ns.total_debit = ns.total_debit + e.debit %}
+          {% set ns.total_credit = ns.total_credit + e.credit %}
+          {% endfor %}
+
+          {# --- 合計行マクロ --- #}
+          {% macro summary_row() %}
+          <tr class="table-dark">
+            <td></td>
+            <td><strong>合計</strong></td>
+            <td class="d-mobile-none"></td>
+            <td></td>
+            <td class="d-mobile-none"></td>
+            <td class="text-end"><strong>&yen;{{ "{:,}".format(ns.total_debit) }}</strong></td>
+            <td class="text-end"><strong>&yen;{{ "{:,}".format(ns.total_credit) }}</strong></td>
+            <td class="text-end d-mobile-none">
+              {% if entries %}
+              <strong>&yen;{{ "{:,}".format(entries[0].balance if sort == 'desc' else entries[-1].balance) }}</strong>
+              {% else %}
+              <strong>&yen;{{ "{:,}".format(carry_forward) }}</strong>
+              {% endif %}
+            </td>
+            <td></td>
+          </tr>
+          {% endmacro %}
+
+          {# --- 前期繰越行マクロ --- #}
+          {% macro carry_forward_row() %}
           <tr class="table-secondary">
             <td></td>
             <td></td>
@@ -94,7 +124,17 @@
               <strong class="ms-2 {% if carry_forward < 0 %}text-danger{% endif %}">&yen;{{ "{:,}".format(carry_forward) }}</strong>
             </td>
           </tr>
-          {% set ns = namespace(total_debit=0, total_credit=0, prev_period=-1, last_balance=carry_forward) %}
+          {% endmacro %}
+
+          {# --- desc: 合計→明細→前期繰越 / asc: 前期繰越→明細→合計 --- #}
+          {% if sort == 'desc' %}
+          {{ summary_row() }}
+          {% else %}
+          {{ carry_forward_row() }}
+          {% endif %}
+
+          {% set ns.prev_period = -1 %}
+          {% set ns.last_balance = carry_forward %}
           {% for e in entries %}
           {% if e.effective_period != ns.prev_period and ns.prev_period != -1 %}
           <tr class="d-mobile-row table-light">
@@ -134,8 +174,6 @@
               </button>
             </td>
           </tr>
-          {% set ns.total_debit = ns.total_debit + e.debit %}
-          {% set ns.total_credit = ns.total_credit + e.credit %}
           {% set ns.last_balance = e.balance %}
           {% endfor %}
           <tr class="d-mobile-row table-light">
@@ -144,22 +182,12 @@
               <strong class="ms-2 {% if ns.last_balance < 0 %}text-danger{% endif %}">&yen;{{ "{:,}".format(ns.last_balance) }}</strong>
             </td>
           </tr>
-          <tr class="table-dark">
-            <td></td>
-            <td><strong>合計</strong></td>
-            <td class="d-mobile-none"></td>
-            <td class="d-mobile-none"></td>
-            <td class="text-end"><strong>&yen;{{ "{:,}".format(ns.total_debit) }}</strong></td>
-            <td class="text-end"><strong>&yen;{{ "{:,}".format(ns.total_credit) }}</strong></td>
-            <td class="text-end d-mobile-none">
-              {% if entries %}
-              <strong>&yen;{{ "{:,}".format(entries[-1].balance) }}</strong>
-              {% else %}
-              <strong>&yen;{{ "{:,}".format(carry_forward) }}</strong>
-              {% endif %}
-            </td>
-            <td></td>
-          </tr>
+
+          {% if sort == 'desc' %}
+          {{ carry_forward_row() }}
+          {% else %}
+          {{ summary_row() }}
+          {% endif %}
         </tbody>
       </table>
     </div>
