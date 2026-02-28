@@ -19,6 +19,8 @@ services:
   web:
     image: ghcr.io/nananek/iikanji-kakeibo:2.7.2
     network_mode: service:tailscale
+    volumes:
+      - vouchers:/app/data/vouchers
     env_file:
       - .env
     depends_on:
@@ -47,3 +49,4 @@ networks:
 volumes:
   pgdata:
   tailscale-state:
+  vouchers:

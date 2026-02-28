@@ -17,6 +17,7 @@ from app.services.audit import get_effective_user_id, get_submitted_account_ids
 from app.services.ai_receipt import analyze_and_suggest
 from app.services.accounting import create_journal_entry
 from app.services.fiscal import check_period_open_for_new, get_closed_periods_map, get_restricted_before_year
+from app.services.storage import get_storage_backend, make_storage_key
 from app.views.helpers import get_grouped_accounts
 
 bp = Blueprint("ai_journal", __name__, url_prefix="/ai-journal")
@@ -35,8 +36,14 @@ def upload():
         user_id=user_id, status="analyzed"
     ).count()
     # 前回の一時ドラフトをクリーンアップ
-    AIDraft.query.filter_by(user_id=user_id, status="temp").delete()
+    temp_drafts = AIDraft.query.filter_by(user_id=user_id, status="temp").all()
+    keys_to_delete = [d.image_key for d in temp_drafts]
+    for d in temp_drafts:
+        db.session.delete(d)
     db.session.commit()
+    storage = get_storage_backend()
+    for key in keys_to_delete:
+        storage.delete(key)
     session.pop("ai_journal_draft_id", None)
     return render_template(
         "ai_journal/upload.html",
@@ -79,16 +86,20 @@ def analyze():
     suggestions_data = [asdict(s) for s in suggestions]
     suggestions_json = json.dumps(suggestions_data, ensure_ascii=False)
 
-    # 画像・解析結果をDBに一時保存（セッションには小さなIDのみ）
+    # 画像・解析結果を保存（セッションには小さなIDのみ）
     draft = AIDraft(
         user_id=get_effective_user_id(),
-        image_data=image_bytes,
+        image_key="",
         image_mime=mime_type,
         comment=comment,
         suggestions_json=suggestions_json,
         status="temp",
     )
     db.session.add(draft)
+    db.session.flush()
+    key = make_storage_key(draft.user_id, draft.id, mime_type)
+    get_storage_backend().put(key, image_bytes, mime_type)
+    draft.image_key = key
     db.session.commit()
     session["ai_journal_draft_id"] = draft.id
 
@@ -164,7 +175,11 @@ def draft_image(draft_id):
     if draft.user_id != get_effective_user_id():
         return "", 403
     from flask import Response
-    return Response(draft.image_data, mimetype=draft.image_mime)
+    try:
+        image_data = get_storage_backend().get(draft.image_key)
+    except FileNotFoundError:
+        return "", 404
+    return Response(image_data, mimetype=draft.image_mime)
 
 
 @bp.route("/drafts/<int:draft_id>/delete", methods=["POST"])
@@ -176,8 +191,10 @@ def drafts_delete(draft_id):
         flash("権限がありません。", "danger")
         return redirect(url_for("ai_journal.drafts"))
 
+    image_key = draft.image_key
     db.session.delete(draft)
     db.session.commit()
+    get_storage_backend().delete(image_key)
     flash("下書きを削除しました。", "info")
     return redirect(url_for("ai_journal.drafts"))
 
@@ -380,8 +397,10 @@ def review():
             )
             session.pop("ai_journal_draft_id", None)
             _update_discord_done(draft, entry.entry_number)
+            image_key = draft.image_key
             db.session.delete(draft)
             db.session.commit()
+            get_storage_backend().delete(image_key)
 
             flash(f"伝票 #{entry.entry_number} を登録しました。", "success")
 

@@ -16,6 +16,8 @@ class TestConfig(Config):
     SQLALCHEMY_DATABASE_URI = "sqlite:///:memory:"
     WTF_CSRF_ENABLED = False
     RATELIMIT_ENABLED = False
+    STORAGE_BACKEND = "local"
+    STORAGE_LOCAL_DIR = "/tmp/iikanji-test-vouchers"
 
 
 class CsrfTestConfig(Config):

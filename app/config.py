@@ -25,3 +25,12 @@ class Config:
     WEBAUTHN_RP_ID = os.environ.get("WEBAUTHN_RP_ID", "localhost")
     WEBAUTHN_RP_NAME = os.environ.get("WEBAUTHN_RP_NAME", "いいかんじ™家計簿")
     WEBAUTHN_ORIGIN = os.environ.get("WEBAUTHN_ORIGIN", "http://localhost:5001")
+
+    # 証憑画像ストレージ
+    STORAGE_BACKEND = os.environ.get("STORAGE_BACKEND", "local")  # "local" or "s3"
+    STORAGE_LOCAL_DIR = os.environ.get("STORAGE_LOCAL_DIR", "/app/data/vouchers")
+    STORAGE_S3_BUCKET = os.environ.get("STORAGE_S3_BUCKET", "")
+    STORAGE_S3_ENDPOINT = os.environ.get("STORAGE_S3_ENDPOINT")
+    STORAGE_S3_REGION = os.environ.get("STORAGE_S3_REGION")
+    STORAGE_S3_ACCESS_KEY = os.environ.get("STORAGE_S3_ACCESS_KEY")
+    STORAGE_S3_SECRET_KEY = os.environ.get("STORAGE_S3_SECRET_KEY")

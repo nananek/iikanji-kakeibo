@@ -10,7 +10,7 @@ class AIDraft(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
-    image_data = db.Column(db.LargeBinary, nullable=False)
+    image_key = db.Column(db.String(255), nullable=False)
     image_mime = db.Column(db.String(50), nullable=False)
     comment = db.Column(db.String(500), default="")
     suggestions_json = db.Column(db.Text, nullable=True)

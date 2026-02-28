@@ -11,6 +11,7 @@ from app.models.ai_config import UserAIConfig
 from app.services.ai_receipt import _get_fernet, analyze_and_suggest
 from app.services.sources.webdav import WebDAVProvider
 from app.services.notify import send_webhook
+from app.services.storage import get_storage_backend, make_storage_key
 
 logger = logging.getLogger(__name__)
 
@@ -166,7 +167,7 @@ def _process_file(source, provider, file_info, user_id, mime_type, dry_run, stat
 
         draft = AIDraft(
             user_id=user_id,
-            image_data=image_bytes,
+            image_key="",
             image_mime=mime_type,
             comment=f"自動取込: {source.name}",
             suggestions_json=suggestions_json,
@@ -174,6 +175,9 @@ def _process_file(source, provider, file_info, user_id, mime_type, dry_run, stat
         )
         db.session.add(draft)
         db.session.flush()
+        key = make_storage_key(draft.user_id, draft.id, mime_type)
+        get_storage_backend().put(key, image_bytes, mime_type)
+        draft.image_key = key
 
         pf = ProcessedFile(
             source_id=source.id,

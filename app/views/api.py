@@ -15,6 +15,7 @@ from app.models.journal import JournalEntry
 from app.services.accounting import create_journal_entry
 from app.services.audit import get_submitted_account_ids, is_entry_locked_for_owner
 from app.services.fiscal import check_period_open_for_new, check_entry_modifiable
+from app.services.storage import get_storage_backend, make_storage_key
 
 bp = Blueprint("api", __name__, url_prefix="/api/v1")
 
@@ -139,8 +140,10 @@ def create_journal():
                 "error": f"下書き(id={draft_id})が見つからないか、既に削除済みです。"
             }), 400
         _mark_draft_done(draft, entry.entry_number)
+        image_key = draft.image_key
         db.session.delete(draft)
         db.session.commit()
+        get_storage_backend().delete(image_key)
 
     return jsonify({
         "ok": True,
@@ -309,13 +312,17 @@ def ai_analyze():
 
     draft = AIDraft(
         user_id=user_id,
-        image_data=image_bytes,
+        image_key="",
         image_mime=mime_type,
         comment=comment or None,
         suggestions_json=suggestions_json,
         status="analyzed",
     )
     db.session.add(draft)
+    db.session.flush()
+    key = make_storage_key(draft.user_id, draft.id, mime_type)
+    get_storage_backend().put(key, image_bytes, mime_type)
+    draft.image_key = key
     db.session.commit()
 
     # オプション: Webhook 通知
@@ -419,8 +426,10 @@ def ai_draft_delete(draft_id):
     if not draft or draft.status == "temp":
         return jsonify({"error": "下書きが見つかりません。"}), 404
 
+    image_key = draft.image_key
     db.session.delete(draft)
     db.session.commit()
+    get_storage_backend().delete(image_key)
 
     return jsonify({"ok": True})
 
