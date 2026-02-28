@@ -148,6 +148,7 @@
 - SQLAlchemy 2.x / Alembic (Flask-Migrate)
 - Flask-Login / Flask-WTF / Flask-Limiter
 - py_webauthn (Passkey / WebAuthn)
+- htmx 2.0 / Alpine.js 3.x (CDN) — 宣言的 AJAX・リアクティブ UI
 - Bootstrap 5.3 (CDN)
 - Docker Compose
 

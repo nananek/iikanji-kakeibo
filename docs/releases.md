@@ -5,6 +5,23 @@ title: リリースノート
 
 # リリースノート
 
+## v2.11.0
+
+**htmx + Alpine.js によるフロントエンド刷新**
+
+手動 DOM 操作・インライン `<script>` 約 1,600 行を htmx の宣言的属性と Alpine.js のリアクティブコンポーネントに段階的に移行。ビルドシステムなし（CDN のみ）。
+
+- **Phase 0: 基盤** — htmx 2.0 / Alpine.js 3.x を CDN で導入。CSRF トークン自動付与、htmx → Toast 連携
+- **Phase 1: 月次確定チェック統合** — 3テンプレートに重複していた `checkClosedPeriod()` を Alpine `fiscalPeriodChecker` コンポーネントに統合
+- **Phase 2: 簡単なフォーム** — cashbook/medical フォームのインライン JS 全廃
+- **Phase 3: リスト削除の htmx 化** — 出納帳・設定画面の `fetch()` + DOM 操作を `hx-post` / `hx-confirm` に置換
+- **Phase 4: 仕訳帳一覧** — 個別削除を htmx 化、一括選択バーを Alpine `bulkSelect` コンポーネントに移行
+- **Phase 5: 科目管理・科目選択モーダル** — IIFE 約 400 行を Alpine `accountEditor` / `accountSelector` に移行
+- **Phase 6: 仕訳明細行** — `addLine()` / `updateTotals()` の重複を Alpine `journalLines` に統合。仕訳フォーム・AI レビュー画面で共用
+- **Phase 7: 取込確認画面** — `import_confirm.js`（499 行）を Alpine `importConfirm` に全面移行。CSV/OFX/Web の 3 テンプレートを共通パーシャルに統合
+- **Phase 8: ドキュメント整備** — CLAUDE.md にフロントエンドパターンを文書化、陳腐化した参照を更新
+- pytest 431件 + E2E 25件
+
 ## v2.10.3
 
 **証憑画像のライトボックスプレビュー**
