@@ -19,9 +19,11 @@ with app.app_context():
     u = User.query.filter_by(username='e2e_test').first()
     if not u:
         u = User(username='e2e_test', email='e2e@test.local', user_type='personal')
+        u.set_password('e2e_pass_12345')
         db.session.add(u)
         db.session.flush()
-    u.set_password('e2e_pass_12345')
+    else:
+        u.set_password('e2e_pass_12345')
     db.session.commit()
 
     # 標準科目シード
