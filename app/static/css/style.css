@@ -1,6 +1,12 @@
 /* Alpine.js: 初期化前に要素を非表示 */
 [x-cloak] { display: none !important; }
 
+/* htmx: 行削除フェードアウト */
+tr.htmx-swapping {
+  opacity: 0;
+  transition: opacity 0.3s ease-out;
+}
+
 /* DEV環境バッジ */
 .dev-badge {
   position: fixed;

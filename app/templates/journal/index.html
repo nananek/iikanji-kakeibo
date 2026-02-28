@@ -31,7 +31,9 @@
 </form>
 
 {% if entries.items %}
-<form id="bulkForm" method="POST" action="{{ url_for('journal.bulk_delete') }}">
+<form id="bulkForm" method="POST" action="{{ url_for('journal.bulk_delete') }}"
+      x-data="bulkSelect" @submit="if (!confirmBulkDelete()) $event.preventDefault()"
+      @drag-select-update="updateCount()">
   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 
   <div class="table-responsive">
@@ -39,7 +41,7 @@
       <thead class="table-light">
         <tr>
           <th style="width:40px;">
-            <input type="checkbox" class="form-check-input" id="selectAll">
+            <input type="checkbox" class="form-check-input" x-model="allSelected" @change="toggleAll()">
           </th>
           <th>No.</th>
           <th>日付</th>
@@ -56,7 +58,7 @@
         <tr>
           <td>
             {% if entry._modifiable %}
-            <input type="checkbox" class="form-check-input entry-cb" name="entry_ids" value="{{ entry.id }}" data-has-voucher="{{ 'true' if entry.vouchers else '' }}">
+            <input type="checkbox" class="form-check-input entry-cb" name="entry_ids" value="{{ entry.id }}" data-has-voucher="{{ 'true' if entry.vouchers else '' }}" @change="updateCount()">
             {% endif %}
           </td>
           <td>{{ entry.entry_number }}</td>
@@ -100,9 +102,10 @@
                 <i class="bi bi-pencil"></i>
               </a>
               {% endif %}
-              <button type="button" class="btn btn-outline-danger delete-btn"
-                      data-action="{{ url_for('journal.delete', entry_id=entry.id) }}"
-                      data-has-voucher="{{ 'true' if entry.vouchers else '' }}">
+              <button type="button" class="btn btn-outline-danger"
+                      hx-post="{{ url_for('journal.delete', entry_id=entry.id) }}"
+                      hx-confirm="{{ 'この仕訳には証憑画像が紐づいています。削除すると証憑が未紐付けになります。削除しますか？' if entry.vouchers else 'この仕訳を削除しますか？' }}"
+                      hx-target="closest tr" hx-swap="outerHTML swap:0.3s">
                 <i class="bi bi-trash"></i>
               </button>
             </div>
@@ -117,8 +120,9 @@
   </div>
 
   {# 一括操作バー #}
-  <div id="bulkBar" class="position-fixed bottom-0 start-50 translate-middle-x mb-3 px-4 py-2 bg-dark text-white rounded-pill shadow d-none align-items-center gap-3" style="z-index:1050;">
-    <span><strong id="selectedCount">0</strong>件選択中</span>
+  <div x-show="selectedCount > 0" x-cloak
+       class="position-fixed bottom-0 start-50 translate-middle-x mb-3 px-4 py-2 bg-dark text-white rounded-pill shadow d-flex align-items-center gap-3" style="z-index:1050;">
+    <span><strong x-text="selectedCount">0</strong>件選択中</span>
     <button type="submit" class="btn btn-danger btn-sm">
       <i class="bi bi-trash"></i> 一括削除
     </button>
@@ -162,78 +166,11 @@
 {% block scripts %}
 <script src="{{ url_for('static', filename='js/drag_select.js') }}"></script>
 <script>
-(function() {
-  var selectAll = document.getElementById('selectAll');
-  var bulkBar = document.getElementById('bulkBar');
-  var countEl = document.getElementById('selectedCount');
-  if (!selectAll) return;
-
-  function updateBar() {
-    var checked = document.querySelectorAll('.entry-cb:checked').length;
-    var total = document.querySelectorAll('.entry-cb').length;
-    countEl.textContent = checked;
-    selectAll.checked = checked === total && total > 0;
-    if (checked > 0) {
-      bulkBar.classList.remove('d-none');
-      bulkBar.classList.add('d-flex');
-    } else {
-      bulkBar.classList.add('d-none');
-      bulkBar.classList.remove('d-flex');
-    }
-  }
-
-  selectAll.addEventListener('change', function() {
-    document.querySelectorAll('.entry-cb').forEach(function(cb) { cb.checked = selectAll.checked; });
-    updateBar();
+var bulkForm = document.getElementById('bulkForm');
+if (bulkForm) {
+  initDragSelect('.table', '.entry-cb', function() {
+    bulkForm.dispatchEvent(new Event('drag-select-update'));
   });
-
-  document.addEventListener('change', function(e) {
-    if (e.target.classList.contains('entry-cb')) updateBar();
-  });
-
-  initDragSelect('.table', '.entry-cb', updateBar);
-
-  // 一括削除の証憑警告
-  document.getElementById('bulkForm').addEventListener('submit', function(e) {
-    var checkedWithVoucher = document.querySelectorAll('.entry-cb:checked[data-has-voucher="true"]').length;
-    var msg = checkedWithVoucher > 0
-        ? checkedWithVoucher + '件の仕訳に証憑が紐づいています。削除すると証憑が未紐付けになります。削除しますか？'
-        : '選択した仕訳を削除しますか？この操作は取り消せません。';
-    if (!confirm(msg)) e.preventDefault();
-  });
-
-  // 個別削除ボタン（AJAX）
-  var csrfMeta = document.querySelector('meta[name="csrf-token"]');
-  var csrfToken = csrfMeta ? csrfMeta.content : '';
-  document.addEventListener('click', function(e) {
-    var btn = e.target.closest('.delete-btn');
-    if (!btn) return;
-    var msg = btn.dataset.hasVoucher
-        ? 'この仕訳には証憑画像が紐づいています。削除すると証憑が未紐付けになります。削除しますか？'
-        : 'この仕訳を削除しますか？';
-    if (!confirm(msg)) return;
-    var tr = btn.closest('tr');
-    btn.disabled = true;
-    fetch(btn.dataset.action, {
-      method: 'POST',
-      headers: {'X-Requested-With': 'XMLHttpRequest', 'X-CSRFToken': csrfToken},
-    })
-    .then(function(r) { return r.json().then(function(d) { return {ok: r.ok, data: d}; }); })
-    .then(function(res) {
-      showToast(res.data.message, res.ok ? 'success' : 'danger');
-      if (res.ok) {
-        tr.style.transition = 'opacity 0.3s';
-        tr.style.opacity = '0';
-        setTimeout(function() { tr.remove(); updateBar(); }, 300);
-      } else {
-        btn.disabled = false;
-      }
-    })
-    .catch(function() {
-      showToast('通信エラーが発生しました。', 'danger');
-      btn.disabled = false;
-    });
-  });
-})();
+}
 </script>
 {% endblock %}

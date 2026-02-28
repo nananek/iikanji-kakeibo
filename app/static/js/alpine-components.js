@@ -78,4 +78,45 @@ document.addEventListener('alpine:init', function() {
     };
   });
 
+  /**
+   * 仕訳帳一覧: 一括選択 + ドラッグ選択連携
+   *
+   * 使い方:
+   *   <form x-data="bulkSelect" ...>
+   */
+  Alpine.data('bulkSelect', function() {
+    return {
+      selectedCount: 0,
+      allSelected: false,
+
+      init: function() {
+        this.updateCount();
+        var self = this;
+        document.addEventListener('htmx:afterSwap', function() { self.updateCount(); });
+      },
+
+      updateCount: function() {
+        var checked = this.$el.querySelectorAll('.entry-cb:checked').length;
+        var total = this.$el.querySelectorAll('.entry-cb').length;
+        this.selectedCount = checked;
+        this.allSelected = checked === total && total > 0;
+      },
+
+      toggleAll: function() {
+        var cbs = this.$el.querySelectorAll('.entry-cb');
+        var val = this.allSelected;
+        cbs.forEach(function(cb) { cb.checked = val; });
+        this.updateCount();
+      },
+
+      confirmBulkDelete: function() {
+        var withVoucher = this.$el.querySelectorAll('.entry-cb:checked[data-has-voucher="true"]').length;
+        var msg = withVoucher > 0
+          ? withVoucher + '件の仕訳に証憑が紐づいています。削除すると証憑が未紐付けになります。削除しますか？'
+          : '選択した仕訳を削除しますか？この操作は取り消せません。';
+        return confirm(msg);
+      }
+    };
+  });
+
 });

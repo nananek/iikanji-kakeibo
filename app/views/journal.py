@@ -1,7 +1,7 @@
 import json
 from datetime import date
 
-from flask import Blueprint, render_template, redirect, url_for, flash, request, jsonify
+from flask import Blueprint, render_template, redirect, url_for, flash, request, jsonify, make_response
 from flask_login import login_required, current_user
 from sqlalchemy import func
 from sqlalchemy.orm import joinedload
@@ -671,7 +671,8 @@ def log_voucher_orphan(entry, user_id):
 @bp.route("/<int:entry_id>/delete", methods=["POST"])
 @login_required
 def delete(entry_id):
-    is_ajax = request.headers.get("X-Requested-With") == "XMLHttpRequest"
+    is_htmx = bool(request.headers.get("HX-Request"))
+    is_ajax = is_htmx or request.headers.get("X-Requested-With") == "XMLHttpRequest"
     user_id = get_effective_user_id()
     entry = JournalEntry.query.filter_by(
         id=entry_id, user_id=user_id
@@ -689,6 +690,13 @@ def delete(entry_id):
         err_msg = check_entry_modifiable(user_id, entry)
 
     if err_msg:
+        if is_htmx:
+            resp = make_response("", 422)
+            resp.headers["HX-Reswap"] = "none"
+            resp.headers["HX-Trigger"] = json.dumps(
+                {"showToast": {"message": err_msg, "type": "danger"}}
+            )
+            return resp
         if is_ajax:
             return jsonify({"ok": False, "message": err_msg}), 400
         flash(err_msg, "danger")
@@ -700,6 +708,12 @@ def delete(entry_id):
     db.session.commit()
 
     msg = f"伝票 #{num} を削除しました。"
+    if is_htmx:
+        resp = make_response("", 200)
+        resp.headers["HX-Trigger"] = json.dumps(
+            {"showToast": {"message": msg, "type": "success"}}
+        )
+        return resp
     if is_ajax:
         return jsonify({"ok": True, "message": msg})
     flash(msg, "success")
