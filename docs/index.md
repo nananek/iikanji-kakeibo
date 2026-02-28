@@ -53,6 +53,7 @@ AIが証憑を読み取って仕訳を提案。
 - [REST API リファレンス]({{ '/api/' | relative_url }}) — 認証・エンドポイント・エラーコード
 - [仕訳 API]({{ '/api/journals.html' | relative_url }}) — 仕訳の CRUD 操作
 - [AI 証憑仕訳 API]({{ '/api/ai-drafts.html' | relative_url }}) — 画像解析・下書き管理
+- [証憑 API]({{ '/api/vouchers.html' | relative_url }}) — 証憑一覧・画像取得・ハッシュ検証・操作ログ
 
 ## Python クライアント
 
