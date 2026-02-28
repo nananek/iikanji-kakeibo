@@ -56,8 +56,9 @@ function renderVoucherPreview(container, vouchers, baseUrl) {
     '<div class="card-body text-center">';
   vouchers.forEach(function(v) {
     var url = baseUrl + v.id + '/image';
+    var thumbUrl = url + '?size=thumb';
     html += '<a href="#" onclick="openImagePreview(\'' + url + '\');return false">' +
-      '<img src="' + url + '" class="img-fluid rounded" style="max-height:300px;cursor:pointer;" alt="証憑" loading="lazy">' +
+      '<img src="' + thumbUrl + '" class="img-fluid rounded" style="max-height:300px;cursor:pointer;" alt="証憑" loading="lazy">' +
       '</a> ';
   });
   html += '</div></div>';

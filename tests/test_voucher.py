@@ -175,6 +175,34 @@ class TestVoucherImageEndpoint:
         resp = logged_in_client.get("/ai-journal/voucher/99999/image")
         assert resp.status_code == 404
 
+    def test_voucher_image_has_cache_headers(self, db, logged_in_client, user, accounts):
+        v = self._setup_voucher_with_file(db, user, accounts)
+        resp = logged_in_client.get(f"/ai-journal/voucher/{v.id}/image")
+        assert resp.status_code == 200
+        assert "immutable" in resp.headers.get("Cache-Control", "")
+
+    def test_voucher_image_etag(self, db, logged_in_client, user, accounts):
+        v = self._setup_voucher_with_file(db, user, accounts)
+        v.file_hash = "a" * 64
+        db.session.commit()
+        resp = logged_in_client.get(f"/ai-journal/voucher/{v.id}/image")
+        assert resp.headers.get("ETag") == f'"{"a" * 64}"'
+
+    def test_voucher_image_304_not_modified(self, db, logged_in_client, user, accounts):
+        v = self._setup_voucher_with_file(db, user, accounts)
+        v.file_hash = "a" * 64
+        db.session.commit()
+        resp = logged_in_client.get(
+            f"/ai-journal/voucher/{v.id}/image",
+            headers={"If-None-Match": f'"{"a" * 64}"'},
+        )
+        assert resp.status_code == 304
+
+    def test_voucher_image_thumb_fallback(self, db, logged_in_client, user, accounts):
+        v = self._setup_voucher_with_file(db, user, accounts)
+        resp = logged_in_client.get(f"/ai-journal/voucher/{v.id}/image?size=thumb")
+        assert resp.status_code == 200
+
 
 class TestAPIVoucherImage:
     """API 証憑画像エンドポイントのテスト"""

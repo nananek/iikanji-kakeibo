@@ -16,7 +16,11 @@ from app.models.journal import JournalEntry
 from app.services.accounting import create_journal_entry
 from app.services.audit import get_submitted_account_ids, is_entry_locked_for_owner
 from app.services.fiscal import check_period_open_for_new, check_entry_modifiable
-from app.services.storage import get_storage_backend, make_storage_key
+from app.services.image import serve_image
+from app.services.storage import (
+    get_storage_backend, make_storage_key, make_thumbnail_key,
+    store_image_with_thumbnail,
+)
 from app.services.voucher import create_voucher_from_draft
 from app.models.voucher import Voucher
 from app.models.voucher_audit_log import VoucherAuditLog
@@ -334,7 +338,7 @@ def ai_analyze():
     db.session.add(draft)
     db.session.flush()
     key = make_storage_key(draft.user_id, draft.id, mime_type)
-    get_storage_backend().put(key, image_bytes, mime_type)
+    store_image_with_thumbnail(key, image_bytes, mime_type)
     draft.image_key = key
     db.session.commit()
 
@@ -442,7 +446,9 @@ def ai_draft_delete(draft_id):
     image_key = draft.image_key
     db.session.delete(draft)
     db.session.commit()
-    get_storage_backend().delete(image_key)
+    storage = get_storage_backend()
+    storage.delete(image_key)
+    storage.delete(make_thumbnail_key(image_key))
 
     return jsonify({"ok": True})
 
@@ -563,17 +569,15 @@ def list_vouchers():
 @api_key_required(scope="journals:read")
 def api_voucher_image(voucher_id):
     """証憑画像取得 API"""
-    from flask import Response
     voucher = Voucher.query.filter_by(
         id=voucher_id, user_id=g.api_user_id
     ).first()
     if not voucher:
         return jsonify({"error": "証憑が見つかりません。"}), 404
     try:
-        image_data = get_storage_backend().get(voucher.image_key)
+        return serve_image(voucher.image_key, voucher.image_mime, voucher.file_hash)
     except FileNotFoundError:
         return jsonify({"error": "画像ファイルが見つかりません。"}), 404
-    return Response(image_data, mimetype=voucher.image_mime)
 
 
 @bp.route("/vouchers/<int:voucher_id>/verify", methods=["GET"])

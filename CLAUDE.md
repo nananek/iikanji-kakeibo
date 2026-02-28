@@ -103,6 +103,8 @@
 | notify.py | Webhook 通知（Discord等） |
 | auto_import.py | 自動取込オーケストレーター（内部利用、UIはオプトアウト済み） |
 | voucher.py | ドラフト→証憑移行ヘルパー (create_voucher_from_draft) |
+| storage.py | 証憑画像ストレージ抽象化（Local/S3）・サムネイル生成 |
+| image.py | 画像配信ヘルパー（キャッシュ・ETag/304・send_file・S3 presigned URL） |
 | seed.py | 標準科目の初期データ・system_role定義 |
 
 ### JS (`app/static/js/`)
@@ -285,7 +287,7 @@ AI証憑仕訳の解析時に、電帳法スキャナ保存の要件を満たし
 - `tests/conftest.py` に SQLite in-memory のフィクスチャあり
 - pytest で実行: `docker exec -w /app server-web-1 python -m pytest tests/ -v`
 - GitHub Actions (`.github/workflows/test.yml`) で push/PR 時に自動実行
-- 431テスト: accounting(16), api(27), audit(43), balance_cache(15), compliance(14), csv_import(53), fiscal(26), models(12), monthly_report(8), ofx_import(15), settings(7), tax(45), security_auth(27), security_idor(12), security_input(12), security_csrf(9), security_headers(7), security_ratelimit(3), voucher(19), voucher_search(14), voucher_tamper(15), timestamp(12)
+- 445テスト: accounting(16), api(27), audit(43), balance_cache(15), compliance(14), csv_import(53), fiscal(26), models(12), monthly_report(8), ofx_import(15), settings(7), storage(25), tax(45), security_auth(27), security_idor(12), security_input(12), security_csrf(9), security_headers(7), security_ratelimit(3), voucher(23), voucher_search(14), voucher_tamper(15), timestamp(12)
 - E2Eテスト (Playwright/Firefox): `npx playwright test tests/e2e/` — 設定画面の表示・遷移(10), ドラッグ選択(15)。CIでも自動実行
 - 税務集計・プライバシー権限は重点テスト項目
 

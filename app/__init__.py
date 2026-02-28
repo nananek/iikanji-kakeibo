@@ -199,3 +199,55 @@ def register_cli(app):
             )
             for err in stats["errors"][:5]:
                 print(f"    ERROR: {err}")
+
+    @app.cli.command("generate-thumbnails")
+    @click.option("--dry-run", is_flag=True, help="サムネイル生成をスキップして対象件数のみ表示")
+    def generate_thumbnails_command(dry_run):
+        """既存画像のサムネイルを一括生成する"""
+        from app.models.voucher import Voucher
+        from app.models.ai_draft import AIDraft
+        from app.services.storage import (
+            get_storage_backend, make_thumbnail_key, generate_thumbnail,
+        )
+
+        backend = get_storage_backend()
+        generated = 0
+        skipped = 0
+        errors = 0
+
+        for v in Voucher.query.all():
+            thumb_key = make_thumbnail_key(v.image_key)
+            if backend.exists(thumb_key):
+                skipped += 1
+                continue
+            if dry_run:
+                generated += 1
+                continue
+            try:
+                image_data = backend.get(v.image_key)
+                thumb_bytes = generate_thumbnail(image_data)
+                backend.put(thumb_key, thumb_bytes, "image/jpeg")
+                generated += 1
+            except Exception as e:
+                errors += 1
+                print(f"  ERROR: Voucher {v.id}: {e}")
+
+        for d in AIDraft.query.filter(AIDraft.status.in_(["analyzed"])).all():
+            thumb_key = make_thumbnail_key(d.image_key)
+            if backend.exists(thumb_key):
+                skipped += 1
+                continue
+            if dry_run:
+                generated += 1
+                continue
+            try:
+                image_data = backend.get(d.image_key)
+                thumb_bytes = generate_thumbnail(image_data)
+                backend.put(thumb_key, thumb_bytes, "image/jpeg")
+                generated += 1
+            except Exception as e:
+                errors += 1
+                print(f"  ERROR: Draft {d.id}: {e}")
+
+        prefix = "[DRY RUN] " if dry_run else ""
+        print(f"{prefix}サムネイル生成: {generated}件, スキップ: {skipped}件, エラー: {errors}件")

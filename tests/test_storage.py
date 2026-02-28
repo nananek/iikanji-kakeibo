@@ -1,6 +1,7 @@
 """ストレージサービスのユニットテスト"""
 
 import importlib
+import io
 import os
 
 import pytest
@@ -8,6 +9,9 @@ import pytest
 from app.services.storage import (
     LocalStorageBackend,
     make_storage_key,
+    make_thumbnail_key,
+    generate_thumbnail,
+    store_image_with_thumbnail,
     get_storage_backend,
     reset_storage_backend,
 )
@@ -31,6 +35,101 @@ class TestMakeStorageKey:
 
     def test_unknown_mime(self):
         assert make_storage_key(1, 42, "application/pdf") == "vouchers/1/42.bin"
+
+
+# --- make_thumbnail_key ---
+
+
+class TestMakeThumbnailKey:
+    def test_jpeg(self):
+        assert make_thumbnail_key("vouchers/1/42.jpg") == "vouchers/1/42_thumb.jpg"
+
+    def test_png(self):
+        assert make_thumbnail_key("vouchers/1/42.png") == "vouchers/1/42_thumb.jpg"
+
+    def test_webp(self):
+        assert make_thumbnail_key("vouchers/1/42.webp") == "vouchers/1/42_thumb.jpg"
+
+
+# --- generate_thumbnail ---
+
+
+def _make_test_image(width=800, height=600, fmt="JPEG", mode="RGB"):
+    from PIL import Image
+    img = Image.new(mode, (width, height), color="red")
+    buf = io.BytesIO()
+    if fmt == "JPEG" and mode != "RGB":
+        img = img.convert("RGB")
+    img.save(buf, format=fmt)
+    return buf.getvalue()
+
+
+class TestGenerateThumbnail:
+    def test_generates_jpeg(self):
+        from PIL import Image
+        thumb = generate_thumbnail(_make_test_image())
+        img = Image.open(io.BytesIO(thumb))
+        assert img.format == "JPEG"
+
+    def test_respects_max_size(self):
+        from PIL import Image
+        thumb = generate_thumbnail(_make_test_image(1600, 1200), max_size=400)
+        img = Image.open(io.BytesIO(thumb))
+        assert max(img.size) <= 400
+
+    def test_small_image_not_enlarged(self):
+        from PIL import Image
+        thumb = generate_thumbnail(_make_test_image(100, 80), max_size=400)
+        img = Image.open(io.BytesIO(thumb))
+        assert img.size == (100, 80)
+
+    def test_png_with_transparency(self):
+        from PIL import Image
+        img = Image.new("RGBA", (200, 200), color=(255, 0, 0, 128))
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        thumb = generate_thumbnail(buf.getvalue())
+        result = Image.open(io.BytesIO(thumb))
+        assert result.mode == "RGB"
+
+    def test_smaller_than_original(self):
+        original = _make_test_image(1600, 1200)
+        thumb = generate_thumbnail(original)
+        assert len(thumb) < len(original)
+
+
+# --- store_image_with_thumbnail ---
+
+
+class TestStoreImageWithThumbnail:
+    @pytest.fixture(autouse=True)
+    def _reset(self):
+        reset_storage_backend()
+        yield
+        reset_storage_backend()
+
+    def test_stores_both(self, app, tmp_path, monkeypatch):
+        monkeypatch.setitem(app.config, "STORAGE_BACKEND", "local")
+        monkeypatch.setitem(app.config, "STORAGE_LOCAL_DIR", str(tmp_path))
+        with app.app_context():
+            key = "vouchers/1/1.jpg"
+            image_bytes = _make_test_image(400, 300)
+            store_image_with_thumbnail(key, image_bytes, "image/jpeg")
+
+            backend = get_storage_backend()
+            assert backend.exists(key)
+            assert backend.exists(make_thumbnail_key(key))
+
+    def test_invalid_image_still_stores_original(self, app, tmp_path, monkeypatch):
+        monkeypatch.setitem(app.config, "STORAGE_BACKEND", "local")
+        monkeypatch.setitem(app.config, "STORAGE_LOCAL_DIR", str(tmp_path))
+        with app.app_context():
+            key = "vouchers/1/1.jpg"
+            store_image_with_thumbnail(key, b"not-an-image", "image/jpeg")
+
+            backend = get_storage_backend()
+            assert backend.exists(key)
+            assert not backend.exists(make_thumbnail_key(key))
 
 
 # --- LocalStorageBackend ---

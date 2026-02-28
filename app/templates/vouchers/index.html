@@ -64,7 +64,7 @@
       <div class="card-body">
         <div class="text-center mb-2">
           <a href="#" onclick="openImagePreview('{{ url_for('ai_journal.voucher_image', voucher_id=v.id) }}');return false">
-            <img src="{{ url_for('ai_journal.voucher_image', voucher_id=v.id) }}"
+            <img src="{{ url_for('ai_journal.voucher_image', voucher_id=v.id, size='thumb') }}"
                  class="img-fluid rounded" style="max-height: 200px; cursor: pointer;" alt="証憑"
                  loading="lazy">
           </a>

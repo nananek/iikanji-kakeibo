@@ -40,7 +40,7 @@
       </div>
       <div class="card-body">
         <div class="text-center mb-2">
-          <img src="{{ url_for('ai_journal.draft_image', draft_id=d.id) }}"
+          <img src="{{ url_for('ai_journal.draft_image', draft_id=d.id, size='thumb') }}"
                class="img-fluid rounded" style="max-height: 150px;" alt="証憑画像"
                loading="lazy">
         </div>

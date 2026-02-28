@@ -18,7 +18,11 @@ from app.services.audit import get_effective_user_id, get_submitted_account_ids
 from app.services.ai_receipt import analyze_and_suggest
 from app.services.accounting import create_journal_entry
 from app.services.fiscal import check_period_open_for_new, get_closed_periods_map, get_restricted_before_year
-from app.services.storage import get_storage_backend, make_storage_key
+from app.services.image import serve_image
+from app.services.storage import (
+    get_storage_backend, make_storage_key, make_thumbnail_key,
+    store_image_with_thumbnail,
+)
 from app.services.voucher import create_voucher_from_draft
 from app.models.voucher import Voucher
 from app.views.helpers import get_grouped_accounts, check_deadline
@@ -47,6 +51,7 @@ def upload():
     storage = get_storage_backend()
     for key in keys_to_delete:
         storage.delete(key)
+        storage.delete(make_thumbnail_key(key))
     session.pop("ai_journal_draft_id", None)
     return render_template(
         "ai_journal/upload.html",
@@ -103,7 +108,7 @@ def analyze():
     db.session.add(draft)
     db.session.flush()
     key = make_storage_key(draft.user_id, draft.id, mime_type)
-    get_storage_backend().put(key, image_bytes, mime_type)
+    store_image_with_thumbnail(key, image_bytes, mime_type)
     draft.image_key = key
     db.session.commit()
     session["ai_journal_draft_id"] = draft.id
@@ -193,12 +198,10 @@ def draft_image(draft_id):
     draft = AIDraft.query.get_or_404(draft_id)
     if draft.user_id != get_effective_user_id():
         return "", 403
-    from flask import Response
     try:
-        image_data = get_storage_backend().get(draft.image_key)
+        return serve_image(draft.image_key, draft.image_mime, draft.file_hash)
     except FileNotFoundError:
         return "", 404
-    return Response(image_data, mimetype=draft.image_mime)
 
 
 @bp.route("/voucher/<int:voucher_id>/image")
@@ -208,12 +211,10 @@ def voucher_image(voucher_id):
     voucher = Voucher.query.get_or_404(voucher_id)
     if voucher.user_id != get_effective_user_id():
         return "", 403
-    from flask import Response
     try:
-        image_data = get_storage_backend().get(voucher.image_key)
+        return serve_image(voucher.image_key, voucher.image_mime, voucher.file_hash)
     except FileNotFoundError:
         return "", 404
-    return Response(image_data, mimetype=voucher.image_mime)
 
 
 @bp.route("/drafts/<int:draft_id>/delete", methods=["POST"])
@@ -228,7 +229,9 @@ def drafts_delete(draft_id):
     image_key = draft.image_key
     db.session.delete(draft)
     db.session.commit()
-    get_storage_backend().delete(image_key)
+    storage = get_storage_backend()
+    storage.delete(image_key)
+    storage.delete(make_thumbnail_key(image_key))
     flash("下書きを削除しました。", "info")
     return redirect(url_for("ai_journal.drafts"))
 

@@ -11,7 +11,7 @@ from app.models.ai_config import UserAIConfig
 from app.services.ai_receipt import _get_fernet, analyze_and_suggest
 from app.services.sources.webdav import WebDAVProvider
 from app.services.notify import send_webhook
-from app.services.storage import get_storage_backend, make_storage_key
+from app.services.storage import make_storage_key, store_image_with_thumbnail
 
 logger = logging.getLogger(__name__)
 
@@ -179,7 +179,7 @@ def _process_file(source, provider, file_info, user_id, mime_type, dry_run, stat
         db.session.add(draft)
         db.session.flush()
         key = make_storage_key(draft.user_id, draft.id, mime_type)
-        get_storage_backend().put(key, image_bytes, mime_type)
+        store_image_with_thumbnail(key, image_bytes, mime_type)
         draft.image_key = key
 
         pf = ProcessedFile(

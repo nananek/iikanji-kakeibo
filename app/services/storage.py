@@ -1,8 +1,10 @@
 """証憑画像ストレージサービス
 
 ローカルファイルシステムと S3 互換ストレージを設定で切り替え可能にする。
+サムネイル生成・保存もここで行う。
 """
 
+import io
 import logging
 import os
 from abc import ABC, abstractmethod
@@ -27,6 +29,43 @@ def make_storage_key(user_id: int, draft_id: int, mime_type: str) -> str:
     """
     ext = MIME_TO_EXT.get(mime_type, "bin")
     return f"vouchers/{user_id}/{draft_id}.{ext}"
+
+
+def make_thumbnail_key(image_key: str) -> str:
+    """画像キーからサムネイルキーを導出する。
+
+    例: vouchers/1/42.jpg → vouchers/1/42_thumb.jpg
+    サムネイルは常に JPEG。
+    """
+    stem, _ext = image_key.rsplit(".", 1)
+    return f"{stem}_thumb.jpg"
+
+
+def generate_thumbnail(
+    image_bytes: bytes,
+    max_size: int = 400,
+    quality: int = 85,
+) -> bytes:
+    """画像のサムネイルを生成する。
+
+    max_size: 長辺の最大ピクセル数（デフォルト400、2xレティナで200px表示に対応）
+    quality: JPEG品質（デフォルト85）
+
+    Returns:
+        JPEG形式のサムネイルバイト列
+    """
+    from PIL import Image, ImageOps
+
+    img = Image.open(io.BytesIO(image_bytes))
+    img = ImageOps.exif_transpose(img)
+    img.thumbnail((max_size, max_size), Image.LANCZOS)
+
+    if img.mode in ("RGBA", "P"):
+        img = img.convert("RGB")
+
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", quality=quality, optimize=True)
+    return buf.getvalue()
 
 
 class StorageBackend(ABC):
@@ -81,6 +120,10 @@ class LocalStorageBackend(StorageBackend):
 
     def exists(self, key: str) -> bool:
         return self._full_path(key).exists()
+
+    def full_path(self, key: str) -> Path:
+        """キーに対応するファイルシステムパスを返す（send_file 用）。"""
+        return self._full_path(key)
 
 
 class S3StorageBackend(StorageBackend):
@@ -138,6 +181,14 @@ class S3StorageBackend(StorageBackend):
         except Exception:
             return False
 
+    def generate_presigned_url(self, key: str, expires_in: int = 3600) -> str:
+        """署名付きURLを生成する。"""
+        return self._client.generate_presigned_url(
+            "get_object",
+            Params={"Bucket": self._bucket, "Key": key},
+            ExpiresIn=expires_in,
+        )
+
 
 # --- ファクトリ (シングルトンキャッシュ) ---
 
@@ -173,3 +224,22 @@ def reset_storage_backend() -> None:
     """テスト用: キャッシュをリセットする"""
     global _backend_instance
     _backend_instance = None
+
+
+def store_image_with_thumbnail(
+    key: str, image_bytes: bytes, mime_type: str
+) -> None:
+    """画像をストレージに保存し、サムネイルも生成・保存する。
+
+    サムネイル生成に失敗しても元画像は保存される（ベストエフォート）。
+    """
+    backend = get_storage_backend()
+    backend.put(key, image_bytes, mime_type)
+
+    try:
+        thumb_bytes = generate_thumbnail(image_bytes)
+        thumb_key = make_thumbnail_key(key)
+        backend.put(thumb_key, thumb_bytes, "image/jpeg")
+        logger.debug("Thumbnail stored: %s (%d bytes)", thumb_key, len(thumb_bytes))
+    except Exception:
+        logger.warning("Failed to generate thumbnail for %s", key, exc_info=True)
