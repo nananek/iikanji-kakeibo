@@ -230,3 +230,60 @@ class TestEntryToDictVouchers:
         resp = client.get(f"/api/v1/journals/{entry.id}", headers=auth_header)
         data = resp.get_json()["journal"]
         assert data["vouchers"] == []
+
+
+class TestJournalFormVoucherPreview:
+    """仕訳編集画面の証憑プレビュー表示テスト"""
+
+    def test_edit_with_voucher_shows_image(self, db, logged_in_client, user, accounts):
+        """証憑ありの仕訳編集画面で証憑画像セクションが表示される"""
+        entry = make_journal(
+            db, user.id, accounts["5010"].id, accounts["1010"].id, 1000,
+            source="ai_receipt",
+        )
+        make_voucher(db, user.id, journal_entry_id=entry.id)
+
+        resp = logged_in_client.get(f"/journal/{entry.id}/edit")
+        html = resp.data.decode()
+        assert "bi-file-image" in html
+        assert "証憑画像" in html
+
+    def test_edit_without_voucher_no_image(self, db, logged_in_client, user, accounts):
+        """証憑なしの仕訳編集画面では証憑セクション非表示"""
+        entry = make_journal(
+            db, user.id, accounts["5010"].id, accounts["1010"].id, 1000,
+        )
+
+        resp = logged_in_client.get(f"/journal/{entry.id}/edit")
+        html = resp.data.decode()
+        assert "証憑画像" not in html
+
+    def test_new_form_no_voucher_section(self, db, logged_in_client, user, accounts):
+        """新規仕訳画面では証憑セクション非表示"""
+        resp = logged_in_client.get("/journal/new")
+        html = resp.data.decode()
+        assert "証憑画像" not in html
+
+
+class TestEntryJsonHasVoucher:
+    """entry_json の has_voucher フィールドテスト"""
+
+    def test_has_voucher_true(self, db, logged_in_client, user, accounts):
+        entry = make_journal(
+            db, user.id, accounts["5010"].id, accounts["1010"].id, 1000,
+            source="ai_receipt",
+        )
+        make_voucher(db, user.id, journal_entry_id=entry.id)
+
+        resp = logged_in_client.get(f"/journal/{entry.id}/json")
+        data = resp.get_json()
+        assert data["has_voucher"] is True
+
+    def test_has_voucher_false(self, db, logged_in_client, user, accounts):
+        entry = make_journal(
+            db, user.id, accounts["5010"].id, accounts["1010"].id, 1000,
+        )
+
+        resp = logged_in_client.get(f"/journal/{entry.id}/json")
+        data = resp.get_json()
+        assert data["has_voucher"] is False

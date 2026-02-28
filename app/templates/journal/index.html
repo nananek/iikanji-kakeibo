@@ -31,8 +31,7 @@
 </form>
 
 {% if entries.items %}
-<form id="bulkForm" method="POST" action="{{ url_for('journal.bulk_delete') }}"
-      onsubmit="return confirm('選択した仕訳を削除しますか？この操作は取り消せません。');">
+<form id="bulkForm" method="POST" action="{{ url_for('journal.bulk_delete') }}">
   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 
   <div class="table-responsive">
@@ -57,7 +56,7 @@
         <tr>
           <td>
             {% if entry._modifiable %}
-            <input type="checkbox" class="form-check-input entry-cb" name="entry_ids" value="{{ entry.id }}">
+            <input type="checkbox" class="form-check-input entry-cb" name="entry_ids" value="{{ entry.id }}" data-has-voucher="{{ 'true' if entry.vouchers else '' }}">
             {% endif %}
           </td>
           <td>{{ entry.entry_number }}</td>
@@ -102,7 +101,8 @@
               </a>
               {% endif %}
               <button type="button" class="btn btn-outline-danger delete-btn"
-                      data-action="{{ url_for('journal.delete', entry_id=entry.id) }}">
+                      data-action="{{ url_for('journal.delete', entry_id=entry.id) }}"
+                      data-has-voucher="{{ 'true' if entry.vouchers else '' }}">
                 <i class="bi bi-trash"></i>
               </button>
             </div>
@@ -193,13 +193,25 @@
 
   initDragSelect('.table', '.entry-cb', updateBar);
 
+  // 一括削除の証憑警告
+  document.getElementById('bulkForm').addEventListener('submit', function(e) {
+    var checkedWithVoucher = document.querySelectorAll('.entry-cb:checked[data-has-voucher="true"]').length;
+    var msg = checkedWithVoucher > 0
+        ? checkedWithVoucher + '件の仕訳に証憑が紐づいています。削除すると証憑が未紐付けになります。削除しますか？'
+        : '選択した仕訳を削除しますか？この操作は取り消せません。';
+    if (!confirm(msg)) e.preventDefault();
+  });
+
   // 個別削除ボタン（AJAX）
   var csrfMeta = document.querySelector('meta[name="csrf-token"]');
   var csrfToken = csrfMeta ? csrfMeta.content : '';
   document.addEventListener('click', function(e) {
     var btn = e.target.closest('.delete-btn');
     if (!btn) return;
-    if (!confirm('この仕訳を削除しますか？')) return;
+    var msg = btn.dataset.hasVoucher
+        ? 'この仕訳には証憑画像が紐づいています。削除すると証憑が未紐付けになります。削除しますか？'
+        : 'この仕訳を削除しますか？';
+    if (!confirm(msg)) return;
     var tr = btn.closest('tr');
     btn.disabled = true;
     fetch(btn.dataset.action, {

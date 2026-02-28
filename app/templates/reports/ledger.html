@@ -384,6 +384,7 @@
 
 var csrfToken = "{{ csrf_token() }}";
 var currentEntryId = null;
+var currentHasVoucher = false;
 var editModal = null;
 
 var _isMobile = window.innerWidth <= 576;
@@ -469,12 +470,14 @@ var PERIOD_NAMES = {'0':'期首振戻月','13':'決算月1','14':'決算月2','1
 
 function openEditModal(entryId) {
   currentEntryId = entryId;
+  currentHasVoucher = false;
   document.getElementById('modalError').classList.add('d-none');
   document.getElementById('modalLinesBody').innerHTML = '';
 
   fetch('/journal/' + entryId + '/json')
     .then(function(r) { return r.json(); })
     .then(function(data) {
+      currentHasVoucher = data.has_voucher || false;
       var ro = data.is_readonly;
 
       // タイトル切替
@@ -554,7 +557,10 @@ function modalUpdateDateForPeriod() {
 document.getElementById('modalFiscalPeriod').addEventListener('change', modalUpdateDateForPeriod);
 
 function deleteEntry() {
-  if (!confirm('この仕訳を削除しますか？')) return;
+  var msg = currentHasVoucher
+      ? 'この仕訳には証憑画像が紐づいています。削除すると証憑が未紐付けになります。削除しますか？'
+      : 'この仕訳を削除しますか？';
+  if (!confirm(msg)) return;
 
   var deleteBtn = document.getElementById('modalDeleteBtn');
   deleteBtn.disabled = true;
