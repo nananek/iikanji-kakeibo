@@ -17,10 +17,10 @@
 ## リリース手順
 
 1. `develop` で開発・コミット・プッシュ
-2. `git checkout master && git merge develop`
-3. `git tag -a vX.Y.Z -m "メッセージ"` → `git push origin master vX.Y.Z`
-4. `git checkout develop`
-5. **`docker-compose.yml.example` の `image:` バージョンを新タグに更新すること**（忘れがち）
+2. **`docker-compose.yml.example` の `image:` バージョンを新タグに更新してコミット**（master マージ前に行うこと）
+3. `git checkout master && git merge develop`
+4. `git tag -a vX.Y.Z -m "メッセージ"` → `git push origin master vX.Y.Z`
+5. `git checkout develop`
 6. GitHub Actions (`.github/workflows/build-and-push.yml`) が GHCR にイメージをビルド・プッシュ
 7. サーバーへのデプロイ・リスタートはユーザーが手動で行う
 8. **Python クライアント (`../client-py`) の仕様見直し・リリースも行うこと** — API のリクエスト/レスポンス形式やエンドポイントに変更がある場合、クライアント側のコード・ドキュメントを更新し、クライアントも合わせてリリースする
