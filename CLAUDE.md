@@ -111,7 +111,6 @@
 |---------|------|
 | app.js | 数値入力のEnterキー制御、証憑プレビュー共通関数 |
 | alpine-components.js | Alpine.js 共通コンポーネント定義（段階的に拡充） |
-| ~~import_confirm.js~~ | 削除済み — alpine-components.js の `importConfirm` に統合 |
 | drag_select.js | ドラッグ選択（バックトラック取消対応） |
 | webauthn.js | Passkey 登録・認証 |
 
@@ -123,6 +122,27 @@
 - ビルドシステムなし（CDN のみ）
 - htmx の CSRF トークンは `htmx:configRequest` イベントで自動付与
 - htmx → Toast 連携: `HX-Trigger: showToast` ヘッダで `showToast()` を呼び出し
+
+### Alpine.js コンポーネント (`alpine-components.js`)
+
+| コンポーネント | 用途 |
+|-------------|------|
+| `fiscalPeriodChecker` | 月次確定・未開設年度チェック（仕訳/出納帳/AI仕訳で共用） |
+| `bulkSelect` | 仕訳帳一覧の一括選択バー |
+| `accountEditor` | 勘定科目管理の CRUD |
+| `accountSelector` | 科目選択モーダル（グローバル `openAccountSelector()` で呼出） |
+| `journalLines` | 仕訳明細行の動的追加・削除・合計計算 |
+| `importConfirm` | 取込確認画面（CSV/OFX/Web共通） |
+
+### フロントエンド実装パターン
+
+- **Alpine コンポーネント**: `Alpine.data('name', function(config) { ... })` で定義。非リアクティブな閉包変数は外側 `var` で宣言
+- **Alpine スコープ入れ子**: 子の `x-data` から親スコープのプロパティにアクセス可能（例: `fiscalPeriodChecker` → `journalLines` の `lines`）
+- **フォーム送信**: `@submit="serializeLines()"` + `this.$refs.xxx.value = JSON.stringify(data)` で hidden input に書込み（Alpine の非同期 DOM 更新を回避）
+- **科目選択モーダル**: `openAccountSelector(callback, filter)` → `CustomEvent('account-selected')` で Alpine に通知
+- **htmx 削除**: `hx-post` + `hx-confirm` + `hx-target="closest tr"` + `hx-swap="outerHTML swap:0.3s"`. バックエンドは `HX-Request` 検出で空レスポンス + `HX-Trigger` 返却
+- **drag_select + Alpine**: `CustomEvent('drag-select-update')` → `@drag-select-update="handler()"` で連携
+- **テンプレート共通化**: `{% set var %}...{% endset %}` + `{% include "partial" %}` パターン
 
 ## 重要な設計パターン
 
@@ -258,7 +278,7 @@ AI証憑仕訳の解析時に、電帳法スキャナ保存の要件を満たし
 
 ### テンプレート
 - HTML の `<form>` はネストできない。外側に `<form>` がある場合、個別のPOSTは JS で動的に form を生成して submit する
-- 取込確認画面（CSV/OFX/Web）は `import_confirm.js` で共通化。テンプレートの構造を変える場合は **3つとも揃える**こと
+- 取込確認画面（CSV/OFX/Web）は `_partials/import_confirm_table.html` + Alpine `importConfirm` コンポーネントで共通化。テンプレートの構造を変える場合は **パーシャルと alpine-components.js の両方を揃える**こと
 - `_partials/account_selector.html` は科目選択モーダルの共通パーツ
 
 ### テスト

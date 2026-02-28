@@ -239,7 +239,7 @@ app/
     └── js/
         ├── app.js        #   PWA Service Worker 登録
         ├── drag_select.js #  ドラッグ選択 (バックトラック取消対応)
-        ├── import_confirm.js # 取込確認画面の共通ロジック
+        ├── alpine-components.js # Alpine.js 共通コンポーネント
         └── webauthn.js   #   Passkey 認証
 ```
 
