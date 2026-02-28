@@ -8,16 +8,20 @@
 
 <div class="card shadow-sm mt-4">
   <div class="card-body">
-    <form method="POST" id="journalForm">
+    <form method="POST" id="journalForm"
+          x-data="journalLines({
+            lines: {{ existing_lines | tojson if existing_lines is defined else '[]' }}
+          })"
+          @submit="serializeLines()">
       {{ form.hidden_tag() }}
-      <input type="hidden" name="lines_json" id="linesJson">
+      <input type="hidden" name="lines_json" x-ref="linesJson">
 
       <div x-data="fiscalPeriodChecker({
         closedPeriods: {{ (closed_periods or {})|tojson }},
         restrictedBefore: {{ restricted_before_year|tojson }},
         dateValue: '{{ form.date.data or '' }}',
         fiscalPeriod: '{{ form.fiscal_period.data if form.fiscal_period.data is not none else '' }}'
-      })" id="fiscalChecker">
+      })">
       <div class="row mb-3">
         <div class="col-md-3">
           {{ form.date.label(class="form-label") }}
@@ -35,7 +39,7 @@
 
       <h5 class="mt-4">仕訳明細</h5>
       <div class="table-responsive">
-        <table class="table" id="linesTable">
+        <table class="table">
           <thead class="table-light">
             <tr>
               <th style="width:35%">勘定科目</th>
@@ -45,17 +49,61 @@
               <th style="width:5%"></th>
             </tr>
           </thead>
-          <tbody id="linesBody">
+          <tbody>
+            <template x-for="(line, index) in lines" :key="line._key">
+              <tr :class="{'table-secondary': line.is_proprietor}">
+                <td>
+                  <template x-if="line.is_proprietor">
+                    <span class="form-control form-control-sm text-start bg-light text-muted"
+                          x-text="line.account_name || '事業主'"></span>
+                  </template>
+                  <template x-if="!line.is_proprietor">
+                    <button type="button" class="form-control form-control-sm text-start"
+                            @click="selectAccount(index)">
+                      <span :class="{'text-muted': !line.account_id}"
+                            x-text="line.account_name || '-- 選択 --'"></span>
+                    </button>
+                  </template>
+                </td>
+                <td>
+                  <input type="number" class="form-control form-control-sm text-end"
+                         x-model="line.debit_amount" min="0"
+                         :readonly="line.is_proprietor"
+                         :class="{'bg-light': line.is_proprietor}"
+                         :tabindex="line.is_proprietor ? -1 : 0">
+                </td>
+                <td>
+                  <input type="number" class="form-control form-control-sm text-end"
+                         x-model="line.credit_amount" min="0"
+                         :readonly="line.is_proprietor"
+                         :class="{'bg-light': line.is_proprietor}"
+                         :tabindex="line.is_proprietor ? -1 : 0">
+                </td>
+                <td class="d-mobile-none">
+                  <input type="text" class="form-control form-control-sm"
+                         x-model="line.description"
+                         :readonly="line.is_proprietor"
+                         :class="{'bg-light': line.is_proprietor}"
+                         :tabindex="line.is_proprietor ? -1 : 0">
+                </td>
+                <td>
+                  <button type="button" class="btn btn-outline-danger btn-sm"
+                          @click="removeLine(index)" x-show="!line.is_proprietor">
+                    <i class="bi bi-x"></i>
+                  </button>
+                </td>
+              </tr>
+            </template>
           </tbody>
           <tfoot>
             <tr class="table-light">
               <th>合計</th>
-              <th id="totalDebit" class="text-end">0</th>
-              <th id="totalCredit" class="text-end">0</th>
+              <th class="text-end" x-text="'\u00a5' + totalDebit.toLocaleString()">0</th>
+              <th class="text-end" x-text="'\u00a5' + totalCredit.toLocaleString()">0</th>
               <th class="d-mobile-none"></th>
               <th></th>
             </tr>
-            <tr id="balanceWarning" class="d-none">
+            <tr x-show="isUnbalanced" x-cloak>
               <td colspan="5">
                 <div class="alert alert-danger mb-0 py-1">貸借が一致していません</div>
               </td>
@@ -63,7 +111,7 @@
           </tfoot>
         </table>
       </div>
-      <button type="button" class="btn btn-outline-secondary btn-sm" onclick="addLine()">
+      <button type="button" class="btn btn-outline-secondary btn-sm" @click="addLine()">
         <i class="bi bi-plus-lg"></i> 行を追加
       </button>
 
@@ -73,7 +121,7 @@
 
       <hr>
       <div class="d-flex gap-2">
-        <button type="submit" class="btn btn-primary" id="submitBtn" :disabled="isBlocked">{{ '更新' if is_edit else '登録' }}</button>
+        <button type="submit" class="btn btn-primary" :disabled="isBlocked">{{ '更新' if is_edit else '登録' }}</button>
         <a href="{{ url_for('journal.index') }}" class="btn btn-outline-secondary">キャンセル</a>
       </div>
       </div><!-- /x-data fiscalPeriodChecker -->
@@ -85,118 +133,12 @@
 {% endblock %}
 
 {% block scripts %}
-<script>
-var lineCount = 0;
-var _isMobile = window.innerWidth <= 576;
-
-function _acctNameById(id) {
-  id = parseInt(id);
-  for (var i = 0; i < _acctSelectorData.length; i++) {
-    var g = _acctSelectorData[i];
-    for (var j = 0; j < g.accounts.length; j++) {
-      if (g.accounts[j].id === id) {
-        if (_isMobile) return g.accounts[j].name;
-        return g.accounts[j].code + ' ' + g.accounts[j].name;
-      }
-    }
-  }
-  return '';
-}
-
-function addLine(data) {
-  data = data || {};
-  var tbody = document.getElementById('linesBody');
-  var tr = document.createElement('tr');
-  var lineIdx = lineCount++;
-  var isProprietor = data.is_proprietor || false;
-  var acctName = data.account_id ? _acctNameById(data.account_id) : '-- 選択 --';
-  if (isProprietor && !acctName) acctName = '事業主';
-  var acctClass = data.account_id ? '' : 'text-muted';
-  if (isProprietor) {
-    tr.classList.add('table-secondary');
-    tr.innerHTML =
-      '<td>' +
-        '<input type="hidden" class="line-account-id" value="' + (data.account_id || '') + '">' +
-        '<input type="hidden" class="line-is-proprietor" value="1">' +
-        '<span class="form-control form-control-sm text-start bg-light text-muted">' + acctName + '</span>' +
-      '</td>' +
-      '<td><input type="number" class="form-control form-control-sm text-end debit-input bg-light" value="' + (data.debit_amount || 0) + '" readonly tabindex="-1"></td>' +
-      '<td><input type="number" class="form-control form-control-sm text-end credit-input bg-light" value="' + (data.credit_amount || 0) + '" readonly tabindex="-1"></td>' +
-      '<td class="d-mobile-none"><input type="text" class="form-control form-control-sm line-desc bg-light" value="" readonly tabindex="-1"></td>' +
-      '<td></td>';
-  } else {
-    tr.innerHTML =
-      '<td>' +
-        '<input type="hidden" class="line-account-id" value="' + (data.account_id || '') + '">' +
-        '<button type="button" class="form-control form-control-sm text-start line-account-btn" data-line="' + lineIdx + '">' +
-          '<span class="line-account-name ' + acctClass + '">' + acctName + '</span>' +
-        '</button>' +
-      '</td>' +
-      '<td><input type="number" class="form-control form-control-sm text-end debit-input" value="' + (data.debit_amount || 0) + '" min="0" onchange="updateTotals()"></td>' +
-      '<td><input type="number" class="form-control form-control-sm text-end credit-input" value="' + (data.credit_amount || 0) + '" min="0" onchange="updateTotals()"></td>' +
-      '<td class="d-mobile-none"><input type="text" class="form-control form-control-sm line-desc" value="' + ((data.description || '').replace(/"/g, '&quot;')) + '"></td>' +
-      '<td><button type="button" class="btn btn-outline-danger btn-sm" onclick="this.closest(\'tr\').remove(); updateTotals()"><i class="bi bi-x"></i></button></td>';
-
-    tr.querySelector('.line-account-btn').addEventListener('click', function() {
-      var btn = this;
-      var curId = btn.parentElement.querySelector('.line-account-id').value;
-      openAccountSelector(function(id, name) {
-        btn.parentElement.querySelector('.line-account-id').value = id;
-        var span = btn.querySelector('.line-account-name');
-        span.textContent = name;
-        span.classList.remove('text-muted');
-      }, {filter: 'all', currentId: curId});
-    });
-  }
-
-  tbody.appendChild(tr);
-  updateTotals();
-}
-
-function updateTotals() {
-  var totalDebit = 0, totalCredit = 0;
-  document.querySelectorAll('.debit-input').forEach(function(el) { totalDebit += parseInt(el.value) || 0; });
-  document.querySelectorAll('.credit-input').forEach(function(el) { totalCredit += parseInt(el.value) || 0; });
-  document.getElementById('totalDebit').textContent = '\u00a5' + totalDebit.toLocaleString();
-  document.getElementById('totalCredit').textContent = '\u00a5' + totalCredit.toLocaleString();
-
-  var warning = document.getElementById('balanceWarning');
-  if (totalDebit !== totalCredit && (totalDebit > 0 || totalCredit > 0)) {
-    warning.classList.remove('d-none');
-  } else {
-    warning.classList.add('d-none');
-  }
-}
-
-document.getElementById('journalForm').addEventListener('submit', function(e) {
-  var lines = [];
-  document.querySelectorAll('#linesBody tr').forEach(function(tr) {
-    var accountId = tr.querySelector('.line-account-id').value;
-    var debit = parseInt(tr.querySelector('.debit-input').value) || 0;
-    var credit = parseInt(tr.querySelector('.credit-input').value) || 0;
-    var desc = tr.querySelector('.line-desc').value;
-    if (accountId && (debit > 0 || credit > 0)) {
-      lines.push({ account_id: accountId, debit_amount: debit, credit_amount: credit, description: desc });
-    }
-  });
-  document.getElementById('linesJson').value = JSON.stringify(lines);
-});
-
-// 初期化
-{% if existing_lines is defined %}
-var existingLines = {{ existing_lines | tojson }};
-existingLines.forEach(function(l) { addLine(l); });
-{% else %}
-addLine();
-addLine();
-{% endif %}
-
-// 証憑プレビュー
 {% if is_edit and entry and entry.vouchers %}
+<script>
 renderVoucherPreview(
   document.getElementById('voucherPreview'),
   {{ entry.vouchers | map(attribute='id') | list | tojson }}.map(function(id) { return {id: id}; })
 );
-{% endif %}
 </script>
+{% endif %}
 {% endblock %}

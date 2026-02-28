@@ -89,6 +89,26 @@
     <div class="tab-content">
       <!-- かんたんモード -->
       <div class="tab-pane fade show active" id="simpleMode" role="tabpanel">
+        <div x-data="{
+          categoryId: '{{ selected.lines[0].account_id if selected.lines else '' }}',
+          categoryName: '',
+          paymentId: '{{ selected.lines[1].account_id if selected.lines|length > 1 else '' }}',
+          paymentName: '',
+          init: function() {
+            if (this.categoryId) this.categoryName = _acctNameById(parseInt(this.categoryId)) || '';
+            if (this.paymentId) this.paymentName = _acctNameById(parseInt(this.paymentId)) || '';
+          },
+          selectCategory: function() {
+            var self = this;
+            openAccountSelector(function(id, name) { self.categoryId = id; self.categoryName = name; },
+              {filter: 'category', activeTab: 'pl', currentId: this.categoryId});
+          },
+          selectPayment: function() {
+            var self = this;
+            openAccountSelector(function(id, name) { self.paymentId = id; self.paymentName = name; },
+              {filter: 'payment', activeTab: 'bs', currentId: this.paymentId});
+          }
+        }">
         <form method="POST" id="simpleForm"
               x-data="fiscalPeriodChecker({
                 closedPeriods: {{ (closed_periods or {})|tojson }},
@@ -124,20 +144,20 @@
           <div class="row mb-3">
             <div class="col-md-6">
               <label class="form-label">費目</label>
-              <input type="hidden" name="category_account_id" id="simpleCategoryId"
-                     value="{{ selected.lines[0].account_id if selected.lines else '' }}">
-              <button type="button" class="form-control text-start" id="simpleCategoryBtn"
-                      onclick="openAccountSelector(onSimpleCategorySelected, {filter: 'category', activeTab: 'pl', currentId: document.getElementById('simpleCategoryId').value})">
-                <span id="simpleCategoryName" class="text-muted">-- 選択 --</span>
+              <input type="hidden" name="category_account_id" x-model="categoryId">
+              <button type="button" class="form-control text-start"
+                      @click="selectCategory()">
+                <span :class="{'text-muted': !categoryId}"
+                      x-text="categoryName || '-- 選択 --'">-- 選択 --</span>
               </button>
             </div>
             <div class="col-md-6">
               <label class="form-label">支払元</label>
-              <input type="hidden" name="payment_account_id" id="simplePaymentId"
-                     value="{{ selected.lines[1].account_id if selected.lines|length > 1 else '' }}">
-              <button type="button" class="form-control text-start" id="simplePaymentBtn"
-                      onclick="openAccountSelector(onSimplePaymentSelected, {filter: 'payment', activeTab: 'bs', currentId: document.getElementById('simplePaymentId').value})">
-                <span id="simplePaymentName" class="text-muted">-- 選択 --</span>
+              <input type="hidden" name="payment_account_id" x-model="paymentId">
+              <button type="button" class="form-control text-start"
+                      @click="selectPayment()">
+                <span :class="{'text-muted': !paymentId}"
+                      x-text="paymentName || '-- 選択 --'">-- 選択 --</span>
               </button>
             </div>
           </div>
@@ -162,20 +182,26 @@
             {% endif %}
           </div>
         </form>
+        </div><!-- /x-data simple selectors -->
       </div>
 
       <!-- 仕訳モード -->
       <div class="tab-pane fade" id="advancedMode" role="tabpanel">
         <form method="POST" id="advancedForm"
-              x-data="fiscalPeriodChecker({
-                closedPeriods: {{ (closed_periods or {})|tojson }},
-                restrictedBefore: {{ restricted_before_year|tojson }},
-                dateValue: '{{ selected.date or '' }}'
-              })">
+              x-data="journalLines({
+                lines: {{ selected.lines | tojson if selected.lines else '[]' }},
+                fullName: true
+              })"
+              @submit="serializeLines()">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <input type="hidden" name="mode" value="advanced">
-          <input type="hidden" name="lines_json" id="linesJson">
+          <input type="hidden" name="lines_json" x-ref="linesJson">
 
+          <div x-data="fiscalPeriodChecker({
+            closedPeriods: {{ (closed_periods or {})|tojson }},
+            restrictedBefore: {{ restricted_before_year|tojson }},
+            dateValue: '{{ selected.date or '' }}'
+          })">
           <div class="row mb-3">
             <div class="col-md-3">
               <label class="form-label">日付</label>
@@ -192,7 +218,7 @@
 
           <h5 class="mt-4">仕訳明細</h5>
           <div class="table-responsive">
-            <table class="table" id="linesTable">
+            <table class="table">
               <thead class="table-light">
                 <tr>
                   <th style="width:35%">勘定科目</th>
@@ -202,16 +228,46 @@
                   <th style="width:5%"></th>
                 </tr>
               </thead>
-              <tbody id="linesBody"></tbody>
+              <tbody>
+                <template x-for="(line, index) in lines" :key="line._key">
+                  <tr>
+                    <td>
+                      <button type="button" class="form-control form-control-sm text-start"
+                              @click="selectAccount(index)">
+                        <span :class="{'text-muted': !line.account_id}"
+                              x-text="line.account_name || '-- 選択 --'"></span>
+                      </button>
+                    </td>
+                    <td>
+                      <input type="number" class="form-control form-control-sm text-end"
+                             x-model="line.debit_amount" min="0">
+                    </td>
+                    <td>
+                      <input type="number" class="form-control form-control-sm text-end"
+                             x-model="line.credit_amount" min="0">
+                    </td>
+                    <td>
+                      <input type="text" class="form-control form-control-sm"
+                             x-model="line.description">
+                    </td>
+                    <td>
+                      <button type="button" class="btn btn-outline-danger btn-sm"
+                              @click="removeLine(index)">
+                        <i class="bi bi-x"></i>
+                      </button>
+                    </td>
+                  </tr>
+                </template>
+              </tbody>
               <tfoot>
                 <tr class="table-light">
                   <th>合計</th>
-                  <th id="totalDebit" class="text-end">0</th>
-                  <th id="totalCredit" class="text-end">0</th>
+                  <th class="text-end" x-text="'\u00a5' + totalDebit.toLocaleString()">0</th>
+                  <th class="text-end" x-text="'\u00a5' + totalCredit.toLocaleString()">0</th>
                   <th></th>
                   <th></th>
                 </tr>
-                <tr id="balanceWarning" class="d-none">
+                <tr x-show="isUnbalanced" x-cloak>
                   <td colspan="5">
                     <div class="alert alert-danger mb-0 py-1">貸借が一致していません</div>
                   </td>
@@ -219,7 +275,7 @@
               </tfoot>
             </table>
           </div>
-          <button type="button" class="btn btn-outline-secondary btn-sm" onclick="addLine()">
+          <button type="button" class="btn btn-outline-secondary btn-sm" @click="addLine()">
             <i class="bi bi-plus-lg"></i> 行を追加
           </button>
 
@@ -242,6 +298,7 @@
             </a>
             {% endif %}
           </div>
+          </div><!-- /x-data fiscalPeriodChecker -->
         </form>
       </div>
     </div>
@@ -249,154 +306,4 @@
 </div>
 
 {% include "_partials/account_selector.html" %}
-{% endblock %}
-
-{% block scripts %}
-<script>
-function _acctNameById(id) {
-  for (var i = 0; i < _acctSelectorData.length; i++) {
-    var g = _acctSelectorData[i];
-    for (var j = 0; j < g.accounts.length; j++) {
-      if (g.accounts[j].id === id) return g.accounts[j].name;
-    }
-  }
-  return '';
-}
-
-function _acctFullNameById(id) {
-  for (var i = 0; i < _acctSelectorData.length; i++) {
-    var g = _acctSelectorData[i];
-    for (var j = 0; j < g.accounts.length; j++) {
-      if (g.accounts[j].id === id) return g.accounts[j].code + ' ' + g.accounts[j].name;
-    }
-  }
-  return '';
-}
-
-// --- かんたんモード ---
-function onSimpleCategorySelected(id, name) {
-  document.getElementById('simpleCategoryId').value = id;
-  var span = document.getElementById('simpleCategoryName');
-  span.textContent = name;
-  span.classList.remove('text-muted');
-}
-
-function onSimplePaymentSelected(id, name) {
-  document.getElementById('simplePaymentId').value = id;
-  var span = document.getElementById('simplePaymentName');
-  span.textContent = name;
-  span.classList.remove('text-muted');
-}
-
-// 初期値設定
-(function() {
-  var catId = parseInt(document.getElementById('simpleCategoryId').value);
-  if (catId) {
-    var name = _acctNameById(catId);
-    if (name) {
-      var span = document.getElementById('simpleCategoryName');
-      span.textContent = name;
-      span.classList.remove('text-muted');
-    }
-  }
-  var payId = parseInt(document.getElementById('simplePaymentId').value);
-  if (payId) {
-    var name2 = _acctNameById(payId);
-    if (name2) {
-      var span2 = document.getElementById('simplePaymentName');
-      span2.textContent = name2;
-      span2.classList.remove('text-muted');
-    }
-  }
-})();
-
-// --- 仕訳モード ---
-var lineCount = 0;
-
-function addLine(data) {
-  data = data || {};
-  var tbody = document.getElementById('linesBody');
-  var tr = document.createElement('tr');
-  var lineIdx = lineCount++;
-  var acctName = data.account_id ? _acctFullNameById(data.account_id) : '-- 選択 --';
-  var acctClass = data.account_id ? '' : 'text-muted';
-  tr.innerHTML =
-    '<td>' +
-      '<input type="hidden" class="line-account-id" value="' + (data.account_id || '') + '">' +
-      '<button type="button" class="form-control form-control-sm text-start line-account-btn" data-line="' + lineIdx + '">' +
-        '<span class="line-account-name ' + acctClass + '">' + acctName + '</span>' +
-      '</button>' +
-    '</td>' +
-    '<td><input type="number" class="form-control form-control-sm text-end debit-input" value="' + (data.debit_amount || 0) + '" min="0" onchange="updateTotals()"></td>' +
-    '<td><input type="number" class="form-control form-control-sm text-end credit-input" value="' + (data.credit_amount || 0) + '" min="0" onchange="updateTotals()"></td>' +
-    '<td><input type="text" class="form-control form-control-sm line-desc" value="' + ((data.description || '').replace(/"/g, '&quot;')) + '"></td>' +
-    '<td><button type="button" class="btn btn-outline-danger btn-sm" onclick="this.closest(\'tr\').remove(); updateTotals()"><i class="bi bi-x"></i></button></td>';
-
-  tr.querySelector('.line-account-btn').addEventListener('click', function() {
-    var btn = this;
-    var curId = btn.parentElement.querySelector('.line-account-id').value;
-    openAccountSelector(function(id, name) {
-      btn.parentElement.querySelector('.line-account-id').value = id;
-      var span = btn.querySelector('.line-account-name');
-      span.textContent = name;
-      span.classList.remove('text-muted');
-    }, {filter: 'all', currentId: curId});
-  });
-
-  tbody.appendChild(tr);
-  updateTotals();
-}
-
-function updateTotals() {
-  var totalDebit = 0, totalCredit = 0;
-  document.querySelectorAll('.debit-input').forEach(function(el) {
-    totalDebit += parseInt(el.value) || 0;
-  });
-  document.querySelectorAll('.credit-input').forEach(function(el) {
-    totalCredit += parseInt(el.value) || 0;
-  });
-  document.getElementById('totalDebit').textContent = '\u00a5' + totalDebit.toLocaleString();
-  document.getElementById('totalCredit').textContent = '\u00a5' + totalCredit.toLocaleString();
-
-  var warning = document.getElementById('balanceWarning');
-  if (totalDebit !== totalCredit && (totalDebit > 0 || totalCredit > 0)) {
-    warning.classList.remove('d-none');
-  } else {
-    warning.classList.add('d-none');
-  }
-}
-
-document.getElementById('advancedForm').addEventListener('submit', function() {
-  var lines = [];
-  document.querySelectorAll('#linesBody tr').forEach(function(tr) {
-    var accountId = tr.querySelector('.line-account-id').value;
-    var debit = parseInt(tr.querySelector('.debit-input').value) || 0;
-    var credit = parseInt(tr.querySelector('.credit-input').value) || 0;
-    var desc = tr.querySelector('.line-desc').value;
-    if (accountId && (debit > 0 || credit > 0)) {
-      lines.push({
-        account_id: accountId, debit_amount: debit,
-        credit_amount: credit, description: desc
-      });
-    }
-  });
-  document.getElementById('linesJson').value = JSON.stringify(lines);
-});
-
-// AI結果で初期化
-var selected = {{ selected | tojson }};
-if (selected.lines && selected.lines.length > 0) {
-  selected.lines.forEach(function(line) {
-    addLine({
-      account_id: line.account_id,
-      debit_amount: line.debit_amount,
-      credit_amount: line.credit_amount,
-      description: line.description || ''
-    });
-  });
-} else {
-  addLine();
-  addLine();
-}
-</script>
 {% endblock %}

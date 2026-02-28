@@ -70,6 +70,21 @@
 
 <script>
 var _acctSelectorData = {{ grouped_accounts | tojson }};
+var _isMobile = window.innerWidth <= 576;
+window._acctNameById = function(id, full) {
+  id = parseInt(id);
+  if (!id) return '';
+  for (var i = 0; i < _acctSelectorData.length; i++) {
+    var g = _acctSelectorData[i];
+    for (var j = 0; j < g.accounts.length; j++) {
+      if (g.accounts[j].id === id) {
+        if (full || !_isMobile) return g.accounts[j].code + ' ' + g.accounts[j].name;
+        return g.accounts[j].name;
+      }
+    }
+  }
+  return '';
+};
 window.openAccountSelector = function(callback, options) {
   window._acctSelectorCallback = callback;
   document.getElementById('accountSelectorModal').dispatchEvent(

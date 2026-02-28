@@ -289,6 +289,95 @@ document.addEventListener('alpine:init', function() {
   });
 
   /**
+   * 仕訳明細行: 動的行追加・削除、貸借合計、科目選択連携
+   *
+   * 使い方:
+   *   <form x-data="journalLines({ lines: [...], fullName: false })"
+   *         @submit="serializeLines()">
+   *     <input type="hidden" name="lines_json" x-ref="linesJson">
+   *     <template x-for="(line, index) in lines" :key="line._key"> ... </template>
+   */
+  Alpine.data('journalLines', function(config) {
+    var _keyCounter = 0;
+
+    return {
+      lines: [],
+      get totalDebit() {
+        var sum = 0;
+        for (var i = 0; i < this.lines.length; i++) sum += parseInt(this.lines[i].debit_amount) || 0;
+        return sum;
+      },
+      get totalCredit() {
+        var sum = 0;
+        for (var i = 0; i < this.lines.length; i++) sum += parseInt(this.lines[i].credit_amount) || 0;
+        return sum;
+      },
+      get isUnbalanced() {
+        return this.totalDebit !== this.totalCredit && (this.totalDebit > 0 || this.totalCredit > 0);
+      },
+
+      init: function() {
+        var initLines = config.lines || [];
+        if (initLines.length > 0) {
+          for (var i = 0; i < initLines.length; i++) this.addLine(initLines[i]);
+        } else {
+          this.addLine();
+          this.addLine();
+        }
+      },
+
+      addLine: function(data) {
+        data = data || {};
+        var name = '';
+        if (data.account_id) {
+          name = typeof _acctNameById === 'function'
+            ? _acctNameById(data.account_id, config.fullName) : '';
+          if (data.is_proprietor && !name) name = '事業主';
+        }
+        this.lines.push({
+          _key: ++_keyCounter,
+          account_id: data.account_id || '',
+          account_name: name,
+          debit_amount: data.debit_amount || 0,
+          credit_amount: data.credit_amount || 0,
+          description: data.description || '',
+          is_proprietor: data.is_proprietor || false,
+        });
+      },
+
+      removeLine: function(index) {
+        this.lines.splice(index, 1);
+      },
+
+      selectAccount: function(index, filter) {
+        var line = this.lines[index];
+        openAccountSelector(function(id, name) {
+          line.account_id = id;
+          line.account_name = name;
+        }, {filter: filter || 'all', currentId: line.account_id});
+      },
+
+      serializeLines: function() {
+        var result = [];
+        for (var i = 0; i < this.lines.length; i++) {
+          var line = this.lines[i];
+          var debit = parseInt(line.debit_amount) || 0;
+          var credit = parseInt(line.credit_amount) || 0;
+          if (line.account_id && (debit > 0 || credit > 0)) {
+            result.push({
+              account_id: line.account_id,
+              debit_amount: debit,
+              credit_amount: credit,
+              description: line.description
+            });
+          }
+        }
+        this.$refs.linesJson.value = JSON.stringify(result);
+      }
+    };
+  });
+
+  /**
    * 科目選択モーダル
    *
    * 使い方:
