@@ -332,6 +332,7 @@ document.addEventListener('alpine:init', function() {
         if (data.account_id) {
           name = typeof _acctNameById === 'function'
             ? _acctNameById(data.account_id, config.fullName) : '';
+          if (!name && data.account_name) name = data.account_name;
           if (data.is_proprietor && !name) name = '事業主';
         }
         this.lines.push({
