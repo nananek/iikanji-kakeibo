@@ -34,6 +34,9 @@
         {% elif s.compliance_status == 'warn' %}
         <span class="badge bg-warning text-dark"><i class="bi bi-exclamation-triangle"></i> 警告</span>
         {% endif %}
+        {% if s.deadline_exceeded %}
+        <span class="badge bg-warning text-dark"><i class="bi bi-clock-history"></i> 期限超過</span>
+        {% endif %}
       </div>
       <div class="card-body">
         <div class="text-center mb-2">

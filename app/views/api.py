@@ -541,8 +541,13 @@ def list_vouchers():
                 "description": entry.description,
                 "amount": int(entry.total_debit),
             }
+            if v.uploaded_at:
+                d["deadline_exceeded"] = (v.uploaded_at.date() - entry.date).days > 67
+            else:
+                d["deadline_exceeded"] = False
         else:
             d["journal"] = None
+            d["deadline_exceeded"] = False
         result.append(d)
 
     return jsonify({

@@ -4,8 +4,22 @@ import json
 import os
 import tempfile
 import uuid
+from datetime import date, datetime
 
 from app.models.account import Account, AccountType
+
+DEADLINE_DAYS = 67  # 電帳法: 約2ヶ月+7営業日
+
+
+def check_deadline(receipt_date, uploaded_date):
+    """入力期限チェック。期限超過なら True を返す。"""
+    if not receipt_date or not uploaded_date:
+        return False
+    if isinstance(uploaded_date, datetime):
+        uploaded_date = uploaded_date.date()
+    if isinstance(receipt_date, datetime):
+        receipt_date = receipt_date.date()
+    return (uploaded_date - receipt_date).days > DEADLINE_DAYS
 
 # 一時ファイル保存先
 _TEMP_DIR = os.path.join(tempfile.gettempdir(), "iikanji_import")

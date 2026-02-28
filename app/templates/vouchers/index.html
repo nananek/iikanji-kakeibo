@@ -48,7 +48,14 @@
       <div class="card-header d-flex justify-content-between align-items-center">
         {% if entry %}
         <small class="text-muted">{{ entry.date.strftime('%Y/%m/%d') }}</small>
-        <span class="badge bg-secondary">#{{ entry.entry_number }}</span>
+        <span>
+          <span class="badge bg-secondary">#{{ entry.entry_number }}</span>
+          {% if v.uploaded_at and (v.uploaded_at.date() - entry.date).days > 67 %}
+          <span class="badge bg-warning text-dark" title="入力期限超過（{{ (v.uploaded_at.date() - entry.date).days }}日）">
+            <i class="bi bi-clock-history"></i>
+          </span>
+          {% endif %}
+        </span>
         {% else %}
         <small class="text-muted">{{ v.uploaded_at.strftime('%Y/%m/%d %H:%M') }}</small>
         <span class="badge bg-warning text-dark">未紐付け</span>
