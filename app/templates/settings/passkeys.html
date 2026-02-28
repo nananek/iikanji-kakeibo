@@ -54,14 +54,12 @@
                 {% endif %}
               </td>
               <td class="text-end">
-                <form method="POST"
-                      action="{{ url_for('settings.delete_passkey', credential_id=cred.id) }}"
-                      onsubmit="return confirm('この Passkey を削除しますか？')">
-                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                  <button type="submit" class="btn btn-sm btn-outline-danger">
-                    <i class="bi bi-trash"></i> 削除
-                  </button>
-                </form>
+                <button type="button" class="btn btn-sm btn-outline-danger"
+                        hx-post="{{ url_for('settings.delete_passkey', credential_id=cred.id) }}"
+                        hx-confirm="この Passkey を削除しますか？"
+                        hx-target="closest tr" hx-swap="outerHTML swap:0.3s">
+                  <i class="bi bi-trash"></i> 削除
+                </button>
               </td>
             </tr>
             {% endfor %}

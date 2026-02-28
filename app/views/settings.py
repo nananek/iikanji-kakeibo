@@ -1,7 +1,7 @@
 import json
 from datetime import date, datetime, timezone
 
-from flask import Blueprint, render_template, redirect, url_for, flash, request, jsonify
+from flask import Blueprint, render_template, redirect, url_for, flash, request, jsonify, make_response
 from flask_login import login_required, current_user
 
 from app.extensions import db
@@ -54,6 +54,14 @@ def delete_passkey(credential_id):
     name = credential.name or f"Passkey #{credential.id}"
     db.session.delete(credential)
     db.session.commit()
+
+    if request.headers.get("HX-Request"):
+        resp = make_response("", 200)
+        resp.headers["HX-Trigger"] = json.dumps(
+            {"showToast": {"message": f"Passkey「{name}」を削除しました。", "type": "success"}}
+        )
+        return resp
+
     flash(f"Passkey「{name}」を削除しました。", "success")
     return redirect(url_for("settings.passkeys"))
 
@@ -213,6 +221,14 @@ def api_key_delete(key_id):
     name = api_key.name
     db.session.delete(api_key)
     db.session.commit()
+
+    if request.headers.get("HX-Request"):
+        resp = make_response("", 200)
+        resp.headers["HX-Trigger"] = json.dumps(
+            {"showToast": {"message": f"APIキー「{name}」を削除しました。", "type": "success"}}
+        )
+        return resp
+
     flash(f"APIキー「{name}」を削除しました。", "success")
     return redirect(url_for("settings.api_keys"))
 
@@ -299,12 +315,22 @@ def fiscal_open_year():
 @login_required
 def fiscal_close():
     """月次確定を実行"""
-    is_ajax = request.headers.get("X-Requested-With") == "XMLHttpRequest"
+    is_htmx = bool(request.headers.get("HX-Request"))
+    is_ajax = is_htmx or request.headers.get("X-Requested-With") == "XMLHttpRequest"
     year = request.form.get("year", type=int)
     period = request.form.get("period", type=int)
 
     err = close_period(get_effective_user_id(), year, period)
     label = PERIOD_LABELS.get(period, f"{period}月")
+
+    if is_htmx:
+        msg = err or f"{year}年{label}を確定しました。"
+        resp = make_response("", 422 if err else 200)
+        trigger = {"showToast": {"message": msg, "type": "danger" if err else "success"}}
+        if not err:
+            resp.headers["HX-Refresh"] = "true"
+        resp.headers["HX-Trigger"] = json.dumps(trigger)
+        return resp
 
     if is_ajax:
         if err:
@@ -322,12 +348,22 @@ def fiscal_close():
 @login_required
 def fiscal_reopen():
     """月次確定を解除"""
-    is_ajax = request.headers.get("X-Requested-With") == "XMLHttpRequest"
+    is_htmx = bool(request.headers.get("HX-Request"))
+    is_ajax = is_htmx or request.headers.get("X-Requested-With") == "XMLHttpRequest"
     year = request.form.get("year", type=int)
     period = request.form.get("period", type=int)
 
     err = reopen_period(get_effective_user_id(), year, period)
     label = PERIOD_LABELS.get(period, f"{period}月")
+
+    if is_htmx:
+        msg = err or f"{year}年{label}の確定を解除しました。"
+        resp = make_response("", 422 if err else 200)
+        trigger = {"showToast": {"message": msg, "type": "danger" if err else "success"}}
+        if not err:
+            resp.headers["HX-Refresh"] = "true"
+        resp.headers["HX-Trigger"] = json.dumps(trigger)
+        return resp
 
     if is_ajax:
         if err:

@@ -73,26 +73,20 @@
           </td>
           <td class="text-end">
             {% if p.can_close and not p.closed %}
-            <form method="POST" action="{{ url_for('settings.fiscal_close') }}" class="d-inline fiscal-form"
-                  {% if p.number == 15 %}data-confirm="決算月3を確定すると損益振替仕訳が自動生成されます。よろしいですか？"{% endif %}>
-              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-              <input type="hidden" name="year" value="{{ year }}">
-              <input type="hidden" name="period" value="{{ p.number }}">
-              <button type="submit" class="btn btn-primary btn-sm">
-                <i class="bi bi-lock"></i> 確定
-              </button>
-            </form>
+            <button type="button" class="btn btn-primary btn-sm"
+                    hx-post="{{ url_for('settings.fiscal_close') }}"
+                    hx-vals='{"year": {{ year }}, "period": {{ p.number }}}'
+                    {% if p.number == 15 %}hx-confirm="決算月3を確定すると損益振替仕訳が自動生成されます。よろしいですか？"{% endif %}>
+              <i class="bi bi-lock"></i> 確定
+            </button>
             {% endif %}
             {% if p.can_reopen and p.closed %}
-            <form method="POST" action="{{ url_for('settings.fiscal_reopen') }}" class="d-inline fiscal-form"
-                  {% if p.number == 15 %}data-confirm="決算月3の確定を解除すると損益振替仕訳が削除されます。よろしいですか？"{% endif %}>
-              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-              <input type="hidden" name="year" value="{{ year }}">
-              <input type="hidden" name="period" value="{{ p.number }}">
-              <button type="submit" class="btn btn-outline-warning btn-sm">
-                <i class="bi bi-unlock"></i> 解除
-              </button>
-            </form>
+            <button type="button" class="btn btn-outline-warning btn-sm"
+                    hx-post="{{ url_for('settings.fiscal_reopen') }}"
+                    hx-vals='{"year": {{ year }}, "period": {{ p.number }}}'
+                    {% if p.number == 15 %}hx-confirm="決算月3の確定を解除すると損益振替仕訳が削除されます。よろしいですか？"{% endif %}>
+              <i class="bi bi-unlock"></i> 解除
+            </button>
             {% endif %}
           </td>
         </tr>
@@ -101,36 +95,4 @@
     </table>
   </div>
 </div>
-{% endblock %}
-
-{% block scripts %}
-<script>
-document.querySelectorAll('.fiscal-form').forEach(function(form) {
-  form.addEventListener('submit', function(e) {
-    e.preventDefault();
-    var msg = form.dataset.confirm;
-    if (msg && !confirm(msg)) return;
-    var btn = form.querySelector('button[type="submit"]');
-    btn.disabled = true;
-    fetch(form.action, {
-      method: 'POST',
-      headers: {'X-Requested-With': 'XMLHttpRequest'},
-      body: new FormData(form),
-    })
-    .then(function(r) { return r.json().then(function(d) { return {ok: r.ok, data: d}; }); })
-    .then(function(res) {
-      showToast(res.data.message, res.ok ? 'success' : 'danger');
-      if (res.ok) {
-        setTimeout(function() { location.reload(); }, 500);
-      } else {
-        btn.disabled = false;
-      }
-    })
-    .catch(function() {
-      showToast('通信エラーが発生しました。', 'danger');
-      btn.disabled = false;
-    });
-  });
-});
-</script>
 {% endblock %}

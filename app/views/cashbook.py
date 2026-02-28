@@ -1,6 +1,8 @@
 from datetime import date
 
-from flask import Blueprint, render_template, redirect, url_for, flash, request
+import json
+
+from flask import Blueprint, render_template, redirect, url_for, flash, request, make_response
 from flask_login import login_required, current_user
 
 from app.extensions import db
@@ -264,22 +266,38 @@ def delete(entry_id):
         id=entry_id, user_id=user_id, source="cashbook"
     ).first_or_404()
 
+    def _hx_error(msg):
+        if request.headers.get("HX-Request"):
+            resp = make_response("", 422)
+            resp.headers["HX-Reswap"] = "none"
+            resp.headers["HX-Trigger"] = json.dumps(
+                {"showToast": {"message": msg, "type": "danger"}}
+            )
+            return resp
+        flash(msg, "danger")
+        return redirect(url_for("cashbook.index"))
+
     # 伝票ロックチェック
     if not is_acting_as_auditor() and is_entry_locked_for_owner(user_id, entry):
-        flash("提出済みの税務科目を含む伝票のため削除できません。", "danger")
-        return redirect(url_for("cashbook.index"))
+        return _hx_error("提出済みの税務科目を含む伝票のため削除できません。")
     if is_acting_as_auditor() and allowed_ids is not None and is_entry_locked_for_auditor(entry, allowed_ids):
-        flash("事業主勘定を含む伝票のため削除できません。", "danger")
-        return redirect(url_for("cashbook.index"))
+        return _hx_error("事業主勘定を含む伝票のため削除できません。")
 
     # 確定済み期間チェック
     err = check_entry_modifiable(user_id, entry)
     if err:
-        flash(err, "danger")
-        return redirect(url_for("cashbook.index"))
+        return _hx_error(err)
 
     num = entry.entry_number
     db.session.delete(entry)
     db.session.commit()
+
+    if request.headers.get("HX-Request"):
+        resp = make_response("", 200)
+        resp.headers["HX-Trigger"] = json.dumps(
+            {"showToast": {"message": f"伝票 #{num} を削除しました。", "type": "success"}}
+        )
+        return resp
+
     flash(f"伝票 #{num} を削除しました。", "success")
     return redirect(url_for("cashbook.index"))

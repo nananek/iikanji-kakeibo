@@ -90,14 +90,12 @@
                 {% endif %}
               </td>
               <td class="text-end">
-                <form method="POST"
-                      action="{{ url_for('settings.api_key_delete', key_id=key.id) }}"
-                      onsubmit="return confirm('このAPIキーを削除しますか？削除すると即座に使えなくなります。')">
-                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                  <button type="submit" class="btn btn-sm btn-outline-danger">
-                    <i class="bi bi-trash"></i> 削除
-                  </button>
-                </form>
+                <button type="button" class="btn btn-sm btn-outline-danger"
+                        hx-post="{{ url_for('settings.api_key_delete', key_id=key.id) }}"
+                        hx-confirm="このAPIキーを削除しますか？削除すると即座に使えなくなります。"
+                        hx-target="closest tr" hx-swap="outerHTML swap:0.3s">
+                  <i class="bi bi-trash"></i> 削除
+                </button>
               </td>
             </tr>
             {% endfor %}
