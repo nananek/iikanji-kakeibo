@@ -109,16 +109,18 @@ export default function globalSetup() {
   const ids = match ? JSON.parse(match[1]) : { cash: 1, food: 2 };
 
   // モック AI サーバーをコンテナ内で起動（バックグラウンド）
+  const mockScript = path.resolve(__dirname, "mock-ai-server.py");
   const mockCmd = process.env.CI
-    ? `python /app/tests/e2e/mock-ai-server.py --cash-id ${ids.cash} --food-id ${ids.food} &`
+    ? `nohup python ${mockScript} --cash-id ${ids.cash} --food-id ${ids.food} > /tmp/mock-ai.log 2>&1 &`
     : `docker compose exec -T -d web python /app/tests/e2e/mock-ai-server.py --cash-id ${ids.cash} --food-id ${ids.food}`;
 
   execSync(mockCmd, { encoding: "utf-8", timeout: 10000 });
 
   // サーバー起動を待つ
+  const checkScript = `import urllib.request, json; r = urllib.request.urlopen(urllib.request.Request('http://localhost:11435/v1/chat/completions', data=json.dumps({'messages':[]}).encode(), headers={'Content-Type':'application/json'})); print('OK', r.status)`;
   const checkCmd = process.env.CI
-    ? `python -c "import httpx; r = httpx.post('http://localhost:11435/v1/chat/completions', json={'messages':[]}, timeout=3); print('OK', r.status_code)"`
-    : `docker compose exec -T web python -c "import httpx; r = httpx.post('http://localhost:11435/v1/chat/completions', json={'messages':[]}, timeout=3); print('OK', r.status_code)"`;
+    ? `python -c "${checkScript}"`
+    : `docker compose exec -T web python -c "${checkScript}"`;
 
   for (let i = 0; i < 5; i++) {
     try {

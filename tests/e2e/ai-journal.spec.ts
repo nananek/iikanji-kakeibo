@@ -443,3 +443,59 @@ test.describe("AI証憑仕訳 — 下書き保存・やり直し確認", () => {
     ).toHaveCount(0);
   });
 });
+
+test.describe("仕訳編集画面 — tojson属性バグ", () => {
+  test.beforeEach(async ({ page }) => {
+    await login(page);
+  });
+
+  test("証憑から開いた仕訳編集画面で日付・明細が表示される", async ({ page }) => {
+    // まず仕訳を登録（AI証憑仕訳経由）
+    await page.goto(`${BASE_URL}/ai-journal/`);
+    const fileInput = page.locator('input[type="file"]');
+    await fileInput.setInputFiles({
+      name: "test-receipt.jpg",
+      mimeType: "image/jpeg",
+      buffer: createTestJpeg(),
+    });
+    await page.locator("button", { hasText: "AIで解析" }).click();
+    await page.waitForSelector("#suggestionsArea", {
+      state: "visible",
+      timeout: 15000,
+    });
+    await page.locator("a", { hasText: "この仕訳を使う" }).first().click();
+    await page.waitForURL(/\/ai-journal\/review/);
+
+    // かんたんモードで登録
+    await page
+      .locator("#simpleMode")
+      .locator("button", { hasText: "仕訳を登録" })
+      .click();
+    await page.waitForURL(/\/journal\/($|\?)/, { timeout: 10000 });
+
+    // 仕訳帳から編集リンクをクリック
+    const editLink = page.locator("table a[href*='/edit']").first();
+    await expect(editLink).toBeVisible();
+    await editLink.click();
+    await page.waitForURL(/\/journal\/\d+\/edit/);
+
+    // 日付が入っている
+    const dateInput = page.locator("input[name='date']");
+    await expect(dateInput).toHaveValue("2026-01-15");
+
+    // 仕訳明細が表示されている（2行以上）
+    const rows = page.locator("#journalForm tbody tr");
+    const count = await rows.count();
+    expect(count).toBeGreaterThanOrEqual(2);
+
+    // 勘定科目名が表示されている（「-- 選択 --」ではない）
+    const firstAccountBtn = rows.nth(0).locator("td:first-child button span");
+    const firstText = await firstAccountBtn.textContent();
+    expect(firstText).not.toBe("-- 選択 --");
+    expect(firstText?.trim().length).toBeGreaterThan(0);
+
+    // 金額が入っている
+    const debit = rows.nth(0).locator('input[type="number"]').first();
+    await expect(debit).toHaveValue("1500");
+  });
+});
