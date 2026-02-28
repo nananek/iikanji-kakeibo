@@ -37,7 +37,7 @@
 
 ### App Factory (`app/__init__.py`)
 - `create_app()` で Flask アプリを生成
-- 15個の Blueprint を登録
+- 16個の Blueprint を登録
 - WebAuthn API は CSRF を免除 (`csrf.exempt`)
 - before_request フックで監査権限を制御
 - テンプレートフィルタ `mask_account` で監査時の科目隠蔽

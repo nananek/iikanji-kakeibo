@@ -36,7 +36,19 @@
 - コメントで「会社の懇親会」等のヒントを付けると精度向上
 - 定型プロンプトで決済手段や摘要ルールを毎回自動指示
 - 仕訳登録後は下書き自動削除、Discord Webhook に完了マーク
-- 証憑画像はファイルシステムまたは S3 互換ストレージに保存（環境変数で切替）
+- 証憑画像はファイルシステムまたは S3 互換ストレージに永続保存（環境変数で切替）
+- 電帳法コンプライアンスチェック（画像品質・必須情報・入力期限をAIが自動判定）
+
+### 電帳法スキャナ保存対応
+
+電子帳簿保存法（スキャナ保存）の要件に対応:
+
+- **証憑の永続保存** — AI証憑仕訳で登録した画像を `Voucher` として永続保存し、仕訳と 1:N で紐付け
+- **検索機能** — 日付・金額・取引先（摘要）で証憑を検索できる一覧画面を提供
+- **改ざん防止** — 保存時に SHA-256 ハッシュを記録し、いつでも検証可能。操作ログで改ざんを検出
+- **入力期限チェック** — レシート日付から約2ヶ月+7日（67日）を超過した証憑に警告バッジを表示
+- **見読可能性** — 仕訳帳・元帳・証憑一覧から画像を閲覧可能
+- 仕訳削除時も証憑は保持（孤立証憑として操作ログに記録）
 
 ### 明細取込 (CSV / OFX / Web)
 
@@ -82,7 +94,8 @@
 
 ### REST API
 
-- 仕訳の起票・閲覧・削除、AI 証憑仕訳を外部プログラムから操作
+- 仕訳の起票・閲覧・削除、AI 証憑仕訳、証憑管理を外部プログラムから操作
+- 証憑一覧・画像取得・ハッシュ検証・操作ログの API を提供
 - API キーによる Bearer 認証、スコープ管理
 - Python クライアント [`iikanji`](https://github.com/nananek/iikanji-kakeibo-client-py) 対応
 
@@ -181,6 +194,8 @@ app/
 │   ├── api_key.py       #   APIKey (REST API 認証)
 │   ├── ai_config.py     #   UserAIConfig (定型プロンプト・base_url含む)
 │   ├── auto_import.py   #   AutoImportSource, ProcessedFile, WebhookConfig
+│   ├── voucher.py       #   Voucher (証憑画像・仕訳紐付け・SHA-256ハッシュ)
+│   ├── voucher_audit_log.py # VoucherAuditLog (改ざん防止ログ)
 │   └── webauthn.py      #   WebAuthnCredential
 ├── views/               # Blueprint (ルーティング)
 │   ├── auth.py          #   認証 (個人/監査用ログイン・登録)
@@ -194,7 +209,8 @@ app/
 │   ├── medical.py       #   医療費管理
 │   ├── reports.py       #   レポート
 │   ├── accounts.py      #   勘定科目管理 (JSON API)
-│   ├── api.py           #   REST API (仕訳・AI証憑仕訳・Bearer認証)
+│   ├── vouchers.py      #   証憑一覧 (電帳法検索要件対応)
+│   ├── api.py           #   REST API (仕訳・AI証憑仕訳・証憑・Bearer認証)
 │   ├── auditor.py       #   監査ダッシュボード・代理閲覧
 │   ├── webauthn.py      #   Passkey WebAuthn API
 │   ├── helpers.py       #   ビュー共通ヘルパー
@@ -211,6 +227,8 @@ app/
 │   ├── tax.py           #   確定申告集計・月次比較・着地予測
 │   ├── captcha.py       #   CAPTCHA 検証 (hCaptcha/reCAPTCHA/Turnstile/mCaptcha)
 │   ├── notify.py        #   Webhook 通知 (Discord 等)
+│   ├── voucher.py       #   ドラフト→証憑移行ヘルパー
+│   ├── storage.py       #   ストレージ抽象レイヤー (local/S3)
 │   ├── auto_import.py   #   自動取込オーケストレーター（内部利用）
 │   └── sources/         #   外部ソースプロバイダー
 │       └── webdav.py    #     WebDAV (Nextcloud 等)
