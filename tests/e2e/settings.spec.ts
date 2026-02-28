@@ -134,46 +134,21 @@ test.describe("ヘッダーナビゲーション", () => {
     await login(page);
   });
 
-  test("設定ドロップダウンにカテゴリーが表示される", async ({ page }) => {
+  test("設定リンクがドロップダウンではなく直接リンクである", async ({ page }) => {
     await page.goto(`${BASE_URL}/`);
-    await page.locator(".nav-link.dropdown-toggle", { hasText: "設定" }).click();
-
+    // ドロップダウンでないこと
     await expect(
-      page.locator(".dropdown-item", { hasText: "設定トップ" })
-    ).toBeVisible();
+      page.locator(".nav-link.dropdown-toggle", { hasText: "設定" })
+    ).toHaveCount(0);
+    // 直接リンクであること
     await expect(
-      page.locator(".dropdown-header", { hasText: "帳簿" })
-    ).toBeVisible();
-    await expect(
-      page.locator(".dropdown-header", { hasText: "AI・連携" })
-    ).toBeVisible();
-    await expect(
-      page.locator(".dropdown-header", { hasText: "セキュリティ" })
+      page.locator("a.nav-link", { hasText: "設定" })
     ).toBeVisible();
   });
 
-  test("設定ドロップダウンに勘定科目がある", async ({ page }) => {
+  test("設定リンクから設定トップへ遷移", async ({ page }) => {
     await page.goto(`${BASE_URL}/`);
-    await page.locator(".nav-link.dropdown-toggle", { hasText: "設定" }).click();
-    await expect(
-      page.locator(".dropdown-item", { hasText: "勘定科目" })
-    ).toBeVisible();
-  });
-
-  test("トップナビに勘定科目の独立リンクがない", async ({ page }) => {
-    await page.goto(`${BASE_URL}/`);
-    // ドロップダウン外の直接ナビリンクに「勘定科目」がないこと
-    const directLink = page.locator(
-      ".navbar-nav > .nav-item > a.nav-link:not(.dropdown-toggle)",
-      { hasText: "勘定科目" }
-    );
-    await expect(directLink).toHaveCount(0);
-  });
-
-  test("設定トップから設定ページへ遷移", async ({ page }) => {
-    await page.goto(`${BASE_URL}/`);
-    await page.locator(".nav-link.dropdown-toggle", { hasText: "設定" }).click();
-    await page.locator(".dropdown-item", { hasText: "設定トップ" }).click();
+    await page.locator("a.nav-link", { hasText: "設定" }).click();
     await expect(page).toHaveURL(/\/settings\/$/);
   });
 });
