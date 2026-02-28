@@ -119,9 +119,9 @@
     </table>
   </div>
 
-  {# 一括操作バー #}
+  {# 一括操作バー — d-flex は !important で x-show を上書きするため inline style で指定 #}
   <div x-show="selectedCount > 0" x-cloak
-       class="position-fixed bottom-0 start-50 translate-middle-x mb-3 px-4 py-2 bg-dark text-white rounded-pill shadow d-flex align-items-center gap-3" style="z-index:1050;">
+       class="position-fixed bottom-0 start-50 translate-middle-x mb-3 px-4 py-2 bg-dark text-white rounded-pill shadow align-items-center gap-3" style="z-index:1050; display:flex;">
     <span><strong x-text="selectedCount">0</strong>件選択中</span>
     <button type="submit" class="btn btn-danger btn-sm">
       <i class="bi bi-trash"></i> 一括削除

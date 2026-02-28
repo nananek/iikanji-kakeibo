@@ -23,8 +23,8 @@ function openImagePreview(url) {
       '<div class="modal-dialog modal-lg modal-dialog-centered">' +
         '<div class="modal-content bg-dark border-0">' +
           '<div class="modal-header border-0 py-2">' +
-            '<a id="imagePreviewNewTab" href="#" target="_blank" class="btn btn-sm btn-outline-light ms-auto me-2" title="別タブで開く">' +
-              '<i class="bi bi-box-arrow-up-right"></i></a>' +
+            '<button type="button" id="imagePreviewNewTab" class="btn btn-sm btn-outline-light ms-auto me-2" title="別タブで開く">' +
+              '<i class="bi bi-box-arrow-up-right"></i></button>' +
             '<button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>' +
           '</div>' +
           '<div class="modal-body text-center p-2">' +
@@ -35,7 +35,9 @@ function openImagePreview(url) {
     document.body.appendChild(modal);
   }
   document.getElementById('imagePreviewImg').src = url;
-  document.getElementById('imagePreviewNewTab').href = url;
+  document.getElementById('imagePreviewNewTab').onclick = function() {
+    window.open(url, '_blank', 'noopener');
+  };
   new bootstrap.Modal(modal).show();
 }
 
