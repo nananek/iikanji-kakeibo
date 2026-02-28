@@ -17,6 +17,7 @@ class User(UserMixin, db.Model):
     created_at = db.Column(
         db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc)
     )
+    preferences = db.Column(db.JSON, nullable=True, default=dict)
 
     accounts = db.relationship("Account", backref="user", lazy="dynamic")
     journal_entries = db.relationship("JournalEntry", backref="user", lazy="dynamic")
@@ -27,6 +28,18 @@ class User(UserMixin, db.Model):
 
     def check_password(self, password):
         return check_password_hash(self.password_hash, password)
+
+    def get_pref(self, key, default=None):
+        if not self.preferences:
+            return default
+        return self.preferences.get(key, default)
+
+    def set_pref(self, key, value):
+        if not self.preferences:
+            self.preferences = {}
+        prefs = dict(self.preferences)
+        prefs[key] = value
+        self.preferences = prefs
 
     def __repr__(self):
         return f"<User {self.username}>"

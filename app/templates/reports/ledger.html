@@ -28,6 +28,10 @@
       </optgroup>
       {% endfor %}
     </select>
+    <button type="button" id="sortToggle" class="btn btn-sm btn-outline-secondary" title="ソート順を切り替え">
+      <i class="bi bi-sort-{% if sort == 'desc' %}down{% else %}up{% endif %}"></i>
+      {{ '新しい順' if sort == 'desc' else '古い順' }}
+    </button>
     <small class="text-muted">ドラッグで範囲を選択 / クリックで単月</small>
   </div>
   <div class="d-flex flex-wrap gap-0" id="periodBar" style="user-select:none">
@@ -269,11 +273,14 @@
   var dragStart = null;
   var dragEnd = null;
 
+  var currentSort = '{{ sort|default("asc") }}';
+
   function navigate(pfVal, ptVal) {
     var year = document.getElementById('yearSelect').value;
     var acctId = document.getElementById('accountSelect').value;
     var url = '?year=' + year + '&pf=' + pfVal + '&pt=' + ptVal;
     if (acctId) url += '&account_id=' + acctId;
+    if (currentSort !== 'asc') url += '&sort=' + currentSort;
     location.href = url;
   }
 
@@ -347,6 +354,11 @@
   });
 
   document.getElementById('accountSelect').addEventListener('change', function() {
+    navigate({{ pf }}, {{ pt }});
+  });
+
+  document.getElementById('sortToggle').addEventListener('click', function() {
+    currentSort = currentSort === 'asc' ? 'desc' : 'asc';
     navigate({{ pf }}, {{ pt }});
   });
 })();

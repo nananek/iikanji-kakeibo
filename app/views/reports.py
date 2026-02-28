@@ -14,6 +14,7 @@ from app.services.tax import (
     get_tax_summary, get_medical_summary, get_income_expense_summary,
     get_monthly_comparison, get_month_projection,
 )
+from flask_login import current_user as _current_user
 from app.services.audit import get_effective_user_id, get_allowed_account_ids, mask_account_name, is_entry_locked_for_owner
 from app.services.fiscal import check_entry_modifiable, period_range_filter, get_closed_period
 from app.services.balance_cache import get_cached_balances
@@ -35,8 +36,15 @@ def balance():
     from app.services.fiscal import PERIOD_LABELS
 
     year = request.args.get("year", date.today().year, type=int)
-    pf = request.args.get("pf", 0, type=int)   # period_from (default: 期首)
-    pt = request.args.get("pt", 15, type=int)   # period_to   (default: 決算月3)
+    if "pf" not in request.args and "pt" not in request.args:
+        pref = _current_user.get_pref("reports_default_period", "all")
+        if pref == "current_month":
+            pf = pt = date.today().month
+        else:
+            pf, pt = 0, 15
+    else:
+        pf = request.args.get("pf", 0, type=int)
+        pt = request.args.get("pt", 15, type=int)
 
     # 範囲の正規化
     pf = max(0, min(16, pf))
@@ -473,9 +481,19 @@ def ledger():
     from sqlalchemy import case
 
     year = request.args.get("year", date.today().year, type=int)
-    pf = request.args.get("pf", 0, type=int)
-    pt = request.args.get("pt", 15, type=int)
+    if "pf" not in request.args and "pt" not in request.args:
+        pref = _current_user.get_pref("reports_default_period", "all")
+        if pref == "current_month":
+            pf = pt = date.today().month
+        else:
+            pf, pt = 0, 15
+    else:
+        pf = request.args.get("pf", 0, type=int)
+        pt = request.args.get("pt", 15, type=int)
     account_id = request.args.get("account_id", 0, type=int)
+    sort_order = request.args.get("sort", _current_user.get_pref("ledger_sort_order", "asc"))
+    if sort_order not in ("asc", "desc"):
+        sort_order = "asc"
 
     pf = max(0, min(16, pf))
     pt = max(pf, min(16, pt))
@@ -602,18 +620,34 @@ def ledger():
                     JournalEntryLine.account_id == account_id,
                     current_filter,
                 )
-                .order_by(effective_period, JournalEntry.date, JournalEntry.entry_number)
+                .order_by(
+                    effective_period.desc() if sort_order == "desc" else effective_period,
+                    JournalEntry.date.desc() if sort_order == "desc" else JournalEntry.date,
+                    JournalEntry.entry_number.desc() if sort_order == "desc" else JournalEntry.entry_number,
+                )
                 .all()
             )
 
-            running_balance = carry_forward
+            if sort_order == "desc":
+                # desc: 期末残高から逆算
+                total_delta = sum(
+                    (int(l.debit_amount) - int(l.credit_amount)) if is_debit_normal
+                    else (int(l.credit_amount) - int(l.debit_amount))
+                    for l in lines
+                )
+                running_balance = carry_forward + total_delta
+            else:
+                running_balance = carry_forward
+
             for line in lines:
                 debit = int(line.debit_amount)
                 credit = int(line.credit_amount)
-                if is_debit_normal:
-                    running_balance += debit - credit
+                delta = (debit - credit) if is_debit_normal else (credit - debit)
+                if sort_order == "desc":
+                    # desc: この行の残高を表示してから引く
+                    pass  # running_balance is already the balance after this line
                 else:
-                    running_balance += credit - debit
+                    running_balance += delta
 
                 # 相手科目を取得
                 counter_lines = (
@@ -640,6 +674,8 @@ def ledger():
                     "entry_id": line.entry_id,
                     "effective_period": line.effective_period,
                 })
+                if sort_order == "desc":
+                    running_balance -= delta
 
     # 各エントリの編集可否・証憑を判定
     if entries:
@@ -675,6 +711,7 @@ def ledger():
         year=year,
         pf=pf,
         pt=pt,
+        sort=sort_order,
         period_labels=PERIOD_LABELS,
         grouped_accounts=grouped_accounts,
         selected_account=selected_account,

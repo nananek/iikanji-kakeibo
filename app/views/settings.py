@@ -32,6 +32,34 @@ def index():
     return render_template("settings/index.html")
 
 
+@bp.route("/display")
+@login_required
+def display():
+    """表示設定ページ"""
+    return render_template(
+        "settings/display.html",
+        default_period=current_user.get_pref("reports_default_period", "all"),
+        ledger_sort=current_user.get_pref("ledger_sort_order", "asc"),
+    )
+
+
+@bp.route("/display/save", methods=["POST"])
+@login_required
+def display_save():
+    """表示設定の保存"""
+    period = request.form.get("default_period", "all")
+    if period not in ("all", "current_month"):
+        period = "all"
+    sort = request.form.get("ledger_sort", "asc")
+    if sort not in ("asc", "desc"):
+        sort = "asc"
+    current_user.set_pref("reports_default_period", period)
+    current_user.set_pref("ledger_sort_order", sort)
+    db.session.commit()
+    flash("表示設定を保存しました。", "success")
+    return redirect(url_for("settings.display"))
+
+
 @bp.route("/passkeys")
 @login_required
 def passkeys():

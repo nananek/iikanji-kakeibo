@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block title %}表示設定 - いいかんじ™家計簿{% endblock %}
+
+{% block content %}
+<div class="row">
+  <div class="col-lg-8">
+    <h2><i class="bi bi-display"></i> 表示設定</h2>
+    <p class="text-muted">試算表・元帳を開いたときのデフォルト表示を設定します。</p>
+
+    <div class="card shadow-sm">
+      <div class="card-body">
+        <form method="POST" action="{{ url_for('settings.display_save') }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+          <h6 class="mb-3">レポートのデフォルト期間</h6>
+          <div class="mb-4">
+            <div class="form-check mb-2">
+              <input class="form-check-input" type="radio" name="default_period" id="period_all"
+                     value="all" {% if default_period == 'all' %}checked{% endif %}>
+              <label class="form-check-label" for="period_all">
+                全期間（期首〜決算月3）
+              </label>
+            </div>
+            <div class="form-check">
+              <input class="form-check-input" type="radio" name="default_period" id="period_current"
+                     value="current_month" {% if default_period == 'current_month' %}checked{% endif %}>
+              <label class="form-check-label" for="period_current">
+                当月のみ
+              </label>
+            </div>
+            <div class="form-text">試算表・元帳を開いたときの初期表示期間です。期間バーで随時変更できます。</div>
+          </div>
+
+          <h6 class="mb-3">元帳のソート順</h6>
+          <div class="mb-4">
+            <div class="form-check mb-2">
+              <input class="form-check-input" type="radio" name="ledger_sort" id="sort_asc"
+                     value="asc" {% if ledger_sort == 'asc' %}checked{% endif %}>
+              <label class="form-check-label" for="sort_asc">
+                古い順（標準）
+              </label>
+            </div>
+            <div class="form-check">
+              <input class="form-check-input" type="radio" name="ledger_sort" id="sort_desc"
+                     value="desc" {% if ledger_sort == 'desc' %}checked{% endif %}>
+              <label class="form-check-label" for="sort_desc">
+                新しい順
+              </label>
+            </div>
+            <div class="form-text">元帳のデフォルトのソート順です。元帳画面でも切り替えできます。</div>
+          </div>
+
+          <div class="d-flex gap-2">
+            <button type="submit" class="btn btn-primary">保存</button>
+            <a href="{{ url_for('settings.index') }}" class="btn btn-outline-secondary">戻る</a>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

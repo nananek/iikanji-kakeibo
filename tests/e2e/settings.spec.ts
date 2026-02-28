@@ -4,12 +4,22 @@ const BASE_URL = "http://127.0.0.1:5000";
 const USERNAME = "e2e_test";
 const PASSWORD = "e2e_pass_12345";
 
-async function login(page) {
-  await page.goto(`${BASE_URL}/login`);
-  await page.fill('input[name="username"]', USERNAME);
-  await page.fill('input[name="password"]', PASSWORD);
-  await page.click('input[type="submit"]');
-  await page.waitForURL((url) => !url.pathname.includes("/login"));
+async function login(page, retries = 2) {
+  for (let i = 0; i <= retries; i++) {
+    try {
+      await page.goto(`${BASE_URL}/login`);
+      await page.fill('input[name="username"]', USERNAME);
+      await page.fill('input[name="password"]', PASSWORD);
+      await page.click('input[type="submit"]');
+      await page.waitForURL((url) => !url.pathname.includes("/login"), {
+        timeout: 10000,
+      });
+      return;
+    } catch {
+      if (i === retries) throw new Error("Login failed after retries");
+      await page.waitForTimeout(1000);
+    }
+  }
 }
 
 test.describe("設定トップページ", () => {
@@ -38,6 +48,7 @@ test.describe("設定トップページ", () => {
     for (const label of [
       "勘定科目",
       "月次確定",
+      "表示設定",
       "外部AI",
       "通知",
       "APIキー管理",
