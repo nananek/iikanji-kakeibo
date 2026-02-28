@@ -186,6 +186,33 @@ details には、status に関わらず全チェック項目の結果を簡潔�
 warnings が空の場合は status を "pass" にしてください。"""
 
 
+CONSISTENCY_CHECK_PROMPT = """
+
+## 仕訳整合性チェック（必ず実施してください）
+この証憑画像から読み取れる情報を、以下の既存仕訳データと比較してください。
+
+既存仕訳:
+- 日付: {journal_date}
+- 金額: {journal_amount}円
+- 摘要: {journal_description}
+
+JSONに以下のフィールドを追加してください:
+"consistency": {{
+  "status": "pass" または "warn" または "fail",
+  "date_match": true/false,
+  "amount_match": true/false,
+  "description_match": true/false,
+  "warnings": ["警告メッセージ1", ...]
+}}
+
+判定基準:
+- date_match: 証憑の日付と仕訳日付が7日以内ならtrue
+- amount_match: 証憑の金額と仕訳金額の差が10%以内ならtrue
+- description_match: 証憑の店名/取引先と仕訳摘要に共通する語があればtrue
+- status: 全matchならtrue→"pass"、1つでもfalse→"warn"、2つ以上false→"fail"
+"""
+
+
 def _build_suggestion_prompt(account_list_text, ledger_text="",
                              custom_prompt=""):
     """第2ラウンド用プロンプトを組み立てる"""
@@ -1040,3 +1067,81 @@ def match_account(user_id: int, category_name: str) -> int | None:
         return expense_accounts[0].id
 
     return None
+
+
+def analyze_voucher_for_attachment(
+    user_id: int,
+    image_bytes: bytes,
+    mime_type: str,
+    journal_date: str,
+    journal_amount: int,
+    journal_description: str,
+) -> dict:
+    """証憑添付用の軽量AI解析 — Round 1のみ + 整合性チェック。
+
+    Returns:
+        {"compliance": {...} | None, "consistency": {...}}
+    """
+    api_key, provider, model, handler, _, extra_kw, compliance_check = (
+        _get_ai_config(user_id)
+    )
+
+    prompt = DOCUMENT_PROMPT
+    if compliance_check:
+        prompt += COMPLIANCE_CHECK_PROMPT
+    prompt += CONSISTENCY_CHECK_PROMPT.format(
+        journal_date=journal_date,
+        journal_amount=journal_amount,
+        journal_description=journal_description,
+    )
+
+    result = _call_ai(
+        handler, api_key, model, image_bytes, mime_type,
+        prompt, 1500, user_id, extra_kw,
+    )
+
+    # コンプライアンスチェック結果
+    compliance_result = None
+    if compliance_check:
+        raw = result.get("compliance")
+        if isinstance(raw, dict):
+            status = raw.get("status", "pass")
+            if status not in ("pass", "warn", "fail"):
+                status = "pass"
+            compliance_result = {
+                "status": status,
+                "warnings": raw.get("warnings", [])
+                if isinstance(raw.get("warnings"), list) else [],
+                "details": raw.get("details", [])
+                if isinstance(raw.get("details"), list) else [],
+            }
+        else:
+            compliance_result = {"status": "pass", "warnings": [], "details": []}
+
+    # 整合性チェック結果
+    raw_con = result.get("consistency")
+    if isinstance(raw_con, dict):
+        con_status = raw_con.get("status", "warn")
+        if con_status not in ("pass", "warn", "fail"):
+            con_status = "warn"
+        consistency_result = {
+            "status": con_status,
+            "date_match": bool(raw_con.get("date_match", False)),
+            "amount_match": bool(raw_con.get("amount_match", False)),
+            "description_match": bool(raw_con.get("description_match", False)),
+            "warnings": raw_con.get("warnings", [])
+            if isinstance(raw_con.get("warnings"), list) else [],
+        }
+    else:
+        consistency_result = {
+            "status": "warn",
+            "date_match": False,
+            "amount_match": False,
+            "description_match": False,
+            "warnings": ["AIが整合性チェック結果を返しませんでした"],
+        }
+
+    return {
+        "compliance": compliance_result,
+        "consistency": consistency_result,
+    }

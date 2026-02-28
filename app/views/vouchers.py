@@ -2,7 +2,7 @@
 
 import hashlib
 
-from flask import Blueprint, render_template, request, flash, redirect, url_for
+from flask import Blueprint, render_template, request, flash, redirect, url_for, jsonify
 from flask_login import login_required
 from sqlalchemy import func
 from sqlalchemy.orm import joinedload
@@ -10,9 +10,14 @@ from sqlalchemy.orm import joinedload
 from app.extensions import db
 from app.models.voucher import Voucher
 from app.models.voucher_audit_log import VoucherAuditLog
+from app.models.ai_config import UserAIConfig
 from app.models.journal import JournalEntry, JournalEntryLine
 from app.services.audit import get_effective_user_id
 from app.services.storage import get_storage_backend
+from app.services.voucher import create_voucher_from_upload
+
+MAX_IMAGE_SIZE = 10 * 1024 * 1024  # 10MB
+ALLOWED_MIME_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
 
 bp = Blueprint("vouchers", __name__, url_prefix="/vouchers")
 
@@ -131,3 +136,63 @@ def verify(voucher_id):
     else:
         flash("ハッシュ不一致！証憑が改ざんされている可能性があります。", "danger")
     return redirect(url_for("vouchers.index"))
+
+
+@bp.route("/attach/<int:entry_id>", methods=["POST"])
+@login_required
+def attach(entry_id):
+    """AJAX: 既存仕訳に証憑画像を添付する"""
+    user_id = get_effective_user_id()
+    entry = JournalEntry.query.filter_by(
+        id=entry_id, user_id=user_id,
+    ).first()
+    if not entry:
+        return jsonify({"error": "仕訳が見つかりません。"}), 404
+
+    image_file = request.files.get("image")
+    if not image_file or not image_file.filename:
+        return jsonify({"error": "画像ファイルを選択してください。"}), 400
+
+    image_bytes = image_file.read()
+    if len(image_bytes) > MAX_IMAGE_SIZE:
+        return jsonify({"error": "ファイルサイズが大きすぎます（上限10MB）。"}), 400
+
+    mime_type = image_file.content_type
+    if mime_type not in ALLOWED_MIME_TYPES:
+        return jsonify({
+            "error": "対応していないファイル形式です。JPEG/PNG/WebP/GIF を使用してください。",
+        }), 400
+
+    voucher = create_voucher_from_upload(
+        user_id=user_id,
+        journal_entry_id=entry.id,
+        image_bytes=image_bytes,
+        mime_type=mime_type,
+        original_filename=image_file.filename,
+    )
+
+    response_data = {"ok": True, "voucher_id": voucher.id}
+
+    config = UserAIConfig.query.filter_by(user_id=user_id).first()
+    if config and config.api_key_encrypted:
+        try:
+            from app.services.ai_receipt import analyze_voucher_for_attachment
+
+            result = analyze_voucher_for_attachment(
+                user_id=user_id,
+                image_bytes=image_bytes,
+                mime_type=mime_type,
+                journal_date=entry.date.isoformat(),
+                journal_amount=int(sum(
+                    line.debit_amount for line in entry.lines
+                )),
+                journal_description=entry.description or "",
+            )
+            if result.get("compliance"):
+                response_data["compliance"] = result["compliance"]
+            response_data["consistency"] = result["consistency"]
+        except Exception as e:
+            response_data["ai_error"] = str(e)
+
+    db.session.commit()
+    return jsonify(response_data)

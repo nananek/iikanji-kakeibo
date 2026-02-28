@@ -213,6 +213,16 @@
       <div class="modal-body">
         <div id="modalError" class="alert alert-danger d-none"></div>
         <div id="modalVoucherPreview" class="text-center mb-3 d-none"></div>
+        <div id="voucherUploadArea" class="d-none border rounded p-3 mb-3">
+          <label class="form-label mb-1"><i class="bi bi-file-image"></i> 証憑画像を選択</label>
+          <input type="file" id="voucherFileInput" accept="image/jpeg,image/png,image/webp,image/gif"
+                 class="form-control" onchange="uploadVoucher()">
+          <div id="voucherUploadProgress" class="d-none mt-2 text-center">
+            <div class="spinner-border spinner-border-sm text-primary" role="status"></div>
+            <span class="ms-1 text-muted">アップロード中…</span>
+          </div>
+          <div id="voucherCheckResult" class="d-none mt-2"></div>
+        </div>
         <div class="row mb-3">
           <div class="col-md-3">
             <label class="form-label">日付</label>
@@ -269,6 +279,9 @@
       <div class="modal-footer">
         <button type="button" class="btn btn-outline-danger me-auto" id="modalDeleteBtn" onclick="deleteEntry()">
           <i class="bi bi-trash"></i> 削除
+        </button>
+        <button type="button" class="btn btn-outline-success" id="modalAttachBtn" onclick="toggleVoucherUpload()">
+          <i class="bi bi-file-image"></i> 証憑追加
         </button>
         <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">閉じる</button>
         <button type="button" class="btn btn-primary" id="modalSaveBtn" onclick="saveEntry()">
@@ -558,10 +571,12 @@ function openEditModal(entryId) {
 
       data.lines.forEach(function(l) { modalAddLine(l, ro); });
 
-      // 保存・削除・行追加ボタンの表示制御
+      // 保存・削除・行追加・証憑追加ボタンの表示制御
       document.getElementById('modalSaveBtn').style.display = ro ? 'none' : '';
       document.getElementById('modalDeleteBtn').style.display = ro ? 'none' : '';
       document.getElementById('modalAddLineBtn').style.display = ro ? 'none' : '';
+      document.getElementById('modalAttachBtn').style.display = ro ? 'none' : '';
+      document.getElementById('voucherUploadArea').classList.add('d-none');
 
       // 行削除ボタンの表示制御
       document.querySelectorAll('#modalLinesBody .modal-remove-btn').forEach(function(btn) {
@@ -679,6 +694,134 @@ function saveEntry() {
     document.getElementById('modalError').textContent = '通信エラーが発生しました。';
     document.getElementById('modalError').classList.remove('d-none');
   });
+}
+
+// --- 証憑添付 ---
+
+function toggleVoucherUpload() {
+  var area = document.getElementById('voucherUploadArea');
+  area.classList.toggle('d-none');
+  if (!area.classList.contains('d-none')) {
+    document.getElementById('voucherFileInput').value = '';
+    document.getElementById('voucherCheckResult').classList.add('d-none');
+    document.getElementById('voucherUploadProgress').classList.add('d-none');
+  }
+}
+
+function uploadVoucher() {
+  var input = document.getElementById('voucherFileInput');
+  if (!input.files.length) return;
+
+  var formData = new FormData();
+  formData.append('image', input.files[0]);
+
+  document.getElementById('voucherUploadProgress').classList.remove('d-none');
+  document.getElementById('voucherCheckResult').classList.add('d-none');
+
+  fetch('/vouchers/attach/' + currentEntryId, {
+    method: 'POST',
+    headers: { 'X-CSRFToken': csrfToken },
+    body: formData,
+  })
+  .then(function(r) { return r.json().then(function(d) { return { ok: r.ok, data: d }; }); })
+  .then(function(result) {
+    document.getElementById('voucherUploadProgress').classList.add('d-none');
+    if (!result.ok || result.data.error) {
+      showVoucherError(result.data.error || 'エラーが発生しました。');
+      return;
+    }
+    if (result.data.compliance || result.data.consistency) {
+      renderAICheckResult(result.data);
+    } else {
+      showVoucherSuccess('証憑を添付しました。');
+    }
+    refreshVoucherPreview();
+    input.value = '';
+  })
+  .catch(function() {
+    document.getElementById('voucherUploadProgress').classList.add('d-none');
+    showVoucherError('通信エラーが発生しました。');
+  });
+}
+
+function showVoucherError(msg) {
+  var el = document.getElementById('voucherCheckResult');
+  el.innerHTML = '<div class="alert alert-danger py-2 mb-0"><i class="bi bi-exclamation-triangle-fill"></i> ' + msg + '</div>';
+  el.classList.remove('d-none');
+}
+
+function showVoucherSuccess(msg) {
+  var el = document.getElementById('voucherCheckResult');
+  el.innerHTML = '<div class="alert alert-success py-2 mb-0"><i class="bi bi-check-circle-fill"></i> ' + msg + '</div>';
+  el.classList.remove('d-none');
+}
+
+function renderAICheckResult(data) {
+  var el = document.getElementById('voucherCheckResult');
+  var html = '<div class="alert alert-success py-2 mb-2"><i class="bi bi-check-circle-fill"></i> 証憑を添付しました。</div>';
+
+  if (data.compliance) {
+    var cls = data.compliance.status === 'pass' ? 'success' :
+              data.compliance.status === 'warn' ? 'warning' : 'danger';
+    var label = data.compliance.status === 'pass' ? '合格' :
+                data.compliance.status === 'warn' ? '警告' : '不適格';
+    html += '<div class="alert alert-' + cls + ' py-2 mb-2">';
+    html += '<strong><i class="bi bi-shield-check"></i> 電帳法チェック: ' + label + '</strong>';
+    if (data.compliance.warnings && data.compliance.warnings.length) {
+      html += '<ul class="mb-0 mt-1 small">';
+      data.compliance.warnings.forEach(function(w) { html += '<li>' + w + '</li>'; });
+      html += '</ul>';
+    }
+    html += '</div>';
+  }
+
+  if (data.consistency) {
+    var cls = data.consistency.status === 'pass' ? 'success' :
+              data.consistency.status === 'warn' ? 'warning' : 'danger';
+    var label = data.consistency.status === 'pass' ? '一致' :
+                data.consistency.status === 'warn' ? '一部不一致' : '不一致';
+    html += '<div class="alert alert-' + cls + ' py-2 mb-0">';
+    html += '<strong><i class="bi bi-arrow-left-right"></i> 仕訳整合性: ' + label + '</strong>';
+    var badges = '';
+    if (data.consistency.date_match !== undefined) {
+      badges += data.consistency.date_match
+        ? ' <span class="badge bg-success">日付</span>'
+        : ' <span class="badge bg-danger">日付</span>';
+    }
+    if (data.consistency.amount_match !== undefined) {
+      badges += data.consistency.amount_match
+        ? ' <span class="badge bg-success">金額</span>'
+        : ' <span class="badge bg-danger">金額</span>';
+    }
+    if (data.consistency.description_match !== undefined) {
+      badges += data.consistency.description_match
+        ? ' <span class="badge bg-success">摘要</span>'
+        : ' <span class="badge bg-danger">摘要</span>';
+    }
+    if (badges) html += '<div class="mt-1">' + badges + '</div>';
+    if (data.consistency.warnings && data.consistency.warnings.length) {
+      html += '<ul class="mb-0 mt-1 small">';
+      data.consistency.warnings.forEach(function(w) { html += '<li>' + w + '</li>'; });
+      html += '</ul>';
+    }
+    html += '</div>';
+  }
+
+  if (data.ai_error) {
+    html += '<div class="alert alert-info py-2 mb-0"><i class="bi bi-info-circle"></i> AIチェック: ' + data.ai_error + '</div>';
+  }
+
+  el.innerHTML = html;
+  el.classList.remove('d-none');
+}
+
+function refreshVoucherPreview() {
+  fetch('/journal/' + currentEntryId + '/json')
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      currentHasVoucher = data.has_voucher || false;
+      renderVoucherPreview(document.getElementById('modalVoucherPreview'), data.vouchers);
+    });
 }
 </script>
 {% endif %}
