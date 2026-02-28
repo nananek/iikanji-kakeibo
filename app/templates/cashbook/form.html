@@ -34,29 +34,23 @@
       </div>
 
       <div class="row mb-3">
-        <div class="col-md-4">
+        <div class="col-md-4" x-data="{ acctId: '{{ form.payment_account_id.data or '' }}', acctName: '{{ payment_account_name or '' }}' }">
           <label class="form-label">支払元 / 入金先</label>
-          <input type="hidden" name="payment_account_id" id="paymentAccountId"
-                 value="{{ form.payment_account_id.data or '' }}">
-          <button type="button" class="form-control text-start" id="paymentAccountBtn"
-                  onclick="openAccountSelector(onPaymentSelected, {filter: 'payment', activeTab: 'bs', currentId: document.getElementById('paymentAccountId').value})">
-            <span id="paymentAccountName" class="{% if not form.payment_account_id.data %}text-muted{% endif %}">
-              {{ payment_account_name or '-- 選択 --' }}
-            </span>
+          <input type="hidden" name="payment_account_id" :value="acctId">
+          <button type="button" class="form-control text-start"
+                  @click="openAccountSelector((id, name) => { acctId = id; acctName = name }, {filter: 'payment', activeTab: 'bs', currentId: acctId})">
+            <span :class="acctName ? '' : 'text-muted'" x-text="acctName || '-- 選択 --'"></span>
           </button>
           {% for error in form.payment_account_id.errors %}
           <div class="invalid-feedback d-block">{{ error }}</div>
           {% endfor %}
         </div>
-        <div class="col-md-4">
+        <div class="col-md-4" x-data="{ acctId: '{{ form.category_account_id.data or '' }}', acctName: '{{ category_account_name or '' }}' }">
           <label class="form-label">費目</label>
-          <input type="hidden" name="category_account_id" id="categoryAccountId"
-                 value="{{ form.category_account_id.data or '' }}">
-          <button type="button" class="form-control text-start" id="categoryAccountBtn"
-                  onclick="openAccountSelector(onCategorySelected, {filter: 'category', activeTab: 'pl', currentId: document.getElementById('categoryAccountId').value})">
-            <span id="categoryAccountName" class="{% if not form.category_account_id.data %}text-muted{% endif %}">
-              {{ category_account_name or '-- 選択 --' }}
-            </span>
+          <input type="hidden" name="category_account_id" :value="acctId">
+          <button type="button" class="form-control text-start"
+                  @click="openAccountSelector((id, name) => { acctId = id; acctName = name }, {filter: 'category', activeTab: 'pl', currentId: acctId})">
+            <span :class="acctName ? '' : 'text-muted'" x-text="acctName || '-- 選択 --'"></span>
           </button>
           {% for error in form.category_account_id.errors %}
           <div class="invalid-feedback d-block">{{ error }}</div>
@@ -98,20 +92,3 @@
 {% include "_partials/account_selector.html" %}
 {% endblock %}
 
-{% block scripts %}
-<script>
-function onPaymentSelected(id, name) {
-  document.getElementById('paymentAccountId').value = id;
-  var span = document.getElementById('paymentAccountName');
-  span.textContent = name;
-  span.classList.remove('text-muted');
-}
-
-function onCategorySelected(id, name) {
-  document.getElementById('categoryAccountId').value = id;
-  var span = document.getElementById('categoryAccountName');
-  span.textContent = name;
-  span.classList.remove('text-muted');
-}
-</script>
-{% endblock %}
