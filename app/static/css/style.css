@@ -1,3 +1,6 @@
+/* Alpine.js: 初期化前に要素を非表示 */
+[x-cloak] { display: none !important; }
+
 /* DEV環境バッジ */
 .dev-badge {
   position: fixed;

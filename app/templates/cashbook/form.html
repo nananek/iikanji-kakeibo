@@ -9,17 +9,23 @@
     <form method="POST">
       {{ form.hidden_tag() }}
 
+      <div x-data="fiscalPeriodChecker({
+        closedPeriods: {{ (closed_periods or {})|tojson }},
+        restrictedBefore: {{ restricted_before_year|tojson }},
+        dateValue: '{{ form.date.data or '' }}',
+        fiscalPeriod: '{{ form.fiscal_period.data or '' }}'
+      })">
       <div class="row mb-3">
         <div class="col-md-3">
           {{ form.date.label(class="form-label") }}
-          {{ form.date(class="form-control") }}
+          {{ form.date(class="form-control", **{"x-model": "dateValue", "@change": "checkDate()", ":readonly": "dateReadOnly"}) }}
           {% for error in form.date.errors %}
           <div class="invalid-feedback d-block">{{ error }}</div>
           {% endfor %}
         </div>
         <div class="col-md-3">
           {{ form.fiscal_period.label(class="form-label") }}
-          {{ form.fiscal_period(class="form-select") }}
+          {{ form.fiscal_period(class="form-select", **{"x-model": "fiscalPeriod", "@change": "onFiscalPeriodChange()"}) }}
         </div>
         <div class="col-md-3">
           {{ form.transaction_type.label(class="form-label") }}
@@ -76,14 +82,15 @@
         {% endfor %}
       </div>
 
-      <div id="closedPeriodWarning" class="alert alert-warning d-none mt-3">
-        <i class="bi bi-lock-fill"></i> <span id="closedPeriodMsg"></span>
+      <div x-show="isBlocked" x-cloak class="alert alert-warning mt-3">
+        <i class="bi bi-lock-fill"></i> <span x-text="warningMessage"></span>
       </div>
 
       <div class="d-flex gap-2">
-        {{ form.submit(class="btn btn-primary", id="submitBtn") }}
+        <button type="submit" class="btn btn-primary" :disabled="isBlocked">{{ '更新' if is_edit else '登録' }}</button>
         <a href="{{ url_for('cashbook.index') }}" class="btn btn-outline-secondary">キャンセル</a>
       </div>
+      </div><!-- /x-data fiscalPeriodChecker -->
     </form>
   </div>
 </div>
@@ -93,65 +100,6 @@
 
 {% block scripts %}
 <script>
-// 計上期間変更時に日付を自動設定・readonly制御
-var fpSelect = document.getElementById('fiscal_period');
-var dateInput = document.getElementById('date');
-
-// 確定済み期間チェック
-var _closedPeriods = {{ (closed_periods or {})|tojson }};
-var _restrictedBefore = {{ restricted_before_year|tojson }};
-var _warningEl = document.getElementById('closedPeriodWarning');
-var _warningMsg = document.getElementById('closedPeriodMsg');
-var _submitBtn = document.getElementById('submitBtn');
-
-function checkClosedPeriod() {
-  if (!dateInput.value) { _warningEl.classList.add('d-none'); _submitBtn.disabled = false; return; }
-  var year = parseInt(dateInput.value.substring(0, 4));
-  var month = parseInt(dateInput.value.substring(5, 7));
-  var fp = fpSelect.value;
-  var period = fp ? parseInt(fp) : month;
-  var msg = null;
-
-  // 未開設年度チェック
-  if (_restrictedBefore && year < _restrictedBefore && _closedPeriods[year] === undefined) {
-    msg = year + '年度は開設されていません。';
-  }
-  // 確定済み期間チェック
-  var closed = _closedPeriods[year];
-  if (!msg && closed !== undefined && period <= closed) {
-    var label = period === 0 ? '期首' : period <= 12 ? period + '月' : '決算整理' + (period - 12);
-    msg = year + '年 ' + label + ' は月次確定済みです。この日付では保存できません。';
-  }
-
-  if (msg) {
-    _warningMsg.textContent = msg;
-    _warningEl.classList.remove('d-none');
-    _submitBtn.disabled = true;
-  } else {
-    _warningEl.classList.add('d-none');
-    _submitBtn.disabled = false;
-  }
-}
-
-function onFiscalPeriodChange() {
-  var fp = fpSelect.value;
-  if (!dateInput.value) return;
-  var year = dateInput.value.substring(0, 4);
-  if (fp === '0') {
-    dateInput.value = year + '-01-01';
-    dateInput.readOnly = true;
-  } else if (fp === '13' || fp === '14' || fp === '15') {
-    dateInput.value = year + '-12-31';
-    dateInput.readOnly = true;
-  } else {
-    dateInput.readOnly = false;
-  }
-  checkClosedPeriod();
-}
-fpSelect.addEventListener('change', onFiscalPeriodChange);
-dateInput.addEventListener('change', checkClosedPeriod);
-onFiscalPeriodChange();
-
 function onPaymentSelected(id, name) {
   document.getElementById('paymentAccountId').value = id;
   var span = document.getElementById('paymentAccountName');
