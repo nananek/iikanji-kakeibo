@@ -14,8 +14,8 @@
     <div class="row g-2">
       {% for s in suggestions %}
       <div class="col-md-4">
-        <a href="{{ url_for('ai_journal.review', idx=loop.index0) }}"
-           class="card text-decoration-none h-100 {% if loop.index0 == selected_index %}border-primary{% endif %}"
+        <a href="{{ url_for('ai_journal.review', idx=loop.index0, tab=request.args.get('tab', '')) }}"
+           class="card suggestion-link text-decoration-none h-100 {% if loop.index0 == selected_index %}border-primary{% endif %}"
            style="{% if loop.index0 == selected_index %}border-width: 2px;{% endif %}">
           <div class="card-body py-2 px-3">
             <div class="d-flex justify-content-between align-items-center">
@@ -92,15 +92,16 @@
     <span class="badge bg-info ms-2">{{ selected.title }}</span>
   </div>
   <div class="card-body">
+    {% set active_tab = request.args.get('tab', 'simple') %}
     <ul class="nav nav-tabs mb-4" role="tablist">
       <li class="nav-item" role="presentation">
-        <button class="nav-link active" data-bs-toggle="tab"
+        <button class="nav-link {{ 'active' if active_tab != 'advanced' }}" data-bs-toggle="tab"
                 data-bs-target="#simpleMode" type="button" role="tab">
           <i class="bi bi-lightning"></i> かんたんモード
         </button>
       </li>
       <li class="nav-item" role="presentation">
-        <button class="nav-link" data-bs-toggle="tab"
+        <button class="nav-link {{ 'active' if active_tab == 'advanced' }}" data-bs-toggle="tab"
                 data-bs-target="#advancedMode" type="button" role="tab">
           <i class="bi bi-journal-bookmark"></i> 仕訳モード
         </button>
@@ -109,7 +110,7 @@
 
     <div class="tab-content">
       <!-- かんたんモード -->
-      <div class="tab-pane fade show active" id="simpleMode" role="tabpanel">
+      <div class="tab-pane fade {{ 'show active' if active_tab != 'advanced' }}" id="simpleMode" role="tabpanel">
         <div x-data="{
           categoryId: '{{ selected.lines[0].account_id if selected.lines else '' }}',
           categoryName: '',
@@ -211,12 +212,10 @@
       </div>
 
       <!-- 仕訳モード -->
-      <div class="tab-pane fade" id="advancedMode" role="tabpanel">
+      <script>var _advancedLines = {{ selected.lines | tojson if selected.lines else '[]' }};</script>
+      <div class="tab-pane fade {{ 'show active' if active_tab == 'advanced' }}" id="advancedMode" role="tabpanel">
         <form method="POST" id="advancedForm"
-              x-data="journalLines({
-                lines: {{ selected.lines | tojson if selected.lines else '[]' }},
-                fullName: true
-              })"
+              x-data="journalLines({ lines: _advancedLines, fullName: true })"
               @submit="serializeLines()">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <input type="hidden" name="mode" value="advanced">
@@ -240,6 +239,11 @@
                      value="{{ selected.entry_description }}" required>
             </div>
           </div>
+
+          <div x-show="isBlocked" x-cloak class="alert alert-warning mt-3">
+            <i class="bi bi-lock-fill"></i> <span x-text="warningMessage"></span>
+          </div>
+          </div><!-- /x-data fiscalPeriodChecker -->
 
           <h5 class="mt-4">仕訳明細</h5>
           <div class="table-responsive">
@@ -304,13 +308,9 @@
             <i class="bi bi-plus-lg"></i> 行を追加
           </button>
 
-          <div x-show="isBlocked" x-cloak class="alert alert-warning mt-3">
-            <i class="bi bi-lock-fill"></i> <span x-text="warningMessage"></span>
-          </div>
-
           <hr>
           <div class="d-flex gap-2">
-            <button type="submit" class="btn btn-primary" :disabled="isBlocked">
+            <button type="submit" class="btn btn-primary">
               <i class="bi bi-check-lg"></i> 仕訳を登録
             </button>
             {% if draft_id %}
@@ -327,7 +327,6 @@
             </a>
             {% endif %}
           </div>
-          </div><!-- /x-data fiscalPeriodChecker -->
         </form>
       </div>
     </div>
@@ -377,6 +376,18 @@
 
 {% include "_partials/account_selector.html" %}
 
+{% if suggestions|length > 1 %}
+<script>
+document.addEventListener('shown.bs.tab', function(e) {
+  var tab = e.target.dataset.bsTarget === '#advancedMode' ? 'advanced' : '';
+  document.querySelectorAll('.suggestion-link').forEach(function(a) {
+    var url = new URL(a.href);
+    if (tab) { url.searchParams.set('tab', tab); } else { url.searchParams.delete('tab'); }
+    a.href = url.toString();
+  });
+});
+</script>
+{% endif %}
 {% if not draft_id %}
 <script>
 function saveDraftFromReview(btn) {
