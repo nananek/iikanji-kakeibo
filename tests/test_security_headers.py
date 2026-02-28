@@ -39,10 +39,22 @@ class TestSecurityHeaders:
 class TestHSTS:
     """HSTS ヘッダーの debug モード条件分岐"""
 
-    def test_hsts_absent_in_debug(self, client):
+    def test_hsts_absent_in_debug(self):
         """debug=True のとき HSTS ヘッダーが付かない"""
-        resp = client.get("/login")
-        assert "Strict-Transport-Security" not in resp.headers
+        class DebugConfig(Config):
+            TESTING = True
+            SQLALCHEMY_DATABASE_URI = "sqlite:///:memory:"
+            WTF_CSRF_ENABLED = False
+            RATELIMIT_ENABLED = False
+
+        app = create_app(DebugConfig)
+        app.debug = True
+        with app.app_context():
+            _db.create_all()
+            c = app.test_client()
+            resp = c.get("/login")
+            assert "Strict-Transport-Security" not in resp.headers
+            _db.drop_all()
 
     def test_hsts_present_in_production(self):
         """debug=False のとき HSTS ヘッダーが付く"""
