@@ -111,7 +111,7 @@
 |---------|------|
 | app.js | 数値入力のEnterキー制御、証憑プレビュー共通関数 |
 | alpine-components.js | Alpine.js 共通コンポーネント定義（段階的に拡充） |
-| import_confirm.js | **取込確認画面の共通ロジック**（CSV/OFX/Web共通） |
+| ~~import_confirm.js~~ | 削除済み — alpine-components.js の `importConfirm` に統合 |
 | drag_select.js | ドラッグ選択（バックトラック取消対応） |
 | webauthn.js | Passkey 登録・認証 |
 

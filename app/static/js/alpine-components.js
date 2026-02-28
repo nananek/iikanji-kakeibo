@@ -483,4 +483,325 @@ document.addEventListener('alpine:init', function() {
     };
   });
 
+  /**
+   * 取込確認画面: CSV / OFX / Web 共通
+   *
+   * 使い方:
+   *   <div x-data="importConfirm({ rows: [...], paymentAccountId: 1,
+   *     defaultIncomeId: 0, defaultExpenseId: 0,
+   *     closedPeriods: {}, restrictedBeforeYear: 0 })"
+   *     @drag-select-update="_syncFromCheckboxes()">
+   */
+  Alpine.data('importConfirm', function(config) {
+    var closedPeriods = config.closedPeriods || {};
+    var restrictedBefore = config.restrictedBeforeYear;
+    var paymentAccountId = config.paymentAccountId;
+    var defaultIncomeId = config.defaultIncomeId || 0;
+    var defaultExpenseId = config.defaultExpenseId || 0;
+
+    function getStatus(row) {
+      if (!row.date) return { cls: 'bg-warning text-dark', text: '日付なし', icon: '', problem: false };
+      if (!row.deposit && !row.withdrawal) return { cls: 'bg-secondary', text: '金額なし', icon: '', problem: false };
+      var year = parseInt(row.date.substring(0, 4));
+      var month = parseInt(row.date.substring(5, 7));
+      if (restrictedBefore && year < restrictedBefore && closedPeriods[year] === undefined) {
+        return { cls: 'bg-warning text-dark', text: '年度未開設', icon: 'exclamation-triangle', problem: true };
+      }
+      if (closedPeriods[year] !== undefined && month <= closedPeriods[year]) {
+        return { cls: 'bg-danger', text: '確定済み', icon: 'lock-fill', problem: true };
+      }
+      return { cls: 'bg-success', text: 'OK', icon: '', problem: false };
+    }
+
+    function applyStatus(row) {
+      var st = getStatus(row);
+      row.statusCls = st.cls;
+      row.statusText = st.text;
+      row.statusIcon = st.icon;
+      row.hasProblem = st.problem;
+      return st;
+    }
+
+    return {
+      rows: [],
+      allChecked: true,
+      bulkDate: '',
+      appendOriginalDate: true,
+      sortKey: null,
+      sortDir: 0,
+      aiLoading: false,
+      hasRestricted: false,
+
+      get selectedCount() {
+        var c = 0;
+        for (var i = 0; i < this.rows.length; i++) if (this.rows[i].enabled) c++;
+        return c;
+      },
+      get totalDeposit() {
+        var s = 0;
+        for (var i = 0; i < this.rows.length; i++) if (this.rows[i].enabled) s += this.rows[i].deposit;
+        return s;
+      },
+      get totalWithdrawal() {
+        var s = 0;
+        for (var i = 0; i < this.rows.length; i++) if (this.rows[i].enabled) s += this.rows[i].withdrawal;
+        return s;
+      },
+
+      init: function() {
+        for (var i = 0; i < config.rows.length; i++) {
+          var r = config.rows[i];
+          var defCatId = r.deposit ? defaultIncomeId : (r.withdrawal ? defaultExpenseId : 0);
+          var st = getStatus(r);
+          this.rows.push({
+            _origIndex: i,
+            row_num: r.row_num || i + 1,
+            date: r.date || '',
+            description: r.description || '',
+            deposit: r.deposit || 0,
+            withdrawal: r.withdrawal || 0,
+            category_id: defCatId || '',
+            category_name: '',
+            enabled: !!r.date && (!!r.deposit || !!r.withdrawal) && !st.problem,
+            statusCls: st.cls,
+            statusText: st.text,
+            statusIcon: st.icon,
+            hasProblem: st.problem,
+            dateEditing: false,
+            dateEditValue: '',
+          });
+        }
+        // Resolve default category names
+        for (var i = 0; i < this.rows.length; i++) {
+          if (this.rows[i].category_id && typeof _acctNameById === 'function') {
+            this.rows[i].category_name = _acctNameById(parseInt(this.rows[i].category_id)) || '';
+          }
+        }
+        // Check for restricted years
+        for (var i = 0; i < this.rows.length; i++) {
+          if (this.rows[i].hasProblem && this.rows[i].statusText === '年度未開設') {
+            this.hasRestricted = true; break;
+          }
+        }
+        // Auto-suggest categories
+        this._suggestCategories();
+        // Initialize drag select after render
+        var el = this.$el;
+        this.$nextTick(function() {
+          if (typeof initDragSelect === 'function') {
+            initDragSelect('#confirmTable', '.row-check', function() {
+              el.dispatchEvent(new CustomEvent('drag-select-update'));
+            });
+          }
+        });
+      },
+
+      toggleAll: function(checked) {
+        for (var i = 0; i < this.rows.length; i++) this.rows[i].enabled = checked;
+        this.allChecked = checked;
+      },
+
+      onRowCheck: function() {
+        this.allChecked = this.selectedCount === this.rows.length && this.rows.length > 0;
+      },
+
+      sortBy: function(key) {
+        if (this.sortKey === key) {
+          this.sortDir = (this.sortDir + 1) % 3;
+        } else {
+          this.sortKey = key;
+          this.sortDir = 1;
+        }
+        if (this.sortDir === 0) {
+          this.rows.sort(function(a, b) { return a._origIndex - b._origIndex; });
+          this.sortKey = null;
+        } else {
+          var dir = this.sortDir;
+          var isNum = (key === 'row_num' || key === 'deposit' || key === 'withdrawal');
+          this.rows.sort(function(a, b) {
+            var va = a[key], vb = b[key];
+            if (!isNum) { va = String(va).toLowerCase(); vb = String(vb).toLowerCase(); }
+            var cmp = isNum ? (va - vb) : (va < vb ? -1 : (va > vb ? 1 : 0));
+            return dir === 2 ? -cmp : cmp;
+          });
+        }
+      },
+
+      sortIcon: function(key) {
+        if (this.sortKey !== key || this.sortDir === 0) return '';
+        return this.sortDir === 1 ? ' \u25B2' : ' \u25BC';
+      },
+
+      selectCategory: function(index) {
+        var row = this.rows[index];
+        openAccountSelector(function(id, name) {
+          row.category_id = id;
+          row.category_name = name;
+        }, { filter: 'category_transfer', excludeId: paymentAccountId, activeTab: 'pl', currentId: row.category_id });
+      },
+
+      bulkSetCategory: function() {
+        var selected = [];
+        for (var i = 0; i < this.rows.length; i++) if (this.rows[i].enabled) selected.push(this.rows[i]);
+        if (selected.length === 0) { alert('行を選択してください。'); return; }
+        var self = this;
+        openAccountSelector(function(id, name) {
+          for (var i = 0; i < selected.length; i++) {
+            selected[i].category_id = id;
+            selected[i].category_name = name;
+          }
+          self.toggleAll(false);
+        }, { filter: 'category_transfer', excludeId: paymentAccountId, activeTab: 'pl' });
+      },
+
+      startDateEdit: function(index) {
+        var row = this.rows[index];
+        if (row.dateEditing) return;
+        row.dateEditValue = row.date;
+        row.dateEditing = true;
+        var origIdx = row._origIndex;
+        this.$nextTick(function() {
+          var tr = document.querySelector('#confirmTable tr[data-idx="' + origIdx + '"]');
+          var input = tr && tr.querySelector('input[type="date"]');
+          if (input) input.focus();
+        });
+      },
+
+      commitDateEdit: function(index) {
+        var row = this.rows[index];
+        if (!row.dateEditing) return;
+        row.dateEditing = false;
+        if (row.dateEditValue && row.dateEditValue !== row.date) {
+          row.date = row.dateEditValue;
+          var st = applyStatus(row);
+          if (!st.problem && (row.deposit || row.withdrawal)) row.enabled = true;
+        }
+      },
+
+      cancelDateEdit: function(index) {
+        this.rows[index].dateEditing = false;
+      },
+
+      bulkSetDate: function(selectedOnly) {
+        if (!this.bulkDate) { alert('日付を入力してください。'); return; }
+        if (selectedOnly) {
+          var has = false;
+          for (var i = 0; i < this.rows.length; i++) { if (this.rows[i].enabled) { has = true; break; } }
+          if (!has) { alert('行を選択してください。'); return; }
+        }
+        for (var i = 0; i < this.rows.length; i++) {
+          var row = this.rows[i];
+          if (selectedOnly && !row.enabled) continue;
+          if (this.appendOriginalDate && row.date) {
+            var orig = row.date.replace(/-/g, '/');
+            if (row.description.indexOf('(' + row.date + ')') === -1 &&
+                row.description.indexOf('（取引日:') === -1) {
+              row.description = row.description + '（取引日: ' + orig + '）';
+            }
+          }
+          row.date = this.bulkDate;
+          var st = applyStatus(row);
+          if (!st.problem && (row.deposit || row.withdrawal)) row.enabled = true;
+        }
+      },
+
+      _suggestCategories: function() {
+        var descriptions = [];
+        for (var i = 0; i < this.rows.length; i++) {
+          if (this.rows[i].description) descriptions.push(this.rows[i].description);
+        }
+        if (descriptions.length === 0) return;
+        var self = this;
+        fetch('/journal/api/suggest-categories', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': Alpine.store('csrf').token,
+          },
+          body: JSON.stringify({ descriptions: descriptions, payment_account_id: paymentAccountId }),
+        })
+          .then(function(res) { return res.json(); })
+          .then(function(suggestions) {
+            if (!suggestions || typeof suggestions !== 'object') return;
+            for (var i = 0; i < self.rows.length; i++) {
+              var desc = self.rows[i].description;
+              if (desc && suggestions[desc]) {
+                self.rows[i].category_id = suggestions[desc].account_id;
+                self.rows[i].category_name = suggestions[desc].account_name;
+              }
+            }
+          })
+          .catch(function() { /* ignore */ });
+      },
+
+      aiSuggestCategories: function() {
+        var targets = [];
+        var indices = [];
+        for (var i = 0; i < this.rows.length; i++) {
+          var row = this.rows[i];
+          if (row.category_id && !row.enabled) continue;
+          if (!row.description) continue;
+          targets.push({ description: row.description, deposit: row.deposit, withdrawal: row.withdrawal });
+          indices.push(i);
+        }
+        if (targets.length === 0) {
+          alert('対象の行がありません。科目未設定の行、またはチェックした行が必要です。');
+          return;
+        }
+        this.aiLoading = true;
+        var self = this;
+        fetch('/journal/api/ai-suggest-categories', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': Alpine.store('csrf').token,
+          },
+          body: JSON.stringify({ payment_account_id: paymentAccountId, rows: targets }),
+        })
+          .then(function(res) { return res.json(); })
+          .then(function(data) {
+            if (data.error) { alert(data.error); return; }
+            for (var i = 0; i < indices.length; i++) {
+              var row = self.rows[indices[i]];
+              var sugg = data[row.description];
+              if (sugg) { row.category_id = sugg.account_id; row.category_name = sugg.account_name; }
+            }
+          })
+          .catch(function(err) { alert('AI科目推定に失敗しました: ' + err.message); })
+          .finally(function() { self.aiLoading = false; });
+      },
+
+      serializeRows: function() {
+        var sorted = this.rows.slice().sort(function(a, b) { return a._origIndex - b._origIndex; });
+        var result = [];
+        for (var i = 0; i < sorted.length; i++) {
+          var row = sorted[i];
+          result.push({
+            enabled: row.enabled,
+            date: row.date,
+            description: row.description,
+            deposit: row.deposit,
+            withdrawal: row.withdrawal,
+            category_id: row.category_id ? parseInt(row.category_id) : 0,
+          });
+        }
+        this.$refs.importRows.value = JSON.stringify(result);
+      },
+
+      _syncFromCheckboxes: function() {
+        var cbs = this.$el.querySelectorAll('.row-check');
+        for (var j = 0; j < cbs.length; j++) {
+          var origIdx = parseInt(cbs[j].dataset.idx);
+          for (var i = 0; i < this.rows.length; i++) {
+            if (this.rows[i]._origIndex === origIdx) {
+              this.rows[i].enabled = cbs[j].checked;
+              break;
+            }
+          }
+        }
+        this.allChecked = this.selectedCount === this.rows.length && this.rows.length > 0;
+      }
+    };
+  });
+
 });

@@ -1,0 +1,158 @@
+{# 取込確認テーブル — CSV/OFX/Web 共通パーツ #}
+{# 親テンプレートで以下を設定してから include すること: #}
+{#   import_step_label, import_header_extra, import_back_buttons #}
+{#   x-data="importConfirm({...})" が親の要素にあること #}
+{#   has_ai_config (Jinja変数) #}
+
+<div class="card shadow-sm mt-4">
+  <div class="card-header import-toolbar">
+    <div class="d-flex justify-content-between align-items-center">
+      <div>
+        <strong>{{ import_step_label }}</strong>
+        <span class="text-muted ms-2">{{ import_header_extra }}</span>
+      </div>
+      <div class="d-flex gap-1">
+        <button type="button" class="btn btn-sm btn-outline-secondary" @click="toggleAll(true)">全選択</button>
+        <button type="button" class="btn btn-sm btn-outline-secondary" @click="toggleAll(false)">全解除</button>
+      </div>
+    </div>
+    <div class="d-flex gap-1 flex-wrap align-items-center mt-2">
+      <button type="button" class="btn btn-sm btn-outline-primary" @click="bulkSetCategory()">
+        <i class="bi bi-tags"></i> 選択行に科目を設定
+      </button>
+      {% if has_ai_config %}
+      <button type="button" class="btn btn-sm btn-outline-success" @click="aiSuggestCategories()" :disabled="aiLoading">
+        <span class="spinner-border spinner-border-sm" x-show="aiLoading" x-cloak></span>
+        <i class="bi bi-stars" x-show="!aiLoading"></i>
+        <span x-text="aiLoading ? '推定中…' : 'AI科目推定'"></span>
+      </button>
+      {% endif %}
+      <div class="vr mx-1"></div>
+      <input type="date" class="form-control form-control-sm" x-model="bulkDate" style="width:auto">
+      <div class="form-check form-check-inline mb-0 ms-1">
+        <input class="form-check-input" type="checkbox" id="appendOriginalDate" x-model="appendOriginalDate">
+        <label class="form-check-label small" for="appendOriginalDate">元の日付を摘要に付記</label>
+      </div>
+      <button type="button" class="btn btn-sm btn-outline-secondary" @click="bulkSetDate(false)">
+        <i class="bi bi-calendar-check"></i> 全行に適用
+      </button>
+      <button type="button" class="btn btn-sm btn-outline-primary" @click="bulkSetDate(true)">
+        <i class="bi bi-calendar-check"></i> 選択行に日付を設定
+      </button>
+    </div>
+  </div>
+  <div class="card-body">
+    <form method="POST" @submit="serializeRows()">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="import_rows" x-ref="importRows">
+
+      <div x-show="hasRestricted" x-cloak class="alert alert-warning mb-3">
+        <i class="bi bi-exclamation-triangle"></i>
+        <strong>未開設年度の明細があります。</strong>
+        <div class="form-check form-check-inline ms-3">
+          <input class="form-check-input" type="radio" name="old_year_action" value="skip" checked>
+          <label class="form-check-label">無視する</label>
+        </div>
+        <div class="form-check form-check-inline">
+          <input class="form-check-input" type="radio" name="old_year_action" value="capital">
+          <label class="form-check-label">元入金にする（当年1/1付）</label>
+        </div>
+      </div>
+
+      <div class="table-responsive">
+        <table class="table table-sm table-hover" id="confirmTable">
+          <thead class="table-light">
+            <tr>
+              <th style="width:3%">
+                <input type="checkbox" class="form-check-input"
+                       x-model="allChecked" @change="toggleAll(allChecked)">
+              </th>
+              <th style="width:5%; cursor:pointer" class="d-mobile-none" @click="sortBy('row_num')">
+                行<span x-text="sortIcon('row_num')"></span>
+              </th>
+              <th style="width:12%; cursor:pointer" @click="sortBy('date')">
+                日付<span x-text="sortIcon('date')"></span>
+              </th>
+              <th style="width:30%; cursor:pointer" @click="sortBy('description')">
+                摘要<span x-text="sortIcon('description')"></span>
+              </th>
+              <th style="width:10%; cursor:pointer" class="text-end" @click="sortBy('deposit')">
+                入金<span x-text="sortIcon('deposit')"></span>
+              </th>
+              <th style="width:10%; cursor:pointer" class="text-end" @click="sortBy('withdrawal')">
+                出金<span x-text="sortIcon('withdrawal')"></span>
+              </th>
+              <th style="width:25%">費目</th>
+              <th style="width:5%">状態</th>
+            </tr>
+          </thead>
+          <tbody>
+            <template x-for="(row, index) in rows" :key="row._origIndex">
+              <tr :data-idx="row._origIndex" :class="{'table-warning': !row.date}">
+                <td>
+                  <input type="checkbox" class="form-check-input row-check"
+                         :data-idx="row._origIndex"
+                         x-model="row.enabled" @change="onRowCheck()">
+                </td>
+                <td class="d-mobile-none" x-text="row.row_num"></td>
+                <td style="cursor:pointer" @click="startDateEdit(index)">
+                  <template x-if="!row.dateEditing">
+                    <span x-text="row.date || '(不明)'"></span>
+                  </template>
+                  <template x-if="row.dateEditing">
+                    <input type="date" class="form-control form-control-sm"
+                           x-model="row.dateEditValue"
+                           @change="commitDateEdit(index)"
+                           @blur="commitDateEdit(index)"
+                           @keydown.escape="cancelDateEdit(index)"
+                           @click.stop>
+                  </template>
+                </td>
+                <td x-text="row.description"></td>
+                <td class="text-end" :class="{'text-primary fw-bold': row.deposit}">
+                  <template x-if="row.deposit">
+                    <span x-text="'\u00a5' + row.deposit.toLocaleString()"></span>
+                  </template>
+                </td>
+                <td class="text-end" :class="{'text-danger fw-bold': row.withdrawal}">
+                  <template x-if="row.withdrawal">
+                    <span x-text="'\u00a5' + row.withdrawal.toLocaleString()"></span>
+                  </template>
+                </td>
+                <td>
+                  <button type="button" class="form-control form-control-sm text-start"
+                          @click="selectCategory(index)">
+                    <span :class="{'text-muted': !row.category_name}"
+                          x-text="row.category_name || '-- 選択 --'"></span>
+                  </button>
+                </td>
+                <td>
+                  <span class="badge" :class="row.statusCls">
+                    <i x-show="row.statusIcon" :class="'bi bi-' + row.statusIcon"></i>
+                    <span x-text="row.statusText"></span>
+                  </span>
+                </td>
+              </tr>
+            </template>
+          </tbody>
+          <tfoot class="table-light fw-bold">
+            <tr>
+              <td colspan="4" class="text-end">選択行の合計</td>
+              <td class="text-end text-primary" x-text="'\u00a5' + totalDeposit.toLocaleString()"></td>
+              <td class="text-end text-danger" x-text="'\u00a5' + totalWithdrawal.toLocaleString()"></td>
+              <td colspan="2"></td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+
+      <div class="d-flex gap-2 align-items-center mt-3">
+        <button type="submit" class="btn btn-primary btn-lg">
+          <i class="bi bi-check-lg"></i>
+          <span x-text="selectedCount">0</span>件を取り込む
+        </button>
+        {{ import_back_buttons }}
+      </div>
+    </form>
+  </div>
+</div>

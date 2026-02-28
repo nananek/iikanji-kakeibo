@@ -4,134 +4,22 @@
 {% block content %}
 <h2><i class="bi bi-globe"></i> Web明細取込</h2>
 
-<div class="card shadow-sm mt-4">
-  <div class="card-header import-toolbar">
-    <div class="d-flex justify-content-between align-items-center">
-      <div>
-        <strong>Step 2:</strong> 確認して取込
-        <span class="text-muted ms-2">取込先: {{ payment_account.name }} / {{ parsed|length }}件</span>
-      </div>
-      <div class="d-flex gap-1">
-        <button type="button" class="btn btn-sm btn-outline-secondary" onclick="toggleAll(true)">全選択</button>
-        <button type="button" class="btn btn-sm btn-outline-secondary" onclick="toggleAll(false)">全解除</button>
-      </div>
-    </div>
-    <div class="d-flex gap-1 flex-wrap align-items-center mt-2">
-      <button type="button" class="btn btn-sm btn-outline-primary" onclick="bulkSetCategory()">
-        <i class="bi bi-tags"></i> 選択行に科目を設定
-      </button>
-      {% if has_ai_config %}
-      <button type="button" class="btn btn-sm btn-outline-success" onclick="aiSuggestCategories()" id="aiSuggestBtn">
-        <i class="bi bi-stars"></i> AI科目推定
-      </button>
-      {% endif %}
-      <div class="vr mx-1"></div>
-      <input type="date" class="form-control form-control-sm" id="bulkDate" style="width:auto">
-      <div class="form-check form-check-inline mb-0 ms-1">
-        <input class="form-check-input" type="checkbox" id="appendOriginalDate" checked>
-        <label class="form-check-label small" for="appendOriginalDate">元の日付を摘要に付記</label>
-      </div>
-      <button type="button" class="btn btn-sm btn-outline-secondary" onclick="bulkSetDate(false)">
-        <i class="bi bi-calendar-check"></i> 全行に適用
-      </button>
-      <button type="button" class="btn btn-sm btn-outline-primary" onclick="bulkSetDate(true)">
-        <i class="bi bi-calendar-check"></i> 選択行に日付を設定
-      </button>
-    </div>
-  </div>
-  <div class="card-body">
-    <form method="POST" id="importForm">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-      <input type="hidden" name="import_rows" id="importRows">
+<div x-data="importConfirm({
+  rows: {{ parsed | tojson }},
+  paymentAccountId: {{ payment_account.id }},
+  defaultIncomeId: {{ default_income_id | tojson }},
+  defaultExpenseId: {{ default_expense_id | tojson }},
+  closedPeriods: {{ closed_periods | tojson }},
+  restrictedBeforeYear: {{ restricted_before_year | tojson }}
+})" @drag-select-update="_syncFromCheckboxes()">
 
-      <div id="oldYearBar" class="alert alert-warning d-none mb-3">
-        <i class="bi bi-exclamation-triangle"></i>
-        <strong>未開設年度の明細があります。</strong>
-        <div class="form-check form-check-inline ms-3">
-          <input class="form-check-input" type="radio" name="old_year_action" id="oldYearSkip" value="skip" checked>
-          <label class="form-check-label" for="oldYearSkip">無視する</label>
-        </div>
-        <div class="form-check form-check-inline">
-          <input class="form-check-input" type="radio" name="old_year_action" id="oldYearCapital" value="capital">
-          <label class="form-check-label" for="oldYearCapital">元入金にする（当年1/1付）</label>
-        </div>
-      </div>
+{% set import_step_label = "Step 2:" %}
+{% set import_header_extra %}確認して取込 <span class="text-muted">取込先: {{ payment_account.name }} / <span x-text="rows.length">0</span>件</span>{% endset %}
+{% set import_back_buttons %}
+<a href="{{ url_for('web_import.upload') }}" class="btn btn-outline-secondary">最初からやり直す</a>
+{% endset %}
+{% include "_partials/import_confirm_table.html" %}
 
-      <div class="table-responsive">
-        <table class="table table-sm table-hover" id="confirmTable">
-          <thead class="table-light">
-            <tr>
-              <th style="width:3%">
-                <input type="checkbox" class="form-check-input" id="checkAll"
-                       checked onchange="toggleAll(this.checked)">
-              </th>
-              <th style="width:5%" class="sortable d-mobile-none" data-sort-key="row_num">行<span class="sort-icon"></span></th>
-              <th style="width:12%" class="sortable" data-sort-key="date">日付<span class="sort-icon"></span></th>
-              <th style="width:30%" class="sortable" data-sort-key="description">摘要<span class="sort-icon"></span></th>
-              <th style="width:10%" class="text-end sortable" data-sort-key="deposit">入金<span class="sort-icon"></span></th>
-              <th style="width:10%" class="text-end sortable" data-sort-key="withdrawal">出金<span class="sort-icon"></span></th>
-              <th style="width:25%">費目</th>
-              <th style="width:5%">状態</th>
-            </tr>
-          </thead>
-          <tbody>
-            {% for row in parsed %}
-            <tr data-idx="{{ loop.index0 }}"
-                {% if not row.date %}class="table-warning"{% endif %}>
-              <td>
-                <input type="checkbox" class="form-check-input row-check"
-                       data-idx="{{ loop.index0 }}"
-                       {% if row.date and (row.deposit or row.withdrawal) %}checked{% endif %}>
-              </td>
-              <td class="d-mobile-none">{{ row.row_num }}</td>
-              <td class="date-cell" data-idx="{{ loop.index0 }}">{{ row.date if row.date else '(不明)' }}</td>
-              <td class="desc-cell">{{ row.description }}</td>
-              <td class="text-end {% if row.deposit %}text-primary fw-bold{% endif %}">
-                {% if row.deposit %}&yen;{{ "{:,}".format(row.deposit) }}{% endif %}
-              </td>
-              <td class="text-end {% if row.withdrawal %}text-danger fw-bold{% endif %}">
-                {% if row.withdrawal %}&yen;{{ "{:,}".format(row.withdrawal) }}{% endif %}
-              </td>
-              <td>
-                <input type="hidden" class="category-id" data-idx="{{ loop.index0 }}"
-                       value="{% if row.deposit and default_income_id %}{{ default_income_id }}{% elif row.withdrawal and default_expense_id %}{{ default_expense_id }}{% endif %}">
-                <button type="button" class="form-control form-control-sm text-start category-btn"
-                        data-idx="{{ loop.index0 }}">
-                  <span class="category-name text-muted">-- 選択 --</span>
-                </button>
-              </td>
-              <td>
-                {% if not row.date %}
-                <span class="badge bg-warning text-dark">日付なし</span>
-                {% elif not row.deposit and not row.withdrawal %}
-                <span class="badge bg-secondary">金額なし</span>
-                {% else %}
-                <span class="badge bg-success">OK</span>
-                {% endif %}
-              </td>
-            </tr>
-            {% endfor %}
-          </tbody>
-          <tfoot class="table-light fw-bold">
-            <tr>
-              <td colspan="4" class="text-end">選択行の合計</td>
-              <td class="text-end text-primary" id="totalDeposit">&yen;0</td>
-              <td class="text-end text-danger" id="totalWithdrawal">&yen;0</td>
-              <td colspan="2"></td>
-            </tr>
-          </tfoot>
-        </table>
-      </div>
-
-      <div class="d-flex gap-2 align-items-center mt-3">
-        <button type="submit" class="btn btn-primary btn-lg">
-          <i class="bi bi-check-lg"></i>
-          <span id="importCount">{{ parsed|length }}</span>件を取り込む
-        </button>
-        <a href="{{ url_for('web_import.upload') }}" class="btn btn-outline-secondary">最初からやり直す</a>
-      </div>
-    </form>
-  </div>
 </div>
 
 {% include "_partials/account_selector.html" %}
@@ -139,9 +27,4 @@
 
 {% block scripts %}
 <script src="{{ url_for('static', filename='js/drag_select.js') }}"></script>
-<script src="{{ url_for('static', filename='js/import_confirm.js') }}"></script>
-<script>
-var parsedData = {{ parsed | tojson }};
-initImportConfirm(parsedData, {{ payment_account.id }}, {{ restricted_before_year | tojson }}, {{ closed_periods | tojson }});
-</script>
 {% endblock %}
