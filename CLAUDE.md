@@ -229,7 +229,7 @@ AI証憑仕訳の解析時に、電帳法スキャナ保存の要件を満たし
 | 証憑の保存 | ✅ Voucher モデルで永続保存 | Phase 1 |
 | 仕訳との相互関連性 | ✅ JournalEntry ↔ Voucher 1:N | Phase 1 |
 | 見読可能性（表示・印刷） | ✅ 仕訳帳・元帳から画像閲覧可 | Phase 1 |
-| AI コンプライアンスチェック | ❌ | Phase 1.5 |
+| AI コンプライアンスチェック | ✅ 設定画面でON/OFF可能 | Phase 1.5 |
 | 検索機能（日付・金額・取引先） | ❌ | Phase 2 |
 | 訂正削除の防止/履歴 | ❌ | Phase 3 |
 | タイムスタンプ | △ uploaded_at 記録済み | Phase 1 / 4 |
@@ -253,7 +253,7 @@ AI証憑仕訳の解析時に、電帳法スキャナ保存の要件を満たし
 - `tests/conftest.py` に SQLite in-memory のフィクスチャあり
 - pytest で実行: `docker exec -w /app server-web-1 python -m pytest tests/ -v`
 - GitHub Actions (`.github/workflows/test.yml`) で push/PR 時に自動実行
-- 371テスト: accounting(16), api(27), audit(43), balance_cache(15), csv_import(53), fiscal(26), models(12), monthly_report(8), ofx_import(15), settings(7), tax(45), security_auth(27), security_idor(12), security_input(12), security_csrf(9), security_headers(7), security_ratelimit(3), voucher(14)
+- 385テスト: accounting(16), api(27), audit(43), balance_cache(15), compliance(14), csv_import(53), fiscal(26), models(12), monthly_report(8), ofx_import(15), settings(7), tax(45), security_auth(27), security_idor(12), security_input(12), security_csrf(9), security_headers(7), security_ratelimit(3), voucher(14)
 - E2Eテスト (Playwright/Firefox): `npx playwright test tests/e2e/` — 設定画面の表示・遷移(10), ドラッグ選択(15)。CIでも自動実行
 - 税務集計・プライバシー権限は重点テスト項目
 

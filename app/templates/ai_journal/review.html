@@ -28,6 +28,11 @@
               <span class="badge bg-secondary">案{{ loop.index }}</span>
               {% endif %}
             </div>
+            {% if s.compliance and s.compliance.status == 'fail' %}
+              <span class="badge bg-danger ms-1"><i class="bi bi-exclamation-triangle-fill"></i></span>
+            {% elif s.compliance and s.compliance.status == 'warn' %}
+              <span class="badge bg-warning text-dark ms-1"><i class="bi bi-exclamation-triangle"></i></span>
+            {% endif %}
             <small class="text-muted">{{ s.description[:60] }}{% if s.description|length > 60 %}...{% endif %}</small>
           </div>
         </a>
@@ -35,6 +40,19 @@
       {% endfor %}
     </div>
   </div>
+</div>
+{% endif %}
+
+{% if selected.compliance and selected.compliance.status != 'pass' %}
+<div class="alert alert-{{ 'danger' if selected.compliance.status == 'fail' else 'warning' }} mt-3 mb-0">
+  <i class="bi bi-exclamation-triangle-fill"></i>
+  <strong>電帳法コンプライアンス{{ '警告' if selected.compliance.status == 'fail' else '注意' }}</strong>
+  {% for w in selected.compliance.warnings %}
+  <div class="mt-1">{{ w }}</div>
+  {% endfor %}
+  {% if selected.compliance.status == 'fail' %}
+  <div class="mt-2"><small>証憑として不適格の可能性があります。撮り直しを検討してください。</small></div>
+  {% endif %}
 </div>
 {% endif %}
 

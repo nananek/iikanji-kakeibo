@@ -29,6 +29,11 @@
         {% else %}
         <span class="badge bg-info">未処理</span>
         {% endif %}
+        {% if s.compliance_status == 'fail' %}
+        <span class="badge bg-danger"><i class="bi bi-exclamation-triangle-fill"></i> 要確認</span>
+        {% elif s.compliance_status == 'warn' %}
+        <span class="badge bg-warning text-dark"><i class="bi bi-exclamation-triangle"></i> 警告</span>
+        {% endif %}
       </div>
       <div class="card-body">
         <div class="text-center mb-2">

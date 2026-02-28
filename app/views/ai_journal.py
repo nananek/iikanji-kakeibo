@@ -165,6 +165,11 @@ def drafts():
                         l.get("debit_amount", 0) for l in s.get("lines", [])
                     )
                     summary["amount"] = total
+                    # コンプライアンスチェック結果
+                    compliance = s.get("compliance")
+                    if isinstance(compliance, dict):
+                        summary["compliance_status"] = compliance.get("status")
+                        summary["compliance_warnings"] = compliance.get("warnings", [])
             except (json.JSONDecodeError, IndexError):
                 pass
         draft_list.append({"draft": d, "summary": summary})

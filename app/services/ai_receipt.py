@@ -53,6 +53,7 @@ class JournalSuggestion:
     date: str | None
     entry_description: str
     lines: list[dict] = field(default_factory=list)
+    compliance: dict | None = None
 
 
 # --- 暗号化ヘルパー ---
@@ -150,6 +151,35 @@ DOCUMENT_PROMPT = """あなたは日本の家計簿アプリのアシスタン�
   - 単純なレシートでは false で構いません
 - requested_accounts: needs_ledger が true の場合、参照したい勘定科目名のリスト
   - 例: ["給料手当", "法定福利費", "預り金"]"""
+
+
+COMPLIANCE_CHECK_PROMPT = """
+
+## 電帳法コンプライアンスチェック（必ず実施してください）
+この画像が電子帳簿保存法（スキャナ保存）の要件を満たすか判定し、JSONに以下のフィールドを追加してください。
+
+"compliance": {
+  "status": "pass" または "warn" または "fail",
+  "warnings": ["警告メッセージ1", "警告メッセージ2"]
+}
+
+チェック項目:
+1. **画像品質**: ピンぼけ、影かぶり、画像の切れ、歪みがないか
+   - fail: 文字が読めないほどぼやけている、大きく切れている
+   - warn: やや影がかかっている、端が少し切れている
+2. **必須情報の視認性**: 日付、金額、取引先名が読み取れるか
+   - fail: 日付・金額・取引先のいずれかが全く読み取れない
+   - warn: 一部が不鮮明だが推測は可能
+3. **書類の妥当性**: 領収書・請求書等の証憑として有効か
+   - fail: 証憑ではない画像（風景写真等）
+   - warn: メモ書き等で証憑としては不十分な可能性
+
+status の判定:
+- "pass": 全チェック項目に問題なし
+- "warn": 軽微な問題あり（登録は可能だが撮り直し推奨）
+- "fail": 重大な問題あり（証憑として不適格の可能性）
+
+warnings が空の場合は status を "pass" にしてください。"""
 
 
 def _build_suggestion_prompt(account_list_text, ledger_text="",
@@ -574,7 +604,7 @@ def _get_ai_config(user_id: int):
     """AI設定を取得してバリデーション
 
     Returns:
-        (api_key, provider, model, handler, custom_prompt, base_url)
+        (api_key, provider, model, handler, custom_prompt, extra_kwargs, compliance_check)
     """
     config = UserAIConfig.query.filter_by(user_id=user_id).first()
     if not config:
@@ -587,6 +617,7 @@ def _get_ai_config(user_id: int):
     model = config.model_name or PROVIDER_DEFAULTS.get(provider, "")
     custom_prompt = getattr(config, "custom_prompt", "") or ""
     base_url = getattr(config, "base_url", "") or ""
+    compliance_check = getattr(config, "compliance_check", False)
 
     handler = _PROVIDER_HANDLERS.get(provider)
     if not handler:
@@ -597,7 +628,7 @@ def _get_ai_config(user_id: int):
     if base_url and provider == "ollama":
         extra_kwargs["base_url"] = base_url
 
-    return api_key, provider, model, handler, custom_prompt, extra_kwargs
+    return api_key, provider, model, handler, custom_prompt, extra_kwargs, compliance_check
 
 
 def _call_ai(handler, api_key, model, image_bytes, mime_type,
@@ -622,7 +653,7 @@ def _call_ai(handler, api_key, model, image_bytes, mime_type,
 def analyze_receipt(user_id: int, image_bytes: bytes,
                     mime_type: str) -> ReceiptData:
     """領収書画像をAIで解析する（後方互換）"""
-    api_key, provider, model, handler, _, extra_kw = _get_ai_config(user_id)
+    api_key, provider, model, handler, _, extra_kw, _ = _get_ai_config(user_id)
     result = _call_ai(handler, api_key, model, image_bytes, mime_type,
                       RECEIPT_PROMPT, 500, user_id, extra_kw)
 
@@ -651,16 +682,19 @@ def analyze_and_suggest(user_id: int, image_bytes: bytes,
         ValueError: AI設定未登録またはプロバイダー未対応
         RuntimeError: API呼出し失敗
     """
-    api_key, provider, model, handler, custom_prompt, extra_kw = _get_ai_config(user_id)
+    api_key, provider, model, handler, custom_prompt, extra_kw, compliance_check = _get_ai_config(user_id)
 
     # 第1ラウンド: 書類解析
     prompt = DOCUMENT_PROMPT
+    if compliance_check:
+        prompt += COMPLIANCE_CHECK_PROMPT
     if custom_prompt:
         prompt += f"\n\n## ユーザー定型情報\n{custom_prompt}"
     if comment:
         prompt += f"\n\nユーザーからのコメント: {comment}"
+    max_tokens_r1 = 1500 if compliance_check else 1000
     round1 = _call_ai(handler, api_key, model, image_bytes, mime_type,
-                      prompt, 1000, user_id, extra_kw)
+                      prompt, max_tokens_r1, user_id, extra_kw)
 
     analysis = DocumentAnalysis(
         date=round1.get("date"),
@@ -671,6 +705,21 @@ def analyze_and_suggest(user_id: int, image_bytes: bytes,
         needs_ledger=round1.get("needs_ledger", False),
         requested_accounts=round1.get("requested_accounts", []),
     )
+
+    # コンプライアンスチェック結果を抽出
+    compliance_result = None
+    if compliance_check:
+        raw_compliance = round1.get("compliance")
+        if isinstance(raw_compliance, dict):
+            status = raw_compliance.get("status", "pass")
+            if status not in ("pass", "warn", "fail"):
+                status = "pass"
+            warnings = raw_compliance.get("warnings", [])
+            if not isinstance(warnings, list):
+                warnings = []
+            compliance_result = {"status": status, "warnings": warnings}
+        else:
+            compliance_result = {"status": "pass", "warnings": []}
 
     # 元帳データ取得（必要な場合）
     ledger_text = ""
@@ -714,6 +763,7 @@ def analyze_and_suggest(user_id: int, image_bytes: bytes,
                 date=s.get("date") or analysis.date,
                 entry_description=s.get("entry_description", analysis.description),
                 lines=lines,
+                compliance=compliance_result,
             ))
 
     if not suggestions:
@@ -759,7 +809,7 @@ WEB_IMPORT_PROMPT = """あなたは日本の家計簿アプリのアシスタン
 def parse_web_text(user_id: int, raw_text: str,
                    payment_account_name: str) -> list[dict]:
     """Webページのテキストからai経由で明細を抽出する"""
-    api_key, provider, model, _, __, extra_kw = _get_ai_config(user_id)
+    api_key, provider, model, _, __, extra_kw, ___ = _get_ai_config(user_id)
 
     text_handler = _TEXT_PROVIDER_HANDLERS.get(provider)
     if not text_handler:
@@ -884,7 +934,7 @@ def suggest_categories_by_ai(user_id: int, payment_account_id: int,
     Returns:
         {"摘要": {"account_id": N, "account_name": "..."}, ...}
     """
-    api_key, provider, model, _, __, extra_kw = _get_ai_config(user_id)
+    api_key, provider, model, _, __, extra_kw, ___ = _get_ai_config(user_id)
     text_handler = _TEXT_PROVIDER_HANDLERS.get(provider)
     if not text_handler:
         raise ValueError(f"未対応のAIプロバイダーです: {provider}")
