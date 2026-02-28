@@ -1,0 +1,133 @@
+{# 照合結果テーブル — reconcileMode コンポーネント内で使用 #}
+
+<!-- ローディング -->
+<div x-show="reconcileLoading" class="text-center py-5">
+  <div class="spinner-border text-primary" role="status"></div>
+  <p class="mt-2 text-muted">照合中…</p>
+</div>
+
+<template x-if="reconcileLoaded">
+  <div class="card shadow-sm mt-4">
+    <div class="card-header">
+      <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+        <div>
+          <strong>照合結果</strong>
+          <span class="text-muted ms-2">取込先: {{ payment_account.name }}</span>
+        </div>
+        <div class="d-flex gap-2">
+          <span class="badge bg-success"><i class="bi bi-check-circle"></i> 照合済み <span x-text="matchedCount"></span>件</span>
+          <span class="badge bg-warning text-dark" x-show="multipleCount > 0"><i class="bi bi-question-circle"></i> 複数候補 <span x-text="multipleCount"></span>件</span>
+          <span class="badge bg-secondary"><i class="bi bi-dash-circle"></i> 未照合 <span x-text="unmatchedCount"></span>件</span>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <form method="POST" @submit="serializeReconcileRows()">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="import_rows" x-ref="reconcileImportRows">
+
+        <div class="table-responsive">
+          <table class="table table-sm table-hover">
+            <thead class="table-light">
+              <tr>
+                <th style="width:3%">取込</th>
+                <th style="width:7%">状態</th>
+                <th style="width:10%">日付</th>
+                <th style="width:20%">摘要(CSV)</th>
+                <th style="width:8%" class="text-end">入金</th>
+                <th style="width:8%" class="text-end">出金</th>
+                <th style="width:44%">照合先 / 費目</th>
+              </tr>
+            </thead>
+            <tbody>
+              <template x-for="(row, index) in reconcileRows" :key="row.csv_index">
+                <tr :class="{
+                  'table-success': row.status === 'matched',
+                  'table-warning': row.status === 'multiple',
+                }">
+                  <td>
+                    <input type="checkbox" class="form-check-input"
+                           x-model="row.enabled"
+                           :disabled="row.status === 'matched' || (row.status === 'multiple' && row.selectedMatchIndex >= 0)">
+                  </td>
+                  <td>
+                    <span class="badge" :class="{
+                      'bg-success': row.status === 'matched',
+                      'bg-warning text-dark': row.status === 'multiple',
+                      'bg-secondary': row.status === 'unmatched'
+                    }">
+                      <span x-text="row.status === 'matched' ? '照合済' : row.status === 'multiple' ? '複数候補' : '未照合'"></span>
+                    </span>
+                  </td>
+                  <td x-text="row.date || '(不明)'"></td>
+                  <td class="text-truncate" style="max-width:200px" x-text="row.description"></td>
+                  <td class="text-end" :class="{'text-primary fw-bold': row.deposit}">
+                    <template x-if="row.deposit">
+                      <span x-text="'\u00a5' + row.deposit.toLocaleString()"></span>
+                    </template>
+                  </td>
+                  <td class="text-end" :class="{'text-danger fw-bold': row.withdrawal}">
+                    <template x-if="row.withdrawal">
+                      <span x-text="'\u00a5' + row.withdrawal.toLocaleString()"></span>
+                    </template>
+                  </td>
+                  <td>
+                    <!-- matched: 既存仕訳情報 -->
+                    <template x-if="row.status === 'matched'">
+                      <div class="small">
+                        <i class="bi bi-link-45deg text-success"></i>
+                        <span x-text="row.matchInfo.date"></span>
+                        <span class="text-muted" x-text="row.matchInfo.description"></span>
+                        <span class="badge bg-light text-dark" x-text="row.matchInfo.category_name"></span>
+                        <span class="badge bg-info text-dark" x-text="sourceLabel(row.matchInfo.source)"></span>
+                      </div>
+                    </template>
+
+                    <!-- multiple: ドロップダウン + 条件付き費目選択 -->
+                    <template x-if="row.status === 'multiple'">
+                      <div>
+                        <select class="form-select form-select-sm"
+                                @change="selectMatch(index, parseInt($event.target.value))">
+                          <option value="-1" :selected="row.selectedMatchIndex === -1">-- 新規取込 --</option>
+                          <template x-for="(m, mi) in row.matches" :key="m.entry_id">
+                            <option :value="mi" :selected="row.selectedMatchIndex === mi"
+                                    x-text="m.date + ' ' + m.description + ' (' + m.category_name + ') [' + sourceLabel(m.source) + ']'"></option>
+                          </template>
+                        </select>
+                        <div class="mt-1" x-show="row.selectedMatchIndex < 0">
+                          <button type="button" class="form-control form-control-sm text-start"
+                                  @click="selectReconcileCategory(index)">
+                            <span :class="{'text-muted': !row.category_name}"
+                                  x-text="row.category_name || '-- 科目を選択 --'"></span>
+                          </button>
+                        </div>
+                      </div>
+                    </template>
+
+                    <!-- unmatched: 費目選択 -->
+                    <template x-if="row.status === 'unmatched'">
+                      <button type="button" class="form-control form-control-sm text-start"
+                              @click="selectReconcileCategory(index)">
+                        <span :class="{'text-muted': !row.category_name}"
+                              x-text="row.category_name || '-- 科目を選択 --'"></span>
+                      </button>
+                    </template>
+                  </td>
+                </tr>
+              </template>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="d-flex gap-2 align-items-center mt-3">
+          <button type="submit" class="btn btn-primary btn-lg" :disabled="reconcileImportCount === 0">
+            <i class="bi bi-check-lg"></i>
+            未照合 <span x-text="reconcileImportCount">0</span>件を取り込む
+          </button>
+          <a href="{{ url_for('csv_import.mapping') }}" class="btn btn-outline-secondary">マッピングに戻る</a>
+          <a href="{{ url_for('csv_import.upload') }}" class="btn btn-outline-secondary">最初からやり直す</a>
+        </div>
+      </form>
+    </div>
+  </div>
+</template>

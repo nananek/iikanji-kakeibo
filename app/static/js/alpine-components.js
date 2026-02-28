@@ -485,6 +485,166 @@ document.addEventListener('alpine:init', function() {
   });
 
   /**
+   * CSV照合モード: 取込/照合タブの切り替え + 照合結果管理
+   *
+   * 使い方:
+   *   <div x-data="reconcileMode({
+   *     csvRows: [...], paymentAccountId: 1,
+   *     defaultIncomeId: 0, defaultExpenseId: 0
+   *   })">
+   */
+  Alpine.data('reconcileMode', function(config) {
+    var csvRows = config.csvRows || [];
+    var paymentAccountId = config.paymentAccountId;
+    var defaultIncomeId = config.defaultIncomeId || 0;
+    var defaultExpenseId = config.defaultExpenseId || 0;
+    var sourceLabels = {
+      'journal': '仕訳', 'cashbook': '出納帳', 'ai_receipt': 'AI証憑',
+      'csv': 'CSV', 'ofx': 'OFX', 'web': 'Web', 'closing': '決算',
+    };
+
+    return {
+      activeTab: 'import',
+      reconcileLoaded: false,
+      reconcileLoading: false,
+      reconcileRows: [],
+
+      get matchedCount() {
+        var c = 0;
+        for (var i = 0; i < this.reconcileRows.length; i++)
+          if (this.reconcileRows[i].status === 'matched') c++;
+        return c;
+      },
+      get multipleCount() {
+        var c = 0;
+        for (var i = 0; i < this.reconcileRows.length; i++)
+          if (this.reconcileRows[i].status === 'multiple') c++;
+        return c;
+      },
+      get unmatchedCount() {
+        var c = 0;
+        for (var i = 0; i < this.reconcileRows.length; i++)
+          if (this.reconcileRows[i].status === 'unmatched') c++;
+        return c;
+      },
+      get reconcileImportCount() {
+        var c = 0;
+        for (var i = 0; i < this.reconcileRows.length; i++)
+          if (this.reconcileRows[i].enabled) c++;
+        return c;
+      },
+
+      sourceLabel: function(src) {
+        return sourceLabels[src] || src;
+      },
+
+      switchTab: function(tab) {
+        this.activeTab = tab;
+        if (tab === 'reconcile' && !this.reconcileLoaded) {
+          this.loadReconciliation();
+        }
+      },
+
+      loadReconciliation: function() {
+        this.reconcileLoading = true;
+        var self = this;
+        fetch('/csv-import/reconcile', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': Alpine.store('csrf').token,
+          },
+        })
+        .then(function(res) { return res.json(); })
+        .then(function(data) {
+          if (data.error) { alert(data.error); return; }
+          self.reconcileRows = [];
+          for (var i = 0; i < data.length; i++) {
+            var r = data[i];
+            var csv = csvRows[r.csv_index] || {};
+            var row = {
+              csv_index: r.csv_index,
+              date: csv.date || '',
+              description: csv.description || '',
+              deposit: csv.deposit || 0,
+              withdrawal: csv.withdrawal || 0,
+              status: r.status,
+              matches: r.matches,
+              selectedMatchIndex: -1,
+              enabled: false,
+              matchInfo: null,
+              category_id: 0,
+              category_name: '',
+            };
+            if (r.status === 'matched') {
+              row.selectedMatchIndex = 0;
+              row.matchInfo = r.matches[0];
+            } else if (r.status === 'multiple') {
+              row.selectedMatchIndex = 0;
+              row.matchInfo = r.matches[0];
+            } else {
+              row.enabled = !!(csv.date && (csv.deposit || csv.withdrawal));
+              row.category_id = csv.deposit ? defaultIncomeId : (csv.withdrawal ? defaultExpenseId : 0);
+            }
+            self.reconcileRows.push(row);
+          }
+          for (var i = 0; i < self.reconcileRows.length; i++) {
+            if (self.reconcileRows[i].category_id && typeof _acctNameById === 'function') {
+              self.reconcileRows[i].category_name = _acctNameById(parseInt(self.reconcileRows[i].category_id)) || '';
+            }
+          }
+          self.reconcileLoaded = true;
+        })
+        .catch(function(err) { alert('照合に失敗しました: ' + err.message); })
+        .finally(function() { self.reconcileLoading = false; });
+      },
+
+      selectMatch: function(rowIdx, matchIdx) {
+        var row = this.reconcileRows[rowIdx];
+        row.selectedMatchIndex = matchIdx;
+        if (matchIdx >= 0) {
+          row.enabled = false;
+          row.matchInfo = row.matches[matchIdx];
+          row.category_id = 0;
+          row.category_name = '';
+        } else {
+          row.enabled = true;
+          row.matchInfo = null;
+          var csv = csvRows[row.csv_index] || {};
+          row.category_id = csv.deposit ? defaultIncomeId : (csv.withdrawal ? defaultExpenseId : 0);
+          if (row.category_id && typeof _acctNameById === 'function') {
+            row.category_name = _acctNameById(parseInt(row.category_id)) || '';
+          }
+        }
+      },
+
+      selectReconcileCategory: function(index) {
+        var row = this.reconcileRows[index];
+        openAccountSelector(function(id, name) {
+          row.category_id = id;
+          row.category_name = name;
+        }, { filter: 'category_transfer', excludeId: paymentAccountId, activeTab: 'pl', currentId: row.category_id });
+      },
+
+      serializeReconcileRows: function() {
+        var result = [];
+        for (var i = 0; i < this.reconcileRows.length; i++) {
+          var row = this.reconcileRows[i];
+          result.push({
+            enabled: row.enabled,
+            date: row.date,
+            description: row.description,
+            deposit: row.deposit,
+            withdrawal: row.withdrawal,
+            category_id: row.category_id ? parseInt(row.category_id) : 0,
+          });
+        }
+        this.$refs.reconcileImportRows.value = JSON.stringify(result);
+      },
+    };
+  });
+
+  /**
    * 取込確認画面: CSV / OFX / Web 共通
    *
    * 使い方:

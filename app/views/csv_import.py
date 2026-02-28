@@ -3,7 +3,7 @@
 import json
 import uuid
 
-from flask import Blueprint, render_template, redirect, url_for, flash, request, session
+from flask import Blueprint, render_template, redirect, url_for, flash, request, session, jsonify
 from flask_login import login_required, current_user
 
 from app.extensions import db
@@ -353,3 +353,19 @@ def confirm():
         closed_periods=closed_periods,
         has_ai_config=has_ai_config,
     )
+
+
+@bp.route("/reconcile", methods=["POST"])
+@login_required
+def reconcile():
+    """照合API — Alpine.jsからfetchで呼び出し"""
+    from app.services.reconciliation import find_matches
+
+    data_key = session.get("csv_data_key")
+    payment_account_id = session.get("csv_payment_account_id")
+    parsed = load_import_data(data_key)
+    if not parsed or not payment_account_id:
+        return jsonify({"error": "データがありません"}), 400
+
+    results = find_matches(get_effective_user_id(), payment_account_id, parsed)
+    return jsonify(results)

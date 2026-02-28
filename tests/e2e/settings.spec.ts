@@ -76,6 +76,57 @@ test.describe("設定トップページ", () => {
       page.locator("a.card", { hasText: "監査アクセス管理" })
     ).toBeVisible();
   });
+
+  test("表示設定カードから表示設定ページへ遷移", async ({ page }) => {
+    await page.goto(`${BASE_URL}/settings/`);
+    await page.locator("a.card", { hasText: "表示設定" }).click();
+    await expect(page).toHaveURL(/\/settings\/display/);
+    await expect(page.locator("h2")).toContainText("表示設定");
+  });
+});
+
+test.describe("表示設定ページ", () => {
+  test.beforeEach(async ({ page }) => {
+    await login(page);
+    await page.goto(`${BASE_URL}/settings/display`);
+  });
+
+  test("レポートのデフォルト期間設定が表示される", async ({ page }) => {
+    await expect(page.locator("h6", { hasText: "レポートのデフォルト期間" })).toBeVisible();
+    await expect(page.locator("#period_all")).toBeVisible();
+    await expect(page.locator("#period_current")).toBeVisible();
+  });
+
+  test("元帳のソート順設定が表示される", async ({ page }) => {
+    await expect(page.locator("h6", { hasText: "元帳のソート順" })).toBeVisible();
+    await expect(page.locator("#sort_asc")).toBeVisible();
+    await expect(page.locator("#sort_desc")).toBeVisible();
+  });
+
+  test("デフォルト期間を当月に変更して保存できる", async ({ page }) => {
+    await page.locator("#period_current").check();
+    await page.locator('button[type="submit"]', { hasText: "保存" }).click();
+    await expect(page).toHaveURL(/\/settings\/display/);
+    await expect(page.locator(".toast")).toContainText("表示設定を保存しました");
+    await expect(page.locator("#period_current")).toBeChecked();
+  });
+
+  test("ソート順を新しい順に変更して保存できる", async ({ page }) => {
+    await page.locator("#sort_desc").check();
+    await page.locator('button[type="submit"]', { hasText: "保存" }).click();
+    await expect(page).toHaveURL(/\/settings\/display/);
+    await expect(page.locator(".toast")).toContainText("表示設定を保存しました");
+    await expect(page.locator("#sort_desc")).toBeChecked();
+  });
+
+  test("設定を元に戻せる（全期間・古い順）", async ({ page }) => {
+    await page.locator("#period_all").check();
+    await page.locator("#sort_asc").check();
+    await page.locator('button[type="submit"]', { hasText: "保存" }).click();
+    await expect(page.locator(".toast")).toContainText("表示設定を保存しました");
+    await expect(page.locator("#period_all")).toBeChecked();
+    await expect(page.locator("#sort_asc")).toBeChecked();
+  });
 });
 
 test.describe("ヘッダーナビゲーション", () => {

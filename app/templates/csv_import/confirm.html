@@ -9,22 +9,59 @@
   var _closedPeriods = {{ closed_periods | tojson }};
   var _restrictedBefore = {{ restricted_before_year | tojson }};
 </script>
-<div x-data="importConfirm({
-  rows: _importRows,
+
+<div x-data="reconcileMode({
+  csvRows: _importRows,
   paymentAccountId: {{ payment_account.id }},
   defaultIncomeId: {{ default_income_id | tojson }},
-  defaultExpenseId: {{ default_expense_id | tojson }},
-  closedPeriods: _closedPeriods,
-  restrictedBeforeYear: _restrictedBefore
-})" @drag-select-update="_syncFromCheckboxes()">
+  defaultExpenseId: {{ default_expense_id | tojson }}
+})">
 
-{% set import_step_label = "Step 3:" %}
-{% set import_header_extra %}確認して取込 <span class="text-muted">取込先: {{ payment_account.name }} / <span x-text="rows.length">0</span>件</span>{% endset %}
-{% set import_back_buttons %}
-<a href="{{ url_for('csv_import.mapping') }}" class="btn btn-outline-secondary">マッピングに戻る</a>
-<a href="{{ url_for('csv_import.upload') }}" class="btn btn-outline-secondary">最初からやり直す</a>
-{% endset %}
-{% include "_partials/import_confirm_table.html" %}
+<!-- タブヘッダー -->
+<ul class="nav nav-tabs mt-3">
+  <li class="nav-item">
+    <a class="nav-link" :class="{'active': activeTab === 'import'}" href="#"
+       @click.prevent="switchTab('import')">
+      <i class="bi bi-cloud-upload"></i> 取込
+    </a>
+  </li>
+  <li class="nav-item">
+    <a class="nav-link" :class="{'active': activeTab === 'reconcile'}" href="#"
+       @click.prevent="switchTab('reconcile')">
+      <i class="bi bi-check2-square"></i> 照合
+      <template x-if="reconcileLoaded">
+        <span class="badge bg-secondary ms-1" x-text="unmatchedCount + '件未照合'"></span>
+      </template>
+    </a>
+  </li>
+</ul>
+
+<!-- 取込タブ -->
+<div x-show="activeTab === 'import'">
+  <div x-data="importConfirm({
+    rows: _importRows,
+    paymentAccountId: {{ payment_account.id }},
+    defaultIncomeId: {{ default_income_id | tojson }},
+    defaultExpenseId: {{ default_expense_id | tojson }},
+    closedPeriods: _closedPeriods,
+    restrictedBeforeYear: _restrictedBefore
+  })" @drag-select-update="_syncFromCheckboxes()">
+
+  {% set import_step_label = "Step 3:" %}
+  {% set import_header_extra %}確認して取込 <span class="text-muted">取込先: {{ payment_account.name }} / <span x-text="rows.length">0</span>件</span>{% endset %}
+  {% set import_back_buttons %}
+  <a href="{{ url_for('csv_import.mapping') }}" class="btn btn-outline-secondary">マッピングに戻る</a>
+  <a href="{{ url_for('csv_import.upload') }}" class="btn btn-outline-secondary">最初からやり直す</a>
+  {% endset %}
+  {% include "_partials/import_confirm_table.html" %}
+
+  </div>
+</div>
+
+<!-- 照合タブ -->
+<div x-show="activeTab === 'reconcile'" x-cloak>
+  {% include "_partials/reconcile_table.html" %}
+</div>
 
 </div>
 
