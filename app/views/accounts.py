@@ -86,6 +86,15 @@ def index():
 
     tax_category_labels = {k: v for k, v in TAX_CATEGORIES if k}
 
+    # Alpine accountEditor 用: 科目区分ごとの有効科目リスト
+    accounts_by_type = {
+        at.id: [
+            {"id": a.id, "code": a.code, "name": a.name}
+            for a in grouped[at] if a.is_active
+        ]
+        for at in account_types
+    }
+
     return render_template(
         "accounts/index.html",
         grouped=grouped,
@@ -95,6 +104,7 @@ def index():
         tax_categories=TAX_CATEGORIES,
         tax_category_labels=tax_category_labels,
         cost_types=COST_TYPES,
+        accounts_by_type=accounts_by_type,
     )
 
 
