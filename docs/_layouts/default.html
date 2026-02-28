@@ -14,13 +14,14 @@
       <nav class="site-nav">
         <a href="{{ '/api/' | relative_url }}"{% if page.url contains '/api/' %} class="active"{% endif %}>REST API</a>
         <a href="{{ '/client-py/' | relative_url }}"{% if page.url contains '/client-py/' %} class="active"{% endif %}>Python Client</a>
+        <a href="{{ '/guides/shortcuts.html' | relative_url }}"{% if page.url contains '/guides/' %} class="active"{% endif %}>活用ガイド</a>
         <a href="https://github.com/nananek/iikanji-kakeibo" class="github-link">GitHub</a>
       </nav>
     </div>
   </header>
 
   <div class="page-wrapper">
-    {% if page.url contains '/api/' or page.url contains '/client-py/' %}
+    {% if page.url contains '/api/' or page.url contains '/client-py/' or page.url contains '/guides/' %}
     <aside class="sidebar">
       {% if page.url contains '/api/' %}
       <h3>REST API</h3>
@@ -35,6 +36,11 @@
         <li><a href="{{ '/client-py/' | relative_url }}"{% if page.url == '/client-py/' or page.url == '/client-py/index.html' %} class="active"{% endif %}>はじめに</a></li>
         <li><a href="{{ '/client-py/api-reference.html' | relative_url }}"{% if page.url contains 'api-reference' %} class="active"{% endif %}>API リファレンス</a></li>
         <li><a href="{{ '/client-py/examples.html' | relative_url }}"{% if page.url contains 'examples' %} class="active"{% endif %}>使用例</a></li>
+      </ul>
+      {% elsif page.url contains '/guides/' %}
+      <h3>活用ガイド</h3>
+      <ul>
+        <li><a href="{{ '/guides/shortcuts.html' | relative_url }}"{% if page.url contains 'shortcuts' %} class="active"{% endif %}>iPhone ショートカット</a></li>
       </ul>
       {% endif %}
     </aside>

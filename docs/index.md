@@ -76,6 +76,10 @@ with KakeiboClient("https://your-server.example.com", "ik_your_api_key") as clie
 - [API リファレンス]({{ '/client-py/api-reference.html' | relative_url }}) — クラス・メソッド・例外
 - [使用例]({{ '/client-py/examples.html' | relative_url }}) — 実践的なサンプルコード
 
+## 活用ガイド
+
+- [iPhone ショートカットで AI 証憑仕訳]({{ '/guides/shortcuts.html' | relative_url }}) — レシートを撮影するだけで仕訳候補を自動作成
+
 ## 技術スタック
 
 - Python 3.12 / Flask 3.x / Gunicorn
