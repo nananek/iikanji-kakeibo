@@ -236,33 +236,33 @@ class TestJournalFormVoucherPreview:
     """仕訳編集画面の証憑プレビュー表示テスト"""
 
     def test_edit_with_voucher_shows_image(self, db, logged_in_client, user, accounts):
-        """証憑ありの仕訳編集画面で証憑画像セクションが表示される"""
+        """証憑ありの仕訳編集画面でrenderVoucherPreview呼び出しが含まれる"""
         entry = make_journal(
             db, user.id, accounts["5010"].id, accounts["1010"].id, 1000,
             source="ai_receipt",
         )
-        make_voucher(db, user.id, journal_entry_id=entry.id)
+        v = make_voucher(db, user.id, journal_entry_id=entry.id)
 
         resp = logged_in_client.get(f"/journal/{entry.id}/edit")
         html = resp.data.decode()
-        assert "bi-file-image" in html
-        assert "証憑画像" in html
+        assert "renderVoucherPreview" in html
+        assert str(v.id) in html
 
     def test_edit_without_voucher_no_image(self, db, logged_in_client, user, accounts):
-        """証憑なしの仕訳編集画面では証憑セクション非表示"""
+        """証憑なしの仕訳編集画面ではrenderVoucherPreview呼び出しなし"""
         entry = make_journal(
             db, user.id, accounts["5010"].id, accounts["1010"].id, 1000,
         )
 
         resp = logged_in_client.get(f"/journal/{entry.id}/edit")
         html = resp.data.decode()
-        assert "証憑画像" not in html
+        assert "renderVoucherPreview" not in html
 
     def test_new_form_no_voucher_section(self, db, logged_in_client, user, accounts):
-        """新規仕訳画面では証憑セクション非表示"""
+        """新規仕訳画面ではrenderVoucherPreview呼び出しなし"""
         resp = logged_in_client.get("/journal/new")
         html = resp.data.decode()
-        assert "証憑画像" not in html
+        assert "renderVoucherPreview" not in html
 
 
 class TestEntryJsonHasVoucher:

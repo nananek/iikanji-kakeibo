@@ -4,21 +4,7 @@
 {% block content %}
 <h2><i class="bi bi-journal-bookmark"></i> 仕訳帳 — {{ '編集' if is_edit else '新規仕訳' }}</h2>
 
-{% if is_edit and entry and entry.vouchers %}
-<div class="card shadow-sm mt-3 mb-0">
-  <div class="card-header">
-    <i class="bi bi-file-image"></i> 証憑画像
-  </div>
-  <div class="card-body text-center">
-    {% for v in entry.vouchers %}
-    <a href="{{ url_for('ai_journal.voucher_image', voucher_id=v.id) }}" target="_blank">
-      <img src="{{ url_for('ai_journal.voucher_image', voucher_id=v.id) }}"
-           class="img-fluid rounded" style="max-height: 300px;" alt="証憑" loading="lazy">
-    </a>
-    {% endfor %}
-  </div>
-</div>
-{% endif %}
+<div id="voucherPreview" class="d-none"></div>
 
 <div class="card shadow-sm mt-4">
   <div class="card-body">
@@ -254,6 +240,14 @@ existingLines.forEach(function(l) { addLine(l); });
 {% else %}
 addLine();
 addLine();
+{% endif %}
+
+// 証憑プレビュー
+{% if is_edit and entry and entry.vouchers %}
+renderVoucherPreview(
+  document.getElementById('voucherPreview'),
+  {{ entry.vouchers | map(attribute='id') | list | tojson }}.map(function(id) { return {id: id}; })
+);
 {% endif %}
 </script>
 {% endblock %}

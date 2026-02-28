@@ -180,6 +180,7 @@
       </div>
       <div class="modal-body">
         <div id="modalError" class="alert alert-danger d-none"></div>
+        <div id="modalVoucherPreview" class="text-center mb-3 d-none"></div>
         <div class="row mb-3">
           <div class="col-md-3">
             <label class="form-label">日付</label>
@@ -478,6 +479,7 @@ function openEditModal(entryId) {
     .then(function(r) { return r.json(); })
     .then(function(data) {
       currentHasVoucher = data.has_voucher || false;
+      renderVoucherPreview(document.getElementById('modalVoucherPreview'), data.vouchers);
       var ro = data.is_readonly;
 
       // タイトル切替
