@@ -211,10 +211,19 @@
   <div class="toast-container position-fixed bottom-0 end-0 p-3" id="toastContainer"></div>
 
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/htmx.org@2.0.4/dist/htmx.min.js"></script>
+  <script src="{{ url_for('static', filename='js/alpine-components.js') }}"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.8/dist/cdn.min.js"></script>
   <script>
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('/sw.js');
     }
+    document.addEventListener('htmx:configRequest', function(e) {
+      e.detail.headers['X-CSRFToken'] = document.querySelector('meta[name="csrf-token"]').content;
+    });
+    document.addEventListener('showToast', function(e) {
+      showToast(e.detail.message, e.detail.type || 'success');
+    });
     function showToast(message, type) {
       var c = document.getElementById('toastContainer');
       var icons = {success:'bi-check-circle-fill',danger:'bi-exclamation-triangle-fill',warning:'bi-exclamation-circle-fill',info:'bi-info-circle-fill'};

@@ -109,10 +109,20 @@
 
 | ファイル | 用途 |
 |---------|------|
-| app.js | PWA Service Worker 登録、数値入力のEnterキー制御 |
+| app.js | 数値入力のEnterキー制御、証憑プレビュー共通関数 |
+| alpine-components.js | Alpine.js 共通コンポーネント定義（段階的に拡充） |
 | import_confirm.js | **取込確認画面の共通ロジック**（CSV/OFX/Web共通） |
 | drag_select.js | ドラッグ選択（バックトラック取消対応） |
 | webauthn.js | Passkey 登録・認証 |
+
+### フロントエンドフレームワーク
+
+- **htmx 2.0** — サーバー通信の宣言的HTML属性化（CDN）
+- **Alpine.js 3.x** — クライアント状態管理のリアクティブ化（CDN, defer）
+- Bootstrap 5 はスタイリング・モーダル・タブに引き続き使用
+- ビルドシステムなし（CDN のみ）
+- htmx の CSRF トークンは `htmx:configRequest` イベントで自動付与
+- htmx → Toast 連携: `HX-Trigger: showToast` ヘッダで `showToast()` を呼び出し
 
 ## 重要な設計パターン
 
