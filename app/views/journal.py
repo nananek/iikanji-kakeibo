@@ -4,6 +4,7 @@ from datetime import date
 from flask import Blueprint, render_template, redirect, url_for, flash, request, jsonify
 from flask_login import login_required, current_user
 from sqlalchemy import func
+from sqlalchemy.orm import joinedload
 
 from app.extensions import db
 from app.models.account import Account
@@ -37,6 +38,7 @@ def index():
     query = (
         JournalEntry.query
         .filter_by(user_id=get_effective_user_id())
+        .options(joinedload(JournalEntry.vouchers))
         .order_by(JournalEntry.date.desc(), JournalEntry.entry_number.desc())
     )
 
@@ -490,6 +492,10 @@ def get_json(entry_id):
         "is_readonly": is_readonly,
         "source": entry.source,
         "lines": lines,
+        "vouchers": [
+            {"id": v.id, "uploaded_at": v.uploaded_at.isoformat() if v.uploaded_at else None}
+            for v in entry.vouchers
+        ],
     })
 
 

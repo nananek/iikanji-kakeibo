@@ -9,6 +9,7 @@ from app.models.account import AccountType, Account
 from app.models.journal import JournalEntry, JournalEntryLine
 from app.models.fiscal import FiscalClose
 from app.models.api_key import APIKey
+from app.models.voucher import Voucher
 
 
 class TestConfig(Config):
@@ -40,6 +41,14 @@ class RateLimitTestConfig(Config):
 def app():
     app = create_app(TestConfig)
     with app.app_context():
+        from sqlalchemy import event
+
+        @event.listens_for(_db.engine, "connect")
+        def _set_sqlite_pragma(dbapi_conn, connection_record):
+            cursor = dbapi_conn.cursor()
+            cursor.execute("PRAGMA foreign_keys=ON")
+            cursor.close()
+
         _db.create_all()
         yield app
         _db.drop_all()
@@ -283,3 +292,17 @@ def make_journal(db, user_id, acct_debit_id, acct_credit_id, amount,
     db.session.add(entry)
     db.session.commit()
     return entry
+
+
+def make_voucher(db, user_id, journal_entry_id=None,
+                 image_key="vouchers/1/1.jpg", image_mime="image/jpeg"):
+    """テスト用の証憑を作成するヘルパー"""
+    v = Voucher(
+        user_id=user_id,
+        journal_entry_id=journal_entry_id,
+        image_key=image_key,
+        image_mime=image_mime,
+    )
+    db.session.add(v)
+    db.session.commit()
+    return v

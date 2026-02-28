@@ -641,13 +641,20 @@ def ledger():
                     "effective_period": line.effective_period,
                 })
 
-    # 各エントリの編集可否を判定
+    # 各エントリの編集可否・証憑を判定
     if entries:
         entry_ids = list({e["entry_id"] for e in entries})
         entry_objs = {
             eo.id: eo
             for eo in JournalEntry.query.filter(JournalEntry.id.in_(entry_ids)).all()
         }
+        from app.models.voucher import Voucher
+        voucher_map = {}
+        voucher_rows = Voucher.query.filter(
+            Voucher.journal_entry_id.in_(entry_ids)
+        ).all()
+        for v in voucher_rows:
+            voucher_map.setdefault(v.journal_entry_id, []).append(v)
         for e in entries:
             eo = entry_objs.get(e["entry_id"])
             if eo:
@@ -657,6 +664,8 @@ def ledger():
                 )
             else:
                 e["is_readonly"] = True
+            vlist = voucher_map.get(e["entry_id"])
+            e["voucher_id"] = vlist[0].id if vlist else None
 
     # モーダル用: 全科目データ（Lv2なら公開科目のみ）
     all_grouped = get_grouped_accounts(user_id, allowed_ids)

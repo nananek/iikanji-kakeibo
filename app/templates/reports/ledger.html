@@ -112,7 +112,7 @@
             </td>
             <td>{{ e.date.strftime('%m/%d') }}</td>
             <td class="d-mobile-none"><small class="text-muted">#{{ e.entry_number }}</small></td>
-            <td>{{ e.description }}</td>
+            <td>{{ e.description }}{% if e.voucher_id %} <a href="{{ url_for('ai_journal.voucher_image', voucher_id=e.voucher_id) }}" target="_blank" title="証憑画像" class="text-success"><i class="bi bi-image"></i></a>{% endif %}</td>
             <td class="d-mobile-none"><small>{{ e.counter_account }}</small></td>
             <td class="text-end">
               {% if e.debit %}&yen;{{ "{:,}".format(e.debit) }}{% endif %}

@@ -1,5 +1,6 @@
 """AI証憑仕訳ビュー"""
 
+import hashlib
 import json
 from dataclasses import asdict
 from datetime import date as date_type
@@ -18,6 +19,8 @@ from app.services.ai_receipt import analyze_and_suggest
 from app.services.accounting import create_journal_entry
 from app.services.fiscal import check_period_open_for_new, get_closed_periods_map, get_restricted_before_year
 from app.services.storage import get_storage_backend, make_storage_key
+from app.services.voucher import create_voucher_from_draft
+from app.models.voucher import Voucher
 from app.views.helpers import get_grouped_accounts
 
 bp = Blueprint("ai_journal", __name__, url_prefix="/ai-journal")
@@ -74,6 +77,7 @@ def analyze():
             "error": "対応していないファイル形式です。JPEG/PNG/WebP/GIF を使用してください。"
         }), 400
 
+    file_hash = hashlib.sha256(image_bytes).hexdigest()
     comment = request.form.get("comment", "").strip()
 
     try:
@@ -91,6 +95,7 @@ def analyze():
         user_id=get_effective_user_id(),
         image_key="",
         image_mime=mime_type,
+        file_hash=file_hash,
         comment=comment,
         suggestions_json=suggestions_json,
         status="temp",
@@ -180,6 +185,21 @@ def draft_image(draft_id):
     except FileNotFoundError:
         return "", 404
     return Response(image_data, mimetype=draft.image_mime)
+
+
+@bp.route("/voucher/<int:voucher_id>/image")
+@login_required
+def voucher_image(voucher_id):
+    """証憑画像を返す"""
+    voucher = Voucher.query.get_or_404(voucher_id)
+    if voucher.user_id != get_effective_user_id():
+        return "", 403
+    from flask import Response
+    try:
+        image_data = get_storage_backend().get(voucher.image_key)
+    except FileNotFoundError:
+        return "", 404
+    return Response(image_data, mimetype=voucher.image_mime)
 
 
 @bp.route("/drafts/<int:draft_id>/delete", methods=["POST"])
@@ -397,10 +417,8 @@ def review():
             )
             session.pop("ai_journal_draft_id", None)
             _update_discord_done(draft, entry.entry_number)
-            image_key = draft.image_key
-            db.session.delete(draft)
+            create_voucher_from_draft(draft, entry.id)
             db.session.commit()
-            get_storage_backend().delete(image_key)
 
             flash(f"伝票 #{entry.entry_number} を登録しました。", "success")
 

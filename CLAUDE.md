@@ -81,6 +81,7 @@
 | AutoImportSource | auto_import_sources | user_id, source_type (webdav), config (JSON暗号化) |
 | ProcessedFile | auto_import_processed_files | source_id, filename, draft_id |
 | WebhookConfig | webhook_configs | user_id, url, events |
+| Voucher | vouchers | user_id, journal_entry_id (SET NULL), image_key, image_mime, file_hash (SHA-256), uploaded_at |
 | BalanceCache | balance_caches | user_id, year, period, account_id, debit_total, credit_total |
 | WebAuthnCredential | webauthn_credentials | credential_id, credential_public_key, current_sign_count |
 
@@ -99,6 +100,7 @@
 | captcha.py | CAPTCHA 検証（hCaptcha/reCAPTCHA/Turnstile/mCaptcha） |
 | notify.py | Webhook 通知（Discord等） |
 | auto_import.py | 自動取込オーケストレーター（内部利用、UIはオプトアウト済み） |
+| voucher.py | ドラフト→証憑移行ヘルパー (create_voucher_from_draft) |
 | seed.py | 標準科目の初期データ・system_role定義 |
 
 ### JS (`app/static/js/`)
@@ -224,13 +226,13 @@ AI証憑仕訳の解析時に、電帳法スキャナ保存の要件を満たし
 
 | 要件 | 状態 | 対応 Phase |
 |------|------|-----------|
-| 証憑の保存 | ❌ 仕訳後に削除 | Phase 1 |
-| 仕訳との相互関連性 | ❌ 紐付けなし | Phase 1 |
-| 見読可能性（表示・印刷） | ❌ 閲覧UIなし | Phase 1 |
+| 証憑の保存 | ✅ Voucher モデルで永続保存 | Phase 1 |
+| 仕訳との相互関連性 | ✅ JournalEntry ↔ Voucher 1:N | Phase 1 |
+| 見読可能性（表示・印刷） | ✅ 仕訳帳・元帳から画像閲覧可 | Phase 1 |
 | AI コンプライアンスチェック | ❌ | Phase 1.5 |
 | 検索機能（日付・金額・取引先） | ❌ | Phase 2 |
 | 訂正削除の防止/履歴 | ❌ | Phase 3 |
-| タイムスタンプ | △ uploaded_at のみ | Phase 1 / 4 |
+| タイムスタンプ | △ uploaded_at 記録済み | Phase 1 / 4 |
 | 入力期限の遵守（最長約2ヶ月7営業日） | △ uploaded_at で検証可能 | Phase 1 |
 | 解像度・階調の確保 | ✅ 原本画像をそのまま保存 | — |
 | ストレージ抽象化 | ✅ local / S3 切替 | v2.8.0 済 |
@@ -251,7 +253,7 @@ AI証憑仕訳の解析時に、電帳法スキャナ保存の要件を満たし
 - `tests/conftest.py` に SQLite in-memory のフィクスチャあり
 - pytest で実行: `docker exec -w /app server-web-1 python -m pytest tests/ -v`
 - GitHub Actions (`.github/workflows/test.yml`) で push/PR 時に自動実行
-- 337テスト: accounting(16), api(27), audit(43), balance_cache(15), csv_import(53), fiscal(26), models(12), monthly_report(8), ofx_import(15), settings(7), tax(45), security_auth(27), security_idor(12), security_input(12), security_csrf(9), security_headers(7), security_ratelimit(3)
+- 371テスト: accounting(16), api(27), audit(43), balance_cache(15), csv_import(53), fiscal(26), models(12), monthly_report(8), ofx_import(15), settings(7), tax(45), security_auth(27), security_idor(12), security_input(12), security_csrf(9), security_headers(7), security_ratelimit(3), voucher(14)
 - E2Eテスト (Playwright/Firefox): `npx playwright test tests/e2e/` — 設定画面の表示・遷移(10), ドラッグ選択(15)。CIでも自動実行
 - 税務集計・プライバシー権限は重点テスト項目
 

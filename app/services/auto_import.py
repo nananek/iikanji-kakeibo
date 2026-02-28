@@ -165,10 +165,13 @@ def _process_file(source, provider, file_info, user_id, mime_type, dry_run, stat
             ensure_ascii=False,
         )
 
+        import hashlib
+        file_hash = hashlib.sha256(image_bytes).hexdigest()
         draft = AIDraft(
             user_id=user_id,
             image_key="",
             image_mime=mime_type,
+            file_hash=file_hash,
             comment=f"自動取込: {source.name}",
             suggestions_json=suggestions_json,
             status="analyzed",

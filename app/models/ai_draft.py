@@ -12,6 +12,7 @@ class AIDraft(db.Model):
     user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
     image_key = db.Column(db.String(255), nullable=False)
     image_mime = db.Column(db.String(50), nullable=False)
+    file_hash = db.Column(db.String(64), nullable=True)  # SHA-256
     comment = db.Column(db.String(500), default="")
     suggestions_json = db.Column(db.Text, nullable=True)
     status = db.Column(

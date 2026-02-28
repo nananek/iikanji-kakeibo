@@ -1,6 +1,7 @@
 """外部 API (Bearer APIキー認証)"""
 
 import functools
+import hashlib
 import json
 from dataclasses import asdict
 from datetime import date as date_type, datetime, timezone
@@ -16,6 +17,8 @@ from app.services.accounting import create_journal_entry
 from app.services.audit import get_submitted_account_ids, is_entry_locked_for_owner
 from app.services.fiscal import check_period_open_for_new, check_entry_modifiable
 from app.services.storage import get_storage_backend, make_storage_key
+from app.services.voucher import create_voucher_from_draft
+from app.models.voucher import Voucher
 
 bp = Blueprint("api", __name__, url_prefix="/api/v1")
 
@@ -140,10 +143,8 @@ def create_journal():
                 "error": f"下書き(id={draft_id})が見つからないか、既に削除済みです。"
             }), 400
         _mark_draft_done(draft, entry.entry_number)
-        image_key = draft.image_key
-        db.session.delete(draft)
+        create_voucher_from_draft(draft, entry.id)
         db.session.commit()
-        get_storage_backend().delete(image_key)
 
     return jsonify({
         "ok": True,
@@ -171,6 +172,13 @@ def _entry_to_dict(entry):
                 "description": line.description or "",
             }
             for line in entry.lines
+        ],
+        "vouchers": [
+            {
+                "id": v.id,
+                "uploaded_at": v.uploaded_at.isoformat() if v.uploaded_at else None,
+            }
+            for v in entry.vouchers
         ],
     }
 
@@ -298,6 +306,7 @@ def ai_analyze():
             "error": "対応していないファイル形式です。JPEG/PNG/WebP/GIF を使用してください。"
         }), 400
 
+    file_hash = hashlib.sha256(image_bytes).hexdigest()
     comment = (request.form.get("comment") or "").strip()[:500]
 
     try:
@@ -314,6 +323,7 @@ def ai_analyze():
         user_id=user_id,
         image_key="",
         image_mime=mime_type,
+        file_hash=file_hash,
         comment=comment or None,
         suggestions_json=suggestions_json,
         status="analyzed",
@@ -432,6 +442,23 @@ def ai_draft_delete(draft_id):
     get_storage_backend().delete(image_key)
 
     return jsonify({"ok": True})
+
+
+@bp.route("/vouchers/<int:voucher_id>/image", methods=["GET"])
+@api_key_required(scope="journals:read")
+def api_voucher_image(voucher_id):
+    """証憑画像取得 API"""
+    from flask import Response
+    voucher = Voucher.query.filter_by(
+        id=voucher_id, user_id=g.api_user_id
+    ).first()
+    if not voucher:
+        return jsonify({"error": "証憑が見つかりません。"}), 404
+    try:
+        image_data = get_storage_backend().get(voucher.image_key)
+    except FileNotFoundError:
+        return jsonify({"error": "画像ファイルが見つかりません。"}), 404
+    return Response(image_data, mimetype=voucher.image_mime)
 
 
 def _send_draft_notification(user_id: int, draft: AIDraft, suggestions: list):

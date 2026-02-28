@@ -6,6 +6,7 @@ from app.models.webauthn import WebAuthnCredential
 from app.models.ai_config import UserAIConfig
 from app.models.audit import AuditGrant, AuditGrantAccount
 from app.models.ai_draft import AIDraft
+from app.models.voucher import Voucher
 from app.models.api_key import APIKey
 from app.models.auto_import import AutoImportSource, ProcessedFile, WebhookConfig
 
@@ -21,6 +22,7 @@ __all__ = [
     "AuditGrant",
     "AuditGrantAccount",
     "AIDraft",
+    "Voucher",
     "APIKey",
     "AutoImportSource",
     "ProcessedFile",
