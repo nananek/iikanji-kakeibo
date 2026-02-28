@@ -27,3 +27,62 @@ jobs:
 
       - name: Run tests
         run: python -m pytest tests/ -v --tb=short
+
+  e2e:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: iikanji
+          POSTGRES_PASSWORD: iikanji
+          POSTGRES_DB: iikanji
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql://iikanji:iikanji@localhost:5432/iikanji
+      SECRET_KEY: ci-test-secret-key
+      STORAGE_BACKEND: local
+      STORAGE_LOCAL_DIR: /tmp/iikanji-test-vouchers
+      RATELIMIT_ENABLED: "false"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+
+      - name: Set up database and start server
+        run: |
+          flask db upgrade
+          flask seed
+          flask run --host=0.0.0.0 &
+          timeout 30 bash -c 'until curl -s http://127.0.0.1:5000/login > /dev/null 2>&1; do sleep 1; done'
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install Playwright
+        run: |
+          npm ci
+          npx playwright install firefox --with-deps
+
+      - name: Run E2E tests
+        run: npx playwright test tests/e2e/

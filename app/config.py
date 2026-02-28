@@ -26,6 +26,9 @@ class Config:
     WEBAUTHN_RP_NAME = os.environ.get("WEBAUTHN_RP_NAME", "いいかんじ™家計簿")
     WEBAUTHN_ORIGIN = os.environ.get("WEBAUTHN_ORIGIN", "http://localhost:5001")
 
+    # レート制限
+    RATELIMIT_ENABLED = os.environ.get("RATELIMIT_ENABLED", "true").lower() != "false"
+
     # 証憑画像ストレージ
     STORAGE_BACKEND = os.environ.get("STORAGE_BACKEND", "local")  # "local" or "s3"
     STORAGE_LOCAL_DIR = os.environ.get("STORAGE_LOCAL_DIR", "/app/data/vouchers")

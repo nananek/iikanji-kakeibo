@@ -5,6 +5,15 @@ title: リリースノート
 
 # リリースノート
 
+## v2.9.0
+
+**Playwright E2E テストの CI 統合**
+
+- **GitHub Actions に E2E ジョブ追加** — PostgreSQL サービスコンテナ + Flask バックグラウンド起動で Playwright (Firefox) E2E テストを CI で自動実行
+- **global-setup の CI 対応** — `process.env.CI` を検出し、CI では Python を直接実行（ローカルは従来通り docker compose）
+- **RATELIMIT_ENABLED 環境変数対応** — `RATELIMIT_ENABLED=false` でレート制限を無効化可能に
+- pytest 337件 + E2E 25件
+
 ## v2.8.0
 
 **証憑画像のオブジェクトストレージ移行**
