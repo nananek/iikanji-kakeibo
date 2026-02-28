@@ -307,6 +307,92 @@ test.describe("AI証憑仕訳 — 仕訳モードからの登録", () => {
   });
 });
 
+test.describe("AI証憑仕訳 — かんたんモードからの登録", () => {
+  test.beforeEach(async ({ page }) => {
+    await login(page);
+  });
+
+  test("かんたんモードで仕訳を登録でき日付が正しく入る", async ({ page }) => {
+    // アップロード → 解析（mock AI）
+    await page.goto(`${BASE_URL}/ai-journal/`);
+    const fileInput = page.locator('input[type="file"]');
+    await fileInput.setInputFiles({
+      name: "test-receipt.jpg",
+      mimeType: "image/jpeg",
+      buffer: createTestJpeg(),
+    });
+    await page.locator("button", { hasText: "AIで解析" }).click();
+    await page.waitForSelector("#suggestionsArea", {
+      state: "visible",
+      timeout: 15000,
+    });
+    await page.locator("a", { hasText: "この仕訳を使う" }).first().click();
+    await page.waitForURL(/\/ai-journal\/review/);
+
+    // かんたんモードの日付を確認
+    const dateInput = page.locator("#simpleMode input[name='date']");
+    await expect(dateInput).toHaveValue("2026-01-15");
+
+    // 「仕訳を登録」をクリック
+    const submitBtn = page
+      .locator("#simpleMode")
+      .locator("button", { hasText: "仕訳を登録" });
+    await submitBtn.click();
+
+    // 仕訳帳にリダイレクト
+    await page.waitForURL(/\/journal\/($|\?)/, { timeout: 10000 });
+
+    // 仕訳帳に日付 2026/01/15 の仕訳が表示されている
+    await expect(page.locator("table")).toContainText("2026/01/15");
+    await expect(page.locator("table")).toContainText("テスト商店");
+  });
+});
+
+test.describe("AI証憑仕訳 — 仕訳モード登録後の日付確認", () => {
+  test.beforeEach(async ({ page }) => {
+    await login(page);
+  });
+
+  test("仕訳モードで登録した仕訳に日付が正しく入る", async ({ page }) => {
+    // アップロード → 解析（mock AI）
+    await page.goto(`${BASE_URL}/ai-journal/`);
+    const fileInput = page.locator('input[type="file"]');
+    await fileInput.setInputFiles({
+      name: "test-receipt.jpg",
+      mimeType: "image/jpeg",
+      buffer: createTestJpeg(),
+    });
+    await page.locator("button", { hasText: "AIで解析" }).click();
+    await page.waitForSelector("#suggestionsArea", {
+      state: "visible",
+      timeout: 15000,
+    });
+    await page.locator("a", { hasText: "この仕訳を使う" }).first().click();
+    await page.waitForURL(/\/ai-journal\/review/);
+
+    // 仕訳モードに切り替え
+    await page.locator("button", { hasText: "仕訳モード" }).click();
+    await page.waitForTimeout(500);
+
+    // 仕訳モードの日付を確認
+    const dateInput = page.locator("#advancedMode input[name='date']");
+    await expect(dateInput).toHaveValue("2026-01-15");
+
+    // 「仕訳を登録」をクリック
+    const submitBtn = page
+      .locator("#advancedMode")
+      .locator("button", { hasText: "仕訳を登録" });
+    await submitBtn.click();
+
+    // 仕訳帳にリダイレクト
+    await page.waitForURL(/\/journal\/($|\?)/, { timeout: 10000 });
+
+    // 仕訳帳に日付 2026/01/15 の仕訳が表示されている
+    await expect(page.locator("table")).toContainText("2026/01/15");
+    await expect(page.locator("table")).toContainText("テスト商店");
+  });
+});
+
 test.describe("AI証憑仕訳 — 下書き保存・やり直し確認", () => {
   test.beforeEach(async ({ page }) => {
     await login(page);

@@ -9,9 +9,13 @@
     <form method="POST">
       {{ form.hidden_tag() }}
 
+      <script>
+        var _closedPeriods = {{ (closed_periods or {})|tojson }};
+        var _restrictedBefore = {{ restricted_before_year|tojson }};
+      </script>
       <div x-data="fiscalPeriodChecker({
-        closedPeriods: {{ (closed_periods or {})|tojson }},
-        restrictedBefore: {{ restricted_before_year|tojson }},
+        closedPeriods: _closedPeriods,
+        restrictedBefore: _restrictedBefore,
         dateValue: '{{ form.date.data or '' }}',
         fiscalPeriod: '{{ form.fiscal_period.data or '' }}'
       })">

@@ -8,17 +8,20 @@
 
 <div class="card shadow-sm mt-4">
   <div class="card-body">
+    <script>
+      var _existingLines = {{ existing_lines | tojson if existing_lines is defined else '[]' }};
+      var _closedPeriods = {{ (closed_periods or {})|tojson }};
+      var _restrictedBefore = {{ restricted_before_year|tojson }};
+    </script>
     <form method="POST" id="journalForm"
-          x-data="journalLines({
-            lines: {{ existing_lines | tojson if existing_lines is defined else '[]' }}
-          })"
+          x-data="journalLines({ lines: _existingLines })"
           @submit="serializeLines()">
       {{ form.hidden_tag() }}
       <input type="hidden" name="lines_json" x-ref="linesJson">
 
       <div x-data="fiscalPeriodChecker({
-        closedPeriods: {{ (closed_periods or {})|tojson }},
-        restrictedBefore: {{ restricted_before_year|tojson }},
+        closedPeriods: _closedPeriods,
+        restrictedBefore: _restrictedBefore,
         dateValue: '{{ form.date.data or '' }}',
         fiscalPeriod: '{{ form.fiscal_period.data if form.fiscal_period.data is not none else '' }}'
       })">

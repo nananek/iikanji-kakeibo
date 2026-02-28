@@ -108,6 +108,10 @@
       </li>
     </ul>
 
+    <script>
+      var _closedPeriods = {{ (closed_periods or {})|tojson }};
+      var _restrictedBefore = {{ restricted_before_year|tojson }};
+    </script>
     <div class="tab-content">
       <!-- かんたんモード -->
       <div class="tab-pane fade {{ 'show active' if active_tab != 'advanced' }}" id="simpleMode" role="tabpanel">
@@ -133,8 +137,8 @@
         }">
         <form method="POST" id="simpleForm"
               x-data="fiscalPeriodChecker({
-                closedPeriods: {{ (closed_periods or {})|tojson }},
-                restrictedBefore: {{ restricted_before_year|tojson }},
+                closedPeriods: _closedPeriods,
+                restrictedBefore: _restrictedBefore,
                 dateValue: '{{ selected.date or '' }}'
               })">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -222,8 +226,8 @@
           <input type="hidden" name="lines_json" x-ref="linesJson">
 
           <div x-data="fiscalPeriodChecker({
-            closedPeriods: {{ (closed_periods or {})|tojson }},
-            restrictedBefore: {{ restricted_before_year|tojson }},
+            closedPeriods: _closedPeriods,
+            restrictedBefore: _restrictedBefore,
             dateValue: '{{ selected.date or '' }}'
           })">
           <div class="row mb-3">

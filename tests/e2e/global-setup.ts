@@ -52,6 +52,14 @@ with app.app_context():
     food = Account.query.filter_by(user_id=u.id, code='5010').first()
     ids = {'cash': cash.id, 'food': food.id}
 
+    # 月次確定データ作成（tojson バグ再現用）
+    from app.models.fiscal import FiscalClose
+    fc = FiscalClose.query.filter_by(user_id=u.id, year=2025).first()
+    if not fc:
+        fc = FiscalClose(user_id=u.id, year=2025, closed_period=12)
+        db.session.add(fc)
+        db.session.commit()
+
     # テスト用 analyzed ドラフト作成（既存があれば削除して再作成）
     AIDraft.query.filter_by(user_id=u.id, status='analyzed').delete()
     db.session.commit()

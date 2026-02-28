@@ -4,13 +4,18 @@
 {% block content %}
 <h2><i class="bi bi-filetype-csv"></i> CSV明細取込</h2>
 
+<script>
+  var _importRows = {{ parsed | tojson }};
+  var _closedPeriods = {{ closed_periods | tojson }};
+  var _restrictedBefore = {{ restricted_before_year | tojson }};
+</script>
 <div x-data="importConfirm({
-  rows: {{ parsed | tojson }},
+  rows: _importRows,
   paymentAccountId: {{ payment_account.id }},
   defaultIncomeId: {{ default_income_id | tojson }},
   defaultExpenseId: {{ default_expense_id | tojson }},
-  closedPeriods: {{ closed_periods | tojson }},
-  restrictedBeforeYear: {{ restricted_before_year | tojson }}
+  closedPeriods: _closedPeriods,
+  restrictedBeforeYear: _restrictedBefore
 })" @drag-select-update="_syncFromCheckboxes()">
 
 {% set import_step_label = "Step 3:" %}

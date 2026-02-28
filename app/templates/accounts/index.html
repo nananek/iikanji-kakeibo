@@ -2,11 +2,12 @@
 {% block title %}勘定科目 - いいかんじ™家計簿{% endblock %}
 
 {% block content %}
+<script>var _accountsByType = {{ accounts_by_type | tojson }};</script>
 <div x-data="accountEditor({
   expenseTypeId: {{ expense_type_id }},
   revenueTypeId: {{ revenue_type_id }},
   defaultTypeId: {{ account_types[0].id }},
-  accountsByType: {{ accounts_by_type | tojson }}
+  accountsByType: _accountsByType
 })">
 
 <div class="d-flex justify-content-between align-items-center mb-4">
