@@ -10,6 +10,36 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 
 /**
+ * 証憑画像をモーダルでプレビュー表示（PWA対応）
+ */
+function openImagePreview(url) {
+  var modal = document.getElementById('imagePreviewModal');
+  if (!modal) {
+    modal = document.createElement('div');
+    modal.id = 'imagePreviewModal';
+    modal.className = 'modal fade';
+    modal.tabIndex = -1;
+    modal.innerHTML =
+      '<div class="modal-dialog modal-lg modal-dialog-centered">' +
+        '<div class="modal-content bg-dark border-0">' +
+          '<div class="modal-header border-0 py-2">' +
+            '<a id="imagePreviewNewTab" href="#" target="_blank" class="btn btn-sm btn-outline-light ms-auto me-2" title="別タブで開く">' +
+              '<i class="bi bi-box-arrow-up-right"></i></a>' +
+            '<button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>' +
+          '</div>' +
+          '<div class="modal-body text-center p-2">' +
+            '<img id="imagePreviewImg" class="img-fluid" style="max-height:85vh;" alt="証憑">' +
+          '</div>' +
+        '</div>' +
+      '</div>';
+    document.body.appendChild(modal);
+  }
+  document.getElementById('imagePreviewImg').src = url;
+  document.getElementById('imagePreviewNewTab').href = url;
+  new bootstrap.Modal(modal).show();
+}
+
+/**
  * 証憑プレビューを描画する共通関数
  * @param {HTMLElement} container - 描画先の要素
  * @param {Array} vouchers - [{id, uploaded_at}, ...] 形式の証憑データ
@@ -26,8 +56,8 @@ function renderVoucherPreview(container, vouchers, baseUrl) {
     '<div class="card-body text-center">';
   vouchers.forEach(function(v) {
     var url = baseUrl + v.id + '/image';
-    html += '<a href="' + url + '" target="_blank">' +
-      '<img src="' + url + '" class="img-fluid rounded" style="max-height:300px;" alt="証憑" loading="lazy">' +
+    html += '<a href="#" onclick="openImagePreview(\'' + url + '\');return false">' +
+      '<img src="' + url + '" class="img-fluid rounded" style="max-height:300px;cursor:pointer;" alt="証憑" loading="lazy">' +
       '</a> ';
   });
   html += '</div></div>';

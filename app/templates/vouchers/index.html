@@ -63,9 +63,9 @@
       </div>
       <div class="card-body">
         <div class="text-center mb-2">
-          <a href="{{ url_for('ai_journal.voucher_image', voucher_id=v.id) }}" target="_blank">
+          <a href="#" onclick="openImagePreview('{{ url_for('ai_journal.voucher_image', voucher_id=v.id) }}');return false">
             <img src="{{ url_for('ai_journal.voucher_image', voucher_id=v.id) }}"
-                 class="img-fluid rounded" style="max-height: 200px;" alt="証憑"
+                 class="img-fluid rounded" style="max-height: 200px; cursor: pointer;" alt="証憑"
                  loading="lazy">
           </a>
         </div>

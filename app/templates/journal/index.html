@@ -81,8 +81,8 @@
             {% elif entry.source == 'ai_receipt' %}
             <span class="badge bg-success">AI</span>
             {% if entry.vouchers %}
-            <a href="{{ url_for('ai_journal.voucher_image', voucher_id=entry.vouchers[0].id) }}"
-               target="_blank" title="証憑画像" class="text-success"><i class="bi bi-image"></i></a>
+            <a href="#" onclick="openImagePreview('{{ url_for('ai_journal.voucher_image', voucher_id=entry.vouchers[0].id) }}');return false"
+               title="証憑画像" class="text-success"><i class="bi bi-image"></i></a>
             {% endif %}
             {% else %}
             <span class="badge bg-secondary">仕訳</span>
