@@ -56,18 +56,18 @@
       })">
 
       {# --- 取引種類タブ --- #}
-      <ul class="nav nav-pills mb-3">
+      <ul class="nav nav-tabs mb-4">
         <li class="nav-item">
           <button type="button" class="nav-link" :class="tab === 'expense' && 'active'"
-                  @click="switchTab('expense')">支出</button>
+                  @click="switchTab('expense')"><i class="bi bi-cart"></i> 支出</button>
         </li>
         <li class="nav-item">
           <button type="button" class="nav-link" :class="tab === 'income' && 'active'"
-                  @click="switchTab('income')">収入</button>
+                  @click="switchTab('income')"><i class="bi bi-cash-coin"></i> 収入</button>
         </li>
         <li class="nav-item">
           <button type="button" class="nav-link" :class="tab === 'transfer' && 'active'"
-                  @click="switchTab('transfer')">資金移動</button>
+                  @click="switchTab('transfer')"><i class="bi bi-arrow-left-right"></i> 資金移動</button>
         </li>
       </ul>
 
