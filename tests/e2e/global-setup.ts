@@ -60,6 +60,25 @@ with app.app_context():
         db.session.add(fc)
         db.session.commit()
 
+    # テスト用仕訳を作成（残高試算表E2Eテスト用）
+    from app.models.journal import JournalEntry, JournalEntryLine
+    from datetime import date
+    if not JournalEntry.query.filter_by(user_id=u.id).first():
+        from app.services.accounting import get_next_entry_number
+        entry = JournalEntry(
+            user_id=u.id, date=date(2026, 1, 15),
+            entry_number=get_next_entry_number(u.id),
+            description='E2Eテスト仕訳', source='journal',
+        )
+        entry.lines = [
+            JournalEntryLine(account_user_id=u.id, account_code=food.code,
+                             debit_amount=1000, credit_amount=0),
+            JournalEntryLine(account_user_id=u.id, account_code=cash.code,
+                             debit_amount=0, credit_amount=1000),
+        ]
+        db.session.add(entry)
+        db.session.commit()
+
     # テスト用 analyzed ドラフト作成（既存があれば削除して再作成）
     AIDraft.query.filter_by(user_id=u.id, status='analyzed').delete()
     db.session.commit()
