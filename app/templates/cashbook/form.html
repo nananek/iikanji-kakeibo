@@ -6,8 +6,43 @@
 
 <div class="card shadow-sm mt-4">
   <div class="card-body">
-    <form method="POST">
+    <form method="POST"
+      x-data="{
+        tab: '{{ form.transaction_type.data or 'expense' }}',
+        paymentCode: '{{ form.payment_account_code.data or '' }}',
+        paymentName: '{{ payment_account_name or '' }}',
+        categoryCode: '{{ form.category_account_code.data or '' }}',
+        categoryName: '{{ category_account_name or '' }}',
+
+        get field1Label() {
+          return this.tab === 'income' ? '入金先' : (this.tab === 'transfer' ? '移動元' : '支払元');
+        },
+        get field2Label() {
+          return this.tab === 'expense' ? '支出先' : (this.tab === 'income' ? '収入源' : '移動先');
+        },
+        get field2Filter() {
+          return this.tab === 'expense' ? 'expense' : (this.tab === 'income' ? 'revenue' : 'payment');
+        },
+        get field2ActiveTab() {
+          return this.tab === 'transfer' ? 'bs' : 'pl';
+        },
+        get field2ExcludeCode() {
+          return this.tab === 'transfer' ? this.paymentCode : null;
+        },
+        get sameAccountWarning() {
+          return this.tab === 'transfer' && this.paymentCode && this.categoryCode && this.paymentCode === this.categoryCode;
+        },
+
+        switchTab(newTab) {
+          this.tab = newTab;
+          this.categoryCode = '';
+          this.categoryName = '';
+        }
+      }">
       {{ form.hidden_tag() }}
+      <input type="hidden" name="transaction_type" :value="tab">
+      <input type="hidden" name="payment_account_code" :value="paymentCode">
+      <input type="hidden" name="category_account_code" :value="categoryCode">
 
       <script>
         var _closedPeriods = {{ (closed_periods or {})|tojson }};
@@ -19,6 +54,23 @@
         dateValue: '{{ form.date.data or '' }}',
         fiscalPeriod: '{{ form.fiscal_period.data or '' }}'
       })">
+
+      {# --- 取引種類タブ --- #}
+      <ul class="nav nav-pills mb-3">
+        <li class="nav-item">
+          <button type="button" class="nav-link" :class="tab === 'expense' && 'active'"
+                  @click="switchTab('expense')">支出</button>
+        </li>
+        <li class="nav-item">
+          <button type="button" class="nav-link" :class="tab === 'income' && 'active'"
+                  @click="switchTab('income')">収入</button>
+        </li>
+        <li class="nav-item">
+          <button type="button" class="nav-link" :class="tab === 'transfer' && 'active'"
+                  @click="switchTab('transfer')">資金移動</button>
+        </li>
+      </ul>
+
       <div class="row mb-3">
         <div class="col-md-3">
           {{ form.date.label(class="form-label") }}
@@ -31,30 +83,24 @@
           {{ form.fiscal_period.label(class="form-label") }}
           {{ form.fiscal_period(class="form-select", **{"x-model": "fiscalPeriod", "@change": "onFiscalPeriodChange()"}) }}
         </div>
-        <div class="col-md-3">
-          {{ form.transaction_type.label(class="form-label") }}
-          {{ form.transaction_type(class="form-select", id="transaction_type") }}
-        </div>
       </div>
 
       <div class="row mb-3">
-        <div class="col-md-4" x-data="{ acctCode: '{{ form.payment_account_code.data or '' }}', acctName: '{{ payment_account_name or '' }}' }">
-          <label class="form-label">支払元 / 入金先</label>
-          <input type="hidden" name="payment_account_code" :value="acctCode">
+        <div class="col-md-4">
+          <label class="form-label" x-text="field1Label"></label>
           <button type="button" class="form-control text-start"
-                  @click="openAccountSelector((code, name) => { acctCode = code; acctName = name }, {filter: 'payment', activeTab: 'bs', currentCode: acctCode})">
-            <span :class="acctName ? '' : 'text-muted'" x-text="acctName || '-- 選択 --'"></span>
+                  @click="openAccountSelector((code, name) => { paymentCode = code; paymentName = name }, {filter: 'payment', activeTab: 'bs', currentCode: paymentCode})">
+            <span :class="paymentName ? '' : 'text-muted'" x-text="paymentName || '-- 選択 --'"></span>
           </button>
           {% for error in form.payment_account_code.errors %}
           <div class="invalid-feedback d-block">{{ error }}</div>
           {% endfor %}
         </div>
-        <div class="col-md-4" x-data="{ acctCode: '{{ form.category_account_code.data or '' }}', acctName: '{{ category_account_name or '' }}' }">
-          <label class="form-label">費目</label>
-          <input type="hidden" name="category_account_code" :value="acctCode">
+        <div class="col-md-4">
+          <label class="form-label" x-text="field2Label"></label>
           <button type="button" class="form-control text-start"
-                  @click="openAccountSelector((code, name) => { acctCode = code; acctName = name }, {filter: 'category', activeTab: 'pl', currentCode: acctCode})">
-            <span :class="acctName ? '' : 'text-muted'" x-text="acctName || '-- 選択 --'"></span>
+                  @click="openAccountSelector((code, name) => { categoryCode = code; categoryName = name }, {filter: field2Filter, activeTab: field2ActiveTab, excludeCode: field2ExcludeCode, currentCode: categoryCode})">
+            <span :class="categoryName ? '' : 'text-muted'" x-text="categoryName || '-- 選択 --'"></span>
           </button>
           {% for error in form.category_account_code.errors %}
           <div class="invalid-feedback d-block">{{ error }}</div>
@@ -80,19 +126,22 @@
         {% endfor %}
       </div>
 
+      <div x-show="sameAccountWarning" x-cloak class="alert alert-warning mt-3">
+        <i class="bi bi-exclamation-triangle"></i> 移動元と移動先は異なる科目を選択してください
+      </div>
+
       <div x-show="isBlocked" x-cloak class="alert alert-warning mt-3">
         <i class="bi bi-lock-fill"></i> <span x-text="warningMessage"></span>
       </div>
 
       <div class="d-flex gap-2">
-        <button type="submit" class="btn btn-primary" :disabled="isBlocked">{{ '更新' if is_edit else '登録' }}</button>
+        <button type="submit" class="btn btn-primary" :disabled="isBlocked || sameAccountWarning">{{ '更新' if is_edit else '登録' }}</button>
         <a href="{{ url_for('cashbook.index') }}" class="btn btn-outline-secondary">キャンセル</a>
       </div>
-      </div><!-- /x-data fiscalPeriodChecker -->
+      </div>{# /x-data fiscalPeriodChecker #}
     </form>
   </div>
 </div>
 
 {% include "_partials/account_selector.html" %}
 {% endblock %}
-

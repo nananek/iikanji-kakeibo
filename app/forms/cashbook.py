@@ -20,7 +20,7 @@ class CashbookForm(FlaskForm):
     ], default="")
     transaction_type = SelectField(
         "種類",
-        choices=[("expense", "支出"), ("income", "収入")],
+        choices=[("expense", "支出"), ("income", "収入"), ("transfer", "資金移動")],
         validators=[DataRequired()],
     )
     payment_account_code = StringField(
@@ -30,7 +30,7 @@ class CashbookForm(FlaskForm):
         "費目", validators=[DataRequired()]
     )
     amount = IntegerField(
-        "金額", validators=[DataRequired(), NumberRange(min=1, message="1円以上を入力してください")]
+        "金額", validators=[DataRequired(message="金額を入力してください。")]
     )
     description = StringField("摘要", validators=[DataRequired()])
     submit = SubmitField("登録")

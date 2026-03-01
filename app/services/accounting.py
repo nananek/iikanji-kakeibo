@@ -38,42 +38,30 @@ def create_cashbook_entry(user_id, date, transaction_type, payment_account_code,
     db.session.add(entry)
     db.session.flush()
 
+    abs_amount = abs(amount)
     if transaction_type == "expense":
-        # 支出: 借方=費用科目 / 貸方=資産（or負債）科目
-        lines = [
-            JournalEntryLine(
-                journal_entry_id=entry.id,
-                account_user_id=user_id,
-                account_code=category_account_code,
-                debit_amount=amount,
-                credit_amount=0,
-            ),
-            JournalEntryLine(
-                journal_entry_id=entry.id,
-                account_user_id=user_id,
-                account_code=payment_account_code,
-                debit_amount=0,
-                credit_amount=amount,
-            ),
-        ]
+        debit_code, credit_code = category_account_code, payment_account_code
     else:
-        # 収入: 借方=資産科目 / 貸方=収益科目
-        lines = [
-            JournalEntryLine(
-                journal_entry_id=entry.id,
-                account_user_id=user_id,
-                account_code=payment_account_code,
-                debit_amount=amount,
-                credit_amount=0,
-            ),
-            JournalEntryLine(
-                journal_entry_id=entry.id,
-                account_user_id=user_id,
-                account_code=category_account_code,
-                debit_amount=0,
-                credit_amount=amount,
-            ),
-        ]
+        debit_code, credit_code = payment_account_code, category_account_code
+    if amount < 0:
+        debit_code, credit_code = credit_code, debit_code
+
+    lines = [
+        JournalEntryLine(
+            journal_entry_id=entry.id,
+            account_user_id=user_id,
+            account_code=debit_code,
+            debit_amount=abs_amount,
+            credit_amount=0,
+        ),
+        JournalEntryLine(
+            journal_entry_id=entry.id,
+            account_user_id=user_id,
+            account_code=credit_code,
+            debit_amount=0,
+            credit_amount=abs_amount,
+        ),
+    ]
 
     db.session.add_all(lines)
     db.session.commit()
@@ -133,6 +121,11 @@ def create_transfer_entry(user_id, date, from_account_code, to_account_code,
         amount: 金額（正の整数）
         fiscal_period: 計上期間（None=日付の月で自動判定）
     """
+    abs_amount = abs(amount)
+    debit_code, credit_code = to_account_code, from_account_code
+    if amount < 0:
+        debit_code, credit_code = credit_code, debit_code
+
     entry = JournalEntry(
         user_id=user_id,
         date=date,
@@ -149,16 +142,53 @@ def create_transfer_entry(user_id, date, from_account_code, to_account_code,
         JournalEntryLine(
             journal_entry_id=entry.id,
             account_user_id=user_id,
-            account_code=to_account_code,
-            debit_amount=amount,
+            account_code=debit_code,
+            debit_amount=abs_amount,
             credit_amount=0,
         ),
         JournalEntryLine(
             journal_entry_id=entry.id,
             account_user_id=user_id,
-            account_code=from_account_code,
+            account_code=credit_code,
             debit_amount=0,
-            credit_amount=amount,
+            credit_amount=abs_amount,
+        ),
+    ]
+    db.session.add_all(lines)
+    db.session.commit()
+    return entry
+
+
+def update_transfer_entry(entry, date, from_account_code, to_account_code,
+                          amount, description):
+    """口座間振替の仕訳を更新する"""
+    entry.date = date
+    entry.description = description
+
+    for line in entry.lines:
+        db.session.delete(line)
+    db.session.flush()
+
+    user_id = entry.user_id
+    abs_amount = abs(amount)
+    debit_code, credit_code = to_account_code, from_account_code
+    if amount < 0:
+        debit_code, credit_code = credit_code, debit_code
+
+    lines = [
+        JournalEntryLine(
+            journal_entry_id=entry.id,
+            account_user_id=user_id,
+            account_code=debit_code,
+            debit_amount=abs_amount,
+            credit_amount=0,
+        ),
+        JournalEntryLine(
+            journal_entry_id=entry.id,
+            account_user_id=user_id,
+            account_code=credit_code,
+            debit_amount=0,
+            credit_amount=abs_amount,
         ),
     ]
     db.session.add_all(lines)
@@ -178,41 +208,31 @@ def update_cashbook_entry(entry, date, transaction_type, payment_account_code,
     db.session.flush()
 
     user_id = entry.user_id
+    abs_amount = abs(amount)
 
     if transaction_type == "expense":
-        lines = [
-            JournalEntryLine(
-                journal_entry_id=entry.id,
-                account_user_id=user_id,
-                account_code=category_account_code,
-                debit_amount=amount,
-                credit_amount=0,
-            ),
-            JournalEntryLine(
-                journal_entry_id=entry.id,
-                account_user_id=user_id,
-                account_code=payment_account_code,
-                debit_amount=0,
-                credit_amount=amount,
-            ),
-        ]
+        debit_code, credit_code = category_account_code, payment_account_code
     else:
-        lines = [
-            JournalEntryLine(
-                journal_entry_id=entry.id,
-                account_user_id=user_id,
-                account_code=payment_account_code,
-                debit_amount=amount,
-                credit_amount=0,
-            ),
-            JournalEntryLine(
-                journal_entry_id=entry.id,
-                account_user_id=user_id,
-                account_code=category_account_code,
-                debit_amount=0,
-                credit_amount=amount,
-            ),
-        ]
+        debit_code, credit_code = payment_account_code, category_account_code
+    if amount < 0:
+        debit_code, credit_code = credit_code, debit_code
+
+    lines = [
+        JournalEntryLine(
+            journal_entry_id=entry.id,
+            account_user_id=user_id,
+            account_code=debit_code,
+            debit_amount=abs_amount,
+            credit_amount=0,
+        ),
+        JournalEntryLine(
+            journal_entry_id=entry.id,
+            account_user_id=user_id,
+            account_code=credit_code,
+            debit_amount=0,
+            credit_amount=abs_amount,
+        ),
+    ]
 
     db.session.add_all(lines)
     db.session.commit()

@@ -392,6 +392,8 @@ document.addEventListener('alpine:init', function() {
       all: ['asset', 'liability', 'equity', 'expense', 'revenue'],
       payment: ['asset', 'liability'],
       category: ['expense', 'revenue'],
+      expense: ['expense'],
+      revenue: ['revenue'],
       category_transfer: ['asset', 'liability', 'expense', 'revenue'],
     };
 

@@ -10,6 +10,7 @@ from app.services.accounting import (
     create_transfer_entry,
     get_next_entry_number,
     update_cashbook_entry,
+    update_transfer_entry,
 )
 
 
@@ -182,6 +183,55 @@ class TestCreateCashbookEntry:
         assert credits[0].account_code == accounts["4010"].code
 
 
+class TestNegativeAmount:
+    def test_expense_negative_reverses(self, db, user, accounts):
+        """マイナス支出 → 借方=資産, 貸方=費用（返金パターン）"""
+        entry = create_cashbook_entry(
+            user_id=user.id, date=date(2026, 3, 1),
+            transaction_type="expense",
+            payment_account_code=accounts["1010"].code,
+            category_account_code=accounts["5010"].code,
+            amount=-500, description="返金",
+        )
+        assert entry.is_balanced
+        assert entry.total_debit == 500
+        debits = [l for l in entry.lines if l.debit_amount > 0]
+        credits = [l for l in entry.lines if l.credit_amount > 0]
+        assert debits[0].account_code == accounts["1010"].code  # 資産が増
+        assert credits[0].account_code == accounts["5010"].code  # 費用が減
+
+    def test_income_negative_reverses(self, db, user, accounts):
+        """マイナス収入 → 借方=収益, 貸方=資産"""
+        entry = create_cashbook_entry(
+            user_id=user.id, date=date(2026, 3, 1),
+            transaction_type="income",
+            payment_account_code=accounts["1020"].code,
+            category_account_code=accounts["4010"].code,
+            amount=-1000, description="返金",
+        )
+        assert entry.is_balanced
+        assert entry.total_debit == 1000
+        debits = [l for l in entry.lines if l.debit_amount > 0]
+        credits = [l for l in entry.lines if l.credit_amount > 0]
+        assert debits[0].account_code == accounts["4010"].code  # 収益が減
+        assert credits[0].account_code == accounts["1020"].code  # 資産が減
+
+    def test_transfer_negative_reverses(self, db, user, accounts):
+        """マイナス振替 → from/to が反転"""
+        entry = create_transfer_entry(
+            user_id=user.id, date=date(2026, 3, 1),
+            from_account_code=accounts["1020"].code,
+            to_account_code=accounts["1010"].code,
+            amount=-5000, description="逆振替",
+        )
+        assert entry.is_balanced
+        assert entry.total_debit == 5000
+        debits = [l for l in entry.lines if l.debit_amount > 0]
+        credits = [l for l in entry.lines if l.credit_amount > 0]
+        assert debits[0].account_code == accounts["1020"].code
+        assert credits[0].account_code == accounts["1010"].code
+
+
 class TestCreateTransferEntry:
     def test_transfer(self, db, user, accounts):
         entry = create_transfer_entry(
@@ -238,3 +288,42 @@ class TestUpdateCashbookEntry:
         )
         debits = [l for l in updated.lines if l.debit_amount > 0]
         assert debits[0].account_code == accounts["5020"].code
+
+
+class TestUpdateTransferEntry:
+    def test_update_amount(self, db, user, accounts):
+        entry = create_transfer_entry(
+            user_id=user.id, date=date(2026, 2, 15),
+            from_account_code=accounts["1020"].code,
+            to_account_code=accounts["1010"].code,
+            amount=50000, description="ATM引出",
+        )
+        updated = update_transfer_entry(
+            entry, date=date(2026, 2, 16),
+            from_account_code=accounts["1020"].code,
+            to_account_code=accounts["1010"].code,
+            amount=30000, description="ATM引出（変更）",
+        )
+        assert updated.is_balanced
+        assert updated.total_debit == 30000
+        assert updated.description == "ATM引出（変更）"
+        assert updated.date == date(2026, 2, 16)
+
+    def test_update_accounts(self, db, user, accounts):
+        entry = create_transfer_entry(
+            user_id=user.id, date=date(2026, 2, 15),
+            from_account_code=accounts["1020"].code,
+            to_account_code=accounts["1010"].code,
+            amount=10000, description="振替",
+        )
+        updated = update_transfer_entry(
+            entry, date=date(2026, 2, 15),
+            from_account_code=accounts["1010"].code,
+            to_account_code=accounts["1020"].code,
+            amount=10000, description="振替（逆方向）",
+        )
+        assert updated.is_balanced
+        debits = [l for l in updated.lines if l.debit_amount > 0]
+        credits = [l for l in updated.lines if l.credit_amount > 0]
+        assert debits[0].account_code == accounts["1020"].code
+        assert credits[0].account_code == accounts["1010"].code
