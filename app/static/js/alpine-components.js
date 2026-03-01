@@ -629,6 +629,16 @@ document.addEventListener('alpine:init', function() {
         }, { filter: 'category_transfer', excludeCode: paymentAccountCode, activeTab: 'pl', currentCode: row.category_code });
       },
 
+      toggleAllReconcile: function(checked) {
+        for (var i = 0; i < this.reconcileRows.length; i++) {
+          var row = this.reconcileRows[i];
+          // matched や候補選択済みは操作不可
+          if (row.status === 'matched') continue;
+          if (row.status === 'multiple' && row.selectedMatchIndex >= 0) continue;
+          row.enabled = checked;
+        }
+      },
+
       serializeReconcileRows: function() {
         var result = [];
         for (var i = 0; i < this.reconcileRows.length; i++) {
