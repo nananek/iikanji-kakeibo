@@ -41,10 +41,8 @@ def csv_column_detect_response():
     return {
         "date_col": 0,
         "desc_col": 1,
-        "amount_mode": "separate",
         "deposit_col": 2,
         "withdrawal_col": 3,
-        "amount_col": None,
         "date_format": "%Y/%m/%d",
     }
 

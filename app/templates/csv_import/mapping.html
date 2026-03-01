@@ -47,53 +47,26 @@
         </div>
       </div>
 
-      <div class="mb-4">
-        <label class="form-label"><strong>金額の列</strong></label>
-        <div class="form-check mb-2">
-          <input class="form-check-input" type="radio" name="amount_mode" id="modeSeparate"
-                 value="separate"
-                 {% if not saved_mapping or saved_mapping.amount_mode == 'separate' %}checked{% endif %}
-                 onchange="toggleAmountMode()">
-          <label class="form-check-label" for="modeSeparate">入金と出金が別の列</label>
+      <div class="row mb-4">
+        <div class="col-md-4">
+          <label class="form-label"><strong>入金（預入・収入）の列</strong></label>
+          <select class="form-select" name="deposit_col" id="depositCol">
+            <option value="">-- なし --</option>
+            {% for i in col_indices %}
+            <option value="{{ i }}" {% if saved_mapping and saved_mapping.deposit_col == i %}selected{% endif %}>{{ headers[i] }}（{{ i + 1 }}列目）</option>
+            {% endfor %}
+          </select>
+          <div class="form-text">該当列がなければ「なし」のままでOK</div>
         </div>
-        <div id="separateCols" class="row ms-4 mb-3 {% if saved_mapping and saved_mapping.amount_mode == 'single' %}d-none{% endif %}">
-          <div class="col-md-4">
-            <label class="form-label">入金（預入・収入）の列</label>
-            <select class="form-select" name="deposit_col" id="depositCol">
-              <option value="">-- なし --</option>
-              {% for i in col_indices %}
-              <option value="{{ i }}" {% if saved_mapping and saved_mapping.deposit_col == i %}selected{% endif %}>{{ headers[i] }}（{{ i + 1 }}列目）</option>
-              {% endfor %}
-            </select>
-          </div>
-          <div class="col-md-4">
-            <label class="form-label">出金（引出・支払）の列</label>
-            <select class="form-select" name="withdrawal_col" id="withdrawalCol">
-              <option value="">-- なし --</option>
-              {% for i in col_indices %}
-              <option value="{{ i }}" {% if saved_mapping and saved_mapping.withdrawal_col == i %}selected{% endif %}>{{ headers[i] }}（{{ i + 1 }}列目）</option>
-              {% endfor %}
-            </select>
-          </div>
-        </div>
-
-        <div class="form-check mb-2">
-          <input class="form-check-input" type="radio" name="amount_mode" id="modeSingle"
-                 value="single"
-                 {% if saved_mapping and saved_mapping.amount_mode == 'single' %}checked{% endif %}
-                 onchange="toggleAmountMode()">
-          <label class="form-check-label" for="modeSingle">入出金が1列（正=入金、負=出金）</label>
-        </div>
-        <div id="singleCol" class="row ms-4 mb-3 {% if not saved_mapping or saved_mapping.amount_mode != 'single' %}d-none{% endif %}">
-          <div class="col-md-4">
-            <label class="form-label">金額の列</label>
-            <select class="form-select" name="amount_col" id="amountCol">
-              <option value="">-- 選択 --</option>
-              {% for i in col_indices %}
-              <option value="{{ i }}" {% if saved_mapping and saved_mapping.amount_col == i %}selected{% endif %}>{{ headers[i] }}（{{ i + 1 }}列目）</option>
-              {% endfor %}
-            </select>
-          </div>
+        <div class="col-md-4">
+          <label class="form-label"><strong>出金（引出・支払）の列</strong></label>
+          <select class="form-select" name="withdrawal_col" id="withdrawalCol">
+            <option value="">-- なし --</option>
+            {% for i in col_indices %}
+            <option value="{{ i }}" {% if saved_mapping and saved_mapping.withdrawal_col == i %}selected{% endif %}>{{ headers[i] }}（{{ i + 1 }}列目）</option>
+            {% endfor %}
+          </select>
+          <div class="form-text">クレカ利用額など、支出が増える列</div>
         </div>
       </div>
 
@@ -135,19 +108,12 @@
 
 {% block scripts %}
 <script>
-function toggleAmountMode() {
-  const isSeparate = document.getElementById('modeSeparate').checked;
-  document.getElementById('separateCols').classList.toggle('d-none', !isSeparate);
-  document.getElementById('singleCol').classList.toggle('d-none', isSeparate);
-}
-
 // 列選択時にプレビューテーブルの該当列をハイライト
-document.querySelectorAll('#dateCol, #descCol, #depositCol, #withdrawalCol, #amountCol').forEach(sel => {
+document.querySelectorAll('#dateCol, #descCol, #depositCol, #withdrawalCol').forEach(sel => {
   sel.addEventListener('change', highlightColumns);
 });
 
 function highlightColumns() {
-  // リセット
   document.querySelectorAll('#previewTable th, #previewTable td').forEach(el => {
     el.classList.remove('table-primary', 'table-success', 'table-danger', 'table-warning');
   });
@@ -157,7 +123,6 @@ function highlightColumns() {
     { id: 'descCol', cls: 'table-warning' },
     { id: 'depositCol', cls: 'table-success' },
     { id: 'withdrawalCol', cls: 'table-danger' },
-    { id: 'amountCol', cls: 'table-success' },
   ];
 
   mappings.forEach(({ id, cls }) => {
@@ -173,10 +138,6 @@ function highlightColumns() {
   });
 }
 
-// ページ読込時に保存済み/AI検出値を反映
-document.addEventListener('DOMContentLoaded', function() {
-  toggleAmountMode();
-  highlightColumns();
-});
+document.addEventListener('DOMContentLoaded', highlightColumns);
 </script>
 {% endblock %}

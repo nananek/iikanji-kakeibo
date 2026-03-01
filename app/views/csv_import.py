@@ -132,24 +132,15 @@ def mapping():
         date_col = request.form.get("date_col", type=int)
         desc_col = request.form.get("desc_col", type=int)
         date_format = request.form.get("date_format", "")
-        amount_mode = request.form.get("amount_mode", "separate")
+        deposit_col = request.form.get("deposit_col", type=int)
+        withdrawal_col = request.form.get("withdrawal_col", type=int)
 
         mapping_data = {
             "date_col": date_col,
             "desc_col": desc_col,
+            "deposit_col": deposit_col,
+            "withdrawal_col": withdrawal_col,
         }
-
-        if amount_mode == "single":
-            amount_col = request.form.get("amount_col", type=int)
-            mapping_data["amount_col"] = amount_col
-            mapping_data["deposit_col"] = None
-            mapping_data["withdrawal_col"] = None
-        else:
-            deposit_col = request.form.get("deposit_col", type=int)
-            withdrawal_col = request.form.get("withdrawal_col", type=int)
-            mapping_data["deposit_col"] = deposit_col
-            mapping_data["withdrawal_col"] = withdrawal_col
-            mapping_data["amount_col"] = None
 
         if date_col is None or desc_col is None:
             flash("日付列と摘要列は必須です。", "danger")
@@ -184,8 +175,7 @@ def mapping():
 
         # プロファイル保存
         save_column_profile(
-            user_id, payment_account_code, mapping_data,
-            date_format, amount_mode,
+            user_id, payment_account_code, mapping_data, date_format,
         )
 
         # パース結果を一時ファイルに保存してconfirmへ

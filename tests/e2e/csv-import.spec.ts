@@ -134,7 +134,6 @@ test.describe("CSV明細取込 — フルフロー", () => {
     // ドロップダウンがAI検出結果で自動選択されている
     await expect(page.locator('select[name="date_col"]')).toHaveValue("0");
     await expect(page.locator('select[name="desc_col"]')).toHaveValue("1");
-    await expect(page.locator("#modeSeparate")).toBeChecked();
     await expect(page.locator('select[name="deposit_col"]')).toHaveValue("2");
     await expect(page.locator('select[name="withdrawal_col"]')).toHaveValue("3");
 

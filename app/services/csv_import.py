@@ -64,9 +64,10 @@ def parse_csv_preview(raw_bytes, max_rows=20):
 
 
 def parse_amount(value):
-    """金額文字列をパースして整数を返す
+    """金額文字列をパースして整数を返す（符号保持）
 
     対応形式: "1,234", "¥1,234", "￥1,234", "-500", "1234円", 空文字→0
+    マイナス値はそのまま返す（呼び出し側で反転処理を行う）
     """
     if not value or not value.strip():
         return 0
@@ -77,7 +78,7 @@ def parse_amount(value):
     if not s or s == "-":
         return 0
     try:
-        return abs(int(float(s)))
+        return int(float(s))
     except ValueError:
         return 0
 
@@ -109,7 +110,6 @@ def parse_csv_full(raw_bytes, mapping, date_format_str):
             "desc_col": int,
             "deposit_col": int or None,   # 入金列
             "withdrawal_col": int or None, # 出金列
-            "amount_col": int or None,     # 入出金が1列の場合
         }
         date_format_str: strftime形式の日付フォーマット
 
@@ -118,10 +118,14 @@ def parse_csv_full(raw_bytes, mapping, date_format_str):
             "row_num": int,
             "date": date or None,
             "description": str,
-            "deposit": int,     # 入金額
-            "withdrawal": int,  # 出金額
+            "deposit": int,     # 入金額（>=0）
+            "withdrawal": int,  # 出金額（>=0）
             "raw_row": list[str],
         }
+
+    Notes:
+        マイナス値は自動的に反転して逆側に振り分ける。
+        例: 出金列に -500 → 入金 500 として扱う（クレカのキャッシュバック等）
     """
     encoding = detect_encoding(raw_bytes)
     text = raw_bytes.decode(encoding)
@@ -141,7 +145,6 @@ def parse_csv_full(raw_bytes, mapping, date_format_str):
     desc_col = mapping["desc_col"]
     deposit_col = mapping.get("deposit_col")
     withdrawal_col = mapping.get("withdrawal_col")
-    amount_col = mapping.get("amount_col")
 
     for i, row in enumerate(data_rows):
         if not any(cell.strip() for cell in row):
@@ -158,24 +161,19 @@ def parse_csv_full(raw_bytes, mapping, date_format_str):
         deposit = 0
         withdrawal = 0
 
-        if amount_col is not None:
-            # 入出金が1列: 正=入金, 負=出金
-            raw_val = safe_get(amount_col)
-            cleaned = raw_val.replace(",", "").replace("¥", "").replace("￥", "").replace("円", "").strip()
-            if cleaned and cleaned != "-":
-                try:
-                    num = int(float(cleaned))
-                    if num >= 0:
-                        deposit = num
-                    else:
-                        withdrawal = abs(num)
-                except ValueError:
-                    pass
-        else:
-            if deposit_col is not None:
-                deposit = parse_amount(safe_get(deposit_col))
-            if withdrawal_col is not None:
-                withdrawal = parse_amount(safe_get(withdrawal_col))
+        if deposit_col is not None:
+            deposit = parse_amount(safe_get(deposit_col))
+        if withdrawal_col is not None:
+            withdrawal = parse_amount(safe_get(withdrawal_col))
+
+        # マイナス値は反転して逆側に振り分ける
+        # 例: 出金列に -500（クレカのキャッシュバック）→ 入金 500
+        if deposit < 0:
+            withdrawal += abs(deposit)
+            deposit = 0
+        if withdrawal < 0:
+            deposit += abs(withdrawal)
+            withdrawal = 0
 
         if parsed_date is None and deposit == 0 and withdrawal == 0:
             continue
@@ -197,8 +195,7 @@ def parse_csv_full(raw_bytes, mapping, date_format_str):
 logger = logging.getLogger(__name__)
 
 
-def save_column_profile(user_id, account_code, mapping_data, date_format,
-                        amount_mode):
+def save_column_profile(user_id, account_code, mapping_data, date_format):
     """CSV列マッピングプロファイルを保存/更新する"""
     from app.extensions import db
     from app.models.csv_column_profile import CsvColumnProfile
@@ -212,9 +209,9 @@ def save_column_profile(user_id, account_code, mapping_data, date_format,
         "desc_col": mapping_data["desc_col"],
         "deposit_col": mapping_data.get("deposit_col"),
         "withdrawal_col": mapping_data.get("withdrawal_col"),
-        "amount_col": mapping_data.get("amount_col"),
+        "amount_col": None,
         "date_format": date_format,
-        "amount_mode": amount_mode,
+        "amount_mode": "separate",
     }
 
     if profile:
@@ -261,18 +258,19 @@ CSV_COLUMN_DETECT_PROMPT = """あなたは日本の家計簿アプリのアシ�
 {{
   "date_col": 日付列のインデックス（0始まり）,
   "desc_col": 摘要・説明列のインデックス（0始まり）,
-  "amount_mode": "separate" または "single",
-  "deposit_col": 入金列のインデックス（amount_mode が "separate" の場合、なければ null）,
-  "withdrawal_col": 出金列のインデックス（amount_mode が "separate" の場合、なければ null）,
-  "amount_col": 金額列のインデックス（amount_mode が "single" の場合、なければ null）,
+  "deposit_col": 入金（預入・収入）列のインデックス（0始まり、なければ null）,
+  "withdrawal_col": 出金（引出・支払）列のインデックス（0始まり、なければ null）,
   "date_format": 日付のstrftime形式（例: "%Y/%m/%d", "%Y-%m-%d"）
 }}
 
 注意:
 - インデックスは0始まりの整数です
 - 日本の銀行・クレカCSVでよくあるパターンを考慮してください
-- 入金・出金が別列の場合は amount_mode を "separate" に
-- 正負の符号で入出金を区別する1列の場合は amount_mode を "single" に
+- 入金と出金が別々の列にある場合: それぞれの列を指定
+- 金額が1つの列にまとまっている場合: 口座の種類に応じて判断
+  - 銀行口座: 入金=預入、出金=引出
+  - クレジットカード: 利用額=出金（withdrawal_col）、キャッシュバック等=入金（deposit_col）
+  - 入出金が1列なら、その列を withdrawal_col に指定し deposit_col は null
 - 日付形式は実際のデータに合わせてください"""
 
 
@@ -331,39 +329,26 @@ def detect_columns_by_ai(user_id, headers, sample_rows):
         if not (0 <= date_col < num_cols) or not (0 <= desc_col < num_cols):
             return None
 
-        amount_mode = result.get("amount_mode", "separate")
         date_format = result.get("date_format", "%Y/%m/%d")
 
         mapping = {
             "date_col": date_col,
             "desc_col": desc_col,
-            "amount_mode": amount_mode,
             "date_format": date_format,
+            "deposit_col": None,
+            "withdrawal_col": None,
         }
 
-        if amount_mode == "single":
-            amount_col = result.get("amount_col")
-            if amount_col is not None:
-                amount_col = int(amount_col)
-                if 0 <= amount_col < num_cols:
-                    mapping["amount_col"] = amount_col
-            mapping.setdefault("amount_col", None)
-            mapping["deposit_col"] = None
-            mapping["withdrawal_col"] = None
-        else:
-            deposit_col = result.get("deposit_col")
-            withdrawal_col = result.get("withdrawal_col")
-            mapping["deposit_col"] = None
-            mapping["withdrawal_col"] = None
-            if deposit_col is not None:
-                deposit_col = int(deposit_col)
-                if 0 <= deposit_col < num_cols:
-                    mapping["deposit_col"] = deposit_col
-            if withdrawal_col is not None:
-                withdrawal_col = int(withdrawal_col)
-                if 0 <= withdrawal_col < num_cols:
-                    mapping["withdrawal_col"] = withdrawal_col
-            mapping["amount_col"] = None
+        deposit_col = result.get("deposit_col")
+        withdrawal_col = result.get("withdrawal_col")
+        if deposit_col is not None:
+            deposit_col = int(deposit_col)
+            if 0 <= deposit_col < num_cols:
+                mapping["deposit_col"] = deposit_col
+        if withdrawal_col is not None:
+            withdrawal_col = int(withdrawal_col)
+            if 0 <= withdrawal_col < num_cols:
+                mapping["withdrawal_col"] = withdrawal_col
 
         return mapping
     except (KeyError, TypeError, ValueError):
