@@ -194,7 +194,7 @@
 
           <hr>
           <div class="d-flex gap-2">
-            <button type="submit" class="btn btn-primary" :disabled="isBlocked">
+            <button type="submit" class="btn btn-primary" :disabled="isBlocked || !categoryCode || !paymentCode">
               <i class="bi bi-check-lg"></i> 仕訳を登録
             </button>
             {% if draft_id %}
@@ -247,7 +247,6 @@
           <div x-show="isBlocked" x-cloak class="alert alert-warning mt-3">
             <i class="bi bi-lock-fill"></i> <span x-text="warningMessage"></span>
           </div>
-          </div><!-- /x-data fiscalPeriodChecker -->
 
           <h5 class="mt-4">仕訳明細</h5>
           <div class="table-responsive">
@@ -314,7 +313,7 @@
 
           <hr>
           <div class="d-flex gap-2">
-            <button type="submit" class="btn btn-primary">
+            <button type="submit" class="btn btn-primary" :disabled="isBlocked || isUnbalanced">
               <i class="bi bi-check-lg"></i> 仕訳を登録
             </button>
             {% if draft_id %}
@@ -331,6 +330,7 @@
             </a>
             {% endif %}
           </div>
+          </div><!-- /x-data fiscalPeriodChecker -->
         </form>
       </div>
     </div>

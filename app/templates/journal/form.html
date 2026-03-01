@@ -124,7 +124,7 @@
 
       <hr>
       <div class="d-flex gap-2">
-        <button type="submit" class="btn btn-primary" :disabled="isBlocked">{{ '更新' if is_edit else '登録' }}</button>
+        <button type="submit" class="btn btn-primary" :disabled="isBlocked || isUnbalanced">{{ '更新' if is_edit else '登録' }}</button>
         <a href="{{ url_for('journal.index') }}" class="btn btn-outline-secondary">キャンセル</a>
       </div>
       </div><!-- /x-data fiscalPeriodChecker -->

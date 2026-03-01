@@ -135,7 +135,7 @@
       </div>
 
       <div class="d-flex gap-2">
-        <button type="submit" class="btn btn-primary" :disabled="isBlocked || sameAccountWarning">{{ '更新' if is_edit else '登録' }}</button>
+        <button type="submit" class="btn btn-primary" :disabled="isBlocked || sameAccountWarning || !paymentCode || !categoryCode">{{ '更新' if is_edit else '登録' }}</button>
         <a href="{{ url_for('cashbook.index') }}" class="btn btn-outline-secondary">キャンセル</a>
       </div>
       </div>{# /x-data fiscalPeriodChecker #}
