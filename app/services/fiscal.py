@@ -164,12 +164,12 @@ def get_restricted_before_year(user_id):
     return user.created_at.year - 1
 
 
-def get_capital_account_id(user_id):
-    """元入金科目のIDを返す"""
+def get_capital_account_code(user_id):
+    """元入金科目のコードを返す"""
     account = Account.query.filter_by(
         user_id=user_id, system_role="capital"
     ).first()
-    return account.id if account else None
+    return account.code if account else None
 
 
 def close_period(user_id, year, period):
@@ -257,12 +257,15 @@ def generate_closing_entries(user_id, year):
     # 収益科目ごとの貸方合計（= 収益残高）
     revenue_balances = (
         db.session.query(
-            Account.id,
+            Account.code,
             Account.name,
             (func.coalesce(func.sum(JournalEntryLine.credit_amount), 0)
              - func.coalesce(func.sum(JournalEntryLine.debit_amount), 0)).label("balance"),
         )
-        .join(JournalEntryLine, JournalEntryLine.account_id == Account.id)
+        .join(JournalEntryLine, db.and_(
+            JournalEntryLine.account_user_id == Account.user_id,
+            JournalEntryLine.account_code == Account.code,
+        ))
         .join(JournalEntry, JournalEntry.id == JournalEntryLine.journal_entry_id)
         .filter(
             Account.user_id == user_id,
@@ -270,7 +273,7 @@ def generate_closing_entries(user_id, year):
             JournalEntry.date >= start,
             JournalEntry.date < end,
         )
-        .group_by(Account.id, Account.name)
+        .group_by(Account.code, Account.name)
         .having(
             func.coalesce(func.sum(JournalEntryLine.credit_amount), 0)
             - func.coalesce(func.sum(JournalEntryLine.debit_amount), 0) != 0
@@ -281,12 +284,15 @@ def generate_closing_entries(user_id, year):
     # 費用科目ごとの借方合計（= 費用残高）
     expense_balances = (
         db.session.query(
-            Account.id,
+            Account.code,
             Account.name,
             (func.coalesce(func.sum(JournalEntryLine.debit_amount), 0)
              - func.coalesce(func.sum(JournalEntryLine.credit_amount), 0)).label("balance"),
         )
-        .join(JournalEntryLine, JournalEntryLine.account_id == Account.id)
+        .join(JournalEntryLine, db.and_(
+            JournalEntryLine.account_user_id == Account.user_id,
+            JournalEntryLine.account_code == Account.code,
+        ))
         .join(JournalEntry, JournalEntry.id == JournalEntryLine.journal_entry_id)
         .filter(
             Account.user_id == user_id,
@@ -294,7 +300,7 @@ def generate_closing_entries(user_id, year):
             JournalEntry.date >= start,
             JournalEntry.date < end,
         )
-        .group_by(Account.id, Account.name)
+        .group_by(Account.code, Account.name)
         .having(
             func.coalesce(func.sum(JournalEntryLine.debit_amount), 0)
             - func.coalesce(func.sum(JournalEntryLine.credit_amount), 0) != 0
@@ -309,31 +315,31 @@ def generate_closing_entries(user_id, year):
 
     # 収益振替: 借方=収益科目（ゼロに）/ 貸方=繰越利益
     total_revenue = Decimal(0)
-    for acct_id, acct_name, balance in revenue_balances:
+    for acct_code, acct_name, balance in revenue_balances:
         amt = int(balance)
         if amt > 0:
             lines_data.append({
-                "account_id": acct_id, "debit_amount": amt, "credit_amount": 0,
+                "account_code": acct_code, "debit_amount": amt, "credit_amount": 0,
             })
             total_revenue += amt
         elif amt < 0:
             lines_data.append({
-                "account_id": acct_id, "debit_amount": 0, "credit_amount": -amt,
+                "account_code": acct_code, "debit_amount": 0, "credit_amount": -amt,
             })
             total_revenue += amt
 
     # 費用振替: 貸方=費用科目（ゼロに）/ 借方=繰越利益
     total_expense = Decimal(0)
-    for acct_id, acct_name, balance in expense_balances:
+    for acct_code, acct_name, balance in expense_balances:
         amt = int(balance)
         if amt > 0:
             lines_data.append({
-                "account_id": acct_id, "debit_amount": 0, "credit_amount": amt,
+                "account_code": acct_code, "debit_amount": 0, "credit_amount": amt,
             })
             total_expense += amt
         elif amt < 0:
             lines_data.append({
-                "account_id": acct_id, "debit_amount": -amt, "credit_amount": 0,
+                "account_code": acct_code, "debit_amount": -amt, "credit_amount": 0,
             })
             total_expense += amt
 
@@ -341,11 +347,11 @@ def generate_closing_entries(user_id, year):
     net = int(total_revenue - total_expense)
     if net > 0:
         lines_data.append({
-            "account_id": retained.id, "debit_amount": 0, "credit_amount": net,
+            "account_code": retained.code, "debit_amount": 0, "credit_amount": net,
         })
     elif net < 0:
         lines_data.append({
-            "account_id": retained.id, "debit_amount": -net, "credit_amount": 0,
+            "account_code": retained.code, "debit_amount": -net, "credit_amount": 0,
         })
 
     if not lines_data:
@@ -366,7 +372,8 @@ def generate_closing_entries(user_id, year):
     for ld in lines_data:
         db.session.add(JournalEntryLine(
             journal_entry_id=entry.id,
-            account_id=ld["account_id"],
+            account_user_id=user_id,
+            account_code=ld["account_code"],
             debit_amount=ld["debit_amount"],
             credit_amount=ld["credit_amount"],
         ))

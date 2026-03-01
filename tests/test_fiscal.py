@@ -13,7 +13,7 @@ from app.services.fiscal import (
     close_period,
     delete_closing_entries,
     generate_closing_entries,
-    get_capital_account_id,
+    get_capital_account_code,
     get_closed_period,
     get_effective_period,
     get_restricted_before_year,
@@ -74,7 +74,7 @@ class TestGetRestrictedBeforeYear:
 
 class TestCheckEntryModifiable:
     def test_modifiable_when_not_locked(self, db, user, accounts):
-        entry = make_journal(db, user.id, accounts["5010"].id, accounts["1010"].id,
+        entry = make_journal(db, user.id, "5010", "1010",
                              1000, entry_date=date(2026, 2, 15))
         assert check_entry_modifiable(user.id, entry) is None
 
@@ -82,13 +82,13 @@ class TestCheckEntryModifiable:
         fc = FiscalClose(user_id=user.id, year=2026, closed_period=2)
         db.session.add(fc)
         db.session.commit()
-        entry = make_journal(db, user.id, accounts["5010"].id, accounts["1010"].id,
+        entry = make_journal(db, user.id, "5010", "1010",
                              1000, entry_date=date(2026, 2, 15))
         result = check_entry_modifiable(user.id, entry)
         assert result is not None
 
     def test_closing_entry_not_modifiable(self, db, user, accounts):
-        entry = make_journal(db, user.id, accounts["5010"].id, accounts["1010"].id,
+        entry = make_journal(db, user.id, "5010", "1010",
                              1000, entry_date=date(2026, 12, 31), source="closing")
         result = check_entry_modifiable(user.id, entry)
         assert result is not None
@@ -110,14 +110,14 @@ class TestCheckPeriodOpenForNew:
         assert result is not None
 
 
-class TestGetCapitalAccountId:
+class TestGetCapitalAccountCode:
     def test_found(self, db, user, accounts):
-        result = get_capital_account_id(user.id)
-        assert result == accounts["3010"].id
+        result = get_capital_account_code(user.id)
+        assert result == accounts["3010"].code
 
     def test_not_found(self, db, user, account_types):
         """科目がない場合は None"""
-        assert get_capital_account_id(user.id) is None
+        assert get_capital_account_code(user.id) is None
 
 
 class TestClosePeriod:
@@ -128,7 +128,7 @@ class TestClosePeriod:
         assert get_closed_period(user.id, 2026) == 0
 
     def test_close_first_month(self, db, user, accounts):
-        make_journal(db, user.id, accounts["5010"].id, accounts["1010"].id,
+        make_journal(db, user.id, "5010", "1010",
                      1000, entry_date=date(2026, 1, 15))
         close_period(user.id, 2026, 0)  # 先に期首を確定
         result = close_period(user.id, 2026, 1)
@@ -136,7 +136,7 @@ class TestClosePeriod:
         assert get_closed_period(user.id, 2026) == 1
 
     def test_close_sequential(self, db, user, accounts):
-        make_journal(db, user.id, accounts["5010"].id, accounts["1010"].id,
+        make_journal(db, user.id, "5010", "1010",
                      1000, entry_date=date(2026, 1, 15))
         close_period(user.id, 2026, 0)
         close_period(user.id, 2026, 1)
@@ -151,7 +151,7 @@ class TestClosePeriod:
 
 class TestReopenPeriod:
     def test_reopen_last_closed(self, db, user, accounts):
-        make_journal(db, user.id, accounts["5010"].id, accounts["1010"].id,
+        make_journal(db, user.id, "5010", "1010",
                      1000, entry_date=date(2026, 1, 15))
         close_period(user.id, 2026, 0)
         close_period(user.id, 2026, 1)
@@ -160,7 +160,7 @@ class TestReopenPeriod:
         assert get_closed_period(user.id, 2026) == 0
 
     def test_cannot_reopen_non_last(self, db, user, accounts):
-        make_journal(db, user.id, accounts["5010"].id, accounts["1010"].id,
+        make_journal(db, user.id, "5010", "1010",
                      1000, entry_date=date(2026, 1, 15))
         close_period(user.id, 2026, 0)
         close_period(user.id, 2026, 1)
@@ -171,12 +171,12 @@ class TestReopenPeriod:
 
 class TestGetEffectivePeriod:
     def test_from_date(self, db, user, accounts):
-        entry = make_journal(db, user.id, accounts["5010"].id, accounts["1010"].id,
+        entry = make_journal(db, user.id, "5010", "1010",
                              1000, entry_date=date(2026, 3, 15))
         assert get_effective_period(entry) == 3
 
     def test_from_fiscal_period(self, db, user, accounts):
-        entry = make_journal(db, user.id, accounts["5010"].id, accounts["1010"].id,
+        entry = make_journal(db, user.id, "5010", "1010",
                              1000, entry_date=date(2026, 12, 31), fiscal_period=13)
         assert get_effective_period(entry) == 13
 
@@ -184,9 +184,9 @@ class TestGetEffectivePeriod:
 class TestGenerateClosingEntries:
     def test_creates_closing_entry(self, db, user, accounts):
         # 収入 300,000 / 費用 200,000 → 純利益 100,000
-        make_journal(db, user.id, accounts["1020"].id, accounts["4010"].id,
+        make_journal(db, user.id, "1020", "4010",
                      300000, entry_date=date(2026, 6, 25), description="給与")
-        make_journal(db, user.id, accounts["5010"].id, accounts["1010"].id,
+        make_journal(db, user.id, "5010", "1010",
                      200000, entry_date=date(2026, 6, 15), description="食費合計")
         result = generate_closing_entries(user.id, 2026)
         assert result is None
@@ -200,7 +200,7 @@ class TestGenerateClosingEntries:
         assert closing.is_balanced
 
     def test_delete_closing_entries(self, db, user, accounts):
-        make_journal(db, user.id, accounts["1020"].id, accounts["4010"].id,
+        make_journal(db, user.id, "1020", "4010",
                      100000, entry_date=date(2026, 6, 25))
         generate_closing_entries(user.id, 2026)
         assert JournalEntry.query.filter_by(user_id=user.id, source="closing").count() > 0

@@ -64,10 +64,19 @@ class JournalEntryLine(db.Model):
     journal_entry_id = db.Column(
         db.Integer, db.ForeignKey("journal_entries.id"), nullable=False
     )
-    account_id = db.Column(db.Integer, db.ForeignKey("accounts.id"), nullable=False)
+    account_user_id = db.Column(db.Integer, nullable=False)
+    account_code = db.Column(db.String(10), nullable=False)
     debit_amount = db.Column(db.Numeric(12, 0), nullable=False, default=0)
     credit_amount = db.Column(db.Numeric(12, 0), nullable=False, default=0)
     description = db.Column(db.String(255), default="")
 
+    __table_args__ = (
+        db.ForeignKeyConstraint(
+            ["account_user_id", "account_code"],
+            ["accounts.user_id", "accounts.code"],
+            name="fk_jel_account",
+        ),
+    )
+
     def __repr__(self):
-        return f"<JournalEntryLine {self.account_id} D:{self.debit_amount} C:{self.credit_amount}>"
+        return f"<JournalEntryLine {self.account_code} D:{self.debit_amount} C:{self.credit_amount}>"

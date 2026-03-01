@@ -27,7 +27,7 @@ class TestIncomeTypeChart:
     def test_income_shows_canvas(self, db, logged_in_client, accounts):
         """収入があれば incomeTypeChart canvas が出力される"""
         make_journal(db, accounts["4010"].user_id,
-                     accounts["1020"].id, accounts["4010"].id,
+                     "1020", "4010",
                      300000, entry_date=date(2026, 1, 25))
         resp = logged_in_client.get("/reports/monthly?year=2026")
         html = resp.data.decode()
@@ -37,7 +37,7 @@ class TestIncomeTypeChart:
     def test_income_chart_js_initialized(self, db, logged_in_client, accounts):
         """Chart.js の初期化コードが出力される"""
         make_journal(db, accounts["4010"].user_id,
-                     accounts["1020"].id, accounts["4010"].id,
+                     "1020", "4010",
                      300000, entry_date=date(2026, 1, 25))
         resp = logged_in_client.get("/reports/monthly?year=2026")
         html = resp.data.decode()
@@ -50,7 +50,7 @@ class TestIncomeTypeChart:
         accounts["4010"].cost_type = "fixed"
         db.session.commit()
         make_journal(db, accounts["4010"].user_id,
-                     accounts["1020"].id, accounts["4010"].id,
+                     "1020", "4010",
                      300000, entry_date=date(2026, 1, 25))
         resp = logged_in_client.get("/reports/monthly?year=2026")
         html = resp.data.decode()
@@ -59,7 +59,7 @@ class TestIncomeTypeChart:
     def test_income_cost_type_null_in_json(self, db, logged_in_client, accounts):
         """cost_type 未設定の場合 null が出力される"""
         make_journal(db, accounts["4010"].user_id,
-                     accounts["1020"].id, accounts["4010"].id,
+                     "1020", "4010",
                      300000, entry_date=date(2026, 1, 25))
         resp = logged_in_client.get("/reports/monthly?year=2026")
         html = resp.data.decode()
@@ -70,7 +70,7 @@ class TestIncomeTypeChart:
         accounts["4010"].cost_type = "fixed"
         db.session.commit()
         make_journal(db, accounts["4010"].user_id,
-                     accounts["1020"].id, accounts["4010"].id,
+                     "1020", "4010",
                      300000, entry_date=date(2026, 1, 25))
         resp = logged_in_client.get("/reports/monthly?year=2026")
         html = resp.data.decode()
@@ -90,7 +90,7 @@ class TestExpenseTypeChart:
 
     def test_expense_shows_canvas(self, db, logged_in_client, accounts):
         make_journal(db, accounts["5010"].user_id,
-                     accounts["5010"].id, accounts["1010"].id,
+                     "5010", "1010",
                      5000, entry_date=date(2026, 1, 15))
         resp = logged_in_client.get("/reports/monthly?year=2026")
         html = resp.data.decode()

@@ -15,7 +15,7 @@ from tests.conftest import make_journal, make_voucher
 def _setup_voucher_with_file(db_sess, user, accounts):
     """ファイル付き証憑を作成するヘルパー"""
     entry = make_journal(
-        db_sess, user.id, accounts["5010"].id, accounts["1010"].id, 500,
+        db_sess, user.id, "5010", "1010", 500,
         source="ai_receipt",
     )
     image_key = f"vouchers/{user.id}/sec_test.jpg"

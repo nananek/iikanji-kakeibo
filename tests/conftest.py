@@ -266,7 +266,7 @@ def ratelimit_client(ratelimit_app):
 # --- ヘルパー ---
 
 
-def make_journal(db, user_id, acct_debit_id, acct_credit_id, amount,
+def make_journal(db, user_id, acct_debit_code, acct_credit_code, amount,
                  entry_date=None, description="テスト仕訳", source="journal",
                  fiscal_period=None, entry_number=None):
     """テスト用の仕訳を作成するヘルパー"""
@@ -284,9 +284,11 @@ def make_journal(db, user_id, acct_debit_id, acct_credit_id, amount,
         fiscal_period=fiscal_period,
     )
     entry.lines = [
-        JournalEntryLine(account_id=acct_debit_id,
+        JournalEntryLine(account_user_id=user_id,
+                         account_code=acct_debit_code,
                          debit_amount=amount, credit_amount=0),
-        JournalEntryLine(account_id=acct_credit_id,
+        JournalEntryLine(account_user_id=user_id,
+                         account_code=acct_credit_code,
                          debit_amount=0, credit_amount=amount),
     ]
     db.session.add(entry)

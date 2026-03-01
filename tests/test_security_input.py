@@ -99,7 +99,7 @@ class TestXSSEscaping:
                                                         logged_in_client, user,
                                                         accounts):
         """仕訳一覧で <script> がHTMLエスケープされる"""
-        make_journal(db, user.id, accounts["5010"].id, accounts["1010"].id,
+        make_journal(db, user.id, "5010", "1010",
                      1000, description='<script>alert("xss")</script>')
         resp = logged_in_client.get("/journal/")
         html = resp.data.decode()
@@ -112,7 +112,7 @@ class TestXSSEscaping:
                                                       logged_in_client, user,
                                                       accounts):
         """JSON エンドポイントは application/json で返す"""
-        entry = make_journal(db, user.id, accounts["5010"].id, accounts["1010"].id,
+        entry = make_journal(db, user.id, "5010", "1010",
                              1000, description='<img src=x onerror=alert(1)>')
         resp = logged_in_client.get(f"/journal/{entry.id}/json")
         assert resp.content_type.startswith("application/json")
@@ -121,7 +121,7 @@ class TestXSSEscaping:
                                                   logged_in_client, user,
                                                   accounts):
         """img onerror XSS ペイロードがエスケープされる"""
-        make_journal(db, user.id, accounts["5010"].id, accounts["1010"].id,
+        make_journal(db, user.id, "5010", "1010",
                      1000, description='<img src=x onerror=alert(1)>')
         resp = logged_in_client.get("/journal/")
         html = resp.data.decode()

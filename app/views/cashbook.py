@@ -15,7 +15,7 @@ from app.services.accounting import (
 )
 from app.services.fiscal import check_entry_modifiable, check_period_open_for_new, adjust_date_for_fiscal_period, get_closed_periods_map, get_restricted_before_year
 from app.services.audit import (
-    get_effective_user_id, get_allowed_account_ids, get_submitted_account_ids,
+    get_effective_user_id, get_allowed_account_codes, get_submitted_account_codes,
     is_entry_locked_for_owner, is_entry_locked_for_auditor,
     is_acting_as_auditor,
 )
@@ -24,11 +24,11 @@ from app.views.helpers import get_grouped_accounts
 bp = Blueprint("cashbook", __name__, url_prefix="/cashbook")
 
 
-def _account_name(account_id, user_id):
-    """科目IDから名前を取得"""
-    if not account_id:
+def _account_name(account_code, user_id):
+    """科目codeから名前を取得"""
+    if not account_code:
         return None
-    a = Account.query.filter_by(id=account_id, user_id=user_id).first()
+    a = Account.query.filter_by(user_id=user_id, code=account_code).first()
     return a.name if a else None
 
 
@@ -39,7 +39,7 @@ def index():
     date_from = request.args.get("date_from", "")
     date_to = request.args.get("date_to", "")
 
-    allowed_ids = get_allowed_account_ids()
+    allowed_codes = get_allowed_account_codes()
 
     query = (
         JournalEntry.query
@@ -48,11 +48,11 @@ def index():
     )
 
     # Lv2: 公開科目を1つも含まない伝票を除外
-    if allowed_ids is not None:
+    if allowed_codes is not None:
         query = query.filter(
             JournalEntry.id.in_(
                 db.session.query(JournalEntryLine.journal_entry_id)
-                .filter(JournalEntryLine.account_id.in_(allowed_ids))
+                .filter(JournalEntryLine.account_code.in_(allowed_codes))
             )
         )
 
@@ -75,7 +75,7 @@ def index():
 def new():
     form = CashbookForm()
     user_id = get_effective_user_id()
-    allowed_ids = get_allowed_account_ids()
+    allowed_codes = get_allowed_account_codes()
     closed_periods = get_closed_periods_map(user_id)
     restricted_before = get_restricted_before_year(user_id)
 
@@ -85,14 +85,14 @@ def new():
     if form.validate_on_submit():
         # 本人側: ロック科目チェック
         if not is_acting_as_auditor():
-            locked_ids = get_submitted_account_ids(user_id)
-            if locked_ids:
-                used = {form.payment_account_id.data, form.category_account_id.data}
-                if used & locked_ids:
+            locked_codes = get_submitted_account_codes(user_id)
+            if locked_codes:
+                used = {form.payment_account_code.data, form.category_account_code.data}
+                if used & locked_codes:
                     flash("提出済みの税務科目を含むため登録できません。", "danger")
-                    grouped_accounts = get_grouped_accounts(user_id, allowed_ids)
-                    payment_account_name = _account_name(form.payment_account_id.data, get_effective_user_id())
-                    category_account_name = _account_name(form.category_account_id.data, get_effective_user_id())
+                    grouped_accounts = get_grouped_accounts(user_id, allowed_codes)
+                    payment_account_name = _account_name(form.payment_account_code.data, get_effective_user_id())
+                    category_account_name = _account_name(form.category_account_code.data, get_effective_user_id())
                     return render_template(
                         "cashbook/form.html", form=form, is_edit=False,
                         grouped_accounts=grouped_accounts,
@@ -116,9 +116,9 @@ def new():
         )
         if err:
             flash(err, "danger")
-            grouped_accounts = get_grouped_accounts(user_id, allowed_ids)
-            payment_account_name = _account_name(form.payment_account_id.data, get_effective_user_id())
-            category_account_name = _account_name(form.category_account_id.data, get_effective_user_id())
+            grouped_accounts = get_grouped_accounts(user_id, allowed_codes)
+            payment_account_name = _account_name(form.payment_account_code.data, get_effective_user_id())
+            category_account_name = _account_name(form.category_account_code.data, get_effective_user_id())
             return render_template(
                 "cashbook/form.html", form=form, is_edit=False,
                 grouped_accounts=grouped_accounts,
@@ -132,8 +132,8 @@ def new():
             user_id=user_id,
             date=form.date.data,
             transaction_type=form.transaction_type.data,
-            payment_account_id=form.payment_account_id.data,
-            category_account_id=form.category_account_id.data,
+            payment_account_code=form.payment_account_code.data,
+            category_account_code=form.category_account_code.data,
             amount=form.amount.data,
             description=form.description.data,
             fiscal_period=fiscal_period,
@@ -141,9 +141,9 @@ def new():
         flash(f"伝票 #{entry.entry_number} を登録しました。", "success")
         return redirect(url_for("cashbook.index"))
 
-    grouped_accounts = get_grouped_accounts(user_id, allowed_ids)
-    payment_account_name = _account_name(form.payment_account_id.data, get_effective_user_id())
-    category_account_name = _account_name(form.category_account_id.data, get_effective_user_id())
+    grouped_accounts = get_grouped_accounts(user_id, allowed_codes)
+    payment_account_name = _account_name(form.payment_account_code.data, get_effective_user_id())
+    category_account_name = _account_name(form.category_account_code.data, get_effective_user_id())
     return render_template(
         "cashbook/form.html", form=form, is_edit=False,
         grouped_accounts=grouped_accounts,
@@ -158,7 +158,7 @@ def new():
 @login_required
 def edit(entry_id):
     user_id = get_effective_user_id()
-    allowed_ids = get_allowed_account_ids()
+    allowed_codes = get_allowed_account_codes()
     entry = JournalEntry.query.filter_by(
         id=entry_id, user_id=user_id, source="cashbook"
     ).first_or_404()
@@ -167,7 +167,7 @@ def edit(entry_id):
     if not is_acting_as_auditor() and is_entry_locked_for_owner(user_id, entry):
         flash("提出済みの税務科目を含む伝票のため変更できません。", "danger")
         return redirect(url_for("cashbook.index"))
-    if is_acting_as_auditor() and allowed_ids is not None and is_entry_locked_for_auditor(entry, allowed_ids):
+    if is_acting_as_auditor() and allowed_codes is not None and is_entry_locked_for_auditor(entry, allowed_codes):
         flash("事業主勘定を含む伝票のため変更できません。", "danger")
         return redirect(url_for("cashbook.index"))
 
@@ -194,9 +194,9 @@ def edit(entry_id):
         err = check_period_open_for_new(user_id, form.date.data.year, new_period)
         if err:
             flash(err, "danger")
-            grouped_accounts = get_grouped_accounts(user_id, allowed_ids)
-            payment_account_name = _account_name(form.payment_account_id.data, get_effective_user_id())
-            category_account_name = _account_name(form.category_account_id.data, get_effective_user_id())
+            grouped_accounts = get_grouped_accounts(user_id, allowed_codes)
+            payment_account_name = _account_name(form.payment_account_code.data, get_effective_user_id())
+            category_account_name = _account_name(form.category_account_code.data, get_effective_user_id())
             return render_template(
                 "cashbook/form.html", form=form, is_edit=True, entry=entry,
                 grouped_accounts=grouped_accounts,
@@ -210,8 +210,8 @@ def edit(entry_id):
             entry=entry,
             date=form.date.data,
             transaction_type=form.transaction_type.data,
-            payment_account_id=form.payment_account_id.data,
-            category_account_id=form.category_account_id.data,
+            payment_account_code=form.payment_account_code.data,
+            category_account_code=form.category_account_code.data,
             amount=form.amount.data,
             description=form.description.data,
         )
@@ -230,23 +230,23 @@ def edit(entry_id):
             debit_line = [l for l in lines if l.debit_amount > 0][0]
             credit_line = [l for l in lines if l.credit_amount > 0][0]
 
-            debit_account = Account.query.filter_by(id=debit_line.account_id, user_id=user_id).first()
+            debit_account = Account.query.filter_by(user_id=user_id, code=debit_line.account_code).first()
             if debit_account and debit_account.account_type.code in ("asset", "liability"):
                 # 収入パターン: 借方=資産、貸方=収益
                 form.transaction_type.data = "income"
-                form.payment_account_id.data = debit_line.account_id
-                form.category_account_id.data = credit_line.account_id
+                form.payment_account_code.data = debit_line.account_code
+                form.category_account_code.data = credit_line.account_code
                 form.amount.data = int(debit_line.debit_amount)
             else:
                 # 支出パターン: 借方=費用、貸方=資産
                 form.transaction_type.data = "expense"
-                form.payment_account_id.data = credit_line.account_id
-                form.category_account_id.data = debit_line.account_id
+                form.payment_account_code.data = credit_line.account_code
+                form.category_account_code.data = debit_line.account_code
                 form.amount.data = int(debit_line.debit_amount)
 
-    grouped_accounts = get_grouped_accounts(get_effective_user_id(), allowed_ids)
-    payment_account_name = _account_name(form.payment_account_id.data, get_effective_user_id())
-    category_account_name = _account_name(form.category_account_id.data, get_effective_user_id())
+    grouped_accounts = get_grouped_accounts(get_effective_user_id(), allowed_codes)
+    payment_account_name = _account_name(form.payment_account_code.data, get_effective_user_id())
+    category_account_name = _account_name(form.category_account_code.data, get_effective_user_id())
     return render_template(
         "cashbook/form.html", form=form, is_edit=True, entry=entry,
         grouped_accounts=grouped_accounts,
@@ -261,7 +261,7 @@ def edit(entry_id):
 @login_required
 def delete(entry_id):
     user_id = get_effective_user_id()
-    allowed_ids = get_allowed_account_ids()
+    allowed_codes = get_allowed_account_codes()
     entry = JournalEntry.query.filter_by(
         id=entry_id, user_id=user_id, source="cashbook"
     ).first_or_404()
@@ -280,7 +280,7 @@ def delete(entry_id):
     # 伝票ロックチェック
     if not is_acting_as_auditor() and is_entry_locked_for_owner(user_id, entry):
         return _hx_error("提出済みの税務科目を含む伝票のため削除できません。")
-    if is_acting_as_auditor() and allowed_ids is not None and is_entry_locked_for_auditor(entry, allowed_ids):
+    if is_acting_as_auditor() and allowed_codes is not None and is_entry_locked_for_auditor(entry, allowed_codes):
         return _hx_error("事業主勘定を含む伝票のため削除できません。")
 
     # 確定済み期間チェック

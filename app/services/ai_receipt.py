@@ -245,19 +245,19 @@ def _build_suggestion_prompt(account_list_text, ledger_text="",
       "date": "YYYY-MM-DD",
       "entry_description": "仕訳帳に記録する摘要",
       "lines": [
-        {{"account_id": 勘定科目ID, "account_name": "勘定科目名", "debit_amount": 借方金額, "credit_amount": 0}},
-        {{"account_id": 勘定科目ID, "account_name": "勘定科目名", "debit_amount": 0, "credit_amount": 貸方金額}}
+        {{"account_code": "勘定科目コード", "account_name": "勘定科目名", "debit_amount": 借方金額, "credit_amount": 0}},
+        {{"account_code": "勘定科目コード", "account_name": "勘定科目名", "debit_amount": 0, "credit_amount": 貸方金額}}
       ]
     }}
   ]
 }}
 {ledger_section}
-利用可能な勘定科目一覧（この中のIDと名前を使ってください）：
+利用可能な勘定科目一覧（この中のコードと名前を使ってください）：
 {account_list_text}
 {custom_section}
 注意事項:
 - 各仕訳案の借方合計と貸方合計は必ず一致させてください
-- account_id は上記一覧のIDを使ってください
+- account_code は上記一覧のコードを使ってください
 - 金額は整数で返してください
 - 給与明細等の複雑な書類では、詳細な内訳を反映した案と簡略化した案の両方を含めてください
 - 異なる解釈（例: 費目の分類の違い、内訳の粒度の違い）を反映した複数案を提案してください"""
@@ -557,7 +557,10 @@ def _get_ledger_context(user_id: int, account_names: list[str]) -> str:
             )
             .join(JournalEntry, JournalEntry.id == JournalEntryLine.journal_entry_id)
             .filter(
-                JournalEntryLine.account_id == acct.id,
+                db.and_(
+                    JournalEntryLine.account_user_id == acct.user_id,
+                    JournalEntryLine.account_code == acct.code,
+                ),
             )
             .order_by(JournalEntry.date.desc())
             .limit(20)
@@ -584,7 +587,12 @@ def _get_ledger_context(user_id: int, account_names: list[str]) -> str:
                     func.coalesce(func.sum(JournalEntryLine.credit_amount), 0),
                 )
                 .join(JournalEntry, JournalEntry.id == JournalEntryLine.journal_entry_id)
-                .filter(JournalEntryLine.account_id == acct.id)
+                .filter(
+                    db.and_(
+                        JournalEntryLine.account_user_id == acct.user_id,
+                        JournalEntryLine.account_code == acct.code,
+                    )
+                )
                 .first()
             )
             if totals:
@@ -623,7 +631,7 @@ def _get_account_list_text(user_id: int) -> str:
             label = type_labels.get(type_code, type_code)
             lines.append(f"\n[{label}]")
 
-        lines.append(f"  ID:{acct.id} {acct.code} {acct.name}")
+        lines.append(f"  {acct.code} {acct.name}")
 
     return "\n".join(lines)
 
@@ -773,9 +781,9 @@ def analyze_and_suggest(user_id: int, image_bytes: bytes,
 
     suggestions_raw = round2.get("suggestions", [])
 
-    # バリデーション: account_idが実在するか確認
-    valid_ids = {
-        a.id for a in
+    # バリデーション: account_codeが実在するか確認
+    valid_codes = {
+        a.code for a in
         Account.query.filter_by(user_id=user_id, is_active=True).all()
     }
 
@@ -783,10 +791,10 @@ def analyze_and_suggest(user_id: int, image_bytes: bytes,
     for s in suggestions_raw:
         lines = []
         for line in s.get("lines", []):
-            aid = int(line.get("account_id", 0))
-            if aid in valid_ids:
+            acode = str(line.get("account_code", ""))
+            if acode in valid_codes:
                 lines.append({
-                    "account_id": aid,
+                    "account_code": acode,
                     "account_name": line.get("account_name", ""),
                     "debit_amount": int(line.get("debit_amount", 0)),
                     "credit_amount": int(line.get("credit_amount", 0)),
@@ -890,24 +898,26 @@ AI_SUGGEST_CATEGORIES_PROMPT = """あなたは日本の複式簿記の家計簿�
 
 {ledger_context}
 
-以下はユーザーの勘定科目一覧です。科目IDを使って回答してください。
+以下はユーザーの勘定科目一覧です。科目コードを使って回答してください。
 {account_list}
 
-以下の新規取引それぞれに、元帳のパターンを参考にして最も適切な勘定科目IDを推定してください。
+以下の新規取引それぞれに、元帳のパターンを参考にして最も適切な勘定科目コードを推定してください。
 - 出金は通常「費用」科目、入金は通常「収益」科目ですが、振替（資産・負債間の移動）の場合もあります。
 - 元帳に似た摘要の取引がある場合は、その相手科目と同じ科目を優先してください。
-- 該当なしの場合は account_id を null にしてください。
+- 該当なしの場合は account_code を null にしてください。
 
 {rows_text}
 
 必ず以下のJSON形式のみを返してください。余計なテキストは不要です。
-{{"results": [{{"index": 0, "account_id": 科目ID}}, ...]}}"""
+{{"results": [{{"index": 0, "account_code": "科目コード"}}, ...]}}"""
 
 
-def _get_payment_ledger_context(user_id: int, account_id: int,
+def _get_payment_ledger_context(user_id: int, payment_account_code: str,
                                 limit: int = 100) -> str:
     """支払口座の元帳データをテキスト形式で返す（相手科目名つき）"""
-    account = Account.query.get(account_id)
+    account = Account.query.filter_by(
+        user_id=user_id, code=payment_account_code
+    ).first()
     if not account:
         return ""
 
@@ -921,7 +931,8 @@ def _get_payment_ledger_context(user_id: int, account_id: int,
         )
         .join(JournalEntry, JournalEntry.id == JournalEntryLine.journal_entry_id)
         .filter(
-            JournalEntryLine.account_id == account_id,
+            JournalEntryLine.account_user_id == user_id,
+            JournalEntryLine.account_code == payment_account_code,
             JournalEntry.user_id == user_id,
         )
         .order_by(JournalEntry.date.desc())
@@ -941,7 +952,7 @@ def _get_payment_ledger_context(user_id: int, account_id: int,
             JournalEntryLine.query
             .filter(
                 JournalEntryLine.journal_entry_id == e.entry_id,
-                JournalEntryLine.account_id != account_id,
+                JournalEntryLine.account_code != payment_account_code,
             )
             .all()
         )
@@ -960,7 +971,7 @@ def _get_payment_ledger_context(user_id: int, account_id: int,
     return "\n".join(lines)
 
 
-def suggest_categories_by_ai(user_id: int, payment_account_id: int,
+def suggest_categories_by_ai(user_id: int, payment_account_code: str,
                               rows: list[dict]) -> dict:
     """元帳データをAIに渡して科目を推定する
 
@@ -968,17 +979,19 @@ def suggest_categories_by_ai(user_id: int, payment_account_id: int,
         rows: [{"description": "...", "deposit": 0, "withdrawal": 5000}, ...]
 
     Returns:
-        {"摘要": {"account_id": N, "account_name": "..."}, ...}
+        {"摘要": {"account_code": "XXXX", "account_name": "..."}, ...}
     """
     api_key, provider, model, _, __, extra_kw, ___ = _get_ai_config(user_id)
     text_handler = _TEXT_PROVIDER_HANDLERS.get(provider)
     if not text_handler:
         raise ValueError(f"未対応のAIプロバイダーです: {provider}")
 
-    account = Account.query.get(payment_account_id)
+    account = Account.query.filter_by(
+        user_id=user_id, code=payment_account_code
+    ).first()
     payment_name = account.name if account else "不明"
 
-    ledger_context = _get_payment_ledger_context(user_id, payment_account_id)
+    ledger_context = _get_payment_ledger_context(user_id, payment_account_code)
     account_list = _get_account_list_text(user_id)
 
     rows_lines = []
@@ -1018,28 +1031,29 @@ def suggest_categories_by_ai(user_id: int, payment_account_id: int,
 
     for item in ai_results:
         idx = item.get("index")
-        aid = item.get("account_id")
-        if idx is None or aid is None or idx >= len(rows):
+        acode = item.get("account_code")
+        if idx is None or acode is None or idx >= len(rows):
             continue
+        acode = str(acode)
         desc = rows[idx].get("description", "")
         if not desc or desc in output:
             continue
 
-        if aid not in accounts_cache:
+        if acode not in accounts_cache:
             acct = Account.query.filter_by(
-                id=aid, user_id=user_id, is_active=True
+                code=acode, user_id=user_id, is_active=True
             ).first()
-            accounts_cache[aid] = acct
+            accounts_cache[acode] = acct
 
-        acct = accounts_cache.get(aid)
+        acct = accounts_cache.get(acode)
         if acct:
-            output[desc] = {"account_id": acct.id, "account_name": acct.name}
+            output[desc] = {"account_code": acct.code, "account_name": acct.name}
 
     return output
 
 
-def match_account(user_id: int, category_name: str) -> int | None:
-    """AI推測カテゴリ名をユーザーの勘定科目IDにマッチング"""
+def match_account(user_id: int, category_name: str) -> str | None:
+    """AI推測カテゴリ名をユーザーの勘定科目コードにマッチング"""
     expense_type = AccountType.query.filter_by(code="expense").first()
     if not expense_type:
         return None
@@ -1051,7 +1065,7 @@ def match_account(user_id: int, category_name: str) -> int | None:
         Account.name == category_name,
     ).first()
     if account:
-        return account.id
+        return account.code
 
     expense_accounts = Account.query.filter(
         Account.user_id == user_id,
@@ -1061,10 +1075,10 @@ def match_account(user_id: int, category_name: str) -> int | None:
 
     for acct in expense_accounts:
         if category_name in acct.name or acct.name in category_name:
-            return acct.id
+            return acct.code
 
     if expense_accounts:
-        return expense_accounts[0].id
+        return expense_accounts[0].code
 
     return None
 

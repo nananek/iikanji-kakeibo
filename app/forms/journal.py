@@ -8,7 +8,7 @@ class JournalLineForm(FlaskForm):
     class Meta:
         csrf = False
 
-    account_id = SelectField("勘定科目", coerce=int, validators=[DataRequired()])
+    account_code = SelectField("勘定科目", coerce=str, validators=[DataRequired()])
     debit_amount = IntegerField("借方", default=0)
     credit_amount = IntegerField("貸方", default=0)
     description = StringField("摘要")

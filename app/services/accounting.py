@@ -14,15 +14,15 @@ def get_next_entry_number(user_id):
     return (max_num or 0) + 1
 
 
-def create_cashbook_entry(user_id, date, transaction_type, payment_account_id,
-                          category_account_id, amount, description,
+def create_cashbook_entry(user_id, date, transaction_type, payment_account_code,
+                          category_account_code, amount, description,
                           batch_id=None, fiscal_period=None):
     """出納帳の入力から仕訳を自動生成する
 
     Args:
         transaction_type: 'income' or 'expense'
-        payment_account_id: 支払元/入金先の勘定科目ID（資産・負債）
-        category_account_id: 費目の勘定科目ID（収益・費用）
+        payment_account_code: 支払元/入金先の勘定科目コード（資産・負債）
+        category_account_code: 費目の勘定科目コード（収益・費用）
         amount: 金額（正の整数）
         fiscal_period: 計上期間（None=日付の月で自動判定）
     """
@@ -43,13 +43,15 @@ def create_cashbook_entry(user_id, date, transaction_type, payment_account_id,
         lines = [
             JournalEntryLine(
                 journal_entry_id=entry.id,
-                account_id=category_account_id,
+                account_user_id=user_id,
+                account_code=category_account_code,
                 debit_amount=amount,
                 credit_amount=0,
             ),
             JournalEntryLine(
                 journal_entry_id=entry.id,
-                account_id=payment_account_id,
+                account_user_id=user_id,
+                account_code=payment_account_code,
                 debit_amount=0,
                 credit_amount=amount,
             ),
@@ -59,13 +61,15 @@ def create_cashbook_entry(user_id, date, transaction_type, payment_account_id,
         lines = [
             JournalEntryLine(
                 journal_entry_id=entry.id,
-                account_id=payment_account_id,
+                account_user_id=user_id,
+                account_code=payment_account_code,
                 debit_amount=amount,
                 credit_amount=0,
             ),
             JournalEntryLine(
                 journal_entry_id=entry.id,
-                account_id=category_account_id,
+                account_user_id=user_id,
+                account_code=category_account_code,
                 debit_amount=0,
                 credit_amount=amount,
             ),
@@ -81,7 +85,7 @@ def create_journal_entry(user_id, date, description, lines_data,
     """仕訳伝票を直接作成する
 
     Args:
-        lines_data: list of dict with keys: account_id, debit_amount, credit_amount
+        lines_data: list of dict with keys: account_code, debit_amount, credit_amount
         source: 仕訳の入力元（"journal", "ai_receipt" 等）
         fiscal_period: 計上期間（None=日付の月で自動判定）
     """
@@ -107,7 +111,8 @@ def create_journal_entry(user_id, date, description, lines_data,
     for line_data in lines_data:
         line = JournalEntryLine(
             journal_entry_id=entry.id,
-            account_id=line_data["account_id"],
+            account_user_id=user_id,
+            account_code=line_data["account_code"],
             debit_amount=line_data["debit_amount"],
             credit_amount=line_data["credit_amount"],
             description=line_data.get("description", ""),
@@ -118,13 +123,13 @@ def create_journal_entry(user_id, date, description, lines_data,
     return entry
 
 
-def create_transfer_entry(user_id, date, from_account_id, to_account_id,
+def create_transfer_entry(user_id, date, from_account_code, to_account_code,
                           amount, description, batch_id=None, fiscal_period=None):
     """口座間振替の仕訳を作成する
 
     Args:
-        from_account_id: 出金元の勘定科目ID（貸方）
-        to_account_id: 入金先の勘定科目ID（借方）
+        from_account_code: 出金元の勘定科目コード（貸方）
+        to_account_code: 入金先の勘定科目コード（借方）
         amount: 金額（正の整数）
         fiscal_period: 計上期間（None=日付の月で自動判定）
     """
@@ -143,13 +148,15 @@ def create_transfer_entry(user_id, date, from_account_id, to_account_id,
     lines = [
         JournalEntryLine(
             journal_entry_id=entry.id,
-            account_id=to_account_id,
+            account_user_id=user_id,
+            account_code=to_account_code,
             debit_amount=amount,
             credit_amount=0,
         ),
         JournalEntryLine(
             journal_entry_id=entry.id,
-            account_id=from_account_id,
+            account_user_id=user_id,
+            account_code=from_account_code,
             debit_amount=0,
             credit_amount=amount,
         ),
@@ -159,8 +166,8 @@ def create_transfer_entry(user_id, date, from_account_id, to_account_id,
     return entry
 
 
-def update_cashbook_entry(entry, date, transaction_type, payment_account_id,
-                          category_account_id, amount, description):
+def update_cashbook_entry(entry, date, transaction_type, payment_account_code,
+                          category_account_code, amount, description):
     """出納帳の仕訳を更新"""
     entry.date = date
     entry.description = description
@@ -170,17 +177,21 @@ def update_cashbook_entry(entry, date, transaction_type, payment_account_id,
         db.session.delete(line)
     db.session.flush()
 
+    user_id = entry.user_id
+
     if transaction_type == "expense":
         lines = [
             JournalEntryLine(
                 journal_entry_id=entry.id,
-                account_id=category_account_id,
+                account_user_id=user_id,
+                account_code=category_account_code,
                 debit_amount=amount,
                 credit_amount=0,
             ),
             JournalEntryLine(
                 journal_entry_id=entry.id,
-                account_id=payment_account_id,
+                account_user_id=user_id,
+                account_code=payment_account_code,
                 debit_amount=0,
                 credit_amount=amount,
             ),
@@ -189,13 +200,15 @@ def update_cashbook_entry(entry, date, transaction_type, payment_account_id,
         lines = [
             JournalEntryLine(
                 journal_entry_id=entry.id,
-                account_id=payment_account_id,
+                account_user_id=user_id,
+                account_code=payment_account_code,
                 debit_amount=amount,
                 credit_amount=0,
             ),
             JournalEntryLine(
                 journal_entry_id=entry.id,
-                account_id=category_account_id,
+                account_user_id=user_id,
+                account_code=category_account_code,
                 debit_amount=0,
                 credit_amount=amount,
             ),

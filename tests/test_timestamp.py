@@ -52,7 +52,7 @@ class TestVoucherListDeadline:
         """期限超過の証憑にバッジが表示される"""
         old_date = date(2025, 10, 1)
         entry = make_journal(
-            db, user.id, accounts["5010"].id, accounts["1010"].id, 1000,
+            db, user.id, "5010", "1010", 1000,
             source="ai_receipt", entry_date=old_date,
         )
         v = Voucher(
@@ -72,7 +72,7 @@ class TestVoucherListDeadline:
     def test_no_badge_within_deadline(self, db, logged_in_client, user, accounts):
         """期限内の証憑にはバッジなし"""
         entry = make_journal(
-            db, user.id, accounts["5010"].id, accounts["1010"].id, 1000,
+            db, user.id, "5010", "1010", 1000,
             source="ai_receipt", entry_date=date(2026, 1, 10),
         )
         v = Voucher(
@@ -96,7 +96,7 @@ class TestAPIDeadline:
     def test_api_deadline_exceeded(self, client, db, user, accounts, auth_header):
         old_date = date(2025, 10, 1)
         entry = make_journal(
-            db, user.id, accounts["5010"].id, accounts["1010"].id, 500,
+            db, user.id, "5010", "1010", 500,
             source="ai_receipt", entry_date=old_date,
         )
         v = Voucher(
@@ -115,7 +115,7 @@ class TestAPIDeadline:
 
     def test_api_within_deadline(self, client, db, user, accounts, auth_header):
         entry = make_journal(
-            db, user.id, accounts["5010"].id, accounts["1010"].id, 500,
+            db, user.id, "5010", "1010", 500,
             source="ai_receipt", entry_date=date(2026, 1, 10),
         )
         v = Voucher(

@@ -25,9 +25,9 @@
 
           <div class="mb-3">
             <label class="form-label">取込先の口座</label>
-            <input type="hidden" name="payment_account_id" id="paymentAccountId" value="">
+            <input type="hidden" name="payment_account_code" id="paymentAccountCode" value="">
             <button type="button" class="form-control text-start" id="paymentAccountBtn"
-                    onclick="openAccountSelector(onPaymentSelected, {filter: 'payment', currentId: document.getElementById('paymentAccountId').value})">
+                    onclick="openAccountSelector(onPaymentSelected, {filter: 'payment', currentCode: document.getElementById('paymentAccountCode').value})">
               <span id="paymentAccountName" class="text-muted">-- 選択してください --</span>
             </button>
             <div class="form-text">
@@ -61,8 +61,8 @@
 
 {% block scripts %}
 <script>
-function onPaymentSelected(id, name) {
-  document.getElementById('paymentAccountId').value = id;
+function onPaymentSelected(code, name) {
+  document.getElementById('paymentAccountCode').value = code;
   var span = document.getElementById('paymentAccountName');
   span.textContent = name;
   span.classList.remove('text-muted');

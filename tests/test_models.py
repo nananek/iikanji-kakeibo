@@ -73,9 +73,11 @@ class TestJournalEntry:
             entry_number=1, description="test",
         )
         entry.lines = [
-            JournalEntryLine(account_id=accounts["5010"].id,
+            JournalEntryLine(account_user_id=user.id,
+                             account_code="5010",
                              debit_amount=1000, credit_amount=0),
-            JournalEntryLine(account_id=accounts["1010"].id,
+            JournalEntryLine(account_user_id=user.id,
+                             account_code="1010",
                              debit_amount=0, credit_amount=1000),
         ]
         db.session.add(entry)
@@ -86,7 +88,7 @@ class TestJournalEntry:
 
     def test_cascade_delete(self, db, user, accounts):
         from tests.conftest import make_journal
-        entry = make_journal(db, user.id, accounts["5010"].id, accounts["1010"].id, 500)
+        entry = make_journal(db, user.id, "5010", "1010", 500)
         entry_id = entry.id
         line_count = len(entry.lines)
         assert line_count == 2

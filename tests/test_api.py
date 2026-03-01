@@ -65,8 +65,8 @@ class TestCreateJournal:
             "date": "2026-02-15",
             "description": "食材購入",
             "lines": [
-                {"account_id": accounts["5010"].id, "debit": 3000},
-                {"account_id": accounts["1010"].id, "credit": 3000},
+                {"account_code": accounts["5010"].code, "debit": 3000},
+                {"account_code": accounts["1010"].code, "credit": 3000},
             ],
         })
         assert resp.status_code == 201
@@ -78,7 +78,7 @@ class TestCreateJournal:
     def test_missing_date(self, client, db, user, accounts, auth_header):
         resp = client.post("/api/v1/journals", headers=auth_header, json={
             "description": "テスト",
-            "lines": [{"account_id": 1, "debit": 100}],
+            "lines": [{"account_code": "1010", "debit": 100}],
         })
         assert resp.status_code == 400
         assert "date" in resp.get_json()["error"]
@@ -87,7 +87,7 @@ class TestCreateJournal:
         resp = client.post("/api/v1/journals", headers=auth_header, json={
             "date": "2026-02-15",
             "description": "",
-            "lines": [{"account_id": 1, "debit": 100}],
+            "lines": [{"account_code": "1010", "debit": 100}],
         })
         assert resp.status_code == 400
 
@@ -103,8 +103,8 @@ class TestCreateJournal:
             "date": "2026/02/15",
             "description": "テスト",
             "lines": [
-                {"account_id": accounts["5010"].id, "debit": 100},
-                {"account_id": accounts["1010"].id, "credit": 100},
+                {"account_code": accounts["5010"].code, "debit": 100},
+                {"account_code": accounts["1010"].code, "credit": 100},
             ],
         })
         assert resp.status_code == 400
@@ -114,8 +114,8 @@ class TestCreateJournal:
             "date": "2026-02-15",
             "description": "不正",
             "lines": [
-                {"account_id": accounts["5010"].id, "debit": 3000},
-                {"account_id": accounts["1010"].id, "credit": 2000},
+                {"account_code": accounts["5010"].code, "debit": 3000},
+                {"account_code": accounts["1010"].code, "credit": 2000},
             ],
         })
         assert resp.status_code == 400
@@ -125,8 +125,8 @@ class TestCreateJournal:
             "date": "2026-02-15",
             "description": "テスト",
             "lines": [
-                {"account_id": accounts["5010"].id, "debit": 100},
-                {"account_id": accounts["1010"].id, "credit": 100},
+                {"account_code": accounts["5010"].code, "debit": 100},
+                {"account_code": accounts["1010"].code, "credit": 100},
             ],
             "draft_id": "abc",
         })
@@ -138,8 +138,8 @@ class TestCreateJournal:
             "date": "2026-02-15",
             "description": "テスト",
             "lines": [
-                {"account_id": accounts["5010"].id, "debit": 100},
-                {"account_id": accounts["1010"].id, "credit": 100},
+                {"account_code": accounts["5010"].code, "debit": 100},
+                {"account_code": accounts["1010"].code, "credit": 100},
             ],
             "draft_id": 99999,
         })
@@ -154,8 +154,8 @@ class TestCreateJournal:
             "date": "2026-02-15",
             "description": "確定済み月",
             "lines": [
-                {"account_id": accounts["5010"].id, "debit": 100},
-                {"account_id": accounts["1010"].id, "credit": 100},
+                {"account_code": accounts["5010"].code, "debit": 100},
+                {"account_code": accounts["1010"].code, "credit": 100},
             ],
         })
         assert resp.status_code == 400
@@ -173,9 +173,9 @@ class TestListJournals:
         assert data["total"] == 0
 
     def test_with_entries(self, client, db, user, accounts, auth_header):
-        make_journal(db, user.id, accounts["5010"].id, accounts["1010"].id,
+        make_journal(db, user.id, "5010", "1010",
                      1000, entry_date=date(2026, 2, 15))
-        make_journal(db, user.id, accounts["5010"].id, accounts["1010"].id,
+        make_journal(db, user.id, "5010", "1010",
                      2000, entry_date=date(2026, 2, 16))
         resp = client.get("/api/v1/journals", headers=auth_header)
         data = resp.get_json()
@@ -183,9 +183,9 @@ class TestListJournals:
         assert len(data["journals"]) == 2
 
     def test_date_filter(self, client, db, user, accounts, auth_header):
-        make_journal(db, user.id, accounts["5010"].id, accounts["1010"].id,
+        make_journal(db, user.id, "5010", "1010",
                      1000, entry_date=date(2026, 1, 15))
-        make_journal(db, user.id, accounts["5010"].id, accounts["1010"].id,
+        make_journal(db, user.id, "5010", "1010",
                      2000, entry_date=date(2026, 2, 15))
         resp = client.get("/api/v1/journals?date_from=2026-02-01",
                           headers=auth_header)
@@ -194,7 +194,7 @@ class TestListJournals:
 
     def test_pagination(self, client, db, user, accounts, auth_header):
         for i in range(5):
-            make_journal(db, user.id, accounts["5010"].id, accounts["1010"].id,
+            make_journal(db, user.id, "5010", "1010",
                          100 * (i + 1), entry_date=date(2026, 1, i + 1))
         resp = client.get("/api/v1/journals?page=1&per_page=2",
                           headers=auth_header)
@@ -205,7 +205,7 @@ class TestListJournals:
 
     def test_user_isolation(self, client, db, user, accounts, auth_header, auditor):
         """他ユーザーの仕訳は見えない"""
-        make_journal(db, user.id, accounts["5010"].id, accounts["1010"].id, 1000)
+        make_journal(db, user.id, "5010", "1010", 1000)
 
         # auditor 用の API キーを作成
         raw_key2, key_hash2, key_prefix2 = APIKey.generate()
@@ -227,7 +227,7 @@ class TestListJournals:
 
 class TestGetJournal:
     def test_success(self, client, db, user, accounts, auth_header):
-        entry = make_journal(db, user.id, accounts["5010"].id, accounts["1010"].id, 2000)
+        entry = make_journal(db, user.id, "5010", "1010", 2000)
         resp = client.get(f"/api/v1/journals/{entry.id}", headers=auth_header)
         assert resp.status_code == 200
         j = resp.get_json()["journal"]
@@ -244,7 +244,7 @@ class TestGetJournal:
 
 class TestDeleteJournal:
     def test_success(self, client, db, user, accounts, auth_header):
-        entry = make_journal(db, user.id, accounts["5010"].id, accounts["1010"].id, 500)
+        entry = make_journal(db, user.id, "5010", "1010", 500)
         resp = client.delete(f"/api/v1/journals/{entry.id}", headers=auth_header)
         assert resp.status_code == 200
         assert JournalEntry.query.get(entry.id) is None
@@ -254,7 +254,7 @@ class TestDeleteJournal:
         assert resp.status_code == 404
 
     def test_locked_period(self, client, db, user, accounts, auth_header):
-        entry = make_journal(db, user.id, accounts["5010"].id, accounts["1010"].id,
+        entry = make_journal(db, user.id, "5010", "1010",
                              500, entry_date=date(2026, 1, 15))
         from app.models.fiscal import FiscalClose
         fc = FiscalClose(user_id=user.id, year=2026, closed_period=1)

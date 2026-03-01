@@ -5,7 +5,7 @@ OpenAI 互換の /v1/chat/completions エンドポイントを提供。
 Docker コンテナ内で実行される。
 
 Usage:
-    python mock-ai-server.py [--port PORT] [--cash-id ID] [--food-id ID]
+    python mock-ai-server.py [--port PORT] [--cash-code CODE] [--food-code CODE]
 """
 import argparse
 import json
@@ -16,8 +16,8 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 def parse_args():
     p = argparse.ArgumentParser()
     p.add_argument("--port", type=int, default=11435)
-    p.add_argument("--cash-id", type=int, default=1)
-    p.add_argument("--food-id", type=int, default=2)
+    p.add_argument("--cash-code", type=str, default="1010")
+    p.add_argument("--food-code", type=str, default="5010")
     return p.parse_args()
 
 
@@ -46,13 +46,13 @@ def round2_response():
                 "entry_description": "テスト商店",
                 "lines": [
                     {
-                        "account_id": ARGS.food_id,
+                        "account_code": ARGS.food_code,
                         "account_name": "食費",
                         "debit_amount": 1500,
                         "credit_amount": 0,
                     },
                     {
-                        "account_id": ARGS.cash_id,
+                        "account_code": ARGS.cash_code,
                         "account_name": "現金",
                         "debit_amount": 0,
                         "credit_amount": 1500,
@@ -125,7 +125,7 @@ if __name__ == "__main__":
     server = HTTPServer(("0.0.0.0", ARGS.port), Handler)
     print(
         f"[mock-ai] Server running on port {ARGS.port} "
-        f"(cash={ARGS.cash_id}, food={ARGS.food_id})",
+        f"(cash={ARGS.cash_code}, food={ARGS.food_code})",
         flush=True,
     )
     try:

@@ -60,12 +60,12 @@
           <td class="text-nowrap">
             {% if not account.system_role %}
             <button type="button" class="btn btn-outline-success btn-sm" title="コピーして追加"
-                    @click="open({{ account.id }}, true)">
+                    @click="open('{{ account.code }}', true)">
               <i class="bi bi-copy"></i>
             </button>
             {% endif %}
             <button type="button" class="btn btn-outline-secondary btn-sm" title="編集"
-                    @click="open({{ account.id }})">
+                    @click="open('{{ account.code }}')">
               <i class="bi bi-pencil"></i>
             </button>
           </td>
@@ -153,10 +153,10 @@
                 この科目の残高: <strong x-text="balanceLabel"></strong>
               </div>
               <label class="form-label">残高の振替先</label>
-              <select class="form-select" x-model="transferToId">
+              <select class="form-select" x-model="transferToCode">
                 <option value="">-- 振替先を選択 --</option>
-                <template x-for="a in transferCandidates" :key="a.id">
-                  <option :value="a.id" x-text="a.code + ' ' + a.name"></option>
+                <template x-for="a in transferCandidates" :key="a.code">
+                  <option :value="a.code" x-text="a.code + ' ' + a.name"></option>
                 </template>
               </select>
             </div>

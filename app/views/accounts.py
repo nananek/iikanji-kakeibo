@@ -9,7 +9,7 @@ from app.extensions import db
 from app.models.account import Account, AccountType
 from app.models.journal import JournalEntryLine
 from app.services.accounting import create_transfer_entry
-from app.services.audit import get_effective_user_id, get_allowed_account_ids
+from app.services.audit import get_effective_user_id, get_allowed_account_codes
 
 
 def _get_account_balance(account):
@@ -17,7 +17,10 @@ def _get_account_balance(account):
     result = db.session.query(
         func.coalesce(func.sum(JournalEntryLine.debit_amount), 0),
         func.coalesce(func.sum(JournalEntryLine.credit_amount), 0),
-    ).filter(JournalEntryLine.account_id == account.id).first()
+    ).filter(
+        JournalEntryLine.account_user_id == account.user_id,
+        JournalEntryLine.account_code == account.code,
+    ).first()
     d, c = int(result[0]), int(result[1])
     if account.account_type.normal_balance == "debit":
         return d - c
@@ -73,9 +76,9 @@ def index():
     )
 
     # Lv2: 公開科目のみ
-    allowed_ids = get_allowed_account_ids()
-    if allowed_ids is not None:
-        accounts = [a for a in accounts if a.id in allowed_ids]
+    allowed_codes = get_allowed_account_codes()
+    if allowed_codes is not None:
+        accounts = [a for a in accounts if a.code in allowed_codes]
 
     grouped = {}
     for at in account_types:
@@ -89,7 +92,7 @@ def index():
     # Alpine accountEditor 用: 科目区分ごとの有効科目リスト
     accounts_by_type = {
         at.id: [
-            {"id": a.id, "code": a.code, "name": a.name}
+            {"code": a.code, "name": a.name}
             for a in grouped[at] if a.is_active
         ]
         for at in account_types
@@ -108,19 +111,18 @@ def index():
     )
 
 
-@bp.route("/api/<int:account_id>")
+@bp.route("/api/<account_code>")
 @login_required
-def api_get(account_id):
+def api_get(account_code):
     """編集・コピー用: アカウントデータをJSONで返す"""
     account = Account.query.filter_by(
-        id=account_id, user_id=get_effective_user_id()
+        user_id=get_effective_user_id(), code=account_code
     ).first_or_404()
 
     copy = request.args.get("copy") == "1"
     if copy and account.system_role:
         return jsonify({"error": "この科目はコピーできません。"}), 400
     data = {
-        "id": account.id,
         "code": account.code,
         "name": account.name,
         "account_type_id": account.account_type_id,
@@ -135,17 +137,16 @@ def api_get(account_id):
         data["code"] = _next_code(account.code, get_effective_user_id())
         data["is_system"] = False
         data["system_role"] = ""
-        data["id"] = None
 
     return jsonify(data)
 
 
-@bp.route("/api/<int:account_id>/balance")
+@bp.route("/api/<account_code>/balance")
 @login_required
-def api_balance(account_id):
+def api_balance(account_code):
     """科目の残高を返す"""
     account = Account.query.filter_by(
-        id=account_id, user_id=get_effective_user_id()
+        user_id=get_effective_user_id(), code=account_code
     ).first_or_404()
     balance = _get_account_balance(account)
     return jsonify({"balance": balance})
@@ -195,12 +196,12 @@ def api_create():
     return jsonify({"success": True, "message": f"勘定科目「{account.name}」を追加しました。"})
 
 
-@bp.route("/api/<int:account_id>", methods=["POST"])
+@bp.route("/api/<account_code>", methods=["POST"])
 @login_required
-def api_update(account_id):
+def api_update(account_code):
     """更新API"""
     account = Account.query.filter_by(
-        id=account_id, user_id=get_effective_user_id()
+        user_id=get_effective_user_id(), code=account_code
     ).first_or_404()
 
     data = request.get_json()
@@ -226,12 +227,12 @@ def api_update(account_id):
     if account.is_active and not new_is_active:
         balance = _get_account_balance(account)
         if balance != 0:
-            transfer_to_id = data.get("transfer_to_account_id")
-            if not transfer_to_id:
+            transfer_to_code = data.get("transfer_to_account_code")
+            if not transfer_to_code:
                 return jsonify({"error": "残高がある科目を無効化するには振替先を指定してください。",
                                 "needs_transfer": True, "balance": balance}), 400
             transfer_to = Account.query.filter_by(
-                id=int(transfer_to_id), user_id=get_effective_user_id()
+                user_id=get_effective_user_id(), code=transfer_to_code
             ).first()
             if not transfer_to or not transfer_to.is_active:
                 return jsonify({"error": "振替先の科目が無効です。"}), 400
@@ -239,27 +240,27 @@ def api_update(account_id):
             # 残高を振替
             if balance > 0:
                 if account.account_type.normal_balance == "debit":
-                    from_id, to_id = account.id, transfer_to.id
+                    from_code, to_code = account.code, transfer_to.code
                 else:
-                    from_id, to_id = transfer_to.id, account.id
+                    from_code, to_code = transfer_to.code, account.code
                 create_transfer_entry(
                     user_id=get_effective_user_id(),
                     date=date.today(),
-                    from_account_id=from_id,
-                    to_account_id=to_id,
+                    from_account_code=from_code,
+                    to_account_code=to_code,
                     amount=abs(balance),
                     description=f"科目無効化振替: {account.name} → {transfer_to.name}",
                 )
             else:
                 if account.account_type.normal_balance == "debit":
-                    from_id, to_id = transfer_to.id, account.id
+                    from_code, to_code = transfer_to.code, account.code
                 else:
-                    from_id, to_id = account.id, transfer_to.id
+                    from_code, to_code = account.code, transfer_to.code
                 create_transfer_entry(
                     user_id=get_effective_user_id(),
                     date=date.today(),
-                    from_account_id=from_id,
-                    to_account_id=to_id,
+                    from_account_code=from_code,
+                    to_account_code=to_code,
                     amount=abs(balance),
                     description=f"科目無効化振替: {account.name} → {transfer_to.name}",
                 )
@@ -280,7 +281,7 @@ def api_update(account_id):
 
         existing = Account.query.filter_by(
             user_id=get_effective_user_id(), code=code
-        ).filter(Account.id != account_id).first()
+        ).filter(Account.code != account_code).first()
         if existing:
             return jsonify({"error": "この科目コードは既に使われています。"}), 400
 

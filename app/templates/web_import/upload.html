@@ -24,13 +24,13 @@
 
           <div class="mb-3">
             <label class="form-label">取込先の口座</label>
-            <input type="hidden" name="payment_account_id" id="paymentAccountId"
-                   value="{{ payment_account_id if payment_account_id is defined else '' }}">
+            <input type="hidden" name="payment_account_code" id="paymentAccountCode"
+                   value="{{ payment_account_code if payment_account_code is defined else '' }}">
             <button type="button" class="form-control text-start" id="paymentAccountBtn"
-                    onclick="openAccountSelector(onPaymentSelected, {filter: 'payment', currentId: document.getElementById('paymentAccountId').value})"
+                    onclick="openAccountSelector(onPaymentSelected, {filter: 'payment', currentCode: document.getElementById('paymentAccountCode').value})"
                     {% if not has_config %}disabled{% endif %}>
-              <span id="paymentAccountName" class="{% if not (payment_account_id is defined and payment_account_id) %}text-muted{% endif %}">
-                {%- if payment_account_id is defined and payment_account_id -%}
+              <span id="paymentAccountName" class="{% if not (payment_account_code is defined and payment_account_code) %}text-muted{% endif %}">
+                {%- if payment_account_code is defined and payment_account_code -%}
                   {{ payment_account_name }}
                 {%- else -%}
                   -- 選択してください --
@@ -105,8 +105,8 @@
 
 {% block scripts %}
 <script>
-function onPaymentSelected(id, name) {
-  document.getElementById('paymentAccountId').value = id;
+function onPaymentSelected(code, name) {
+  document.getElementById('paymentAccountCode').value = code;
   var span = document.getElementById('paymentAccountName');
   span.textContent = name;
   span.classList.remove('text-muted');
@@ -117,7 +117,7 @@ function onPaymentSelected(id, name) {
   var submitBtn = document.getElementById('submitBtn');
 
   form.addEventListener('submit', function(e) {
-    if (!document.getElementById('paymentAccountId').value) {
+    if (!document.getElementById('paymentAccountCode').value) {
       e.preventDefault();
       alert('取込先の口座を選択してください。');
       return;

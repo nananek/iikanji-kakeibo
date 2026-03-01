@@ -88,7 +88,7 @@ test.describe("モバイル: 科目コードが非表示", () => {
     const optionValue = await firstOption.getAttribute("value");
     if (optionValue) {
       await page.locator("#accountSelect").selectOption(optionValue);
-      await page.waitForURL(/account_id=/);
+      await page.waitForURL(/account_code=/);
 
       // カードヘッダー内のコード部分が非表示
       const codeSpan = page.locator(".card-header .d-mobile-none").first();
@@ -174,7 +174,7 @@ test.describe("デスクトップ: 科目コードが表示", () => {
     const optionValue = await firstOption.getAttribute("value");
     if (optionValue) {
       await page.locator("#accountSelect").selectOption(optionValue);
-      await page.waitForURL(/account_id=/);
+      await page.waitForURL(/account_code=/);
 
       const codeSpan = page.locator(".card-header .d-mobile-none").first();
       await expect(codeSpan).toBeVisible();

@@ -65,8 +65,8 @@ def get_acting_as_grant():
     ).first()
 
 
-def get_allowed_account_ids():
-    """Lv2の場合の公開科目IDセット。Lv2でなければNone"""
+def get_allowed_account_codes():
+    """Lv2の場合の公開科目コードセット。Lv2でなければNone"""
     perm = get_permission_level()
     if perm != 2:
         return None
@@ -74,13 +74,13 @@ def get_allowed_account_ids():
     if not grant:
         return set()
     return {
-        ga.account_id
+        ga.account_code
         for ga in AuditGrantAccount.query.filter_by(audit_grant_id=grant.id).all()
     }
 
 
-def get_submitted_account_ids(user_id):
-    """提出済みLv2グラントの公開科目IDセットを返す（個人ユーザー用）
+def get_submitted_account_codes(user_id):
+    """提出済みLv2グラントの公開科目コードセットを返す（個人ユーザー用）
 
     個人ユーザーが自分のデータを編集するときのロック判定に使う。
     """
@@ -95,7 +95,7 @@ def get_submitted_account_ids(user_id):
     accounts = AuditGrantAccount.query.filter(
         AuditGrantAccount.audit_grant_id.in_(grant_ids)
     ).all()
-    return {a.account_id for a in accounts}
+    return {a.account_code for a in accounts}
 
 
 def is_entry_locked_for_owner(user_id, entry):
@@ -103,34 +103,34 @@ def is_entry_locked_for_owner(user_id, entry):
 
     伝票の明細行にロック科目（提出済みLv2の公開科目）が1つでもあればTrue
     """
-    locked_ids = get_submitted_account_ids(user_id)
-    if not locked_ids:
+    locked_codes = get_submitted_account_codes(user_id)
+    if not locked_codes:
         return False
     for line in entry.lines:
-        if line.account_id in locked_ids:
+        if line.account_code in locked_codes:
             return True
     return False
 
 
-def is_entry_locked_for_auditor(entry, allowed_account_ids):
+def is_entry_locked_for_auditor(entry, allowed_account_codes):
     """監査者が伝票を編集・削除できるかチェック
 
     伝票の明細行に非公開科目が1つでもあればTrue
     """
-    if allowed_account_ids is None:
+    if allowed_account_codes is None:
         return False
     for line in entry.lines:
-        if line.account_id not in allowed_account_ids:
+        if line.account_code not in allowed_account_codes:
             return True
     return False
 
 
-def get_proprietor_account_id(user_id):
-    """事業主科目のIDを返す"""
+def get_proprietor_account_code(user_id):
+    """事業主科目のコードを返す"""
     account = Account.query.filter_by(
         user_id=user_id, system_role="proprietor"
     ).first()
-    return account.id if account else None
+    return account.code if account else None
 
 
 def check_auditor_redirect():
@@ -146,10 +146,10 @@ def check_auditor_redirect():
     return None
 
 
-def mask_account_name(account_name, account_id, allowed_account_ids):
+def mask_account_name(account_name, account_code, allowed_account_codes):
     """Lv2監査者向け: 非公開科目名を「事業主」に差し替え"""
-    if allowed_account_ids is None:
+    if allowed_account_codes is None:
         return account_name
-    if account_id in allowed_account_ids:
+    if account_code in allowed_account_codes:
         return account_name
     return "事業主"

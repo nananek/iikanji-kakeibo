@@ -43,7 +43,7 @@ class TestVoucherModel:
 
     def test_voucher_relationship(self, db, user, accounts):
         entry = make_journal(
-            db, user.id, accounts["5010"].id, accounts["1010"].id, 1000,
+            db, user.id, "5010", "1010", 1000,
             source="ai_receipt",
         )
         v = make_voucher(db, user.id, journal_entry_id=entry.id)
@@ -56,7 +56,7 @@ class TestSetNullOnJournalDelete:
 
     def test_journal_delete_orphans_voucher(self, db, user, accounts):
         entry = make_journal(
-            db, user.id, accounts["5010"].id, accounts["1010"].id, 1000,
+            db, user.id, "5010", "1010", 1000,
             source="ai_receipt",
         )
         v = make_voucher(db, user.id, journal_entry_id=entry.id)
@@ -71,7 +71,7 @@ class TestSetNullOnJournalDelete:
 
     def test_bulk_delete_orphans_vouchers(self, db, user, accounts):
         entry = make_journal(
-            db, user.id, accounts["5010"].id, accounts["1010"].id, 1000,
+            db, user.id, "5010", "1010", 1000,
             source="ai_receipt",
         )
         v = make_voucher(db, user.id, journal_entry_id=entry.id)
@@ -105,7 +105,7 @@ class TestCreateVoucherFromDraft:
         draft = self._make_draft(db, user.id)
         draft_id = draft.id
         entry = make_journal(
-            db, user.id, accounts["5010"].id, accounts["1010"].id, 500,
+            db, user.id, "5010", "1010", 500,
             source="ai_receipt",
         )
 
@@ -125,7 +125,7 @@ class TestCreateVoucherFromDraft:
         draft = self._make_draft(db, user.id)
         original_time = draft.created_at
         entry = make_journal(
-            db, user.id, accounts["5010"].id, accounts["1010"].id, 500,
+            db, user.id, "5010", "1010", 500,
             source="ai_receipt",
         )
 
@@ -141,7 +141,7 @@ class TestVoucherImageEndpoint:
     def _setup_voucher_with_file(self, db, user, accounts):
         from app.services.storage import get_storage_backend
         entry = make_journal(
-            db, user.id, accounts["5010"].id, accounts["1010"].id, 500,
+            db, user.id, "5010", "1010", 500,
             source="ai_receipt",
         )
         image_key = f"vouchers/{user.id}/test.jpg"
@@ -210,7 +210,7 @@ class TestAPIVoucherImage:
     def test_api_voucher_image(self, client, db, user, accounts, auth_header):
         from app.services.storage import get_storage_backend
         entry = make_journal(
-            db, user.id, accounts["5010"].id, accounts["1010"].id, 500,
+            db, user.id, "5010", "1010", 500,
             source="ai_receipt",
         )
         image_key = f"vouchers/{user.id}/api_test.jpg"
@@ -238,7 +238,7 @@ class TestEntryToDictVouchers:
 
     def test_entry_dict_includes_vouchers(self, client, db, user, accounts, auth_header):
         entry = make_journal(
-            db, user.id, accounts["5010"].id, accounts["1010"].id, 500,
+            db, user.id, "5010", "1010", 500,
             source="ai_receipt",
         )
         make_voucher(db, user.id, journal_entry_id=entry.id)
@@ -253,7 +253,7 @@ class TestEntryToDictVouchers:
 
     def test_entry_dict_empty_vouchers(self, client, db, user, accounts, auth_header):
         entry = make_journal(
-            db, user.id, accounts["5010"].id, accounts["1010"].id, 500,
+            db, user.id, "5010", "1010", 500,
         )
         resp = client.get(f"/api/v1/journals/{entry.id}", headers=auth_header)
         data = resp.get_json()["journal"]
@@ -266,7 +266,7 @@ class TestJournalFormVoucherPreview:
     def test_edit_with_voucher_shows_image(self, db, logged_in_client, user, accounts):
         """証憑ありの仕訳編集画面でrenderVoucherPreview呼び出しが含まれる"""
         entry = make_journal(
-            db, user.id, accounts["5010"].id, accounts["1010"].id, 1000,
+            db, user.id, "5010", "1010", 1000,
             source="ai_receipt",
         )
         v = make_voucher(db, user.id, journal_entry_id=entry.id)
@@ -279,7 +279,7 @@ class TestJournalFormVoucherPreview:
     def test_edit_without_voucher_no_image(self, db, logged_in_client, user, accounts):
         """証憑なしの仕訳編集画面ではrenderVoucherPreview呼び出しなし"""
         entry = make_journal(
-            db, user.id, accounts["5010"].id, accounts["1010"].id, 1000,
+            db, user.id, "5010", "1010", 1000,
         )
 
         resp = logged_in_client.get(f"/journal/{entry.id}/edit")
@@ -298,7 +298,7 @@ class TestEntryJsonHasVoucher:
 
     def test_has_voucher_true(self, db, logged_in_client, user, accounts):
         entry = make_journal(
-            db, user.id, accounts["5010"].id, accounts["1010"].id, 1000,
+            db, user.id, "5010", "1010", 1000,
             source="ai_receipt",
         )
         make_voucher(db, user.id, journal_entry_id=entry.id)
@@ -309,7 +309,7 @@ class TestEntryJsonHasVoucher:
 
     def test_has_voucher_false(self, db, logged_in_client, user, accounts):
         entry = make_journal(
-            db, user.id, accounts["5010"].id, accounts["1010"].id, 1000,
+            db, user.id, "5010", "1010", 1000,
         )
 
         resp = logged_in_client.get(f"/journal/{entry.id}/json")

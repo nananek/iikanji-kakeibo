@@ -133,7 +133,7 @@ document.addEventListener('alpine:init', function() {
       expenseTypeId: config.expenseTypeId,
       revenueTypeId: config.revenueTypeId,
       accountsByType: config.accountsByType,
-      editingId: null,
+      editingCode: null,
       editingTypeId: null,
       wasActive: true,
       code: '',
@@ -154,7 +154,7 @@ document.addEventListener('alpine:init', function() {
       deactivateLoading: false,
       balanceLabel: '',
       hasBalance: false,
-      transferToId: '',
+      transferToCode: '',
       transferCandidates: [],
 
       get showCostType() {
@@ -171,7 +171,7 @@ document.addEventListener('alpine:init', function() {
       },
 
       resetForm: function() {
-        this.editingId = null;
+        this.editingCode = null;
         this.editingTypeId = null;
         this.wasActive = true;
         this.code = '';
@@ -187,19 +187,19 @@ document.addEventListener('alpine:init', function() {
         this.errorMessage = '';
         this.saving = false;
         this.showDeactivate = false;
-        this.transferToId = '';
+        this.transferToCode = '';
       },
 
-      open: function(accountId, copy) {
+      open: function(accountCode, copy) {
         this.resetForm();
-        if (accountId) {
+        if (accountCode) {
           var self = this;
-          var url = '/accounts/api/' + accountId;
+          var url = '/accounts/api/' + accountCode;
           if (copy) url += '?copy=1';
           fetch(url)
             .then(function(r) { return r.json(); })
             .then(function(data) {
-              self.editingId = data.id;
+              self.editingCode = data.code;
               self.editingTypeId = data.account_type_id;
               self.wasActive = data.is_active;
               self.modalTitle = copy ? 'コピーして追加' : '科目を編集';
@@ -222,12 +222,12 @@ document.addEventListener('alpine:init', function() {
       },
 
       onActiveChange: function() {
-        if (!this.isActive && this.editingId && this.wasActive) {
+        if (!this.isActive && this.editingCode && this.wasActive) {
           this.showDeactivate = true;
           this.deactivateLoading = true;
           this.hasBalance = false;
           var self = this;
-          fetch('/accounts/api/' + this.editingId + '/balance')
+          fetch('/accounts/api/' + this.editingCode + '/balance')
             .then(function(r) { return r.json(); })
             .then(function(data) {
               self.deactivateLoading = false;
@@ -237,7 +237,7 @@ document.addEventListener('alpine:init', function() {
                   (data.balance < 0 ? '（貸方残）' : '（借方残）');
                 var candidates = self.accountsByType[self.editingTypeId] || [];
                 self.transferCandidates = candidates.filter(function(a) {
-                  return a.id !== self.editingId;
+                  return a.code !== self.editingCode;
                 });
               }
             });
@@ -257,10 +257,10 @@ document.addEventListener('alpine:init', function() {
           cost_type: this.costType,
           is_active: this.isActive,
         };
-        if (!this.isActive && this.editingId && this.wasActive && this.transferToId) {
-          payload.transfer_to_account_id = parseInt(this.transferToId);
+        if (!this.isActive && this.editingCode && this.wasActive && this.transferToCode) {
+          payload.transfer_to_account_code = this.transferToCode;
         }
-        var url = this.editingId ? ('/accounts/api/' + this.editingId) : '/accounts/api/new';
+        var url = this.editingCode ? ('/accounts/api/' + this.editingCode) : '/accounts/api/new';
         this.saving = true;
         var self = this;
         fetch(url, {
@@ -329,15 +329,15 @@ document.addEventListener('alpine:init', function() {
       addLine: function(data) {
         data = data || {};
         var name = '';
-        if (data.account_id) {
-          name = typeof _acctNameById === 'function'
-            ? _acctNameById(data.account_id, config.fullName) : '';
+        if (data.account_code) {
+          name = typeof _acctNameByCode === 'function'
+            ? _acctNameByCode(data.account_code, config.fullName) : '';
           if (!name && data.account_name) name = data.account_name;
           if (data.is_proprietor && !name) name = '事業主';
         }
         this.lines.push({
           _key: ++_keyCounter,
-          account_id: data.account_id || '',
+          account_code: data.account_code || '',
           account_name: name,
           debit_amount: data.debit_amount || 0,
           credit_amount: data.credit_amount || 0,
@@ -352,10 +352,10 @@ document.addEventListener('alpine:init', function() {
 
       selectAccount: function(index, filter) {
         var line = this.lines[index];
-        openAccountSelector(function(id, name) {
-          line.account_id = id;
+        openAccountSelector(function(code, name) {
+          line.account_code = code;
           line.account_name = name;
-        }, {filter: filter || 'all', currentId: line.account_id});
+        }, {filter: filter || 'all', currentCode: line.account_code});
       },
 
       serializeLines: function() {
@@ -364,9 +364,9 @@ document.addEventListener('alpine:init', function() {
           var line = this.lines[i];
           var debit = parseInt(line.debit_amount) || 0;
           var credit = parseInt(line.credit_amount) || 0;
-          if (line.account_id && (debit > 0 || credit > 0)) {
+          if (line.account_code && (debit > 0 || credit > 0)) {
             result.push({
-              account_id: line.account_id,
+              account_code: line.account_code,
               debit_amount: debit,
               credit_amount: credit,
               description: line.description
@@ -399,22 +399,22 @@ document.addEventListener('alpine:init', function() {
       allGroups: allGroups,
       searchQuery: '',
       activeTab: 'bs',
-      currentId: null,
+      currentCode: null,
       filterType: 'all',
-      excludeId: null,
+      excludeCode: null,
       modal: null,
 
       get filteredGroups() {
         var allowed = filterMap[this.filterType] || filterMap.all;
-        var exId = this.excludeId;
+        var exCode = this.excludeCode;
         return this.allGroups
           .filter(function(g) { return allowed.indexOf(g.type_code) !== -1; })
           .map(function(g) {
-            if (!exId) return g;
+            if (!exCode) return g;
             return {
               type_code: g.type_code, type_name: g.type_name,
               normal_balance: g.normal_balance,
-              accounts: g.accounts.filter(function(a) { return a.id !== exId; }),
+              accounts: g.accounts.filter(function(a) { return a.code !== exCode; }),
             };
           })
           .filter(function(g) { return g.accounts.length > 0; });
@@ -443,16 +443,16 @@ document.addEventListener('alpine:init', function() {
       open: function(options) {
         options = options || {};
         this.filterType = options.filter || 'all';
-        this.excludeId = options.excludeId || null;
-        this.currentId = options.currentId ? parseInt(options.currentId) : null;
+        this.excludeCode = options.excludeCode || null;
+        this.currentCode = options.currentCode || null;
         this.searchQuery = '';
 
         var autoTab = null;
-        if (this.currentId) {
+        if (this.currentCode) {
           for (var i = 0; i < this.filteredGroups.length; i++) {
             var g = this.filteredGroups[i];
             for (var j = 0; j < g.accounts.length; j++) {
-              if (g.accounts[j].id === this.currentId) {
+              if (g.accounts[j].code === this.currentCode) {
                 autoTab = bsCodes.indexOf(g.type_code) !== -1 ? 'bs' : 'pl';
                 break;
               }
@@ -465,7 +465,7 @@ document.addEventListener('alpine:init', function() {
         if (!this.modal) this.modal = new bootstrap.Modal(this.$el);
         this.modal.show();
 
-        if (this.currentId) {
+        if (this.currentCode) {
           var el = this.$el;
           el.addEventListener('shown.bs.modal', function _scroll() {
             el.removeEventListener('shown.bs.modal', _scroll);
@@ -475,10 +475,10 @@ document.addEventListener('alpine:init', function() {
         }
       },
 
-      select: function(id, name, typeCode) {
+      select: function(code, name, typeCode) {
         if (window._acctSelectorCallback) {
-          var displayName = (typeof _acctNameById === 'function' ? _acctNameById(id) : '') || name;
-          window._acctSelectorCallback(id, displayName, typeCode);
+          var displayName = (typeof _acctNameByCode === 'function' ? _acctNameByCode(code) : '') || name;
+          window._acctSelectorCallback(code, displayName, typeCode);
         }
         this.modal.hide();
       }
@@ -490,13 +490,13 @@ document.addEventListener('alpine:init', function() {
    *
    * 使い方:
    *   <div x-data="reconcileMode({
-   *     csvRows: [...], paymentAccountId: 1,
+   *     csvRows: [...], paymentAccountCode: '1010',
    *     defaultIncomeId: 0, defaultExpenseId: 0
    *   })">
    */
   Alpine.data('reconcileMode', function(config) {
     var csvRows = config.csvRows || [];
-    var paymentAccountId = config.paymentAccountId;
+    var paymentAccountCode = config.paymentAccountCode;
     var defaultIncomeId = config.defaultIncomeId || 0;
     var defaultExpenseId = config.defaultExpenseId || 0;
     var sourceLabels = {
@@ -574,7 +574,7 @@ document.addEventListener('alpine:init', function() {
               selectedMatchIndex: -1,
               enabled: false,
               matchInfo: null,
-              category_id: 0,
+              category_code: '',
               category_name: '',
             };
             if (r.status === 'matched') {
@@ -585,13 +585,13 @@ document.addEventListener('alpine:init', function() {
               row.matchInfo = r.matches[0];
             } else {
               row.enabled = !!(csv.date && (csv.deposit || csv.withdrawal));
-              row.category_id = csv.deposit ? defaultIncomeId : (csv.withdrawal ? defaultExpenseId : 0);
+              row.category_code = csv.deposit ? defaultIncomeId : (csv.withdrawal ? defaultExpenseId : 0);
             }
             self.reconcileRows.push(row);
           }
           for (var i = 0; i < self.reconcileRows.length; i++) {
-            if (self.reconcileRows[i].category_id && typeof _acctNameById === 'function') {
-              self.reconcileRows[i].category_name = _acctNameById(parseInt(self.reconcileRows[i].category_id)) || '';
+            if (self.reconcileRows[i].category_code && typeof _acctNameByCode === 'function') {
+              self.reconcileRows[i].category_name = _acctNameByCode(String(self.reconcileRows[i].category_code)) || '';
             }
           }
           self.reconcileLoaded = true;
@@ -606,25 +606,25 @@ document.addEventListener('alpine:init', function() {
         if (matchIdx >= 0) {
           row.enabled = false;
           row.matchInfo = row.matches[matchIdx];
-          row.category_id = 0;
+          row.category_code = '';
           row.category_name = '';
         } else {
           row.enabled = true;
           row.matchInfo = null;
           var csv = csvRows[row.csv_index] || {};
-          row.category_id = csv.deposit ? defaultIncomeId : (csv.withdrawal ? defaultExpenseId : 0);
-          if (row.category_id && typeof _acctNameById === 'function') {
-            row.category_name = _acctNameById(parseInt(row.category_id)) || '';
+          row.category_code = csv.deposit ? defaultIncomeId : (csv.withdrawal ? defaultExpenseId : 0);
+          if (row.category_code && typeof _acctNameByCode === 'function') {
+            row.category_name = _acctNameByCode(String(row.category_code)) || '';
           }
         }
       },
 
       selectReconcileCategory: function(index) {
         var row = this.reconcileRows[index];
-        openAccountSelector(function(id, name) {
-          row.category_id = id;
+        openAccountSelector(function(code, name) {
+          row.category_code = code;
           row.category_name = name;
-        }, { filter: 'category_transfer', excludeId: paymentAccountId, activeTab: 'pl', currentId: row.category_id });
+        }, { filter: 'category_transfer', excludeCode: paymentAccountCode, activeTab: 'pl', currentCode: row.category_code });
       },
 
       serializeReconcileRows: function() {
@@ -637,7 +637,7 @@ document.addEventListener('alpine:init', function() {
             description: row.description,
             deposit: row.deposit,
             withdrawal: row.withdrawal,
-            category_id: row.category_id ? parseInt(row.category_id) : 0,
+            category_code: row.category_code || '',
           });
         }
         this.$refs.reconcileImportRows.value = JSON.stringify(result);
@@ -649,7 +649,7 @@ document.addEventListener('alpine:init', function() {
    * 取込確認画面: CSV / OFX / Web 共通
    *
    * 使い方:
-   *   <div x-data="importConfirm({ rows: [...], paymentAccountId: 1,
+   *   <div x-data="importConfirm({ rows: [...], paymentAccountCode: '1010',
    *     defaultIncomeId: 0, defaultExpenseId: 0,
    *     closedPeriods: {}, restrictedBeforeYear: 0 })"
    *     @drag-select-update="_syncFromCheckboxes()">
@@ -657,7 +657,7 @@ document.addEventListener('alpine:init', function() {
   Alpine.data('importConfirm', function(config) {
     var closedPeriods = config.closedPeriods || {};
     var restrictedBefore = config.restrictedBeforeYear;
-    var paymentAccountId = config.paymentAccountId;
+    var paymentAccountCode = config.paymentAccountCode;
     var defaultIncomeId = config.defaultIncomeId || 0;
     var defaultExpenseId = config.defaultExpenseId || 0;
 
@@ -722,7 +722,7 @@ document.addEventListener('alpine:init', function() {
             description: r.description || '',
             deposit: r.deposit || 0,
             withdrawal: r.withdrawal || 0,
-            category_id: defCatId || '',
+            category_code: defCatId || '',
             category_name: '',
             enabled: !!r.date && (!!r.deposit || !!r.withdrawal) && !st.problem,
             statusCls: st.cls,
@@ -735,8 +735,8 @@ document.addEventListener('alpine:init', function() {
         }
         // Resolve default category names
         for (var i = 0; i < this.rows.length; i++) {
-          if (this.rows[i].category_id && typeof _acctNameById === 'function') {
-            this.rows[i].category_name = _acctNameById(parseInt(this.rows[i].category_id)) || '';
+          if (this.rows[i].category_code && typeof _acctNameByCode === 'function') {
+            this.rows[i].category_name = _acctNameByCode(String(this.rows[i].category_code)) || '';
           }
         }
         // Check for restricted years
@@ -796,10 +796,10 @@ document.addEventListener('alpine:init', function() {
 
       selectCategory: function(index) {
         var row = this.rows[index];
-        openAccountSelector(function(id, name) {
-          row.category_id = id;
+        openAccountSelector(function(code, name) {
+          row.category_code = code;
           row.category_name = name;
-        }, { filter: 'category_transfer', excludeId: paymentAccountId, activeTab: 'pl', currentId: row.category_id });
+        }, { filter: 'category_transfer', excludeCode: paymentAccountCode, activeTab: 'pl', currentCode: row.category_code });
       },
 
       bulkSetCategory: function() {
@@ -807,13 +807,13 @@ document.addEventListener('alpine:init', function() {
         for (var i = 0; i < this.rows.length; i++) if (this.rows[i].enabled) selected.push(this.rows[i]);
         if (selected.length === 0) { alert('行を選択してください。'); return; }
         var self = this;
-        openAccountSelector(function(id, name) {
+        openAccountSelector(function(code, name) {
           for (var i = 0; i < selected.length; i++) {
-            selected[i].category_id = id;
+            selected[i].category_code = code;
             selected[i].category_name = name;
           }
           self.toggleAll(false);
-        }, { filter: 'category_transfer', excludeId: paymentAccountId, activeTab: 'pl' });
+        }, { filter: 'category_transfer', excludeCode: paymentAccountCode, activeTab: 'pl' });
       },
 
       startDateEdit: function(index) {
@@ -880,7 +880,7 @@ document.addEventListener('alpine:init', function() {
             'Content-Type': 'application/json',
             'X-CSRFToken': Alpine.store('csrf').token,
           },
-          body: JSON.stringify({ descriptions: descriptions, payment_account_id: paymentAccountId }),
+          body: JSON.stringify({ descriptions: descriptions, payment_account_code: paymentAccountCode }),
         })
           .then(function(res) { return res.json(); })
           .then(function(suggestions) {
@@ -888,7 +888,7 @@ document.addEventListener('alpine:init', function() {
             for (var i = 0; i < self.rows.length; i++) {
               var desc = self.rows[i].description;
               if (desc && suggestions[desc]) {
-                self.rows[i].category_id = suggestions[desc].account_id;
+                self.rows[i].category_code = suggestions[desc].account_code;
                 self.rows[i].category_name = suggestions[desc].account_name;
               }
             }
@@ -901,7 +901,7 @@ document.addEventListener('alpine:init', function() {
         var indices = [];
         for (var i = 0; i < this.rows.length; i++) {
           var row = this.rows[i];
-          if (row.category_id && !row.enabled) continue;
+          if (row.category_code && !row.enabled) continue;
           if (!row.description) continue;
           targets.push({ description: row.description, deposit: row.deposit, withdrawal: row.withdrawal });
           indices.push(i);
@@ -918,7 +918,7 @@ document.addEventListener('alpine:init', function() {
             'Content-Type': 'application/json',
             'X-CSRFToken': Alpine.store('csrf').token,
           },
-          body: JSON.stringify({ payment_account_id: paymentAccountId, rows: targets }),
+          body: JSON.stringify({ payment_account_code: paymentAccountCode, rows: targets }),
         })
           .then(function(res) { return res.json(); })
           .then(function(data) {
@@ -926,7 +926,7 @@ document.addEventListener('alpine:init', function() {
             for (var i = 0; i < indices.length; i++) {
               var row = self.rows[indices[i]];
               var sugg = data[row.description];
-              if (sugg) { row.category_id = sugg.account_id; row.category_name = sugg.account_name; }
+              if (sugg) { row.category_code = sugg.account_code; row.category_name = sugg.account_name; }
             }
           })
           .catch(function(err) { alert('AI科目推定に失敗しました: ' + err.message); })
@@ -944,7 +944,7 @@ document.addEventListener('alpine:init', function() {
             description: row.description,
             deposit: row.deposit,
             withdrawal: row.withdrawal,
-            category_id: row.category_id ? parseInt(row.category_id) : 0,
+            category_code: row.category_code || '',
           });
         }
         this.$refs.importRows.value = JSON.stringify(result);

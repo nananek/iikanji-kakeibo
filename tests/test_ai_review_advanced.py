@@ -19,9 +19,9 @@ class TestAdvancedModePost:
             "date": "2026-01-15",
             "entry_description": "テスト購入",
             "lines": [
-                {"account_id": accounts["5010"].id, "account_name": "食費",
+                {"account_code": accounts["5010"].code, "account_name": "食費",
                  "debit_amount": 1000, "credit_amount": 0},
-                {"account_id": accounts["1010"].id, "account_name": "現金",
+                {"account_code": accounts["1010"].code, "account_name": "現金",
                  "debit_amount": 0, "credit_amount": 1000},
             ],
         }]
@@ -46,8 +46,8 @@ class TestAdvancedModePost:
         self._set_draft_session(logged_in_client, draft)
 
         lines_json = json.dumps([
-            {"account_id": accounts["5010"].id, "debit_amount": 1000, "credit_amount": 0, "description": ""},
-            {"account_id": accounts["1010"].id, "debit_amount": 0, "credit_amount": 1000, "description": ""},
+            {"account_code": accounts["5010"].code, "debit_amount": 1000, "credit_amount": 0, "description": ""},
+            {"account_code": accounts["1010"].code, "debit_amount": 0, "credit_amount": 1000, "description": ""},
         ])
 
         resp = logged_in_client.post("/ai-journal/review", data={
@@ -144,9 +144,9 @@ class TestReviewButtons:
             "date": "2026-01-15",
             "entry_description": "テスト購入",
             "lines": [
-                {"account_id": accounts["5010"].id, "account_name": "食費",
+                {"account_code": accounts["5010"].code, "account_name": "食費",
                  "debit_amount": 1000, "credit_amount": 0},
-                {"account_id": accounts["1010"].id, "account_name": "現金",
+                {"account_code": accounts["1010"].code, "account_name": "現金",
                  "debit_amount": 0, "credit_amount": 1000},
             ],
         }]

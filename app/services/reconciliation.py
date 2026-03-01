@@ -10,12 +10,12 @@ from app.models.journal import JournalEntry, JournalEntryLine
 MATCH_DATE_TOLERANCE = 5  # 日付許容範囲（±日）
 
 
-def find_matches(user_id, payment_account_id, csv_rows):
+def find_matches(user_id, payment_account_code, csv_rows):
     """CSV parsed行と既存仕訳のマッチングを行う。
 
     Args:
         user_id: ユーザーID
-        payment_account_id: 支払元口座ID
+        payment_account_code: 支払元口座コード
         csv_rows: list of dict — parse_csv_full() の戻り値と同じ形式
             date: str (ISO format) or None
             description: str
@@ -67,7 +67,8 @@ def find_matches(user_id, payment_account_id, csv_rows):
         .join(JournalEntry, JournalEntry.id == JournalEntryLine.journal_entry_id)
         .filter(
             JournalEntry.user_id == user_id,
-            JournalEntryLine.account_id == payment_account_id,
+            JournalEntryLine.account_user_id == user_id,
+            JournalEntryLine.account_code == payment_account_code,
             JournalEntry.date >= date_min,
             JournalEntry.date <= date_max,
         )
@@ -83,10 +84,13 @@ def find_matches(user_id, payment_account_id, csv_rows):
                 JournalEntryLine.journal_entry_id,
                 Account.name,
             )
-            .join(Account, Account.id == JournalEntryLine.account_id)
+            .join(Account, db.and_(
+                Account.user_id == JournalEntryLine.account_user_id,
+                Account.code == JournalEntryLine.account_code,
+            ))
             .filter(
                 JournalEntryLine.journal_entry_id.in_(entry_ids),
-                JournalEntryLine.account_id != payment_account_id,
+                JournalEntryLine.account_code != payment_account_code,
             )
             .all()
         )

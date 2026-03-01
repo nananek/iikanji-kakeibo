@@ -64,7 +64,7 @@ class TestOrphanLogging:
 
     def test_single_delete_logs_orphan(self, db, logged_in_client, user, accounts):
         entry = make_journal(
-            db, user.id, accounts["5010"].id, accounts["1010"].id, 1000,
+            db, user.id, "5010", "1010", 1000,
             source="ai_receipt",
         )
         v = _make_voucher_with_hash(db, user.id, journal_entry_id=entry.id)
@@ -80,7 +80,7 @@ class TestOrphanLogging:
 
     def test_bulk_delete_logs_orphan(self, db, logged_in_client, user, accounts):
         entry = make_journal(
-            db, user.id, accounts["5010"].id, accounts["1010"].id, 1000,
+            db, user.id, "5010", "1010", 1000,
             source="ai_receipt",
         )
         v = _make_voucher_with_hash(db, user.id, journal_entry_id=entry.id)
@@ -96,7 +96,7 @@ class TestOrphanLogging:
 
     def test_api_delete_logs_orphan(self, client, db, user, accounts, auth_header):
         entry = make_journal(
-            db, user.id, accounts["5010"].id, accounts["1010"].id, 1000,
+            db, user.id, "5010", "1010", 1000,
             source="ai_receipt",
         )
         v = _make_voucher_with_hash(db, user.id, journal_entry_id=entry.id)
@@ -110,7 +110,7 @@ class TestOrphanLogging:
 
     def test_no_log_when_no_voucher(self, db, logged_in_client, user, accounts):
         entry = make_journal(
-            db, user.id, accounts["5010"].id, accounts["1010"].id, 1000,
+            db, user.id, "5010", "1010", 1000,
         )
         entry_id = entry.id
 

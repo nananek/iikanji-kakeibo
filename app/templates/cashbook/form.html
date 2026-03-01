@@ -38,25 +38,25 @@
       </div>
 
       <div class="row mb-3">
-        <div class="col-md-4" x-data="{ acctId: '{{ form.payment_account_id.data or '' }}', acctName: '{{ payment_account_name or '' }}' }">
+        <div class="col-md-4" x-data="{ acctCode: '{{ form.payment_account_code.data or '' }}', acctName: '{{ payment_account_name or '' }}' }">
           <label class="form-label">支払元 / 入金先</label>
-          <input type="hidden" name="payment_account_id" :value="acctId">
+          <input type="hidden" name="payment_account_code" :value="acctCode">
           <button type="button" class="form-control text-start"
-                  @click="openAccountSelector((id, name) => { acctId = id; acctName = name }, {filter: 'payment', activeTab: 'bs', currentId: acctId})">
+                  @click="openAccountSelector((code, name) => { acctCode = code; acctName = name }, {filter: 'payment', activeTab: 'bs', currentCode: acctCode})">
             <span :class="acctName ? '' : 'text-muted'" x-text="acctName || '-- 選択 --'"></span>
           </button>
-          {% for error in form.payment_account_id.errors %}
+          {% for error in form.payment_account_code.errors %}
           <div class="invalid-feedback d-block">{{ error }}</div>
           {% endfor %}
         </div>
-        <div class="col-md-4" x-data="{ acctId: '{{ form.category_account_id.data or '' }}', acctName: '{{ category_account_name or '' }}' }">
+        <div class="col-md-4" x-data="{ acctCode: '{{ form.category_account_code.data or '' }}', acctName: '{{ category_account_name or '' }}' }">
           <label class="form-label">費目</label>
-          <input type="hidden" name="category_account_id" :value="acctId">
+          <input type="hidden" name="category_account_code" :value="acctCode">
           <button type="button" class="form-control text-start"
-                  @click="openAccountSelector((id, name) => { acctId = id; acctName = name }, {filter: 'category', activeTab: 'pl', currentId: acctId})">
+                  @click="openAccountSelector((code, name) => { acctCode = code; acctName = name }, {filter: 'category', activeTab: 'pl', currentCode: acctCode})">
             <span :class="acctName ? '' : 'text-muted'" x-text="acctName || '-- 選択 --'"></span>
           </button>
-          {% for error in form.category_account_id.errors %}
+          {% for error in form.category_account_code.errors %}
           <div class="invalid-feedback d-block">{{ error }}</div>
           {% endfor %}
         </div>

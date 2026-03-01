@@ -8,9 +8,9 @@ from app.models.account import Account
 from app.models.audit import AuditGrant, AuditGrantAccount
 from app.models.journal import JournalEntry
 from app.services.audit import (
-    get_allowed_account_ids,
-    get_proprietor_account_id,
-    get_submitted_account_ids,
+    get_allowed_account_codes,
+    get_proprietor_account_code,
+    get_submitted_account_codes,
     is_entry_locked_for_auditor,
     is_entry_locked_for_owner,
     mask_account_name,
@@ -25,47 +25,47 @@ from tests.conftest import make_journal
 
 class TestMaskAccountName:
     def test_no_restriction(self):
-        """allowed_account_ids が None なら科目名そのまま"""
-        assert mask_account_name("食費", 1, None) == "食費"
+        """allowed_account_codes が None なら科目名そのまま"""
+        assert mask_account_name("食費", "5010", None) == "食費"
 
     def test_allowed_account(self):
         """公開科目は科目名そのまま"""
-        assert mask_account_name("食費", 1, {1, 2, 3}) == "食費"
+        assert mask_account_name("食費", "5010", {"5010", "1010", "1020"}) == "食費"
 
     def test_hidden_account(self):
         """非公開科目は「事業主」に差し替え"""
-        assert mask_account_name("食費", 4, {1, 2, 3}) == "事業主"
+        assert mask_account_name("食費", "5010", {"1010", "1020", "2010"}) == "事業主"
 
     def test_empty_allowed_set(self):
         """公開科目が空の場合は全て「事業主」"""
-        assert mask_account_name("現金", 1, set()) == "事業主"
+        assert mask_account_name("現金", "1010", set()) == "事業主"
 
 
 # =================================================================
-# get_proprietor_account_id — 事業主科目ID取得
+# get_proprietor_account_code — 事業主科目コード取得
 # =================================================================
 
 
-class TestGetProprietorAccountId:
+class TestGetProprietorAccountCode:
     def test_found(self, db, user, accounts):
         """事業主科目がある場合"""
-        result = get_proprietor_account_id(user.id)
-        assert result == accounts["3030"].id
+        result = get_proprietor_account_code(user.id)
+        assert result == accounts["3030"].code
 
     def test_not_found(self, db, user, account_types):
         """事業主科目がない場合"""
-        assert get_proprietor_account_id(user.id) is None
+        assert get_proprietor_account_code(user.id) is None
 
 
 # =================================================================
-# get_submitted_account_ids — 提出済み公開科目
+# get_submitted_account_codes — 提出済み公開科目
 # =================================================================
 
 
-class TestGetSubmittedAccountIds:
+class TestGetSubmittedAccountCodes:
     def test_no_grants(self, db, user, accounts):
         """グラントなし → 空"""
-        result = get_submitted_account_ids(user.id)
+        result = get_submitted_account_codes(user.id)
         assert result == set()
 
     def test_draft_grant_not_included(self, db, user, accounts, auditor):
@@ -77,10 +77,12 @@ class TestGetSubmittedAccountIds:
         db.session.add(grant)
         db.session.commit()
         db.session.add(AuditGrantAccount(
-            audit_grant_id=grant.id, account_id=accounts["5010"].id,
+            audit_grant_id=grant.id,
+            account_user_id=user.id,
+            account_code="5010",
         ))
         db.session.commit()
-        result = get_submitted_account_ids(user.id)
+        result = get_submitted_account_codes(user.id)
         assert result == set()
 
     def test_submitted_grant(self, db, user, accounts, auditor):
@@ -92,12 +94,12 @@ class TestGetSubmittedAccountIds:
         db.session.add(grant)
         db.session.commit()
         db.session.add_all([
-            AuditGrantAccount(audit_grant_id=grant.id, account_id=accounts["5010"].id),
-            AuditGrantAccount(audit_grant_id=grant.id, account_id=accounts["5020"].id),
+            AuditGrantAccount(audit_grant_id=grant.id, account_user_id=user.id, account_code="5010"),
+            AuditGrantAccount(audit_grant_id=grant.id, account_user_id=user.id, account_code="5020"),
         ])
         db.session.commit()
-        result = get_submitted_account_ids(user.id)
-        assert result == {accounts["5010"].id, accounts["5020"].id}
+        result = get_submitted_account_codes(user.id)
+        assert result == {"5010", "5020"}
 
     def test_lv1_grant_not_included(self, db, user, accounts, auditor):
         """Lv1グラント（提出済み）は対象外（Lv2のみ）"""
@@ -107,7 +109,7 @@ class TestGetSubmittedAccountIds:
         )
         db.session.add(grant)
         db.session.commit()
-        result = get_submitted_account_ids(user.id)
+        result = get_submitted_account_codes(user.id)
         assert result == set()
 
     def test_lv3_grant_not_included(self, db, user, accounts, auditor):
@@ -118,7 +120,7 @@ class TestGetSubmittedAccountIds:
         )
         db.session.add(grant)
         db.session.commit()
-        result = get_submitted_account_ids(user.id)
+        result = get_submitted_account_codes(user.id)
         assert result == set()
 
     def test_other_user_grants_not_included(self, db, user, accounts, auditor):
@@ -129,7 +131,7 @@ class TestGetSubmittedAccountIds:
         )
         db.session.add(grant)
         db.session.commit()
-        result = get_submitted_account_ids(user.id)
+        result = get_submitted_account_codes(user.id)
         assert result == set()
 
 
@@ -141,7 +143,7 @@ class TestGetSubmittedAccountIds:
 class TestIsEntryLockedForOwner:
     def test_no_grant(self, db, user, accounts):
         """グラントなし → ロックなし"""
-        entry = make_journal(db, user.id, accounts["5010"].id, accounts["1010"].id, 1000)
+        entry = make_journal(db, user.id, "5010", "1010", 1000)
         assert is_entry_locked_for_owner(user.id, entry) is False
 
     def test_not_locked_when_no_overlap(self, db, user, accounts, auditor):
@@ -153,11 +155,11 @@ class TestIsEntryLockedForOwner:
         db.session.add(grant)
         db.session.commit()
         db.session.add(AuditGrantAccount(
-            audit_grant_id=grant.id, account_id=accounts["5020"].id,
+            audit_grant_id=grant.id, account_user_id=user.id, account_code="5020",
         ))
         db.session.commit()
         # 5010(食費)/1010(現金) → 5020 はロック対象だが使っていない
-        entry = make_journal(db, user.id, accounts["5010"].id, accounts["1010"].id, 1000)
+        entry = make_journal(db, user.id, "5010", "1010", 1000)
         assert is_entry_locked_for_owner(user.id, entry) is False
 
     def test_locked_when_overlap(self, db, user, accounts, auditor):
@@ -169,10 +171,10 @@ class TestIsEntryLockedForOwner:
         db.session.add(grant)
         db.session.commit()
         db.session.add(AuditGrantAccount(
-            audit_grant_id=grant.id, account_id=accounts["5010"].id,
+            audit_grant_id=grant.id, account_user_id=user.id, account_code="5010",
         ))
         db.session.commit()
-        entry = make_journal(db, user.id, accounts["5010"].id, accounts["1010"].id, 1000)
+        entry = make_journal(db, user.id, "5010", "1010", 1000)
         assert is_entry_locked_for_owner(user.id, entry) is True
 
     def test_locked_by_credit_side(self, db, user, accounts, auditor):
@@ -184,10 +186,10 @@ class TestIsEntryLockedForOwner:
         db.session.add(grant)
         db.session.commit()
         db.session.add(AuditGrantAccount(
-            audit_grant_id=grant.id, account_id=accounts["1010"].id,
+            audit_grant_id=grant.id, account_user_id=user.id, account_code="1010",
         ))
         db.session.commit()
-        entry = make_journal(db, user.id, accounts["5010"].id, accounts["1010"].id, 1000)
+        entry = make_journal(db, user.id, "5010", "1010", 1000)
         assert is_entry_locked_for_owner(user.id, entry) is True
 
     def test_draft_grant_does_not_lock(self, db, user, accounts, auditor):
@@ -199,10 +201,10 @@ class TestIsEntryLockedForOwner:
         db.session.add(grant)
         db.session.commit()
         db.session.add(AuditGrantAccount(
-            audit_grant_id=grant.id, account_id=accounts["5010"].id,
+            audit_grant_id=grant.id, account_user_id=user.id, account_code="5010",
         ))
         db.session.commit()
-        entry = make_journal(db, user.id, accounts["5010"].id, accounts["1010"].id, 1000)
+        entry = make_journal(db, user.id, "5010", "1010", 1000)
         assert is_entry_locked_for_owner(user.id, entry) is False
 
 
@@ -213,25 +215,25 @@ class TestIsEntryLockedForOwner:
 
 class TestIsEntryLockedForAuditor:
     def test_no_restriction(self, db, user, accounts):
-        """allowed_account_ids=None（Lv3等） → ロックなし"""
-        entry = make_journal(db, user.id, accounts["5010"].id, accounts["1010"].id, 1000)
+        """allowed_account_codes=None（Lv3等） → ロックなし"""
+        entry = make_journal(db, user.id, "5010", "1010", 1000)
         assert is_entry_locked_for_auditor(entry, None) is False
 
     def test_all_accounts_allowed(self, db, user, accounts):
         """全科目が公開 → ロックなし"""
-        entry = make_journal(db, user.id, accounts["5010"].id, accounts["1010"].id, 1000)
-        allowed = {accounts["5010"].id, accounts["1010"].id}
+        entry = make_journal(db, user.id, "5010", "1010", 1000)
+        allowed = {"5010", "1010"}
         assert is_entry_locked_for_auditor(entry, allowed) is False
 
     def test_partial_hidden(self, db, user, accounts):
         """一部が非公開 → ロック"""
-        entry = make_journal(db, user.id, accounts["5010"].id, accounts["1010"].id, 1000)
-        allowed = {accounts["5010"].id}  # 1010 は非公開
+        entry = make_journal(db, user.id, "5010", "1010", 1000)
+        allowed = {"5010"}  # 1010 は非公開
         assert is_entry_locked_for_auditor(entry, allowed) is True
 
     def test_all_hidden(self, db, user, accounts):
         """全科目が非公開 → ロック"""
-        entry = make_journal(db, user.id, accounts["5010"].id, accounts["1010"].id, 1000)
+        entry = make_journal(db, user.id, "5010", "1010", 1000)
         assert is_entry_locked_for_auditor(entry, set()) is True
 
 
@@ -318,7 +320,7 @@ class TestAPIAuth:
         )
         db.session.add(key)
         db.session.commit()
-        entry = make_journal(db, user.id, accounts["5010"].id, accounts["1010"].id, 1000)
+        entry = make_journal(db, user.id, "5010", "1010", 1000)
         resp = client.delete(f"/api/v1/journals/{entry.id}",
                              headers={"Authorization": f"Bearer {raw_key}"})
         assert resp.status_code == 403
@@ -372,7 +374,7 @@ class TestAPIUserIsolation:
 
     def test_list_isolation(self, client, db, user, accounts, auditor):
         """他ユーザーの仕訳は一覧に表示されない"""
-        make_journal(db, user.id, accounts["5010"].id, accounts["1010"].id, 1000)
+        make_journal(db, user.id, "5010", "1010", 1000)
         key = self._make_key(db, auditor.id, scopes="journals:read")
         resp = client.get("/api/v1/journals",
                           headers={"Authorization": f"Bearer {key}"})
@@ -380,7 +382,7 @@ class TestAPIUserIsolation:
 
     def test_detail_isolation(self, client, db, user, accounts, auditor):
         """他ユーザーの仕訳は詳細取得で 404"""
-        entry = make_journal(db, user.id, accounts["5010"].id, accounts["1010"].id, 1000)
+        entry = make_journal(db, user.id, "5010", "1010", 1000)
         key = self._make_key(db, auditor.id, scopes="journals:read")
         resp = client.get(f"/api/v1/journals/{entry.id}",
                           headers={"Authorization": f"Bearer {key}"})
@@ -388,7 +390,7 @@ class TestAPIUserIsolation:
 
     def test_delete_isolation(self, client, db, user, accounts, auditor):
         """他ユーザーの仕訳は削除で 404"""
-        entry = make_journal(db, user.id, accounts["5010"].id, accounts["1010"].id, 1000)
+        entry = make_journal(db, user.id, "5010", "1010", 1000)
         key = self._make_key(db, auditor.id, scopes="journals:delete")
         resp = client.delete(f"/api/v1/journals/{entry.id}",
                              headers={"Authorization": f"Bearer {key}"})
@@ -413,7 +415,7 @@ class TestAPIUserIsolation:
 class TestAPISubmitLock:
     """API における提出ロック（Lv2グラント提出済み科目の制限）"""
 
-    def _setup_submitted_grant(self, db, user, accounts, auditor, locked_account_ids):
+    def _setup_submitted_grant(self, db, user, accounts, auditor, locked_account_codes):
         """提出済みLv2グラントを作成"""
         grant = AuditGrant(
             owner_user_id=user.id, auditor_user_id=auditor.id,
@@ -421,9 +423,9 @@ class TestAPISubmitLock:
         )
         db.session.add(grant)
         db.session.commit()
-        for aid in locked_account_ids:
+        for code in locked_account_codes:
             db.session.add(AuditGrantAccount(
-                audit_grant_id=grant.id, account_id=aid,
+                audit_grant_id=grant.id, account_user_id=user.id, account_code=code,
             ))
         db.session.commit()
         return grant
@@ -432,13 +434,13 @@ class TestAPISubmitLock:
                                             auditor, auth_header):
         """提出済み科目を含む仕訳の起票が拒否される"""
         self._setup_submitted_grant(db, user, accounts, auditor,
-                                     [accounts["5010"].id])
+                                     ["5010"])
         resp = client.post("/api/v1/journals", headers=auth_header, json={
             "date": "2026-02-15",
             "description": "ロック対象",
             "lines": [
-                {"account_id": accounts["5010"].id, "debit": 1000},
-                {"account_id": accounts["1010"].id, "credit": 1000},
+                {"account_code": accounts["5010"].code, "debit": 1000},
+                {"account_code": accounts["1010"].code, "credit": 1000},
             ],
         })
         assert resp.status_code == 400
@@ -448,13 +450,13 @@ class TestAPISubmitLock:
                                                     auditor, auth_header):
         """提出済み科目を含まない仕訳は起票できる"""
         self._setup_submitted_grant(db, user, accounts, auditor,
-                                     [accounts["5020"].id])
+                                     ["5020"])
         resp = client.post("/api/v1/journals", headers=auth_header, json={
             "date": "2026-02-15",
             "description": "ロック対象外",
             "lines": [
-                {"account_id": accounts["5010"].id, "debit": 1000},
-                {"account_id": accounts["1010"].id, "credit": 1000},
+                {"account_code": accounts["5010"].code, "debit": 1000},
+                {"account_code": accounts["1010"].code, "credit": 1000},
             ],
         })
         assert resp.status_code == 201
@@ -462,9 +464,9 @@ class TestAPISubmitLock:
     def test_delete_blocked_by_submit_lock(self, client, db, user, accounts,
                                             auditor, auth_header):
         """提出済み科目を含む伝票の削除が拒否される"""
-        entry = make_journal(db, user.id, accounts["5010"].id, accounts["1010"].id, 1000)
+        entry = make_journal(db, user.id, "5010", "1010", 1000)
         self._setup_submitted_grant(db, user, accounts, auditor,
-                                     [accounts["5010"].id])
+                                     ["5010"])
         resp = client.delete(f"/api/v1/journals/{entry.id}", headers=auth_header)
         assert resp.status_code == 400
         assert "提出済み" in resp.get_json()["error"]
@@ -472,9 +474,9 @@ class TestAPISubmitLock:
     def test_delete_allowed_for_unlocked_entry(self, client, db, user, accounts,
                                                 auditor, auth_header):
         """提出済み科目を含まない伝票は削除できる"""
-        entry = make_journal(db, user.id, accounts["5010"].id, accounts["1010"].id, 1000)
+        entry = make_journal(db, user.id, "5010", "1010", 1000)
         self._setup_submitted_grant(db, user, accounts, auditor,
-                                     [accounts["5020"].id])
+                                     ["5020"])
         resp = client.delete(f"/api/v1/journals/{entry.id}", headers=auth_header)
         assert resp.status_code == 200
 
@@ -512,7 +514,7 @@ class TestAuditGrantModel:
         db.session.add(grant)
         db.session.commit()
         db.session.add(AuditGrantAccount(
-            audit_grant_id=grant.id, account_id=accounts["5010"].id,
+            audit_grant_id=grant.id, account_user_id=user.id, account_code="5010",
         ))
         db.session.commit()
         grant_id = grant.id

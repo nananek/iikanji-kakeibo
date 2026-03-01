@@ -116,23 +116,23 @@
       <!-- かんたんモード -->
       <div class="tab-pane fade {{ 'show active' if active_tab != 'advanced' }}" id="simpleMode" role="tabpanel">
         <div x-data="{
-          categoryId: '{{ selected.lines[0].account_id if selected.lines else '' }}',
+          categoryCode: '{{ selected.lines[0].account_code if selected.lines else '' }}',
           categoryName: '',
-          paymentId: '{{ selected.lines[1].account_id if selected.lines|length > 1 else '' }}',
+          paymentCode: '{{ selected.lines[1].account_code if selected.lines|length > 1 else '' }}',
           paymentName: '',
           init: function() {
-            if (this.categoryId) this.categoryName = _acctNameById(parseInt(this.categoryId)) || '';
-            if (this.paymentId) this.paymentName = _acctNameById(parseInt(this.paymentId)) || '';
+            if (this.categoryCode) this.categoryName = _acctNameByCode(this.categoryCode) || '';
+            if (this.paymentCode) this.paymentName = _acctNameByCode(this.paymentCode) || '';
           },
           selectCategory: function() {
             var self = this;
-            openAccountSelector(function(id, name) { self.categoryId = id; self.categoryName = name; },
-              {filter: 'category', activeTab: 'pl', currentId: this.categoryId});
+            openAccountSelector(function(code, name) { self.categoryCode = code; self.categoryName = name; },
+              {filter: 'category', activeTab: 'pl', currentCode: this.categoryCode});
           },
           selectPayment: function() {
             var self = this;
-            openAccountSelector(function(id, name) { self.paymentId = id; self.paymentName = name; },
-              {filter: 'payment', activeTab: 'bs', currentId: this.paymentId});
+            openAccountSelector(function(code, name) { self.paymentCode = code; self.paymentName = name; },
+              {filter: 'payment', activeTab: 'bs', currentCode: this.paymentCode});
           }
         }">
         <form method="POST" id="simpleForm"
@@ -170,19 +170,19 @@
           <div class="row mb-3">
             <div class="col-md-6">
               <label class="form-label">費目</label>
-              <input type="hidden" name="category_account_id" x-model="categoryId">
+              <input type="hidden" name="category_account_code" x-model="categoryCode">
               <button type="button" class="form-control text-start"
                       @click="selectCategory()">
-                <span :class="{'text-muted': !categoryId}"
+                <span :class="{'text-muted': !categoryCode}"
                       x-text="categoryName || '-- 選択 --'">-- 選択 --</span>
               </button>
             </div>
             <div class="col-md-6">
               <label class="form-label">支払元</label>
-              <input type="hidden" name="payment_account_id" x-model="paymentId">
+              <input type="hidden" name="payment_account_code" x-model="paymentCode">
               <button type="button" class="form-control text-start"
                       @click="selectPayment()">
-                <span :class="{'text-muted': !paymentId}"
+                <span :class="{'text-muted': !paymentCode}"
                       x-text="paymentName || '-- 選択 --'">-- 選択 --</span>
               </button>
             </div>
@@ -267,7 +267,7 @@
                     <td>
                       <button type="button" class="form-control form-control-sm text-start"
                               @click="selectAccount(index)">
-                        <span :class="{'text-muted': !line.account_id}"
+                        <span :class="{'text-muted': !line.account_code}"
                               x-text="line.account_name || '-- 選択 --'"></span>
                       </button>
                     </td>

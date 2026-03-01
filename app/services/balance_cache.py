@@ -22,7 +22,13 @@ def compute_balance_cache(user_id, year, period):
                 func.coalesce(func.sum(JournalEntryLine.credit_amount), 0),
             )
             .join(JournalEntry, JournalEntry.id == JournalEntryLine.journal_entry_id)
-            .filter(JournalEntryLine.account_id == account.id, range_cond)
+            .filter(
+                db.and_(
+                    JournalEntryLine.account_user_id == account.user_id,
+                    JournalEntryLine.account_code == account.code,
+                ),
+                range_cond,
+            )
         )
         if not include_closing:
             q = q.filter(JournalEntry.source != "closing")
@@ -32,14 +38,14 @@ def compute_balance_cache(user_id, year, period):
             continue
 
         existing = BalanceCache.query.filter_by(
-            user_id=user_id, account_id=account.id, year=year, period=period,
+            user_id=user_id, account_code=account.code, year=year, period=period,
         ).first()
         if existing:
             existing.cumulative_debit = d
             existing.cumulative_credit = c
         else:
             db.session.add(BalanceCache(
-                user_id=user_id, account_id=account.id,
+                user_id=user_id, account_code=account.code,
                 year=year, period=period,
                 cumulative_debit=d, cumulative_credit=c,
             ))
@@ -55,11 +61,11 @@ def invalidate_balance_cache(user_id, year, from_period):
 
 
 def get_cached_balances(user_id, year, period):
-    """一括取得: {account_id: (debit, credit)}"""
+    """一括取得: {account_code: (debit, credit)}"""
     caches = BalanceCache.query.filter_by(
         user_id=user_id, year=year, period=period,
     ).all()
     return {
-        c.account_id: (int(c.cumulative_debit), int(c.cumulative_credit))
+        c.account_code: (int(c.cumulative_debit), int(c.cumulative_credit))
         for c in caches
     }

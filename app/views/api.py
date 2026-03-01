@@ -14,7 +14,7 @@ from app.models.ai_config import UserAIConfig
 from app.models.ai_draft import AIDraft
 from app.models.journal import JournalEntry
 from app.services.accounting import create_journal_entry
-from app.services.audit import get_submitted_account_ids, is_entry_locked_for_owner
+from app.services.audit import get_submitted_account_codes, is_entry_locked_for_owner
 from app.services.fiscal import check_period_open_for_new, check_entry_modifiable
 from app.services.image import serve_image
 from app.services.storage import (
@@ -105,21 +105,21 @@ def create_journal():
     # lines_data 変換
     lines_data = []
     for i, line in enumerate(lines):
-        account_id = line.get("account_id")
-        if not account_id:
-            return jsonify({"error": f"lines[{i}].account_id は必須です。"}), 400
+        account_code = line.get("account_code")
+        if not account_code:
+            return jsonify({"error": f"lines[{i}].account_code は必須です。"}), 400
         lines_data.append({
-            "account_id": int(account_id),
+            "account_code": account_code,
             "debit_amount": int(line.get("debit", 0) or 0),
             "credit_amount": int(line.get("credit", 0) or 0),
             "description": line.get("description", ""),
         })
 
     # 提出済みロック科目チェック
-    locked_ids = get_submitted_account_ids(user_id)
-    if locked_ids:
-        used_ids = {ld["account_id"] for ld in lines_data}
-        if used_ids & locked_ids:
+    locked_codes = get_submitted_account_codes(user_id)
+    if locked_codes:
+        used_codes = {ld["account_code"] for ld in lines_data}
+        if used_codes & locked_codes:
             return jsonify({"error": "提出済みの税務科目を含むため登録できません。"}), 400
 
     try:
@@ -171,7 +171,7 @@ def _entry_to_dict(entry):
         "source": entry.source,
         "lines": [
             {
-                "account_id": line.account_id,
+                "account_code": line.account_code,
                 "debit": line.debit_amount,
                 "credit": line.credit_amount,
                 "description": line.description or "",

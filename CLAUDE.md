@@ -70,13 +70,13 @@
 |--------|---------|-----------|
 | User | users | username, email, password_hash, user_type (personal/auditor) |
 | AccountType | account_types | name, code (asset/liability/equity/revenue/expense), normal_balance |
-| Account | accounts | user_id, code, name, tax_category, cost_type, system_role, is_active, deactivated_year |
+| Account | accounts | PK(user_id, code), name, tax_category, cost_type, system_role, is_active, deactivated_year |
 | JournalEntry | journal_entries | user_id, date, entry_number, description, source, batch_id, fiscal_period |
-| JournalEntryLine | journal_entry_lines | journal_entry_id, account_id, debit_amount, credit_amount |
+| JournalEntryLine | journal_entry_lines | journal_entry_id, account_user_id, account_code, debit_amount, credit_amount |
 | FiscalClose | fiscal_closes | user_id, year, closed_period |
 | MedicalExpense | medical_expenses | patient_name, hospital_name, amount_paid, insurance_reimbursement, provider_type |
 | AuditGrant | audit_grants | owner_user_id, auditor_user_id, permission_level (1/2/3), status |
-| AuditGrantAccount | audit_grant_accounts | audit_grant_id, account_id（Lv2の可視科目） |
+| AuditGrantAccount | audit_grant_accounts | audit_grant_id, account_user_id, account_code（Lv2の可視科目） |
 | AIDraft | ai_drafts | user_id, status (pending/analyzed), image_path, suggestions (JSON), discord_webhook_url, discord_message_id |
 | UserAIConfig | user_ai_configs | provider, api_key_encrypted, model_name, custom_prompt, base_url |
 | AutoImportSource | auto_import_sources | user_id, source_type (webdav), config (JSON暗号化) |
@@ -84,7 +84,7 @@
 | WebhookConfig | webhook_configs | user_id, url, events |
 | Voucher | vouchers | user_id, journal_entry_id (SET NULL), image_key, image_mime, file_hash (SHA-256), uploaded_at |
 | VoucherAuditLog | voucher_audit_logs | voucher_id, user_id, action (orphaned/hash_verified/hash_mismatch), detail (JSON) |
-| BalanceCache | balance_caches | user_id, year, period, account_id, debit_total, credit_total |
+| BalanceCache | balance_caches | user_id, year, period, account_code, cumulative_debit, cumulative_credit |
 | WebAuthnCredential | webauthn_credentials | credential_id, credential_public_key, current_sign_count |
 
 ### サービス (`app/services/`)

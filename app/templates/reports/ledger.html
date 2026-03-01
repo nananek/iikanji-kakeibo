@@ -21,7 +21,7 @@
       {% for at, accts in grouped_accounts.items() %}
       <optgroup label="{{ at.name }}">
         {% for a in accts %}
-        <option value="{{ a.id }}" {% if a.id == account_id %}selected{% endif %}
+        <option value="{{ a.code }}" {% if a.code == account_code %}selected{% endif %}
                 data-code="{{ a.code }}">
           {{ a.name }}{% if not a.is_active %} (無効){% endif %}
         </option>
@@ -293,7 +293,7 @@
   </div>
 </div>
 
-{% elif not account_id %}
+{% elif not account_code %}
 <div class="text-center text-muted py-5">
   <i class="bi bi-book" style="font-size: 3rem;"></i>
   <p class="mt-2">科目を選択してください。</p>
@@ -326,9 +326,9 @@ if (window.innerWidth > 576) {
 
   function navigate(pfVal, ptVal) {
     var year = document.getElementById('yearSelect').value;
-    var acctId = document.getElementById('accountSelect').value;
+    var acctCode = document.getElementById('accountSelect').value;
     var url = '?year=' + year + '&pf=' + pfVal + '&pt=' + ptVal;
-    if (acctId) url += '&account_id=' + acctId;
+    if (acctCode) url += '&account_code=' + acctCode;
     if (currentSort !== 'asc') url += '&sort=' + currentSort;
     location.href = url;
   }
@@ -450,11 +450,13 @@ var currentHasVoucher = false;
 var editModal = null;
 
 var _isMobile = window.innerWidth <= 576;
-function _acctNameById(id) {
+function _acctNameByCode(code) {
+  if (!code) return '';
+  code = String(code);
   for (var i = 0; i < _acctSelectorData.length; i++) {
     var g = _acctSelectorData[i];
     for (var j = 0; j < g.accounts.length; j++) {
-      if (g.accounts[j].id === id) {
+      if (g.accounts[j].code === code) {
         if (_isMobile) return g.accounts[j].name;
         return g.accounts[j].code + ' ' + g.accounts[j].name;
       }
@@ -469,15 +471,15 @@ function modalAddLine(data, readonly) {
   var tbody = document.getElementById('modalLinesBody');
   var tr = document.createElement('tr');
   var isProprietor = data.is_proprietor || false;
-  var acctName = data.account_id ? _acctNameById(data.account_id) : '-- 選択 --';
+  var acctName = data.account_code ? _acctNameByCode(data.account_code) : '-- 選択 --';
   if (isProprietor && !acctName) acctName = '事業主';
-  var acctClass = data.account_id ? '' : 'text-muted';
+  var acctClass = data.account_code ? '' : 'text-muted';
 
   if (isProprietor || ro) {
     if (isProprietor) tr.classList.add('table-secondary');
     tr.innerHTML =
       '<td>' +
-        '<input type="hidden" class="modal-account-id" value="' + (data.account_id || '') + '">' +
+        '<input type="hidden" class="modal-account-code" value="' + (data.account_code || '') + '">' +
         (isProprietor ? '<input type="hidden" class="modal-is-proprietor" value="1">' : '') +
         '<span class="form-control form-control-sm text-start bg-light text-muted">' + acctName + '</span>' +
       '</td>' +
@@ -488,7 +490,7 @@ function modalAddLine(data, readonly) {
   } else {
     tr.innerHTML =
       '<td>' +
-        '<input type="hidden" class="modal-account-id" value="' + (data.account_id || '') + '">' +
+        '<input type="hidden" class="modal-account-code" value="' + (data.account_code || '') + '">' +
         '<button type="button" class="form-control form-control-sm text-start modal-account-btn">' +
           '<span class="modal-account-name ' + acctClass + '">' + acctName + '</span>' +
         '</button>' +
@@ -500,13 +502,13 @@ function modalAddLine(data, readonly) {
 
     tr.querySelector('.modal-account-btn').addEventListener('click', function() {
       var btn = this;
-      var curId = btn.parentElement.querySelector('.modal-account-id').value;
-      openAccountSelector(function(id, name) {
-        btn.parentElement.querySelector('.modal-account-id').value = id;
+      var curCode = btn.parentElement.querySelector('.modal-account-code').value;
+      openAccountSelector(function(code, name) {
+        btn.parentElement.querySelector('.modal-account-code').value = code;
         var span = btn.querySelector('.modal-account-name');
         span.textContent = name;
         span.classList.remove('text-muted');
-      }, {filter: 'all', currentId: curId});
+      }, {filter: 'all', currentCode: curCode});
     });
   }
 
@@ -658,12 +660,12 @@ function deleteEntry() {
 function saveEntry() {
   var lines = [];
   document.querySelectorAll('#modalLinesBody tr').forEach(function(tr) {
-    var accountId = tr.querySelector('.modal-account-id').value;
+    var accountCode = tr.querySelector('.modal-account-code').value;
     var debit = parseInt(tr.querySelector('.modal-debit').value) || 0;
     var credit = parseInt(tr.querySelector('.modal-credit').value) || 0;
     var desc = tr.querySelector('.modal-line-desc').value;
-    if (accountId && (debit > 0 || credit > 0)) {
-      lines.push({ account_id: parseInt(accountId), debit_amount: debit, credit_amount: credit, description: desc });
+    if (accountCode && (debit > 0 || credit > 0)) {
+      lines.push({ account_code: accountCode, debit_amount: debit, credit_amount: credit, description: desc });
     }
   });
 

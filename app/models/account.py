@@ -23,12 +23,11 @@ class Account(db.Model):
 
     __tablename__ = "accounts"
 
-    id = db.Column(db.Integer, primary_key=True)
-    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), primary_key=True)
+    code = db.Column(db.String(10), primary_key=True)
     account_type_id = db.Column(
         db.Integer, db.ForeignKey("account_types.id"), nullable=False
     )
-    code = db.Column(db.String(10), nullable=False)
     name = db.Column(db.String(100), nullable=False)
     description = db.Column(db.String(255), default="")
     tax_category = db.Column(db.String(50), nullable=True)
@@ -41,10 +40,6 @@ class Account(db.Model):
 
     journal_lines = db.relationship(
         "JournalEntryLine", backref="account", lazy="dynamic"
-    )
-
-    __table_args__ = (
-        db.UniqueConstraint("user_id", "code", name="uq_user_account_code"),
     )
 
     def __repr__(self):

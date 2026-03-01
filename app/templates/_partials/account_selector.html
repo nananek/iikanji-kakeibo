@@ -6,12 +6,12 @@
   <div class="mb-2">
     <div class="small fw-bold text-muted px-1 mb-1" x-text="group.type_name"></div>
     <div class="list-group list-group-flush">
-      <template x-for="a in group.accounts" :key="a.id">
+      <template x-for="a in group.accounts" :key="a.code">
         <button type="button"
                 class="list-group-item list-group-item-action py-1 px-2 acct-item"
-                :class="{'acct-current': a.id === currentId}"
+                :class="{'acct-current': a.code === currentCode}"
                 x-show="matchesSearch(a)"
-                @click="select(a.id, a.name, group.type_code)">
+                @click="select(a.code, a.name, group.type_code)">
           <small class="text-muted me-1 d-mobile-none" x-text="a.code"></small>
           <span x-text="a.name"></span>
         </button>
@@ -71,13 +71,13 @@
 <script>
 var _acctSelectorData = {{ grouped_accounts | tojson }};
 var _isMobile = window.innerWidth <= 576;
-window._acctNameById = function(id, full) {
-  id = parseInt(id);
-  if (!id) return '';
+window._acctNameByCode = function(code, full) {
+  if (!code) return '';
+  code = String(code);
   for (var i = 0; i < _acctSelectorData.length; i++) {
     var g = _acctSelectorData[i];
     for (var j = 0; j < g.accounts.length; j++) {
-      if (g.accounts[j].id === id) {
+      if (g.accounts[j].code === code) {
         if (full || !_isMobile) return g.accounts[j].code + ' ' + g.accounts[j].name;
         return g.accounts[j].name;
       }

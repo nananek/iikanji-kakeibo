@@ -91,28 +91,28 @@ def create_app(config_class=Config):
                 "is_acting_as": False,
                 "acting_as_user": None,
                 "audit_permission_level": None,
-                "audit_allowed_account_ids": None,
+                "audit_allowed_account_codes": None,
             }
         from app.services.audit import (
             is_acting_as_auditor, get_acting_as_user,
-            get_permission_level, get_allowed_account_ids,
+            get_permission_level, get_allowed_account_codes,
         )
         return {
             "is_acting_as": is_acting_as_auditor(),
             "acting_as_user": get_acting_as_user() if is_acting_as_auditor() else None,
             "audit_permission_level": get_permission_level(),
-            "audit_allowed_account_ids": get_allowed_account_ids(),
+            "audit_allowed_account_codes": get_allowed_account_codes(),
         }
 
     # Template filter for account name masking
     @app.template_filter("mask_account")
-    def mask_account_filter(account_name, account_id):
+    def mask_account_filter(account_name, account_code):
         from flask_login import current_user as cu
         if not cu.is_authenticated:
             return account_name
-        from app.services.audit import get_allowed_account_ids, mask_account_name
-        allowed = get_allowed_account_ids()
-        return mask_account_name(account_name, account_id, allowed)
+        from app.services.audit import get_allowed_account_codes, mask_account_name
+        allowed = get_allowed_account_codes()
+        return mask_account_name(account_name, account_code, allowed)
 
     # Serve service worker from root scope
     @app.route("/sw.js")

@@ -35,7 +35,7 @@ def get_tax_summary(user_id, year):
             (func.coalesce(func.sum(JournalEntryLine.debit_amount), 0)
              - func.coalesce(func.sum(JournalEntryLine.credit_amount), 0)).label("total"),
         )
-        .join(JournalEntryLine, JournalEntryLine.account_id == Account.id)
+        .join(JournalEntryLine, db.and_(JournalEntryLine.account_user_id == Account.user_id, JournalEntryLine.account_code == Account.code))
         .join(JournalEntry, JournalEntry.id == JournalEntryLine.journal_entry_id)
         .filter(
             Account.user_id == user_id,
@@ -79,7 +79,7 @@ def get_medical_summary(user_id, year):
             JournalEntryLine.debit_amount,
             Account.name.label("account_name"),
         )
-        .join(JournalEntryLine, JournalEntryLine.account_id == Account.id)
+        .join(JournalEntryLine, db.and_(JournalEntryLine.account_user_id == Account.user_id, JournalEntryLine.account_code == Account.code))
         .join(JournalEntry, JournalEntry.id == JournalEntryLine.journal_entry_id)
         .filter(
             Account.user_id == user_id,
@@ -184,7 +184,6 @@ def get_monthly_comparison(user_id, year):
     # 費用: 月別の正味発生額（借方 - 貸方）
     expense_rows = (
         db.session.query(
-            Account.id,
             Account.code,
             Account.name,
             Account.cost_type,
@@ -192,7 +191,7 @@ def get_monthly_comparison(user_id, year):
             (func.coalesce(func.sum(JournalEntryLine.debit_amount), 0)
              - func.coalesce(func.sum(JournalEntryLine.credit_amount), 0)).label("total"),
         )
-        .join(JournalEntryLine, JournalEntryLine.account_id == Account.id)
+        .join(JournalEntryLine, db.and_(JournalEntryLine.account_user_id == Account.user_id, JournalEntryLine.account_code == Account.code))
         .join(JournalEntry, JournalEntry.id == JournalEntryLine.journal_entry_id)
         .filter(
             Account.user_id == user_id,
@@ -201,14 +200,13 @@ def get_monthly_comparison(user_id, year):
             JournalEntry.date >= start,
             JournalEntry.date < end,
         )
-        .group_by(Account.id, Account.code, Account.name, Account.cost_type, "m")
+        .group_by(Account.code, Account.name, Account.cost_type, "m")
         .all()
     )
 
     # 収益: 月別の正味発生額（貸方 - 借方）
     income_rows = (
         db.session.query(
-            Account.id,
             Account.code,
             Account.name,
             Account.cost_type,
@@ -216,7 +214,7 @@ def get_monthly_comparison(user_id, year):
             (func.coalesce(func.sum(JournalEntryLine.credit_amount), 0)
              - func.coalesce(func.sum(JournalEntryLine.debit_amount), 0)).label("total"),
         )
-        .join(JournalEntryLine, JournalEntryLine.account_id == Account.id)
+        .join(JournalEntryLine, db.and_(JournalEntryLine.account_user_id == Account.user_id, JournalEntryLine.account_code == Account.code))
         .join(JournalEntry, JournalEntry.id == JournalEntryLine.journal_entry_id)
         .filter(
             Account.user_id == user_id,
@@ -225,24 +223,24 @@ def get_monthly_comparison(user_id, year):
             JournalEntry.date >= start,
             JournalEntry.date < end,
         )
-        .group_by(Account.id, Account.code, Account.name, Account.cost_type, "m")
+        .group_by(Account.code, Account.name, Account.cost_type, "m")
         .all()
     )
 
     def pivot(rows):
         accounts = {}
         for row in rows:
-            aid = row.id
-            if aid not in accounts:
-                accounts[aid] = {
-                    "id": aid, "code": row.code, "name": row.name,
+            code = row.code
+            if code not in accounts:
+                accounts[code] = {
+                    "code": code, "name": row.name,
                     "cost_type": row.cost_type,
                     "months": [0] * 12, "total": 0,
                 }
             m_idx = int(row.m) - 1
             amount = int(row.total)
-            accounts[aid]["months"][m_idx] = amount
-            accounts[aid]["total"] += amount
+            accounts[code]["months"][m_idx] = amount
+            accounts[code]["total"] += amount
         return sorted(accounts.values(), key=lambda a: a["code"])
 
     expense_accounts = pivot(expense_rows)
@@ -341,7 +339,7 @@ def get_income_expense_summary(user_id, year, month=None):
             - func.coalesce(func.sum(JournalEntryLine.debit_amount), 0)
         )
         .join(JournalEntry, JournalEntry.id == JournalEntryLine.journal_entry_id)
-        .join(Account, Account.id == JournalEntryLine.account_id)
+        .join(Account, db.and_(Account.user_id == JournalEntryLine.account_user_id, Account.code == JournalEntryLine.account_code))
         .filter(
             JournalEntry.user_id == user_id,
             JournalEntry.date >= start,
@@ -357,7 +355,7 @@ def get_income_expense_summary(user_id, year, month=None):
             - func.coalesce(func.sum(JournalEntryLine.credit_amount), 0)
         )
         .join(JournalEntry, JournalEntry.id == JournalEntryLine.journal_entry_id)
-        .join(Account, Account.id == JournalEntryLine.account_id)
+        .join(Account, db.and_(Account.user_id == JournalEntryLine.account_user_id, Account.code == JournalEntryLine.account_code))
         .filter(
             JournalEntry.user_id == user_id,
             JournalEntry.date >= start,

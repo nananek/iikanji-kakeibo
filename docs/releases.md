@@ -5,6 +5,35 @@ title: リリースノート
 
 # リリースノート
 
+## v3.0.0
+
+**Account 複合PK移行 — 科目コードをプライマリーキーに**
+
+accounts テーブルの PK を auto-increment `id` から `(user_id, code)` 複合キーに変更。API・フォーム・内部ロジックの全レイヤーで `account_id`（整数）を `account_code`（文字列）に置換。
+
+### 破壊的変更
+
+- **REST API**: 仕訳明細の `account_id` (int) → `account_code` (str)
+- **Python クライアント**: `JournalLine.account_id` → `JournalLine.account_code`
+- **DBマイグレーション** (`028_account_composite_pk`): `accounts.id` 廃止、FK を持つ 3 テーブル（`journal_entry_lines`, `audit_grant_accounts`, `balance_caches`）のカラム構造が変更
+
+### 変更内容
+
+- Account モデル: `id` (Integer PK) → `(user_id, code)` 複合 PK
+- JournalEntryLine: `account_id` → `account_user_id` + `account_code` (複合 FK)
+- AuditGrantAccount: 同上
+- BalanceCache: `account_id` → `account_code` (`user_id` は既存)
+- サービス層 7 ファイル: 関数名・引数名を `_id` → `_code` に統一
+- ビュー層 11 ファイル: URL パラメータ・フォーム処理・JSON レスポンス
+- テンプレート 15 ファイル + JS: `account.id` → `account.code` 全置換
+- IDOR セキュリティテスト 7 件追加（科目一覧・元帳・試算表・API の他ユーザー分離検証）
+- 71 ファイル変更、pytest 499 件 + E2E 55 件
+
+### アップグレード手順
+
+1. コンテナを再作成（マイグレーション 028 が自動実行）
+2. Python クライアントを v3.0.0 に更新
+
 ## v2.16.1
 
 **科目コードのモバイル表示を統制**

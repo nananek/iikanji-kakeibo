@@ -78,7 +78,7 @@ class TestGetTaxSummary:
 
     def test_life_insurance(self, db, user, accounts, tax_accounts):
         """生命保険料控除が集計される"""
-        make_journal(db, user.id, tax_accounts["7010"].id, accounts["1010"].id,
+        make_journal(db, user.id, "7010", "1010",
                      88370, entry_date=date(2026, 12, 24),
                      description="第一生命保険株式会社")
         summary = get_tax_summary(user.id, 2026)
@@ -88,9 +88,9 @@ class TestGetTaxSummary:
 
     def test_life_insurance_multiple_accounts(self, db, user, accounts, tax_accounts):
         """生命保険と個人年金が同じカテゴリで合算される"""
-        make_journal(db, user.id, tax_accounts["7010"].id, accounts["1010"].id,
+        make_journal(db, user.id, "7010", "1010",
                      50000, entry_date=date(2026, 6, 15))
-        make_journal(db, user.id, tax_accounts["7020"].id, accounts["1010"].id,
+        make_journal(db, user.id, "7020", "1010",
                      30000, entry_date=date(2026, 6, 15))
         summary = get_tax_summary(user.id, 2026)
         assert summary["life_insurance"]["total"] == 80000
@@ -98,11 +98,11 @@ class TestGetTaxSummary:
 
     def test_social_insurance(self, db, user, accounts, tax_accounts):
         """社会保険料控除の集計（複数科目）"""
-        make_journal(db, user.id, tax_accounts["6020"].id, accounts["1020"].id,
+        make_journal(db, user.id, "6020", "1020",
                      50000, entry_date=date(2026, 6, 25))
-        make_journal(db, user.id, tax_accounts["6030"].id, accounts["1020"].id,
+        make_journal(db, user.id, "6030", "1020",
                      90000, entry_date=date(2026, 6, 25))
-        make_journal(db, user.id, tax_accounts["6040"].id, accounts["1020"].id,
+        make_journal(db, user.id, "6040", "1020",
                      16590, entry_date=date(2026, 6, 25))
         summary = get_tax_summary(user.id, 2026)
         assert "social_insurance" in summary
@@ -111,7 +111,7 @@ class TestGetTaxSummary:
 
     def test_earthquake_insurance(self, db, user, accounts, tax_accounts):
         """地震保険料控除"""
-        make_journal(db, user.id, tax_accounts["7030"].id, accounts["1020"].id,
+        make_journal(db, user.id, "7030", "1020",
                      12000, entry_date=date(2026, 3, 15))
         summary = get_tax_summary(user.id, 2026)
         assert "earthquake_insurance" in summary
@@ -119,7 +119,7 @@ class TestGetTaxSummary:
 
     def test_donation(self, db, user, accounts, tax_accounts):
         """寄附金控除"""
-        make_journal(db, user.id, tax_accounts["7040"].id, accounts["1020"].id,
+        make_journal(db, user.id, "7040", "1020",
                      50000, entry_date=date(2026, 11, 30))
         summary = get_tax_summary(user.id, 2026)
         assert "donation" in summary
@@ -128,7 +128,7 @@ class TestGetTaxSummary:
     def test_ideco(self, db, user, accounts, tax_accounts):
         """小規模企業共済等掛金控除"""
         for m in range(1, 13):
-            make_journal(db, user.id, tax_accounts["7060"].id, accounts["1020"].id,
+            make_journal(db, user.id, "7060", "1020",
                          23000, entry_date=date(2026, m, 26))
         summary = get_tax_summary(user.id, 2026)
         assert "ideco" in summary
@@ -136,7 +136,7 @@ class TestGetTaxSummary:
 
     def test_withholding_tax(self, db, user, accounts, tax_accounts):
         """源泉所得税が集計される"""
-        make_journal(db, user.id, tax_accounts["8010"].id, accounts["1020"].id,
+        make_journal(db, user.id, "8010", "1020",
                      5000, entry_date=date(2026, 1, 25))
         summary = get_tax_summary(user.id, 2026)
         assert "withholding_tax" in summary
@@ -144,10 +144,10 @@ class TestGetTaxSummary:
 
     def test_closing_entries_excluded(self, db, user, accounts, tax_accounts):
         """損益振替仕訳（source=closing）は集計から除外される"""
-        make_journal(db, user.id, tax_accounts["7010"].id, accounts["1010"].id,
+        make_journal(db, user.id, "7010", "1010",
                      88370, entry_date=date(2026, 12, 24))
         # 損益振替（逆仕訳）
-        make_journal(db, user.id, accounts["3010"].id, tax_accounts["7010"].id,
+        make_journal(db, user.id, "3010", "7010",
                      88370, entry_date=date(2026, 12, 31),
                      source="closing", fiscal_period=16)
         summary = get_tax_summary(user.id, 2026)
@@ -155,52 +155,52 @@ class TestGetTaxSummary:
 
     def test_medical_excluded(self, db, user, accounts, tax_accounts):
         """医療費カテゴリは集計から除外される（専用セクションで表示）"""
-        make_journal(db, user.id, tax_accounts["6010"].id, accounts["1010"].id,
+        make_journal(db, user.id, "6010", "1010",
                      5000, entry_date=date(2026, 3, 15))
         summary = get_tax_summary(user.id, 2026)
         assert "medical" not in summary
 
     def test_resident_tax_excluded(self, db, user, accounts, tax_accounts):
         """住民税は集計から除外される（確定申告と無関係）"""
-        make_journal(db, user.id, tax_accounts["8020"].id, accounts["1020"].id,
+        make_journal(db, user.id, "8020", "1020",
                      11900, entry_date=date(2026, 6, 25))
         summary = get_tax_summary(user.id, 2026)
         assert "resident_tax" not in summary
 
     def test_year_boundary(self, db, user, accounts, tax_accounts):
         """年度をまたぐ仕訳は対象年のみ集計される"""
-        make_journal(db, user.id, tax_accounts["7010"].id, accounts["1010"].id,
+        make_journal(db, user.id, "7010", "1010",
                      50000, entry_date=date(2025, 12, 31))
-        make_journal(db, user.id, tax_accounts["7010"].id, accounts["1010"].id,
+        make_journal(db, user.id, "7010", "1010",
                      60000, entry_date=date(2026, 1, 1))
-        make_journal(db, user.id, tax_accounts["7010"].id, accounts["1010"].id,
+        make_journal(db, user.id, "7010", "1010",
                      70000, entry_date=date(2026, 12, 31))
-        make_journal(db, user.id, tax_accounts["7010"].id, accounts["1010"].id,
+        make_journal(db, user.id, "7010", "1010",
                      80000, entry_date=date(2027, 1, 1))
         summary = get_tax_summary(user.id, 2026)
         assert summary["life_insurance"]["total"] == 130000  # 60000 + 70000
 
     def test_no_tax_category_excluded(self, db, user, accounts):
         """tax_category が NULL の科目は集計されない"""
-        make_journal(db, user.id, accounts["5010"].id, accounts["1010"].id,
+        make_journal(db, user.id, "5010", "1010",
                      3000, entry_date=date(2026, 2, 15))
         summary = get_tax_summary(user.id, 2026)
         assert summary == {}
 
     def test_csv_source_included(self, db, user, accounts, tax_accounts):
         """CSV取込（source=csv）の仕訳も集計される"""
-        make_journal(db, user.id, tax_accounts["6020"].id, accounts["1020"].id,
+        make_journal(db, user.id, "6020", "1020",
                      45000, entry_date=date(2026, 5, 25), source="csv")
         summary = get_tax_summary(user.id, 2026)
         assert summary["social_insurance"]["total"] == 45000
 
     def test_multiple_categories(self, db, user, accounts, tax_accounts):
         """複数カテゴリが同時に集計される"""
-        make_journal(db, user.id, tax_accounts["7010"].id, accounts["1010"].id,
+        make_journal(db, user.id, "7010", "1010",
                      80000, entry_date=date(2026, 12, 24))
-        make_journal(db, user.id, tax_accounts["6020"].id, accounts["1020"].id,
+        make_journal(db, user.id, "6020", "1020",
                      50000, entry_date=date(2026, 6, 25))
-        make_journal(db, user.id, tax_accounts["7040"].id, accounts["1020"].id,
+        make_journal(db, user.id, "7040", "1020",
                      30000, entry_date=date(2026, 11, 30))
         summary = get_tax_summary(user.id, 2026)
         assert len(summary) == 3
@@ -210,7 +210,7 @@ class TestGetTaxSummary:
 
     def test_user_isolation(self, db, user, accounts, tax_accounts, auditor):
         """他ユーザーのデータは集計されない"""
-        make_journal(db, user.id, tax_accounts["7010"].id, accounts["1010"].id,
+        make_journal(db, user.id, "7010", "1010",
                      80000, entry_date=date(2026, 12, 24))
         summary = get_tax_summary(auditor.id, 2026)
         assert summary == {}
@@ -233,7 +233,7 @@ class TestGetMedicalSummary:
 
     def test_basic_medical_expense(self, db, user, accounts, tax_accounts):
         """基本的な医療費集計"""
-        make_journal(db, user.id, tax_accounts["6010"].id, accounts["1010"].id,
+        make_journal(db, user.id, "6010", "1010",
                      5000, entry_date=date(2026, 3, 15), description="内科受診")
         result = get_medical_summary(user.id, 2026)
         assert result["total_paid"] == 5000
@@ -244,7 +244,7 @@ class TestGetMedicalSummary:
 
     def test_with_medical_expense_detail(self, db, user, accounts, tax_accounts):
         """MedicalExpense レコード付きの集計"""
-        entry = make_journal(db, user.id, tax_accounts["6010"].id, accounts["1010"].id,
+        entry = make_journal(db, user.id, "6010", "1010",
                              8000, entry_date=date(2026, 4, 10), description="歯科治療")
         me = MedicalExpense(
             user_id=user.id, journal_entry_id=entry.id,
@@ -268,21 +268,21 @@ class TestGetMedicalSummary:
     def test_by_patient_aggregation(self, db, user, accounts, tax_accounts):
         """受診者別・医療機関別の階層集計"""
         # 山田太郎: A病院 2回、B薬局 1回
-        e1 = make_journal(db, user.id, tax_accounts["6010"].id, accounts["1010"].id,
+        e1 = make_journal(db, user.id, "6010", "1010",
                           3000, entry_date=date(2026, 2, 10))
         db.session.add(MedicalExpense(
             user_id=user.id, journal_entry_id=e1.id, date=date(2026, 2, 10),
             patient_name="山田太郎", hospital_name="A病院", provider_type="hospital",
             amount_paid=3000, insurance_reimbursement=0,
         ))
-        e2 = make_journal(db, user.id, tax_accounts["6010"].id, accounts["1010"].id,
+        e2 = make_journal(db, user.id, "6010", "1010",
                           5000, entry_date=date(2026, 3, 20))
         db.session.add(MedicalExpense(
             user_id=user.id, journal_entry_id=e2.id, date=date(2026, 3, 20),
             patient_name="山田太郎", hospital_name="A病院", provider_type="hospital",
             amount_paid=5000, insurance_reimbursement=1000,
         ))
-        e3 = make_journal(db, user.id, tax_accounts["6010"].id, accounts["1010"].id,
+        e3 = make_journal(db, user.id, "6010", "1010",
                           1500, entry_date=date(2026, 3, 20))
         db.session.add(MedicalExpense(
             user_id=user.id, journal_entry_id=e3.id, date=date(2026, 3, 20),
@@ -290,7 +290,7 @@ class TestGetMedicalSummary:
             amount_paid=1500, insurance_reimbursement=0,
         ))
         # 山田花子: C病院 1回
-        e4 = make_journal(db, user.id, tax_accounts["6010"].id, accounts["1010"].id,
+        e4 = make_journal(db, user.id, "6010", "1010",
                           2000, entry_date=date(2026, 5, 1))
         db.session.add(MedicalExpense(
             user_id=user.id, journal_entry_id=e4.id, date=date(2026, 5, 1),
@@ -318,7 +318,7 @@ class TestGetMedicalSummary:
 
     def test_without_detail_uses_defaults(self, db, user, accounts, tax_accounts):
         """MedicalExpense レコードがない場合はデフォルト値"""
-        make_journal(db, user.id, tax_accounts["6010"].id, accounts["1010"].id,
+        make_journal(db, user.id, "6010", "1010",
                      3000, entry_date=date(2026, 6, 15))
         result = get_medical_summary(user.id, 2026)
         e = result["expenses"][0]
@@ -328,28 +328,28 @@ class TestGetMedicalSummary:
 
     def test_by_patient_unset_uses_placeholder(self, db, user, accounts, tax_accounts):
         """受診者名未設定は「(未設定)」でグルーピング"""
-        make_journal(db, user.id, tax_accounts["6010"].id, accounts["1010"].id,
+        make_journal(db, user.id, "6010", "1010",
                      3000, entry_date=date(2026, 6, 15))
         result = get_medical_summary(user.id, 2026)
         assert result["by_patient"][0]["name"] == "(未設定)"
 
     def test_year_boundary(self, db, user, accounts, tax_accounts):
         """年度境界: 対象年のみ集計"""
-        make_journal(db, user.id, tax_accounts["6010"].id, accounts["1010"].id,
+        make_journal(db, user.id, "6010", "1010",
                      3000, entry_date=date(2025, 12, 31))
-        make_journal(db, user.id, tax_accounts["6010"].id, accounts["1010"].id,
+        make_journal(db, user.id, "6010", "1010",
                      5000, entry_date=date(2026, 1, 1))
-        make_journal(db, user.id, tax_accounts["6010"].id, accounts["1010"].id,
+        make_journal(db, user.id, "6010", "1010",
                      7000, entry_date=date(2026, 12, 31))
         result = get_medical_summary(user.id, 2026)
         assert result["total_paid"] == 12000  # 5000 + 7000
 
     def test_closing_entry_not_counted(self, db, user, accounts, tax_accounts):
         """損益振替仕訳は debit_amount=0 なので集計されない"""
-        make_journal(db, user.id, tax_accounts["6010"].id, accounts["1010"].id,
+        make_journal(db, user.id, "6010", "1010",
                      5000, entry_date=date(2026, 3, 15))
         # 損益振替: 医療費科目が貸方(credit)に来る → debit_amount=0 なので除外される
-        make_journal(db, user.id, accounts["3010"].id, tax_accounts["6010"].id,
+        make_journal(db, user.id, "3010", "6010",
                      5000, entry_date=date(2026, 12, 31),
                      source="closing", fiscal_period=16)
         result = get_medical_summary(user.id, 2026)
@@ -357,7 +357,7 @@ class TestGetMedicalSummary:
 
     def test_user_isolation(self, db, user, accounts, tax_accounts, auditor):
         """他ユーザーの医療費は集計されない"""
-        make_journal(db, user.id, tax_accounts["6010"].id, accounts["1010"].id,
+        make_journal(db, user.id, "6010", "1010",
                      5000, entry_date=date(2026, 3, 15))
         result = get_medical_summary(auditor.id, 2026)
         assert result["total_paid"] == 0
@@ -379,11 +379,11 @@ class TestGetMonthlyComparison:
 
     def test_expense_by_month(self, db, user, accounts):
         """費用の月別集計"""
-        make_journal(db, user.id, accounts["5010"].id, accounts["1010"].id,
+        make_journal(db, user.id, "5010", "1010",
                      3000, entry_date=date(2026, 1, 15))
-        make_journal(db, user.id, accounts["5010"].id, accounts["1010"].id,
+        make_journal(db, user.id, "5010", "1010",
                      5000, entry_date=date(2026, 2, 15))
-        make_journal(db, user.id, accounts["5010"].id, accounts["1010"].id,
+        make_journal(db, user.id, "5010", "1010",
                      4000, entry_date=date(2026, 2, 20))
         result = get_monthly_comparison(user.id, 2026)
         assert len(result["expense_accounts"]) == 1
@@ -397,9 +397,9 @@ class TestGetMonthlyComparison:
 
     def test_income_by_month(self, db, user, accounts):
         """収入の月別集計（貸方 - 借方）"""
-        make_journal(db, user.id, accounts["1020"].id, accounts["4010"].id,
+        make_journal(db, user.id, "1020", "4010",
                      300000, entry_date=date(2026, 1, 25))
-        make_journal(db, user.id, accounts["1020"].id, accounts["4010"].id,
+        make_journal(db, user.id, "1020", "4010",
                      320000, entry_date=date(2026, 2, 25))
         result = get_monthly_comparison(user.id, 2026)
         assert len(result["income_accounts"]) == 1
@@ -410,9 +410,9 @@ class TestGetMonthlyComparison:
 
     def test_multiple_expense_accounts(self, db, user, accounts):
         """複数費用科目のピボット"""
-        make_journal(db, user.id, accounts["5010"].id, accounts["1010"].id,
+        make_journal(db, user.id, "5010", "1010",
                      3000, entry_date=date(2026, 3, 10))
-        make_journal(db, user.id, accounts["5020"].id, accounts["1020"].id,
+        make_journal(db, user.id, "5020", "1020",
                      80000, entry_date=date(2026, 3, 1))
         result = get_monthly_comparison(user.id, 2026)
         assert len(result["expense_accounts"]) == 2
@@ -420,9 +420,9 @@ class TestGetMonthlyComparison:
 
     def test_sorted_by_code(self, db, user, accounts):
         """科目はコード順にソートされる"""
-        make_journal(db, user.id, accounts["5020"].id, accounts["1010"].id,
+        make_journal(db, user.id, "5020", "1010",
                      1000, entry_date=date(2026, 1, 1))
-        make_journal(db, user.id, accounts["5010"].id, accounts["1010"].id,
+        make_journal(db, user.id, "5010", "1010",
                      2000, entry_date=date(2026, 1, 1))
         result = get_monthly_comparison(user.id, 2026)
         codes = [a["code"] for a in result["expense_accounts"]]
@@ -436,11 +436,11 @@ class TestGetMonthlyComparison:
 
     def test_year_boundary(self, db, user, accounts):
         """年度外の仕訳は含まない"""
-        make_journal(db, user.id, accounts["5010"].id, accounts["1010"].id,
+        make_journal(db, user.id, "5010", "1010",
                      1000, entry_date=date(2025, 12, 31))
-        make_journal(db, user.id, accounts["5010"].id, accounts["1010"].id,
+        make_journal(db, user.id, "5010", "1010",
                      2000, entry_date=date(2026, 1, 1))
-        make_journal(db, user.id, accounts["5010"].id, accounts["1010"].id,
+        make_journal(db, user.id, "5010", "1010",
                      3000, entry_date=date(2027, 1, 1))
         result = get_monthly_comparison(user.id, 2026)
         assert result["expense_accounts"][0]["total"] == 2000
@@ -449,7 +449,7 @@ class TestGetMonthlyComparison:
         """収入科目の cost_type がレスポンスに含まれる"""
         accounts["4010"].cost_type = "fixed"
         db.session.commit()
-        make_journal(db, user.id, accounts["1020"].id, accounts["4010"].id,
+        make_journal(db, user.id, "1020", "4010",
                      300000, entry_date=date(2026, 1, 25))
         result = get_monthly_comparison(user.id, 2026)
         assert len(result["income_accounts"]) == 1
@@ -457,7 +457,7 @@ class TestGetMonthlyComparison:
 
     def test_income_cost_type_none_default(self, db, user, accounts):
         """cost_type 未設定の収入科目は None で返される"""
-        make_journal(db, user.id, accounts["1020"].id, accounts["4010"].id,
+        make_journal(db, user.id, "1020", "4010",
                      300000, entry_date=date(2026, 1, 25))
         result = get_monthly_comparison(user.id, 2026)
         assert result["income_accounts"][0]["cost_type"] is None
@@ -473,9 +473,9 @@ class TestGetMonthlyComparison:
         accounts["4010"].cost_type = "fixed"
         db.session.commit()
 
-        make_journal(db, user.id, accounts["1020"].id, accounts["4010"].id,
+        make_journal(db, user.id, "1020", "4010",
                      300000, entry_date=date(2026, 1, 25))
-        make_journal(db, user.id, accounts["1020"].id, bonus.id,
+        make_journal(db, user.id, "1020", bonus.code,
                      50000, entry_date=date(2026, 1, 15))
 
         result = get_monthly_comparison(user.id, 2026)
@@ -498,16 +498,16 @@ class TestGetMonthProjection:
     def _make_comparison(self, db, user, accounts):
         """テスト用の月次比較データを作成して返す（モック前に呼ぶこと）"""
         # 1月: 食費 80,000, 住居費 90,000, 給与 300,000
-        make_journal(db, user.id, accounts["5010"].id, accounts["1010"].id,
+        make_journal(db, user.id, "5010", "1010",
                      80000, entry_date=date(2026, 1, 15))
-        make_journal(db, user.id, accounts["5020"].id, accounts["1020"].id,
+        make_journal(db, user.id, "5020", "1020",
                      90000, entry_date=date(2026, 1, 1))
-        make_journal(db, user.id, accounts["1020"].id, accounts["4010"].id,
+        make_journal(db, user.id, "1020", "4010",
                      300000, entry_date=date(2026, 1, 25))
         # 2月: 食費 40,000（途中）
-        make_journal(db, user.id, accounts["5010"].id, accounts["1010"].id,
+        make_journal(db, user.id, "5010", "1010",
                      40000, entry_date=date(2026, 2, 10))
-        make_journal(db, user.id, accounts["1020"].id, accounts["4010"].id,
+        make_journal(db, user.id, "1020", "4010",
                      300000, entry_date=date(2026, 2, 25))
         return get_monthly_comparison(user.id, 2026)
 
@@ -583,13 +583,13 @@ class TestGetIncomeExpenseSummary:
 
     def test_annual_summary(self, db, user, accounts):
         """年間収支"""
-        make_journal(db, user.id, accounts["1020"].id, accounts["4010"].id,
+        make_journal(db, user.id, "1020", "4010",
                      300000, entry_date=date(2026, 1, 25))
-        make_journal(db, user.id, accounts["1020"].id, accounts["4010"].id,
+        make_journal(db, user.id, "1020", "4010",
                      300000, entry_date=date(2026, 2, 25))
-        make_journal(db, user.id, accounts["5010"].id, accounts["1010"].id,
+        make_journal(db, user.id, "5010", "1010",
                      50000, entry_date=date(2026, 1, 15))
-        make_journal(db, user.id, accounts["5010"].id, accounts["1010"].id,
+        make_journal(db, user.id, "5010", "1010",
                      60000, entry_date=date(2026, 2, 15))
         result = get_income_expense_summary(user.id, 2026)
         assert result["income"] == 600000
@@ -598,11 +598,11 @@ class TestGetIncomeExpenseSummary:
 
     def test_monthly_summary(self, db, user, accounts):
         """月次収支（指定月のみ）"""
-        make_journal(db, user.id, accounts["1020"].id, accounts["4010"].id,
+        make_journal(db, user.id, "1020", "4010",
                      300000, entry_date=date(2026, 1, 25))
-        make_journal(db, user.id, accounts["5010"].id, accounts["1010"].id,
+        make_journal(db, user.id, "5010", "1010",
                      50000, entry_date=date(2026, 1, 15))
-        make_journal(db, user.id, accounts["5010"].id, accounts["1010"].id,
+        make_journal(db, user.id, "5010", "1010",
                      60000, entry_date=date(2026, 2, 15))
         result = get_income_expense_summary(user.id, 2026, month=1)
         assert result["income"] == 300000
@@ -611,9 +611,9 @@ class TestGetIncomeExpenseSummary:
 
     def test_december_summary(self, db, user, accounts):
         """12月の月次集計（年跨ぎ境界）"""
-        make_journal(db, user.id, accounts["5010"].id, accounts["1010"].id,
+        make_journal(db, user.id, "5010", "1010",
                      30000, entry_date=date(2026, 12, 15))
-        make_journal(db, user.id, accounts["5010"].id, accounts["1010"].id,
+        make_journal(db, user.id, "5010", "1010",
                      10000, entry_date=date(2027, 1, 1))
         result = get_income_expense_summary(user.id, 2026, month=12)
         assert result["expense"] == 30000  # 1月分は含まない
@@ -626,7 +626,7 @@ class TestGetIncomeExpenseSummary:
 
     def test_user_isolation(self, db, user, accounts, auditor):
         """他ユーザーのデータは含まれない"""
-        make_journal(db, user.id, accounts["1020"].id, accounts["4010"].id,
+        make_journal(db, user.id, "1020", "4010",
                      300000, entry_date=date(2026, 1, 25))
         result = get_income_expense_summary(auditor.id, 2026)
         assert result["income"] == 0

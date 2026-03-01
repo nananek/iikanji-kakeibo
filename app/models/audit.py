@@ -53,14 +53,18 @@ class AuditGrantAccount(db.Model):
         db.ForeignKey("audit_grants.id", ondelete="CASCADE"),
         nullable=False,
     )
-    account_id = db.Column(
-        db.Integer, db.ForeignKey("accounts.id"), nullable=False
-    )
+    account_user_id = db.Column(db.Integer, nullable=False)
+    account_code = db.Column(db.String(10), nullable=False)
 
-    account = db.relationship("Account")
+    account = db.relationship("Account", foreign_keys=[account_user_id, account_code])
 
     __table_args__ = (
+        db.ForeignKeyConstraint(
+            ["account_user_id", "account_code"],
+            ["accounts.user_id", "accounts.code"],
+            name="fk_aga_account",
+        ),
         db.UniqueConstraint(
-            "audit_grant_id", "account_id", name="uq_audit_grant_account"
+            "audit_grant_id", "account_code", name="uq_audit_grant_account"
         ),
     )

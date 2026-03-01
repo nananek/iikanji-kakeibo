@@ -41,7 +41,7 @@ class TestCreateVoucherFromUpload:
     @patch("app.services.voucher.store_image_with_thumbnail")
     def test_creates_voucher_linked_to_entry(self, mock_store, db, user, accounts):
         entry = make_journal(
-            db, user.id, accounts["5010"].id, accounts["1010"].id, 1000,
+            db, user.id, "5010", "1010", 1000,
         )
         voucher = create_voucher_from_upload(
             user_id=user.id,
@@ -63,7 +63,7 @@ class TestCreateVoucherFromUpload:
     @patch("app.services.voucher.store_image_with_thumbnail")
     def test_computes_sha256_hash(self, mock_store, db, user, accounts):
         entry = make_journal(
-            db, user.id, accounts["5010"].id, accounts["1010"].id, 500,
+            db, user.id, "5010", "1010", 500,
         )
         voucher = create_voucher_from_upload(
             user_id=user.id,
@@ -79,7 +79,7 @@ class TestCreateVoucherFromUpload:
     @patch("app.services.voucher.store_image_with_thumbnail")
     def test_creates_audit_log(self, mock_store, db, user, accounts):
         entry = make_journal(
-            db, user.id, accounts["5010"].id, accounts["1010"].id, 300,
+            db, user.id, "5010", "1010", 300,
         )
         voucher = create_voucher_from_upload(
             user_id=user.id,
@@ -102,7 +102,7 @@ class TestAttachEndpoint:
     @patch("app.services.voucher.store_image_with_thumbnail")
     def test_attach_success_no_ai(self, mock_store, logged_in_client, user, accounts, db):
         entry = make_journal(
-            db, user.id, accounts["5010"].id, accounts["1010"].id, 2000,
+            db, user.id, "5010", "1010", 2000,
         )
 
         data = {"image": (io.BytesIO(TINY_JPEG), "receipt.jpg", "image/jpeg")}
@@ -146,7 +146,7 @@ class TestAttachEndpoint:
         db.session.add_all([acct, acct2])
         db.session.commit()
 
-        entry = mj(db, second_user.id, acct.id, acct2.id, 1000)
+        entry = mj(db, second_user.id, acct.code, acct2.code, 1000)
 
         data = {"image": (io.BytesIO(TINY_JPEG), "receipt.jpg", "image/jpeg")}
         resp = logged_in_client.post(
@@ -158,7 +158,7 @@ class TestAttachEndpoint:
 
     def test_attach_no_file_400(self, logged_in_client, user, accounts, db):
         entry = make_journal(
-            db, user.id, accounts["5010"].id, accounts["1010"].id, 1000,
+            db, user.id, "5010", "1010", 1000,
         )
         resp = logged_in_client.post(
             f"/vouchers/attach/{entry.id}",
@@ -168,7 +168,7 @@ class TestAttachEndpoint:
 
     def test_attach_invalid_mime_400(self, logged_in_client, user, accounts, db):
         entry = make_journal(
-            db, user.id, accounts["5010"].id, accounts["1010"].id, 1000,
+            db, user.id, "5010", "1010", 1000,
         )
         data = {"image": (io.BytesIO(b"fake pdf"), "doc.pdf", "application/pdf")}
         resp = logged_in_client.post(
@@ -209,7 +209,7 @@ class TestAttachEndpoint:
         }
 
         entry = make_journal(
-            db, user.id, accounts["5010"].id, accounts["1010"].id, 1500,
+            db, user.id, "5010", "1010", 1500,
         )
         data = {"image": (io.BytesIO(TINY_JPEG), "receipt.jpg", "image/jpeg")}
         resp = logged_in_client.post(
@@ -244,7 +244,7 @@ class TestAttachEndpoint:
         mock_analyze.side_effect = RuntimeError("API error")
 
         entry = make_journal(
-            db, user.id, accounts["5010"].id, accounts["1010"].id, 800,
+            db, user.id, "5010", "1010", 800,
         )
         data = {"image": (io.BytesIO(TINY_JPEG), "receipt.jpg", "image/jpeg")}
         resp = logged_in_client.post(

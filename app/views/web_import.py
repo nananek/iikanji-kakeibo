@@ -9,13 +9,13 @@ from flask_login import login_required, current_user
 
 from app.extensions import db
 from app.models.account import Account, AccountType
-from app.services.audit import get_effective_user_id, get_submitted_account_ids
+from app.services.audit import get_effective_user_id, get_submitted_account_codes
 from app.models.ai_config import UserAIConfig
 from app.services.ai_receipt import parse_web_text
 from app.services.accounting import create_cashbook_entry, create_transfer_entry
 from app.services.fiscal import (
     check_period_open_for_new, get_restricted_before_year, is_year_open,
-    get_capital_account_id, get_closed_periods_for_dates,
+    get_capital_account_code, get_closed_periods_for_dates,
 )
 from app.views.helpers import (
     get_grouped_accounts, save_import_data, load_import_data, delete_import_data,
@@ -35,7 +35,7 @@ def upload():
 
     if request.method == "POST":
         raw_text = request.form.get("raw_text", "").strip()
-        payment_account_id = request.form.get("payment_account_id", type=int)
+        payment_account_code = request.form.get("payment_account_code")
 
         if not raw_text:
             flash("テキストを入力してください。", "danger")
@@ -53,7 +53,7 @@ def upload():
                 has_config=has_config,
             )
 
-        if not payment_account_id:
+        if not payment_account_code:
             flash("取込先の口座を選択してください。", "danger")
             return render_template(
                 "web_import/upload.html",
@@ -61,7 +61,7 @@ def upload():
                 has_config=has_config,
             )
 
-        payment_account = Account.query.filter_by(id=payment_account_id, user_id=get_effective_user_id()).first()
+        payment_account = Account.query.filter_by(user_id=get_effective_user_id(), code=payment_account_code).first()
 
         try:
             parsed = parse_web_text(
@@ -74,7 +74,7 @@ def upload():
                 grouped_accounts=grouped_accounts,
                 has_config=has_config,
                 raw_text=raw_text,
-                payment_account_id=payment_account_id,
+                payment_account_code=payment_account_code,
                 payment_account_name=payment_account.name,
             )
 
@@ -85,13 +85,13 @@ def upload():
                 grouped_accounts=grouped_accounts,
                 has_config=has_config,
                 raw_text=raw_text,
-                payment_account_id=payment_account_id,
+                payment_account_code=payment_account_code,
                 payment_account_name=payment_account.name,
             )
 
         key = save_import_data(parsed)
         session["web_data_key"] = key
-        session["web_payment_account_id"] = payment_account_id
+        session["web_payment_account_code"] = payment_account_code
 
         return redirect(url_for("web_import.confirm"))
 
@@ -107,12 +107,12 @@ def upload():
 def confirm():
     """Step 2: 確認して一括取込（日付一括編集対応）"""
     data_key = session.get("web_data_key")
-    payment_account_id = session.get("web_payment_account_id")
+    payment_account_code = session.get("web_payment_account_code")
     parsed = load_import_data(data_key)
-    if not parsed or not payment_account_id:
+    if not parsed or not payment_account_code:
         flash("データがありません。もう一度入力してください。", "warning")
         return redirect(url_for("web_import.upload"))
-    payment_account = Account.query.filter_by(id=payment_account_id, user_id=get_effective_user_id()).first()
+    payment_account = Account.query.filter_by(user_id=get_effective_user_id(), code=payment_account_code).first()
 
     expense_type = AccountType.query.filter_by(code="expense").first()
     default_expense = (
@@ -136,7 +136,7 @@ def confirm():
 
     user_id = get_effective_user_id()
     restricted_before = get_restricted_before_year(user_id)
-    capital_id = get_capital_account_id(user_id)
+    capital_code = get_capital_account_code(user_id)
 
     if request.method == "POST":
         import_rows = request.form.get("import_rows", "")
@@ -150,7 +150,7 @@ def confirm():
         skipped = 0
         capital_count = 0
         batch_id = str(uuid.uuid4())
-        locked_ids = get_submitted_account_ids(user_id)
+        locked_codes = get_submitted_account_codes(user_id)
         today_year = date_type.today().year
 
         for row in rows_data:
@@ -167,24 +167,24 @@ def confirm():
             description = row.get("description", "")
             deposit = int(row.get("deposit", 0))
             withdrawal = int(row.get("withdrawal", 0))
-            category_id = int(row.get("category_id", 0))
+            category_code = row.get("category_code", "")
 
-            if not category_id or (deposit == 0 and withdrawal == 0):
+            if not category_code or (deposit == 0 and withdrawal == 0):
                 skipped += 1
                 continue
 
             # 提出済みロック科目チェック
-            if locked_ids and {payment_account_id, category_id} & locked_ids:
+            if locked_codes and {payment_account_code, category_code} & locked_codes:
                 skipped += 1
                 continue
 
             # 未開設年度チェック
             if restricted_before and row_date.year < restricted_before:
                 if not is_year_open(user_id, row_date.year):
-                    if old_year_action == "capital" and capital_id:
+                    if old_year_action == "capital" and capital_code:
                         description = f"({row_date_str}) {description}"
                         row_date = date_type(today_year, 1, 1)
-                        category_id = capital_id
+                        category_code = capital_code
                         capital_count += 1
                     else:
                         skipped += 1
@@ -196,7 +196,7 @@ def confirm():
                 skipped += 1
                 continue
 
-            cat_account = Account.query.filter_by(id=category_id, user_id=user_id).first()
+            cat_account = Account.query.filter_by(user_id=user_id, code=category_code).first()
             is_transfer = cat_account and cat_account.account_type_id in transfer_type_ids
 
             if is_transfer:
@@ -205,8 +205,8 @@ def confirm():
                     create_transfer_entry(
                         user_id=user_id,
                         date=row_date,
-                        from_account_id=payment_account_id,
-                        to_account_id=category_id,
+                        from_account_code=payment_account_code,
+                        to_account_code=category_code,
                         amount=amount,
                         description=description,
                         batch_id=batch_id,
@@ -215,8 +215,8 @@ def confirm():
                     create_transfer_entry(
                         user_id=user_id,
                         date=row_date,
-                        from_account_id=category_id,
-                        to_account_id=payment_account_id,
+                        from_account_code=category_code,
+                        to_account_code=payment_account_code,
                         amount=amount,
                         description=description,
                         batch_id=batch_id,
@@ -227,8 +227,8 @@ def confirm():
                     user_id=user_id,
                     date=row_date,
                     transaction_type="income",
-                    payment_account_id=payment_account_id,
-                    category_account_id=category_id,
+                    payment_account_code=payment_account_code,
+                    category_account_code=category_code,
                     amount=deposit,
                     description=description,
                     batch_id=batch_id,
@@ -239,8 +239,8 @@ def confirm():
                     user_id=user_id,
                     date=row_date,
                     transaction_type="expense",
-                    payment_account_id=payment_account_id,
-                    category_account_id=category_id,
+                    payment_account_code=payment_account_code,
+                    category_account_code=category_code,
                     amount=withdrawal,
                     description=description,
                     batch_id=batch_id,
@@ -251,7 +251,7 @@ def confirm():
 
         delete_import_data(data_key)
         session.pop("web_data_key", None)
-        session.pop("web_payment_account_id", None)
+        session.pop("web_payment_account_code", None)
 
         msg = f"{imported}件を取り込みました。（スキップ: {skipped}件）"
         if capital_count:

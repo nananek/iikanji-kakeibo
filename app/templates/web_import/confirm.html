@@ -11,7 +11,7 @@
 </script>
 <div x-data="importConfirm({
   rows: _importRows,
-  paymentAccountId: {{ payment_account.id }},
+  paymentAccountCode: '{{ payment_account.code }}',
   defaultIncomeId: {{ default_income_id | tojson }},
   defaultExpenseId: {{ default_expense_id | tojson }},
   closedPeriods: _closedPeriods,

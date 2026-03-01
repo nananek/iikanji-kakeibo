@@ -15,10 +15,10 @@ from app.forms.journal import JournalForm
 from app.services.accounting import create_journal_entry, get_next_entry_number
 from app.services.fiscal import check_entry_modifiable, check_period_open_for_new, get_effective_period, adjust_date_for_fiscal_period, get_closed_periods_map, get_restricted_before_year
 from app.services.audit import (
-    get_effective_user_id, get_allowed_account_ids, get_submitted_account_ids,
+    get_effective_user_id, get_allowed_account_codes, get_submitted_account_codes,
     is_entry_locked_for_owner, is_entry_locked_for_auditor,
     is_acting_as_auditor, get_permission_level,
-    get_proprietor_account_id, mask_account_name,
+    get_proprietor_account_code, mask_account_name,
 )
 from app.views.helpers import get_grouped_accounts
 
@@ -35,7 +35,7 @@ def index():
     date_to = request.args.get("date_to", "")
     search = request.args.get("search", "")
 
-    allowed_ids = get_allowed_account_ids()
+    allowed_codes = get_allowed_account_codes()
 
     query = (
         JournalEntry.query
@@ -45,11 +45,11 @@ def index():
     )
 
     # Lv2: 公開科目を1つも含まない伝票を除外
-    if allowed_ids is not None:
+    if allowed_codes is not None:
         query = query.filter(
             JournalEntry.id.in_(
                 db.session.query(JournalEntryLine.journal_entry_id)
-                .filter(JournalEntryLine.account_id.in_(allowed_ids))
+                .filter(JournalEntryLine.account_code.in_(allowed_codes))
             )
         )
 
@@ -84,8 +84,8 @@ def index():
 def new():
     form = JournalForm()
     user_id = get_effective_user_id()
-    allowed_ids = get_allowed_account_ids()
-    grouped_accounts = get_grouped_accounts(user_id, allowed_ids)
+    allowed_codes = get_allowed_account_codes()
+    grouped_accounts = get_grouped_accounts(user_id, allowed_codes)
     closed_periods = get_closed_periods_map(user_id)
     restricted_before = get_restricted_before_year(user_id)
 
@@ -140,7 +140,7 @@ def new():
         parsed = []
         for line in lines_data:
             parsed.append({
-                "account_id": int(line["account_id"]),
+                "account_code": line["account_code"],
                 "debit_amount": int(line.get("debit_amount", 0) or 0),
                 "credit_amount": int(line.get("credit_amount", 0) or 0),
                 "description": line.get("description", ""),
@@ -148,16 +148,16 @@ def new():
 
         # 本人側: 提出済みロック科目チェック
         if not is_acting_as_auditor():
-            locked_ids = get_submitted_account_ids(user_id)
-            if locked_ids:
-                used_locked = [p for p in parsed if p["account_id"] in locked_ids]
+            locked_codes = get_submitted_account_codes(user_id)
+            if locked_codes:
+                used_locked = [p for p in parsed if p["account_code"] in locked_codes]
                 if used_locked:
                     return _render_with_lines("提出済みの税務科目を含むため仕訳を作成できません。")
 
         # Lv2監査者: 非公開科目チェック
-        if allowed_ids is not None:
+        if allowed_codes is not None:
             for p in parsed:
-                if p["account_id"] not in allowed_ids:
+                if p["account_code"] not in allowed_codes:
                     return _render_with_lines("使用できない科目が含まれています。")
 
         try:
@@ -191,7 +191,7 @@ def edit(entry_id):
     ).first_or_404()
 
     user_id = get_effective_user_id()
-    allowed_ids = get_allowed_account_ids()
+    allowed_codes = get_allowed_account_codes()
 
     # 伝票ロック: 本人側
     if not is_acting_as_auditor() and is_entry_locked_for_owner(user_id, entry):
@@ -205,8 +205,8 @@ def edit(entry_id):
         return redirect(url_for("journal.index"))
 
     form = JournalForm()
-    grouped_accounts = get_grouped_accounts(get_effective_user_id(), allowed_ids)
-    proprietor_id = get_proprietor_account_id(user_id) if allowed_ids is not None else None
+    grouped_accounts = get_grouped_accounts(get_effective_user_id(), allowed_codes)
+    proprietor_code = get_proprietor_account_code(user_id) if allowed_codes is not None else None
     closed_periods = get_closed_periods_map(user_id)
     restricted_before = get_restricted_before_year(user_id)
 
@@ -229,23 +229,23 @@ def edit(entry_id):
         # Lv2: 事業主行をスキップして公開科目のみ受け入れ
         parsed = []
         for line in lines_data:
-            aid = int(line["account_id"])
-            if allowed_ids is not None and proprietor_id and aid == proprietor_id:
+            acode = line["account_code"]
+            if allowed_codes is not None and proprietor_code and acode == proprietor_code:
                 continue
             parsed.append({
-                "account_id": aid,
+                "account_code": acode,
                 "debit_amount": int(line.get("debit_amount", 0) or 0),
                 "credit_amount": int(line.get("credit_amount", 0) or 0),
                 "description": line.get("description", ""),
             })
 
-        if allowed_ids is not None:
+        if allowed_codes is not None:
             # Lv2: 非公開行を保持、公開行のみ差し替え
             non_public_debit = sum(
-                int(l.debit_amount) for l in entry.lines if l.account_id not in allowed_ids
+                int(l.debit_amount) for l in entry.lines if l.account_code not in allowed_codes
             )
             non_public_credit = sum(
-                int(l.credit_amount) for l in entry.lines if l.account_id not in allowed_ids
+                int(l.credit_amount) for l in entry.lines if l.account_code not in allowed_codes
             )
             public_debit = sum(l["debit_amount"] for l in parsed)
             public_credit = sum(l["credit_amount"] for l in parsed)
@@ -299,14 +299,15 @@ def edit(entry_id):
             entry.fiscal_period = fiscal_period
 
             for line in entry.lines:
-                if line.account_id in allowed_ids:
+                if line.account_code in allowed_codes:
                     db.session.delete(line)
             db.session.flush()
 
             for line_data in parsed:
                 db.session.add(JournalEntryLine(
                     journal_entry_id=entry.id,
-                    account_id=line_data["account_id"],
+                    account_user_id=user_id,
+                    account_code=line_data["account_code"],
                     debit_amount=line_data["debit_amount"],
                     credit_amount=line_data["credit_amount"],
                     description=line_data.get("description", ""),
@@ -373,7 +374,8 @@ def edit(entry_id):
         for line_data in parsed:
             db.session.add(JournalEntryLine(
                 journal_entry_id=entry.id,
-                account_id=line_data["account_id"],
+                account_user_id=user_id,
+                account_code=line_data["account_code"],
                 debit_amount=line_data["debit_amount"],
                 credit_amount=line_data["credit_amount"],
                 description=line_data.get("description", ""),
@@ -389,14 +391,14 @@ def edit(entry_id):
         form.fiscal_period.data = str(entry.fiscal_period) if entry.fiscal_period is not None else ""
 
     # Lv2: 公開行 + 事業主集約行
-    if allowed_ids is not None and proprietor_id:
+    if allowed_codes is not None and proprietor_code:
         proprietor_debit = 0
         proprietor_credit = 0
         existing_lines = []
         for line in entry.lines:
-            if line.account_id in allowed_ids:
+            if line.account_code in allowed_codes:
                 existing_lines.append({
-                    "account_id": line.account_id,
+                    "account_code": line.account_code,
                     "debit_amount": int(line.debit_amount),
                     "credit_amount": int(line.credit_amount),
                     "description": line.description or "",
@@ -406,7 +408,7 @@ def edit(entry_id):
                 proprietor_credit += int(line.credit_amount)
         if proprietor_debit > 0 or proprietor_credit > 0:
             existing_lines.append({
-                "account_id": proprietor_id,
+                "account_code": proprietor_code,
                 "debit_amount": proprietor_debit,
                 "credit_amount": proprietor_credit,
                 "description": "",
@@ -415,7 +417,7 @@ def edit(entry_id):
     else:
         existing_lines = [
             {
-                "account_id": line.account_id,
+                "account_code": line.account_code,
                 "debit_amount": int(line.debit_amount),
                 "credit_amount": int(line.credit_amount),
                 "description": line.description or "",
@@ -444,18 +446,18 @@ def get_json(entry_id):
         id=entry_id, user_id=user_id
     ).first_or_404()
 
-    allowed_ids = get_allowed_account_ids()
-    proprietor_id = get_proprietor_account_id(user_id) if allowed_ids is not None else None
+    allowed_codes = get_allowed_account_codes()
+    proprietor_code = get_proprietor_account_code(user_id) if allowed_codes is not None else None
 
     lines = []
-    if allowed_ids is not None and proprietor_id:
+    if allowed_codes is not None and proprietor_code:
         # Lv2: 非公開行を事業主バランス行に集約
         proprietor_debit = 0
         proprietor_credit = 0
         for line in entry.lines:
-            if line.account_id in allowed_ids:
+            if line.account_code in allowed_codes:
                 lines.append({
-                    "account_id": line.account_id,
+                    "account_code": line.account_code,
                     "debit_amount": int(line.debit_amount),
                     "credit_amount": int(line.credit_amount),
                     "description": line.description or "",
@@ -465,7 +467,7 @@ def get_json(entry_id):
                 proprietor_credit += int(line.credit_amount)
         if proprietor_debit > 0 or proprietor_credit > 0:
             lines.append({
-                "account_id": proprietor_id,
+                "account_code": proprietor_code,
                 "debit_amount": proprietor_debit,
                 "credit_amount": proprietor_credit,
                 "description": "",
@@ -474,7 +476,7 @@ def get_json(entry_id):
     else:
         for line in entry.lines:
             lines.append({
-                "account_id": line.account_id,
+                "account_code": line.account_code,
                 "debit_amount": int(line.debit_amount),
                 "credit_amount": int(line.credit_amount),
                 "description": line.description or "",
@@ -511,7 +513,7 @@ def edit_api(entry_id):
         id=entry_id, user_id=user_id
     ).first_or_404()
 
-    allowed_ids = get_allowed_account_ids()
+    allowed_codes = get_allowed_account_codes()
 
     # 伝票ロック: 本人側
     if not is_acting_as_auditor() and is_entry_locked_for_owner(user_id, entry):
@@ -537,29 +539,29 @@ def edit_api(entry_id):
         return jsonify({"error": "仕訳明細を1行以上入力してください。"}), 400
 
     # Lv2: 事業主行（is_proprietor）を除外して公開科目の行のみ受け入れ
-    proprietor_id = get_proprietor_account_id(user_id) if allowed_ids is not None else None
+    proprietor_code = get_proprietor_account_code(user_id) if allowed_codes is not None else None
 
     parsed = []
     for line in lines_data:
-        aid = int(line["account_id"])
+        acode = line["account_code"]
         # Lv2: 事業主行はスキップ（非公開行はDBに保持）
-        if allowed_ids is not None and proprietor_id and aid == proprietor_id:
+        if allowed_codes is not None and proprietor_code and acode == proprietor_code:
             continue
         parsed.append({
-            "account_id": aid,
+            "account_code": acode,
             "debit_amount": int(line.get("debit_amount", 0) or 0),
             "credit_amount": int(line.get("credit_amount", 0) or 0),
             "description": line.get("description", ""),
         })
 
-    if allowed_ids is not None:
+    if allowed_codes is not None:
         # Lv2: 非公開行を保持したまま、公開行だけ差し替え
         # 非公開行の借方/貸方合計を算出
         non_public_debit = 0
         non_public_credit = 0
         non_public_lines = []
         for line in entry.lines:
-            if line.account_id not in allowed_ids:
+            if line.account_code not in allowed_codes:
                 non_public_debit += int(line.debit_amount)
                 non_public_credit += int(line.credit_amount)
                 non_public_lines.append(line)
@@ -593,7 +595,7 @@ def edit_api(entry_id):
 
         # 公開科目の既存行だけ削除
         for line in entry.lines:
-            if line.account_id in allowed_ids:
+            if line.account_code in allowed_codes:
                 db.session.delete(line)
         db.session.flush()
 
@@ -601,7 +603,8 @@ def edit_api(entry_id):
         for line_data in parsed:
             db.session.add(JournalEntryLine(
                 journal_entry_id=entry.id,
-                account_id=line_data["account_id"],
+                account_user_id=user_id,
+                account_code=line_data["account_code"],
                 debit_amount=line_data["debit_amount"],
                 credit_amount=line_data["credit_amount"],
                 description=line_data.get("description", ""),
@@ -642,7 +645,8 @@ def edit_api(entry_id):
     for line_data in parsed:
         db.session.add(JournalEntryLine(
             journal_entry_id=entry.id,
-            account_id=line_data["account_id"],
+            account_user_id=user_id,
+            account_code=line_data["account_code"],
             debit_amount=line_data["debit_amount"],
             credit_amount=line_data["credit_amount"],
             description=line_data.get("description", ""),
@@ -678,13 +682,13 @@ def delete(entry_id):
         id=entry_id, user_id=user_id
     ).first_or_404()
 
-    allowed_ids = get_allowed_account_ids()
+    allowed_codes = get_allowed_account_codes()
 
     # 伝票ロックチェック
     err_msg = None
     if not is_acting_as_auditor() and is_entry_locked_for_owner(user_id, entry):
         err_msg = "提出済みの税務科目を含む伝票のため削除できません。"
-    elif is_acting_as_auditor() and allowed_ids is not None and is_entry_locked_for_auditor(entry, allowed_ids):
+    elif is_acting_as_auditor() and allowed_codes is not None and is_entry_locked_for_auditor(entry, allowed_codes):
         err_msg = "事業主勘定を含む伝票のため削除できません。"
     else:
         err_msg = check_entry_modifiable(user_id, entry)
@@ -737,7 +741,7 @@ def bulk_delete():
     ).all()
 
     user_id = get_effective_user_id()
-    allowed_ids = get_allowed_account_ids()
+    allowed_codes = get_allowed_account_codes()
 
     # 確定済み期間 + 伝票ロックチェック
     locked = []
@@ -748,7 +752,7 @@ def bulk_delete():
             locked.append(entry)
         elif not is_acting_as_auditor() and is_entry_locked_for_owner(user_id, entry):
             locked.append(entry)
-        elif is_acting_as_auditor() and allowed_ids is not None and is_entry_locked_for_auditor(entry, allowed_ids):
+        elif is_acting_as_auditor() and allowed_codes is not None and is_entry_locked_for_auditor(entry, allowed_codes):
             locked.append(entry)
         else:
             deletable.append(entry)
@@ -842,15 +846,15 @@ def delete_batch(batch_id):
 def suggest_categories():
     """摘要から過去の仕訳の科目を推定して返す
 
-    POST: {"descriptions": ["摘要1", "摘要2", ...], "payment_account_id": 123}
-    Response: {"摘要1": {"account_id": 456, "account_name": "食費"}, ...}
+    POST: {"descriptions": ["摘要1", "摘要2", ...], "payment_account_code": "1010"}
+    Response: {"摘要1": {"account_code": "5010", "account_name": "食費"}, ...}
     """
     data = request.get_json()
     if not data:
         return jsonify({}), 400
 
     descriptions = data.get("descriptions", [])
-    payment_account_id = data.get("payment_account_id")
+    payment_account_code = data.get("payment_account_code")
     if not descriptions:
         return jsonify({})
 
@@ -876,12 +880,12 @@ def suggest_categories():
 
         # 支払口座以外の科目を取得（= 相手科目）
         for line in entry.lines:
-            if payment_account_id and line.account_id == payment_account_id:
+            if payment_account_code and line.account_code == payment_account_code:
                 continue
-            account = Account.query.filter_by(id=line.account_id, user_id=user_id).first()
+            account = Account.query.filter_by(user_id=user_id, code=line.account_code).first()
             if account and account.is_active:
                 result[desc] = {
-                    "account_id": account.id,
+                    "account_code": account.code,
                     "account_name": account.name,
                 }
                 break
@@ -894,8 +898,8 @@ def suggest_categories():
 def ai_suggest_categories():
     """元帳データをAIに渡して科目を推定する
 
-    POST: {"payment_account_id": 123, "rows": [{"description": "...", "deposit": 0, "withdrawal": 5000}, ...]}
-    Response: {"摘要1": {"account_id": 456, "account_name": "食費"}, ...}
+    POST: {"payment_account_code": "1010", "rows": [{"description": "...", "deposit": 0, "withdrawal": 5000}, ...]}
+    Response: {"摘要1": {"account_code": "5010", "account_name": "食費"}, ...}
     """
     from app.services.ai_receipt import suggest_categories_by_ai
 
@@ -903,14 +907,14 @@ def ai_suggest_categories():
     if not data:
         return jsonify({"error": "リクエストが不正です。"}), 400
 
-    payment_account_id = data.get("payment_account_id")
+    payment_account_code = data.get("payment_account_code")
     rows = data.get("rows", [])
-    if not payment_account_id or not rows:
+    if not payment_account_code or not rows:
         return jsonify({"error": "取込先口座と取引データが必要です。"}), 400
 
     user_id = get_effective_user_id()
     try:
-        result = suggest_categories_by_ai(user_id, payment_account_id, rows)
+        result = suggest_categories_by_ai(user_id, payment_account_code, rows)
         return jsonify(result)
     except ValueError as e:
         return jsonify({"error": str(e)}), 400

@@ -15,7 +15,7 @@ class MedicalExpenseForm(FlaskForm):
     insurance_reimbursement = IntegerField(
         "保険等で補填される金額", default=0, validators=[Optional(), NumberRange(min=0)]
     )
-    payment_account_id = IntegerField(
+    payment_account_code = StringField(
         "支払元", validators=[DataRequired()]
     )
     submit = SubmitField("登録")

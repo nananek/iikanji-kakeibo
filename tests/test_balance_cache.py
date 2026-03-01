@@ -21,48 +21,48 @@ from tests.conftest import make_journal
 class TestComputeBalanceCache:
     def test_basic_cache(self, app, user, accounts):
         """基本的なキャッシュ計算"""
-        make_journal(db, user.id, accounts["5010"].id, accounts["1010"].id,
+        make_journal(db, user.id, "5010", "1010",
                      1000, entry_date=date(2026, 1, 10), fiscal_period=1)
         compute_balance_cache(user.id, 2026, 1)
         db.session.commit()
 
         balances = get_cached_balances(user.id, 2026, 1)
         # 食費（借方）
-        assert balances[accounts["5010"].id] == (1000, 0)
+        assert balances["5010"] == (1000, 0)
         # 現金（貸方）
-        assert balances[accounts["1010"].id] == (0, 1000)
+        assert balances["1010"] == (0, 1000)
 
     def test_cumulative_across_periods(self, app, user, accounts):
         """複数期間の累計が正しく計算される"""
-        make_journal(db, user.id, accounts["5010"].id, accounts["1010"].id,
+        make_journal(db, user.id, "5010", "1010",
                      1000, entry_date=date(2026, 1, 10), fiscal_period=1)
-        make_journal(db, user.id, accounts["5010"].id, accounts["1010"].id,
+        make_journal(db, user.id, "5010", "1010",
                      2000, entry_date=date(2026, 2, 10), fiscal_period=2)
 
         compute_balance_cache(user.id, 2026, 2)
         db.session.commit()
 
         balances = get_cached_balances(user.id, 2026, 2)
-        assert balances[accounts["5010"].id] == (3000, 0)
-        assert balances[accounts["1010"].id] == (0, 3000)
+        assert balances["5010"] == (3000, 0)
+        assert balances["1010"] == (0, 3000)
 
     def test_zero_balance_not_cached(self, app, user, accounts):
         """残高ゼロの科目はキャッシュしない"""
-        make_journal(db, user.id, accounts["5010"].id, accounts["1010"].id,
+        make_journal(db, user.id, "5010", "1010",
                      1000, entry_date=date(2026, 1, 10), fiscal_period=1)
         compute_balance_cache(user.id, 2026, 1)
         db.session.commit()
 
         balances = get_cached_balances(user.id, 2026, 1)
         # 使用していない科目はキャッシュに含まれない
-        assert accounts["1020"].id not in balances  # 普通預金
+        assert "1020" not in balances  # 普通預金
 
     def test_closing_excluded_for_normal_period(self, app, user, accounts):
         """通常期間では決算整理仕訳（closing）を除外"""
-        make_journal(db, user.id, accounts["5010"].id, accounts["1010"].id,
+        make_journal(db, user.id, "5010", "1010",
                      1000, entry_date=date(2026, 1, 10), fiscal_period=1)
         # closing 仕訳
-        make_journal(db, user.id, accounts["1010"].id, accounts["5010"].id,
+        make_journal(db, user.id, "1010", "5010",
                      1000, entry_date=date(2026, 12, 31), source="closing",
                      fiscal_period=16)
 
@@ -71,13 +71,13 @@ class TestComputeBalanceCache:
 
         balances = get_cached_balances(user.id, 2026, 12)
         # closing が除外されるので食費は1000のまま
-        assert balances[accounts["5010"].id] == (1000, 0)
+        assert balances["5010"] == (1000, 0)
 
     def test_closing_included_for_period_16(self, app, user, accounts):
         """period >= 16 では決算整理仕訳を含む"""
-        make_journal(db, user.id, accounts["5010"].id, accounts["1010"].id,
+        make_journal(db, user.id, "5010", "1010",
                      1000, entry_date=date(2026, 1, 10), fiscal_period=1)
-        make_journal(db, user.id, accounts["1010"].id, accounts["5010"].id,
+        make_journal(db, user.id, "1010", "5010",
                      1000, entry_date=date(2026, 12, 31), source="closing",
                      fiscal_period=16)
 
@@ -86,48 +86,48 @@ class TestComputeBalanceCache:
 
         balances = get_cached_balances(user.id, 2026, 16)
         # closing 含むので借方1000 + 貸方1000 → 相殺
-        d, c = balances.get(accounts["5010"].id, (0, 0))
+        d, c = balances.get("5010", (0, 0))
         assert d == 1000
         assert c == 1000
 
     def test_update_existing_cache(self, app, user, accounts):
         """既存のキャッシュがある場合は更新"""
-        make_journal(db, user.id, accounts["5010"].id, accounts["1010"].id,
+        make_journal(db, user.id, "5010", "1010",
                      1000, entry_date=date(2026, 1, 10), fiscal_period=1)
         compute_balance_cache(user.id, 2026, 1)
         db.session.commit()
 
         # 追加の仕訳後に再計算
-        make_journal(db, user.id, accounts["5010"].id, accounts["1010"].id,
+        make_journal(db, user.id, "5010", "1010",
                      500, entry_date=date(2026, 1, 20), fiscal_period=1)
         compute_balance_cache(user.id, 2026, 1)
         db.session.commit()
 
         balances = get_cached_balances(user.id, 2026, 1)
-        assert balances[accounts["5010"].id] == (1500, 0)
+        assert balances["5010"] == (1500, 0)
 
         # レコードが重複していないことを確認
         count = BalanceCache.query.filter_by(
-            user_id=user.id, account_id=accounts["5010"].id,
+            user_id=user.id, account_code="5010",
             year=2026, period=1,
         ).count()
         assert count == 1
 
     def test_multiple_accounts(self, app, user, accounts):
         """複数の科目のキャッシュが正しく作成される"""
-        make_journal(db, user.id, accounts["5010"].id, accounts["1010"].id,
+        make_journal(db, user.id, "5010", "1010",
                      1000, entry_date=date(2026, 1, 10), fiscal_period=1)
-        make_journal(db, user.id, accounts["5020"].id, accounts["1020"].id,
+        make_journal(db, user.id, "5020", "1020",
                      50000, entry_date=date(2026, 1, 15), fiscal_period=1)
 
         compute_balance_cache(user.id, 2026, 1)
         db.session.commit()
 
         balances = get_cached_balances(user.id, 2026, 1)
-        assert balances[accounts["5010"].id] == (1000, 0)
-        assert balances[accounts["5020"].id] == (50000, 0)
-        assert balances[accounts["1010"].id] == (0, 1000)
-        assert balances[accounts["1020"].id] == (0, 50000)
+        assert balances["5010"] == (1000, 0)
+        assert balances["5020"] == (50000, 0)
+        assert balances["1010"] == (0, 1000)
+        assert balances["1020"] == (0, 50000)
 
     def test_user_isolation(self, app, user, accounts, account_types):
         """他ユーザーの仕訳は含まれない"""
@@ -146,17 +146,17 @@ class TestComputeBalanceCache:
         db.session.commit()
 
         # user1 の仕訳
-        make_journal(db, user.id, accounts["5010"].id, accounts["1010"].id,
+        make_journal(db, user.id, "5010", "1010",
                      1000, entry_date=date(2026, 1, 10), fiscal_period=1)
         # user2 の仕訳
-        make_journal(db, user2.id, a2_food.id, a2_cash.id,
+        make_journal(db, user2.id, a2_food.code, a2_cash.code,
                      9999, entry_date=date(2026, 1, 10), fiscal_period=1)
 
         compute_balance_cache(user.id, 2026, 1)
         db.session.commit()
 
         balances = get_cached_balances(user.id, 2026, 1)
-        assert balances[accounts["5010"].id] == (1000, 0)
+        assert balances["5010"] == (1000, 0)
 
 
 # ============================================================
@@ -166,9 +166,9 @@ class TestComputeBalanceCache:
 class TestInvalidateBalanceCache:
     def test_invalidate_from_period(self, app, user, accounts):
         """指定期間以降のキャッシュが削除される"""
-        make_journal(db, user.id, accounts["5010"].id, accounts["1010"].id,
+        make_journal(db, user.id, "5010", "1010",
                      1000, entry_date=date(2026, 1, 10), fiscal_period=1)
-        make_journal(db, user.id, accounts["5010"].id, accounts["1010"].id,
+        make_journal(db, user.id, "5010", "1010",
                      2000, entry_date=date(2026, 2, 10), fiscal_period=2)
 
         compute_balance_cache(user.id, 2026, 1)
@@ -188,7 +188,7 @@ class TestInvalidateBalanceCache:
 
     def test_invalidate_all(self, app, user, accounts):
         """period=0 で全期間のキャッシュを削除"""
-        make_journal(db, user.id, accounts["5010"].id, accounts["1010"].id,
+        make_journal(db, user.id, "5010", "1010",
                      1000, entry_date=date(2026, 1, 10), fiscal_period=1)
 
         compute_balance_cache(user.id, 2026, 1)
@@ -201,9 +201,9 @@ class TestInvalidateBalanceCache:
 
     def test_invalidate_different_year_unaffected(self, app, user, accounts):
         """他年度のキャッシュは影響されない"""
-        make_journal(db, user.id, accounts["5010"].id, accounts["1010"].id,
+        make_journal(db, user.id, "5010", "1010",
                      1000, entry_date=date(2025, 1, 10), fiscal_period=1)
-        make_journal(db, user.id, accounts["5010"].id, accounts["1010"].id,
+        make_journal(db, user.id, "5010", "1010",
                      2000, entry_date=date(2026, 1, 10), fiscal_period=1)
 
         compute_balance_cache(user.id, 2025, 1)
@@ -234,9 +234,9 @@ class TestInvalidateBalanceCache:
         db.session.add_all([a2_cash, a2_food])
         db.session.commit()
 
-        make_journal(db, user.id, accounts["5010"].id, accounts["1010"].id,
+        make_journal(db, user.id, "5010", "1010",
                      1000, entry_date=date(2026, 1, 10), fiscal_period=1)
-        make_journal(db, user2.id, a2_food.id, a2_cash.id,
+        make_journal(db, user2.id, a2_food.code, a2_cash.code,
                      2000, entry_date=date(2026, 1, 10), fiscal_period=1)
 
         compute_balance_cache(user.id, 2026, 1)
@@ -261,21 +261,21 @@ class TestGetCachedBalances:
 
     def test_returns_dict(self, app, user, accounts):
         """正しい形式の辞書を返す"""
-        make_journal(db, user.id, accounts["5010"].id, accounts["1010"].id,
+        make_journal(db, user.id, "5010", "1010",
                      1500, entry_date=date(2026, 1, 10), fiscal_period=1)
         compute_balance_cache(user.id, 2026, 1)
         db.session.commit()
 
         balances = get_cached_balances(user.id, 2026, 1)
         assert isinstance(balances, dict)
-        for account_id, (d, c) in balances.items():
-            assert isinstance(account_id, int)
+        for account_code, (d, c) in balances.items():
+            assert isinstance(account_code, str)
             assert isinstance(d, int)
             assert isinstance(c, int)
 
     def test_different_period_returns_different_cache(self, app, user, accounts):
         """異なる期間のキャッシュを区別して返す"""
-        make_journal(db, user.id, accounts["5010"].id, accounts["1010"].id,
+        make_journal(db, user.id, "5010", "1010",
                      1000, entry_date=date(2026, 1, 10), fiscal_period=1)
 
         compute_balance_cache(user.id, 2026, 1)

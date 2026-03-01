@@ -45,8 +45,8 @@ class TestCsrfRejection:
         resp = csrf_client.post("/cashbook/new", data={
             "date": "2026-01-15",
             "transaction_type": "expense",
-            "payment_account_id": 1,
-            "category_account_id": 2,
+            "payment_account_code": "1010",
+            "category_account_code": "5010",
             "amount": 1000,
             "description": "test",
         })

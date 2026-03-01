@@ -64,10 +64,10 @@ def delete_import_data(key):
         os.remove(path)
 
 
-def get_grouped_accounts(user_id, allowed_account_ids=None):
+def get_grouped_accounts(user_id, allowed_account_codes=None):
     """全科目をタイプごとにグルーピングしてJSON化可能なリストを返す
 
-    allowed_account_ids: Noneなら全科目、setなら指定IDの科目のみ
+    allowed_account_codes: Noneなら全科目、setなら指定codeの科目のみ
     """
     account_types = AccountType.query.order_by(AccountType.display_order).all()
     accounts = (
@@ -77,8 +77,8 @@ def get_grouped_accounts(user_id, allowed_account_ids=None):
         .all()
     )
 
-    if allowed_account_ids is not None:
-        accounts = [a for a in accounts if a.id in allowed_account_ids]
+    if allowed_account_codes is not None:
+        accounts = [a for a in accounts if a.code in allowed_account_codes]
 
     result = []
     for at in account_types:
@@ -89,7 +89,7 @@ def get_grouped_accounts(user_id, allowed_account_ids=None):
                 "type_name": at.name,
                 "normal_balance": at.normal_balance,
                 "accounts": [
-                    {"id": a.id, "code": a.code, "name": a.name}
+                    {"code": a.code, "name": a.name}
                     for a in group
                 ],
             })

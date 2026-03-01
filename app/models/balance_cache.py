@@ -8,19 +8,24 @@ class BalanceCache(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
-    account_id = db.Column(db.Integer, db.ForeignKey("accounts.id"), nullable=False)
+    account_code = db.Column(db.String(10), nullable=False)
     year = db.Column(db.Integer, nullable=False)
     period = db.Column(db.Integer, nullable=False)  # 0-16
     cumulative_debit = db.Column(db.Numeric(15, 0), nullable=False, default=0)
     cumulative_credit = db.Column(db.Numeric(15, 0), nullable=False, default=0)
 
     __table_args__ = (
+        db.ForeignKeyConstraint(
+            ["user_id", "account_code"],
+            ["accounts.user_id", "accounts.code"],
+            name="fk_bc_account",
+        ),
         db.UniqueConstraint(
-            "user_id", "account_id", "year", "period",
+            "user_id", "account_code", "year", "period",
             name="uq_balance_cache",
         ),
         db.Index("ix_balance_cache_user_year", "user_id", "year"),
     )
 
     def __repr__(self):
-        return f"<BalanceCache account={self.account_id} {self.year}/p{self.period}>"
+        return f"<BalanceCache account={self.account_code} {self.year}/p{self.period}>"

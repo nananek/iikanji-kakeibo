@@ -480,7 +480,8 @@ def audit_add():
             if account.tax_category or account.system_role == "proprietor":
                 db.session.add(AuditGrantAccount(
                     audit_grant_id=grant.id,
-                    account_id=account.id,
+                    account_user_id=account.user_id,
+                    account_code=account.code,
                 ))
 
     db.session.commit()
@@ -546,8 +547,8 @@ def audit_accounts(grant_id):
         .all()
     )
 
-    published_ids = {
-        ga.account_id for ga in grant.grant_accounts
+    published_codes = {
+        ga.account_code for ga in grant.grant_accounts
     }
 
     tax_category_labels = {k: v for k, v in TAX_CATEGORIES if k}
@@ -557,7 +558,7 @@ def audit_accounts(grant_id):
         grant=grant,
         account_types=account_types,
         accounts=accounts,
-        published_ids=published_ids,
+        published_codes=published_codes,
         permission_labels=PERMISSION_LABELS,
         tax_category_labels=tax_category_labels,
     )
@@ -575,21 +576,22 @@ def audit_accounts_save(grant_id):
         flash("提出済みのため公開科目を変更できません。", "danger")
         return redirect(url_for("settings.audit_accounts", grant_id=grant_id))
 
-    selected_ids = set(request.form.getlist("account_ids", type=int))
+    selected_codes = set(request.form.getlist("account_codes"))
 
     # 事業主は常に含める
     proprietor = Account.query.filter_by(
         user_id=current_user.id, system_role="proprietor"
     ).first()
     if proprietor:
-        selected_ids.add(proprietor.id)
+        selected_codes.add(proprietor.code)
 
     # 既存をクリアして再作成
     AuditGrantAccount.query.filter_by(audit_grant_id=grant.id).delete()
-    for aid in selected_ids:
+    for acode in selected_codes:
         db.session.add(AuditGrantAccount(
             audit_grant_id=grant.id,
-            account_id=aid,
+            account_user_id=current_user.id,
+            account_code=acode,
         ))
 
     db.session.commit()

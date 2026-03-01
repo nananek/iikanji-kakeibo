@@ -63,7 +63,7 @@
                   <template x-if="!line.is_proprietor">
                     <button type="button" class="form-control form-control-sm text-start"
                             @click="selectAccount(index)">
-                      <span :class="{'text-muted': !line.account_id}"
+                      <span :class="{'text-muted': !line.account_code}"
                             x-text="line.account_name || '-- 選択 --'"></span>
                     </button>
                   </template>

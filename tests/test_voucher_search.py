@@ -19,7 +19,7 @@ class TestVoucherListPage:
 
     def test_lists_vouchers(self, db, logged_in_client, user, accounts):
         entry = make_journal(
-            db, user.id, accounts["5010"].id, accounts["1010"].id, 1000,
+            db, user.id, "5010", "1010", 1000,
             source="ai_receipt",
         )
         make_voucher(db, user.id, journal_entry_id=entry.id)
@@ -44,7 +44,7 @@ class TestVoucherListPage:
     def test_user_isolation(self, app, db, user, accounts, second_user):
         """他ユーザーの証憑は表示されない"""
         entry = make_journal(
-            db, user.id, accounts["5010"].id, accounts["1010"].id, 1000,
+            db, user.id, "5010", "1010", 1000,
             source="ai_receipt",
         )
         make_voucher(db, user.id, journal_entry_id=entry.id)
@@ -62,7 +62,7 @@ class TestVoucherDateFilter:
 
     def _create_voucher_with_date(self, db, user, accounts, entry_date):
         entry = make_journal(
-            db, user.id, accounts["5010"].id, accounts["1010"].id, 500,
+            db, user.id, "5010", "1010", 500,
             source="ai_receipt", entry_date=entry_date,
         )
         return make_voucher(db, user.id, journal_entry_id=entry.id)
@@ -93,12 +93,12 @@ class TestVoucherAmountFilter:
 
     def test_amount_from_filter(self, db, logged_in_client, user, accounts):
         e1 = make_journal(
-            db, user.id, accounts["5010"].id, accounts["1010"].id, 500,
+            db, user.id, "5010", "1010", 500,
             source="ai_receipt",
         )
         make_voucher(db, user.id, journal_entry_id=e1.id)
         e2 = make_journal(
-            db, user.id, accounts["5010"].id, accounts["1010"].id, 5000,
+            db, user.id, "5010", "1010", 5000,
             source="ai_receipt",
         )
         make_voucher(db, user.id, journal_entry_id=e2.id)
@@ -112,12 +112,12 @@ class TestVoucherAmountFilter:
 
     def test_amount_to_filter(self, db, logged_in_client, user, accounts):
         e1 = make_journal(
-            db, user.id, accounts["5010"].id, accounts["1010"].id, 500,
+            db, user.id, "5010", "1010", 500,
             source="ai_receipt",
         )
         make_voucher(db, user.id, journal_entry_id=e1.id)
         e2 = make_journal(
-            db, user.id, accounts["5010"].id, accounts["1010"].id, 5000,
+            db, user.id, "5010", "1010", 5000,
             source="ai_receipt",
         )
         make_voucher(db, user.id, journal_entry_id=e2.id)
@@ -133,12 +133,12 @@ class TestVoucherSearchFilter:
 
     def test_search_description(self, db, logged_in_client, user, accounts):
         e1 = make_journal(
-            db, user.id, accounts["5010"].id, accounts["1010"].id, 1000,
+            db, user.id, "5010", "1010", 1000,
             source="ai_receipt", description="コンビニ購入",
         )
         make_voucher(db, user.id, journal_entry_id=e1.id)
         e2 = make_journal(
-            db, user.id, accounts["5010"].id, accounts["1010"].id, 2000,
+            db, user.id, "5010", "1010", 2000,
             source="ai_receipt", description="ランチ代",
         )
         make_voucher(db, user.id, journal_entry_id=e2.id)
@@ -155,7 +155,7 @@ class TestAPIVoucherList:
 
     def test_api_list_vouchers(self, client, db, user, accounts, auth_header):
         entry = make_journal(
-            db, user.id, accounts["5010"].id, accounts["1010"].id, 1000,
+            db, user.id, "5010", "1010", 1000,
             source="ai_receipt",
         )
         make_voucher(db, user.id, journal_entry_id=entry.id)
@@ -179,12 +179,12 @@ class TestAPIVoucherList:
 
     def test_api_date_filter(self, client, db, user, accounts, auth_header):
         e1 = make_journal(
-            db, user.id, accounts["5010"].id, accounts["1010"].id, 500,
+            db, user.id, "5010", "1010", 500,
             source="ai_receipt", entry_date=date(2025, 1, 15),
         )
         make_voucher(db, user.id, journal_entry_id=e1.id)
         e2 = make_journal(
-            db, user.id, accounts["5010"].id, accounts["1010"].id, 800,
+            db, user.id, "5010", "1010", 800,
             source="ai_receipt", entry_date=date(2025, 3, 20),
         )
         make_voucher(db, user.id, journal_entry_id=e2.id)
@@ -199,7 +199,7 @@ class TestAPIVoucherList:
 
     def test_api_search_filter(self, client, db, user, accounts, auth_header):
         e1 = make_journal(
-            db, user.id, accounts["5010"].id, accounts["1010"].id, 500,
+            db, user.id, "5010", "1010", 500,
             source="ai_receipt", description="タクシー代",
         )
         make_voucher(db, user.id, journal_entry_id=e1.id)

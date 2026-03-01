@@ -14,7 +14,7 @@ from flask_login import login_required, current_user
 from app.extensions import db
 from app.models.ai_config import UserAIConfig
 from app.models.ai_draft import AIDraft
-from app.services.audit import get_effective_user_id, get_submitted_account_ids
+from app.services.audit import get_effective_user_id, get_submitted_account_codes
 from app.services.ai_receipt import analyze_and_suggest
 from app.services.accounting import create_journal_entry
 from app.services.fiscal import check_period_open_for_new, get_closed_periods_map, get_restricted_before_year
@@ -324,12 +324,12 @@ def review():
 
         if mode == "simple":
             amount = request.form.get("amount", 0, type=int)
-            category_id = request.form.get("category_account_id", 0, type=int)
-            pay_account_id = request.form.get(
-                "payment_account_id", 0, type=int
+            category_code = request.form.get("category_account_code", "")
+            pay_account_code = request.form.get(
+                "payment_account_code", ""
             )
 
-            if amount <= 0 or not category_id or not pay_account_id:
+            if amount <= 0 or not category_code or not pay_account_code:
                 flash("金額・費目・支払元を入力してください。", "danger")
                 return render_template(
                     "ai_journal/review.html",
@@ -344,13 +344,13 @@ def review():
 
             lines_data = [
                 {
-                    "account_id": category_id,
+                    "account_code": category_code,
                     "debit_amount": amount,
                     "credit_amount": 0,
                     "description": "",
                 },
                 {
-                    "account_id": pay_account_id,
+                    "account_code": pay_account_code,
                     "debit_amount": 0,
                     "credit_amount": amount,
                     "description": "",
@@ -375,13 +375,13 @@ def review():
 
             lines_data = [
                 {
-                    "account_id": int(line["account_id"]),
+                    "account_code": line["account_code"],
                     "debit_amount": int(line.get("debit_amount", 0) or 0),
                     "credit_amount": int(line.get("credit_amount", 0) or 0),
                     "description": line.get("description", ""),
                 }
                 for line in raw_lines
-                if line.get("account_id")
+                if line.get("account_code")
             ]
 
         if not lines_data:
@@ -398,10 +398,10 @@ def review():
             )
 
         # 提出済みロック科目チェック
-        locked_ids = get_submitted_account_ids(get_effective_user_id())
-        if locked_ids:
-            used_ids = {line["account_id"] for line in lines_data}
-            if used_ids & locked_ids:
+        locked_codes = get_submitted_account_codes(get_effective_user_id())
+        if locked_codes:
+            used_codes = {line["account_code"] for line in lines_data}
+            if used_codes & locked_codes:
                 flash("提出済みの税務科目を含むため登録できません。", "danger")
                 return render_template(
                     "ai_journal/review.html",

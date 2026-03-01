@@ -116,9 +116,9 @@ class TestCompliancePromptInjection:
                     "date": "2025-01-15",
                     "entry_description": "テスト",
                     "lines": [
-                        {"account_id": accounts["5010"].id, "account_name": "消耗品費",
+                        {"account_code": accounts["5010"].code, "account_name": "消耗品費",
                          "debit_amount": 1000, "credit_amount": 0},
-                        {"account_id": accounts["1010"].id, "account_name": "現金",
+                        {"account_code": accounts["1010"].code, "account_name": "現金",
                          "debit_amount": 0, "credit_amount": 1000},
                     ],
                 }],
@@ -156,9 +156,9 @@ class TestCompliancePromptInjection:
                     "date": "2025-01-15",
                     "entry_description": "テスト",
                     "lines": [
-                        {"account_id": accounts["5010"].id, "account_name": "消耗品費",
+                        {"account_code": accounts["5010"].code, "account_name": "消耗品費",
                          "debit_amount": 1000, "credit_amount": 0},
-                        {"account_id": accounts["1010"].id, "account_name": "現金",
+                        {"account_code": accounts["1010"].code, "account_name": "現金",
                          "debit_amount": 0, "credit_amount": 1000},
                     ],
                 }],
@@ -199,9 +199,9 @@ class TestCompliancePromptInjection:
                     "date": "2025-01-15",
                     "entry_description": "テスト",
                     "lines": [
-                        {"account_id": accounts["5010"].id, "account_name": "消耗品費",
+                        {"account_code": accounts["5010"].code, "account_name": "消耗品費",
                          "debit_amount": 1000, "credit_amount": 0},
-                        {"account_id": accounts["1010"].id, "account_name": "現金",
+                        {"account_code": accounts["1010"].code, "account_name": "現金",
                          "debit_amount": 0, "credit_amount": 1000},
                     ],
                 }],
@@ -237,9 +237,9 @@ class TestCompliancePromptInjection:
                     "date": "2025-01-15",
                     "entry_description": "不明",
                     "lines": [
-                        {"account_id": accounts["5010"].id, "account_name": "消耗品費",
+                        {"account_code": accounts["5010"].code, "account_name": "消耗品費",
                          "debit_amount": 1000, "credit_amount": 0},
-                        {"account_id": accounts["1010"].id, "account_name": "現金",
+                        {"account_code": accounts["1010"].code, "account_name": "現金",
                          "debit_amount": 0, "credit_amount": 1000},
                     ],
                 }],
@@ -272,9 +272,9 @@ class TestCompliancePromptInjection:
                     "date": "2025-01-15",
                     "entry_description": "テスト",
                     "lines": [
-                        {"account_id": accounts["5010"].id, "account_name": "消耗品費",
+                        {"account_code": accounts["5010"].code, "account_name": "消耗品費",
                          "debit_amount": 1000, "credit_amount": 0},
-                        {"account_id": accounts["1010"].id, "account_name": "現金",
+                        {"account_code": accounts["1010"].code, "account_name": "現金",
                          "debit_amount": 0, "credit_amount": 1000},
                     ],
                 }],
@@ -346,9 +346,9 @@ class TestReviewComplianceDisplay:
             "title": "テスト", "description": "desc",
             "date": "2025-01-15", "entry_description": "テスト",
             "lines": [
-                {"account_id": 1, "account_name": "消耗品費",
+                {"account_code": "5010", "account_name": "消耗品費",
                  "debit_amount": 1000, "credit_amount": 0},
-                {"account_id": 2, "account_name": "現金",
+                {"account_code": "1010", "account_name": "現金",
                  "debit_amount": 0, "credit_amount": 1000},
             ],
             "compliance": compliance,
@@ -415,7 +415,7 @@ class TestDraftsComplianceDisplay:
             "date": "2025-01-15",
             "entry_description": "テスト",
             "lines": [
-                {"account_id": 1, "debit_amount": 1000, "credit_amount": 0},
+                {"account_code": "5010", "debit_amount": 1000, "credit_amount": 0},
             ],
             "compliance": {"status": "warn", "warnings": ["影あり"]},
         }]
@@ -442,7 +442,7 @@ class TestDraftsComplianceDisplay:
             "date": "2025-01-15",
             "entry_description": "テスト",
             "lines": [
-                {"account_id": 1, "debit_amount": 1000, "credit_amount": 0},
+                {"account_code": "5010", "debit_amount": 1000, "credit_amount": 0},
             ],
             "compliance": {"status": "pass", "warnings": [], "details": ["OK"]},
         }]

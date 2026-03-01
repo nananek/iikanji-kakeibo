@@ -10,8 +10,8 @@ from app.forms.medical import MedicalExpenseForm
 from app.services.accounting import create_cashbook_entry
 from app.services.fiscal import check_entry_modifiable, check_period_open_for_new
 from app.services.audit import (
-    get_effective_user_id, get_allowed_account_ids,
-    get_submitted_account_ids, is_entry_locked_for_owner,
+    get_effective_user_id, get_allowed_account_codes,
+    get_submitted_account_codes, is_entry_locked_for_owner,
     is_entry_locked_for_auditor, is_acting_as_auditor,
 )
 from app.views.helpers import get_grouped_accounts
@@ -42,7 +42,10 @@ def index():
             Account.name.label("account_name"),
         )
         .join(JournalEntryLine, JournalEntryLine.journal_entry_id == JournalEntry.id)
-        .join(Account, Account.id == JournalEntryLine.account_id)
+        .join(Account, db.and_(
+            Account.user_id == JournalEntryLine.account_user_id,
+            Account.code == JournalEntryLine.account_code,
+        ))
         .filter(
             JournalEntry.user_id == get_effective_user_id(),
             Account.tax_category == "medical",
@@ -111,16 +114,16 @@ def new():
 
         # 本人側: ロック科目チェック（医療費科目 + 支払科目）
         if not is_acting_as_auditor():
-            locked_ids = get_submitted_account_ids(user_id)
-            if locked_ids:
+            locked_codes = get_submitted_account_codes(user_id)
+            if locked_codes:
                 medical_account = _get_medical_account(user_id)
-                used = {form.payment_account_id.data}
+                used = {form.payment_account_code.data}
                 if medical_account:
-                    used.add(medical_account.id)
-                if used & locked_ids:
+                    used.add(medical_account.code)
+                if used & locked_codes:
                     flash("提出済みの税務科目を含むため登録できません。", "danger")
-                    allowed_ids = get_allowed_account_ids()
-                    grouped_accounts = get_grouped_accounts(user_id, allowed_ids)
+                    allowed_codes = get_allowed_account_codes()
+                    grouped_accounts = get_grouped_accounts(user_id, allowed_codes)
                     return render_template(
                         "medical/form.html", form=form, is_edit=False,
                         grouped_accounts=grouped_accounts,
@@ -151,8 +154,8 @@ def new():
             user_id=get_effective_user_id(),
             date=form.date.data,
             transaction_type="expense",
-            payment_account_id=form.payment_account_id.data,
-            category_account_id=medical_account.id,
+            payment_account_code=form.payment_account_code.data,
+            category_account_code=medical_account.code,
             amount=form.amount_paid.data,
             description=f"医療費: {form.hospital_name.data}",
         )
@@ -175,8 +178,8 @@ def new():
 
     grouped_accounts = get_grouped_accounts(get_effective_user_id())
     payment_account_name = None
-    if form.payment_account_id.data:
-        a = Account.query.filter_by(id=form.payment_account_id.data, user_id=get_effective_user_id()).first()
+    if form.payment_account_code.data:
+        a = Account.query.filter_by(code=form.payment_account_code.data, user_id=get_effective_user_id()).first()
         payment_account_name = a.name if a else None
     return render_template(
         "medical/form.html", form=form, is_edit=False,
@@ -215,8 +218,8 @@ def edit(expense_id):
 
     grouped_accounts = get_grouped_accounts(get_effective_user_id())
     payment_account_name = None
-    if form.payment_account_id.data:
-        a = Account.query.filter_by(id=form.payment_account_id.data, user_id=get_effective_user_id()).first()
+    if form.payment_account_code.data:
+        a = Account.query.filter_by(code=form.payment_account_code.data, user_id=get_effective_user_id()).first()
         payment_account_name = a.name if a else None
     return render_template(
         "medical/form.html", form=form, is_edit=True, expense=expense,
@@ -235,11 +238,11 @@ def delete(expense_id):
 
     # 伝票ロックチェック
     if expense.journal_entry:
-        allowed_ids = get_allowed_account_ids()
+        allowed_codes = get_allowed_account_codes()
         if not is_acting_as_auditor() and is_entry_locked_for_owner(user_id, expense.journal_entry):
             flash("提出済みの税務科目を含む伝票のため削除できません。", "danger")
             return redirect(url_for("medical.index"))
-        if is_acting_as_auditor() and allowed_ids is not None and is_entry_locked_for_auditor(expense.journal_entry, allowed_ids):
+        if is_acting_as_auditor() and allowed_codes is not None and is_entry_locked_for_auditor(expense.journal_entry, allowed_codes):
             flash("事業主勘定を含む伝票のため削除できません。", "danger")
             return redirect(url_for("medical.index"))
 
@@ -306,7 +309,10 @@ def api_update(entry_id):
     # 仕訳の医療費科目への借方合計を amount_paid として使用
     medical_lines = (
         db.session.query(JournalEntryLine.debit_amount)
-        .join(Account, Account.id == JournalEntryLine.account_id)
+        .join(Account, db.and_(
+            Account.user_id == JournalEntryLine.account_user_id,
+            Account.code == JournalEntryLine.account_code,
+        ))
         .filter(
             JournalEntryLine.journal_entry_id == entry_id,
             Account.tax_category == "medical",

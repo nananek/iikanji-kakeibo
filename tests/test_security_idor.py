@@ -14,8 +14,8 @@ class TestJournalIDOR:
                                                    user, second_user, accounts,
                                                    second_user_accounts):
         entry = make_journal(db, second_user.id,
-                             second_user_accounts["5010"].id,
-                             second_user_accounts["1010"].id, 2000)
+                             "5010",
+                             "1010", 2000)
         with client.session_transaction() as sess:
             sess["_user_id"] = str(user.id)
         resp = client.get(f"/journal/{entry.id}/json")
@@ -25,8 +25,8 @@ class TestJournalIDOR:
                                               user, second_user, accounts,
                                               second_user_accounts):
         entry = make_journal(db, second_user.id,
-                             second_user_accounts["5010"].id,
-                             second_user_accounts["1010"].id, 2000)
+                             "5010",
+                             "1010", 2000)
         with client.session_transaction() as sess:
             sess["_user_id"] = str(user.id)
         resp = client.post(f"/journal/{entry.id}/edit-api",
@@ -38,8 +38,8 @@ class TestJournalIDOR:
                                                 user, second_user, accounts,
                                                 second_user_accounts):
         entry = make_journal(db, second_user.id,
-                             second_user_accounts["5010"].id,
-                             second_user_accounts["1010"].id, 2000)
+                             "5010",
+                             "1010", 2000)
         with client.session_transaction() as sess:
             sess["_user_id"] = str(user.id)
         resp = client.post(f"/journal/{entry.id}/delete")
@@ -54,8 +54,8 @@ class TestCashbookIDOR:
                                                      user, second_user,
                                                      accounts, second_user_accounts):
         entry = make_journal(db, second_user.id,
-                             second_user_accounts["5010"].id,
-                             second_user_accounts["1010"].id,
+                             "5010",
+                             "1010",
                              1000, source="cashbook")
         with client.session_transaction() as sess:
             sess["_user_id"] = str(user.id)
@@ -66,8 +66,8 @@ class TestCashbookIDOR:
                                                        user, second_user,
                                                        accounts, second_user_accounts):
         entry = make_journal(db, second_user.id,
-                             second_user_accounts["5010"].id,
-                             second_user_accounts["1010"].id,
+                             "5010",
+                             "1010",
                              1000, source="cashbook")
         with client.session_transaction() as sess:
             sess["_user_id"] = str(user.id)
@@ -77,35 +77,191 @@ class TestCashbookIDOR:
 
 
 class TestAccountIDOR:
-    """他ユーザーの勘定科目に対する操作"""
+    """他ユーザーの勘定科目に対する操作
+
+    Note: 複合PKのため account_code は URL に含まれるが、
+    user_id はセッションから取得される。同じ code を持つ科目が
+    両ユーザーに存在する場合、自分の科目が返るためIDOR検知ができない。
+    second_user にだけ存在する一意の code を使ってテストする。
+    """
+
+    def _create_unique_account(self, db, second_user, account_types):
+        """user には存在しない code の科目を second_user に作成"""
+        from app.models.account import Account
+        acct = Account(
+            user_id=second_user.id,
+            account_type_id=account_types["asset"].id,
+            code="9090", name="テスト専用", is_active=True,
+        )
+        db.session.add(acct)
+        db.session.commit()
+        return acct
 
     def test_cannot_get_other_users_account_api(self, app, client, db,
                                                  user, second_user,
-                                                 accounts, second_user_accounts):
-        target = second_user_accounts["1010"]
+                                                 accounts, account_types):
+        target = self._create_unique_account(db, second_user, account_types)
         with client.session_transaction() as sess:
             sess["_user_id"] = str(user.id)
-        resp = client.get(f"/accounts/api/{target.id}")
+        resp = client.get(f"/accounts/api/{target.code}")
         assert resp.status_code == 404
 
     def test_cannot_update_other_users_account(self, app, client, db,
                                                 user, second_user,
-                                                accounts, second_user_accounts):
-        target = second_user_accounts["1010"]
+                                                accounts, account_types):
+        target = self._create_unique_account(db, second_user, account_types)
         with client.session_transaction() as sess:
             sess["_user_id"] = str(user.id)
-        resp = client.post(f"/accounts/api/{target.id}",
+        resp = client.post(f"/accounts/api/{target.code}",
                            json={"name": "ハッキング", "code": "9999"})
         assert resp.status_code == 404
 
     def test_cannot_get_other_users_account_balance(self, app, client, db,
                                                      user, second_user,
-                                                     accounts, second_user_accounts):
-        target = second_user_accounts["1010"]
+                                                     accounts, account_types):
+        target = self._create_unique_account(db, second_user, account_types)
         with client.session_transaction() as sess:
             sess["_user_id"] = str(user.id)
-        resp = client.get(f"/accounts/api/{target.id}/balance")
+        resp = client.get(f"/accounts/api/{target.code}/balance")
         assert resp.status_code == 404
+
+
+class TestAccountListIDOR:
+    """科目一覧が他ユーザーのデータを含まないこと"""
+
+    def test_account_list_excludes_other_users_accounts(self, app, client, db,
+                                                         user, second_user,
+                                                         accounts, account_types):
+        """second_user にだけ存在する科目が user の一覧に出ないこと"""
+        from app.models.account import Account
+        unique = Account(
+            user_id=second_user.id,
+            account_type_id=account_types["asset"].id,
+            code="9090", name="他人だけの科目", is_active=True,
+        )
+        db.session.add(unique)
+        db.session.commit()
+
+        with client.session_transaction() as sess:
+            sess["_user_id"] = str(user.id)
+        resp = client.get("/accounts/")
+        assert resp.status_code == 200
+        html = resp.data.decode()
+        assert "9090" not in html
+        assert "他人だけの科目" not in html
+        # 自分の科目は見える
+        assert "1010" in html
+
+    def test_account_list_shows_own_data_with_overlapping_codes(
+            self, app, client, db, user, second_user,
+            accounts, second_user_accounts):
+        """両ユーザーに同じ code "1010" が存在しても自分の科目だけ返ること"""
+        with client.session_transaction() as sess:
+            sess["_user_id"] = str(user.id)
+        resp = client.get("/accounts/")
+        assert resp.status_code == 200
+        html = resp.data.decode()
+        assert "現金" in html  # 両ユーザー同名だが自分のが出る
+
+
+class TestLedgerIDOR:
+    """元帳が他ユーザーの仕訳を含まないこと"""
+
+    def test_ledger_excludes_other_users_entries(self, app, client, db,
+                                                   user, second_user,
+                                                   accounts, second_user_accounts):
+        """同じ code "1010" でも他人の仕訳は表示されないこと"""
+        # second_user の仕訳を作成
+        make_journal(db, second_user.id, "5010", "1010", 99999,
+                     description="他人の秘密仕訳")
+        # user の仕訳を作成
+        make_journal(db, user.id, "5010", "1010", 500,
+                     description="自分の仕訳")
+
+        with client.session_transaction() as sess:
+            sess["_user_id"] = str(user.id)
+        resp = client.get("/reports/ledger?account_code=1010&year=2026")
+        assert resp.status_code == 200
+        html = resp.data.decode()
+        assert "自分の仕訳" in html
+        assert "他人の秘密仕訳" not in html
+        assert "99,999" not in html  # 他人の金額が表示されない
+
+    def test_ledger_nonexistent_code_shows_empty(self, app, client, db,
+                                                    user, second_user,
+                                                    accounts, second_user_accounts,
+                                                    account_types):
+        """second_user にだけ存在する code で元帳を開いても空であること"""
+        from app.models.account import Account
+        unique = Account(
+            user_id=second_user.id,
+            account_type_id=account_types["expense"].id,
+            code="9090", name="他人専用科目", is_active=True,
+        )
+        db.session.add(unique)
+        db.session.commit()
+        make_journal(db, second_user.id, "9090", "1010", 77777,
+                     description="他人の機密")
+
+        with client.session_transaction() as sess:
+            sess["_user_id"] = str(user.id)
+        resp = client.get("/reports/ledger?account_code=9090&year=2026")
+        assert resp.status_code == 200
+        html = resp.data.decode()
+        assert "他人の機密" not in html
+        assert "77,777" not in html
+
+    def test_trial_balance_excludes_other_users(self, app, client, db,
+                                                  user, second_user,
+                                                  accounts, second_user_accounts):
+        """試算表に他人の残高が含まれないこと"""
+        make_journal(db, second_user.id, "5010", "1010", 88888)
+
+        with client.session_transaction() as sess:
+            sess["_user_id"] = str(user.id)
+        resp = client.get("/reports/balance?year=2026")
+        assert resp.status_code == 200
+        html = resp.data.decode()
+        assert "88,888" not in html
+
+
+class TestAPIJournalLineIDOR:
+    """API 経由で他ユーザーの仕訳明細（科目コード含む）が漏洩しないこと"""
+
+    def test_api_list_excludes_other_users_journals(self, client, db,
+                                                      user, second_user,
+                                                      accounts, second_user_accounts,
+                                                      api_key_raw):
+        """API で仕訳一覧を取得しても他人の仕訳が含まれないこと"""
+        make_journal(db, second_user.id, "5010", "1010", 55555,
+                     description="他人の仕訳")
+        make_journal(db, user.id, "5010", "1010", 1000,
+                     description="自分の仕訳")
+
+        raw_key, _ = api_key_raw
+        resp = client.get("/api/v1/journals",
+                          headers={"Authorization": f"Bearer {raw_key}"})
+        assert resp.status_code == 200
+        data = resp.get_json()
+        descriptions = [j["description"] for j in data["journals"]]
+        assert "自分の仕訳" in descriptions
+        assert "他人の仕訳" not in descriptions
+
+    def test_api_journal_detail_lines_scoped(self, client, db,
+                                               user, second_user,
+                                               accounts, second_user_accounts,
+                                               api_key_raw):
+        """API で仕訳詳細を取得した際、明細行が自分のデータであること"""
+        entry = make_journal(db, user.id, "5010", "1010", 2000,
+                             description="自分の仕訳")
+        raw_key, _ = api_key_raw
+        resp = client.get(f"/api/v1/journals/{entry.id}",
+                          headers={"Authorization": f"Bearer {raw_key}"})
+        assert resp.status_code == 200
+        data = resp.get_json()
+        for line in data["journal"]["lines"]:
+            assert "account_code" in line
+            assert line["account_code"] in ("5010", "1010")
 
 
 class TestSettingsIDOR:
@@ -156,8 +312,8 @@ class TestAPIUserIsolation:
                                                         api_key_raw):
         """user の API キーで second_user の仕訳を削除できない"""
         entry = make_journal(db, second_user.id,
-                             second_user_accounts["5010"].id,
-                             second_user_accounts["1010"].id, 500)
+                             "5010",
+                             "1010", 500)
         raw_key, _ = api_key_raw
         resp = client.delete(f"/api/v1/journals/{entry.id}",
                              headers={"Authorization": f"Bearer {raw_key}"})
@@ -169,8 +325,8 @@ class TestAPIUserIsolation:
                                                              accounts, second_user_accounts,
                                                              api_key_raw):
         entry = make_journal(db, second_user.id,
-                             second_user_accounts["5010"].id,
-                             second_user_accounts["1010"].id, 500)
+                             "5010",
+                             "1010", 500)
         raw_key, _ = api_key_raw
         resp = client.get(f"/api/v1/journals/{entry.id}",
                           headers={"Authorization": f"Bearer {raw_key}"})

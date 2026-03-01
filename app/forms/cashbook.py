@@ -23,10 +23,10 @@ class CashbookForm(FlaskForm):
         choices=[("expense", "支出"), ("income", "収入")],
         validators=[DataRequired()],
     )
-    payment_account_id = IntegerField(
+    payment_account_code = StringField(
         "支払元 / 入金先", validators=[DataRequired()]
     )
-    category_account_id = IntegerField(
+    category_account_code = StringField(
         "費目", validators=[DataRequired()]
     )
     amount = IntegerField(

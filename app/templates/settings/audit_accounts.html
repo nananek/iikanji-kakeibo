@@ -23,13 +23,13 @@
     {% endif %}
     <div class="form-check">
       {% if account.system_role == 'proprietor' %}
-      <input class="form-check-input" type="checkbox" name="account_ids"
-             value="{{ account.id }}" checked disabled>
-      <input type="hidden" name="account_ids" value="{{ account.id }}">
+      <input class="form-check-input" type="checkbox" name="account_codes"
+             value="{{ account.code }}" checked disabled>
+      <input type="hidden" name="account_codes" value="{{ account.code }}">
       {% else %}
-      <input class="form-check-input" type="checkbox" name="account_ids"
-             value="{{ account.id }}"
-             {% if account.id in published_ids %}checked{% endif %}
+      <input class="form-check-input" type="checkbox" name="account_codes"
+             value="{{ account.code }}"
+             {% if account.code in published_codes %}checked{% endif %}
              {% if grant.status == 'submitted' %}disabled{% endif %}>
       {% endif %}
       <label class="form-check-label">

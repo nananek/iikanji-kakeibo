@@ -47,10 +47,10 @@ with app.app_context():
         config.api_key_encrypted = encrypt_api_key('_')
     db.session.commit()
 
-    # アカウント ID 取得
+    # アカウントコード取得
     cash = Account.query.filter_by(user_id=u.id, code='1010').first()
     food = Account.query.filter_by(user_id=u.id, code='5010').first()
-    ids = {'cash': cash.id, 'food': food.id}
+    codes = {'cash': cash.code, 'food': food.code}
 
     # 月次確定データ作成（tojson バグ再現用）
     from app.models.fiscal import FiscalClose
@@ -69,9 +69,9 @@ with app.app_context():
         'date': '2026-01-15',
         'entry_description': 'テスト商店',
         'lines': [
-            {'account_id': food.id, 'account_name': '食費',
+            {'account_code': food.code, 'account_name': '食費',
              'debit_amount': 1500, 'credit_amount': 0},
-            {'account_id': cash.id, 'account_name': '現金',
+            {'account_code': cash.code, 'account_name': '現金',
              'debit_amount': 0, 'credit_amount': 1500},
         ],
     }]
@@ -89,7 +89,7 @@ with app.app_context():
     db.session.commit()
 
     print('OK user_id=' + str(u.id))
-    print('ACCOUNT_IDS=' + json.dumps(ids))
+    print('ACCOUNT_CODES=' + json.dumps(codes))
 `;
 
 /**
@@ -104,15 +104,15 @@ export default function globalSetup() {
   const result = execSync(execCmd, { encoding: "utf-8", timeout: 30000 });
   console.log("global-setup:", result.trim());
 
-  // ACCOUNT_IDS を抽出
-  const match = result.match(/ACCOUNT_IDS=(\{.*\})/);
-  const ids = match ? JSON.parse(match[1]) : { cash: 1, food: 2 };
+  // ACCOUNT_CODES を抽出
+  const match = result.match(/ACCOUNT_CODES=(\{.*\})/);
+  const codes = match ? JSON.parse(match[1]) : { cash: "1010", food: "5010" };
 
   // モック AI サーバーをコンテナ内で起動（バックグラウンド）
   const mockScript = path.resolve(__dirname, "mock-ai-server.py");
   const mockCmd = process.env.CI
-    ? `nohup python ${mockScript} --cash-id ${ids.cash} --food-id ${ids.food} > /tmp/mock-ai.log 2>&1 &`
-    : `docker compose exec -T -d web python /app/tests/e2e/mock-ai-server.py --cash-id ${ids.cash} --food-id ${ids.food}`;
+    ? `nohup python ${mockScript} --cash-code ${codes.cash} --food-code ${codes.food} > /tmp/mock-ai.log 2>&1 &`
+    : `docker compose exec -T -d web python /app/tests/e2e/mock-ai-server.py --cash-code ${codes.cash} --food-code ${codes.food}`;
 
   execSync(mockCmd, { encoding: "utf-8", timeout: 10000 });
 
