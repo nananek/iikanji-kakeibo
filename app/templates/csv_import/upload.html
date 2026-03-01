@@ -11,17 +11,10 @@
         <strong>Step 1:</strong> CSVファイルをアップロード
       </div>
       <div class="card-body">
-        <form method="POST" enctype="multipart/form-data">
+        <form method="POST" enctype="multipart/form-data"
+              x-data="{ accountSelected: false, fileSelected: false }"
+              @account-picked.window="accountSelected = true">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-
-          <div class="mb-3">
-            <label class="form-label" for="csv_file">CSVファイル</label>
-            <input type="file" class="form-control" name="csv_file" id="csv_file"
-                   accept=".csv,.txt" required>
-            <div class="form-text">
-              銀行やクレジットカードの明細CSVを選択してください（UTF-8 / Shift-JIS 自動判定）
-            </div>
-          </div>
 
           <div class="mb-3">
             <label class="form-label">取込先の口座</label>
@@ -35,10 +28,19 @@
             </div>
           </div>
 
-          <button type="submit" class="btn btn-primary">
+          <div class="mb-3" x-show="accountSelected" x-transition>
+            <label class="form-label" for="csv_file">CSVファイル</label>
+            <input type="file" class="form-control" name="csv_file" id="csv_file"
+                   accept=".csv,.txt" required
+                   @change="fileSelected = ($event.target.files.length > 0)">
+            <div class="form-text">
+              銀行やクレジットカードの明細CSVを選択してください（UTF-8 / Shift-JIS 自動判定）
+            </div>
+          </div>
+
+          <button type="submit" class="btn btn-primary" x-show="fileSelected" x-transition>
             <i class="bi bi-upload"></i> アップロードして次へ
           </button>
-          <a href="{{ url_for('cashbook.index') }}" class="btn btn-outline-secondary">キャンセル</a>
         </form>
       </div>
     </div>
@@ -67,13 +69,7 @@ function onPaymentSelected(code, name) {
   var span = document.getElementById('paymentAccountName');
   span.textContent = name;
   span.classList.remove('text-muted');
+  window.dispatchEvent(new CustomEvent('account-picked'));
 }
-
-document.querySelector('form').addEventListener('submit', function(e) {
-  if (!document.getElementById('paymentAccountCode').value) {
-    e.preventDefault();
-    alert('取込先の口座を選択してください。');
-  }
-});
 </script>
 {% endblock %}

@@ -36,6 +36,19 @@ def round1_response():
     }
 
 
+def csv_column_detect_response():
+    """CSV列マッピングAI自動検出のレスポンス"""
+    return {
+        "date_col": 0,
+        "desc_col": 1,
+        "amount_mode": "separate",
+        "deposit_col": 2,
+        "withdrawal_col": 3,
+        "amount_col": None,
+        "date_format": "%Y/%m/%d",
+    }
+
+
 def round2_response():
     return {
         "suggestions": [
@@ -87,6 +100,7 @@ class Handler(BaseHTTPRequestHandler):
             body = self.rfile.read(length).decode()
 
             is_round2 = False
+            is_csv_detect = False
             try:
                 parsed = json.loads(body)
                 for msg in parsed.get("messages", []):
@@ -95,23 +109,29 @@ class Handler(BaseHTTPRequestHandler):
                         content = " ".join(
                             c.get("text", "") for c in content if c.get("type") == "text"
                         )
+                    if "列マッピングを推定" in content:
+                        is_csv_detect = True
+                        break
                     if "勘定科目一覧" in content:
                         is_round2 = True
                         break
             except json.JSONDecodeError:
                 pass
 
-            data = round2_response() if is_round2 else round1_response()
+            if is_csv_detect:
+                data = csv_column_detect_response()
+            elif is_round2:
+                data = round2_response()
+            else:
+                data = round1_response()
             response = json.dumps(wrap_openai(data), ensure_ascii=False)
 
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
             self.wfile.write(response.encode())
-            print(
-                f"[mock-ai] {'Round 2' if is_round2 else 'Round 1'} response sent",
-                flush=True,
-            )
+            label = "CSV Detect" if is_csv_detect else ("Round 2" if is_round2 else "Round 1")
+            print(f"[mock-ai] {label} response sent", flush=True)
         else:
             self.send_response(404)
             self.end_headers()

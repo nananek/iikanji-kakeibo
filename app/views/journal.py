@@ -13,7 +13,7 @@ from app.models.voucher import Voucher
 from app.models.voucher_audit_log import VoucherAuditLog
 from app.forms.journal import JournalForm
 from app.services.accounting import create_journal_entry, get_next_entry_number
-from app.services.fiscal import check_entry_modifiable, check_period_open_for_new, get_effective_period, adjust_date_for_fiscal_period, get_closed_periods_map, get_restricted_before_year
+from app.services.fiscal import check_entry_modifiable, check_period_open_for_new, get_effective_period, adjust_date_for_fiscal_period, get_closed_periods_map, get_restricted_before_year, is_period_locked
 from app.services.audit import (
     get_effective_user_id, get_allowed_account_codes, get_submitted_account_codes,
     is_entry_locked_for_owner, is_entry_locked_for_auditor,
@@ -781,6 +781,7 @@ SOURCE_LABELS = {
 @login_required
 def batches():
     """インポート履歴"""
+    user_id = get_effective_user_id()
     batch_list = (
         db.session.query(
             JournalEntry.batch_id,
@@ -791,7 +792,7 @@ def batches():
             func.min(JournalEntry.created_at).label("imported_at"),
         )
         .filter(
-            JournalEntry.user_id == get_effective_user_id(),
+            JournalEntry.user_id == user_id,
             JournalEntry.batch_id.isnot(None),
         )
         .group_by(JournalEntry.batch_id, JournalEntry.source)
@@ -799,9 +800,39 @@ def batches():
         .all()
     )
 
+    enriched = []
+    for b in batch_list:
+        deletable = True
+        delete_reason = ""
+        if b.source == "closing":
+            deletable = False
+            delete_reason = "損益振替（自動生成）は削除できません"
+        else:
+            # バッチの日付範囲に含まれる全月をチェック
+            d = b.date_from
+            while d <= b.date_to:
+                if is_period_locked(user_id, d.year, d.month):
+                    deletable = False
+                    delete_reason = "確定済み期間の仕訳が含まれています"
+                    break
+                if d.month == 12:
+                    d = date(d.year + 1, 1, 1)
+                else:
+                    d = date(d.year, d.month + 1, 1)
+        enriched.append({
+            "batch_id": b.batch_id,
+            "source": b.source,
+            "count": b.count,
+            "date_from": b.date_from,
+            "date_to": b.date_to,
+            "imported_at": b.imported_at,
+            "deletable": deletable,
+            "delete_reason": delete_reason,
+        })
+
     return render_template(
         "journal/batches.html",
-        batches=batch_list,
+        batches=enriched,
         source_labels=SOURCE_LABELS,
     )
 

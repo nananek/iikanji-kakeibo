@@ -10,6 +10,7 @@ from app.models.voucher import Voucher
 from app.models.voucher_audit_log import VoucherAuditLog
 from app.models.api_key import APIKey
 from app.models.auto_import import AutoImportSource, ProcessedFile, WebhookConfig
+from app.models.csv_column_profile import CsvColumnProfile
 
 __all__ = [
     "User",
@@ -29,4 +30,5 @@ __all__ = [
     "AutoImportSource",
     "ProcessedFile",
     "WebhookConfig",
+    "CsvColumnProfile",
 ]

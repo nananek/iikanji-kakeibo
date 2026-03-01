@@ -14,6 +14,9 @@ from app.services.csv_import import (
     parse_csv_preview,
     parse_csv_full,
     DATE_FORMATS,
+    load_column_profile,
+    save_column_profile,
+    detect_columns_by_ai,
 )
 from app.services.accounting import create_cashbook_entry, create_transfer_entry
 from app.services.fiscal import (
@@ -96,8 +99,34 @@ def mapping():
     preview = parse_csv_preview(raw_bytes)
     headers = preview["headers"]
     col_indices = list(range(len(headers)))
+    num_cols = len(headers)
 
-    payment_account = Account.query.filter_by(user_id=get_effective_user_id(), code=payment_account_code).first()
+    user_id = get_effective_user_id()
+    payment_account = Account.query.filter_by(
+        user_id=user_id, code=payment_account_code
+    ).first()
+
+    # プロファイル読込 / AI自動検出
+    saved_mapping = None
+    mapping_source = None  # "saved" | "ai" | None
+
+    profile = load_column_profile(user_id, payment_account_code)
+    if profile:
+        # 列インデックスがCSV列数の範囲内かチェック
+        cols_valid = all(
+            profile.get(k) is None or 0 <= profile[k] < num_cols
+            for k in ("date_col", "desc_col", "deposit_col",
+                       "withdrawal_col", "amount_col")
+        )
+        if cols_valid:
+            saved_mapping = profile
+            mapping_source = "saved"
+
+    if not saved_mapping:
+        ai_result = detect_columns_by_ai(user_id, headers, preview["rows"])
+        if ai_result:
+            saved_mapping = ai_result
+            mapping_source = "ai"
 
     if request.method == "POST":
         date_col = request.form.get("date_col", type=int)
@@ -132,6 +161,8 @@ def mapping():
                 total_rows=preview["total_rows"],
                 date_formats=DATE_FORMATS,
                 payment_account=payment_account,
+                saved_mapping=saved_mapping,
+                mapping_source=mapping_source,
             )
 
         # フルパース
@@ -147,7 +178,15 @@ def mapping():
                 total_rows=preview["total_rows"],
                 date_formats=DATE_FORMATS,
                 payment_account=payment_account,
+                saved_mapping=saved_mapping,
+                mapping_source=mapping_source,
             )
+
+        # プロファイル保存
+        save_column_profile(
+            user_id, payment_account_code, mapping_data,
+            date_format, amount_mode,
+        )
 
         # パース結果を一時ファイルに保存してconfirmへ
         serializable = []
@@ -173,6 +212,8 @@ def mapping():
         total_rows=preview["total_rows"],
         date_formats=DATE_FORMATS,
         payment_account=payment_account,
+        saved_mapping=saved_mapping,
+        mapping_source=mapping_source,
     )
 
 
@@ -346,8 +387,8 @@ def confirm():
         "csv_import/confirm.html",
         parsed=parsed,
         payment_account=payment_account,
-        default_expense_id=default_expense.id if default_expense else 0,
-        default_income_id=default_income.id if default_income else 0,
+        default_expense_id=default_expense.code if default_expense else 0,
+        default_income_id=default_income.code if default_income else 0,
         grouped_accounts=grouped_accounts,
         restricted_before_year=restricted_before,
         closed_periods=closed_periods,

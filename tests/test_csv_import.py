@@ -1,6 +1,7 @@
 """csv_import サービスのテスト"""
 
 from datetime import date
+from unittest.mock import patch, MagicMock
 
 import pytest
 
@@ -10,6 +11,9 @@ from app.services.csv_import import (
     parse_csv_full,
     parse_csv_preview,
     parse_date,
+    save_column_profile,
+    load_column_profile,
+    detect_columns_by_ai,
 )
 
 
@@ -349,3 +353,301 @@ class TestParseCsvFull:
         rows = parse_csv_full(raw, self._two_col_mapping(), "%Y/%m/%d")
         assert len(rows) == 5
         assert [r["row_num"] for r in rows] == [2, 3, 4, 5, 6]
+
+
+# ============================================================
+# save_column_profile / load_column_profile
+# ============================================================
+
+class TestColumnProfileCrud:
+    def test_save_and_load(self, db, user, accounts):
+        mapping = {"date_col": 0, "desc_col": 1, "deposit_col": 2,
+                   "withdrawal_col": 3, "amount_col": None}
+        save_column_profile(user.id, "1020", mapping, "%Y/%m/%d", "separate")
+        loaded = load_column_profile(user.id, "1020")
+        assert loaded is not None
+        assert loaded["date_col"] == 0
+        assert loaded["desc_col"] == 1
+        assert loaded["deposit_col"] == 2
+        assert loaded["withdrawal_col"] == 3
+        assert loaded["amount_col"] is None
+        assert loaded["date_format"] == "%Y/%m/%d"
+        assert loaded["amount_mode"] == "separate"
+
+    def test_update_existing_profile(self, db, user, accounts):
+        mapping1 = {"date_col": 0, "desc_col": 1, "deposit_col": 2,
+                    "withdrawal_col": 3, "amount_col": None}
+        save_column_profile(user.id, "1020", mapping1, "%Y/%m/%d", "separate")
+
+        mapping2 = {"date_col": 1, "desc_col": 2, "amount_col": 3,
+                    "deposit_col": None, "withdrawal_col": None}
+        save_column_profile(user.id, "1020", mapping2, "%Y-%m-%d", "single")
+
+        loaded = load_column_profile(user.id, "1020")
+        assert loaded["date_col"] == 1
+        assert loaded["desc_col"] == 2
+        assert loaded["amount_col"] == 3
+        assert loaded["amount_mode"] == "single"
+        assert loaded["date_format"] == "%Y-%m-%d"
+
+    def test_load_nonexistent_returns_none(self, db, user, accounts):
+        assert load_column_profile(user.id, "9999") is None
+
+    def test_different_accounts_independent(self, db, user, accounts):
+        m1 = {"date_col": 0, "desc_col": 1, "deposit_col": 2,
+              "withdrawal_col": 3, "amount_col": None}
+        m2 = {"date_col": 1, "desc_col": 0, "amount_col": 2,
+              "deposit_col": None, "withdrawal_col": None}
+        save_column_profile(user.id, "1020", m1, "%Y/%m/%d", "separate")
+        save_column_profile(user.id, "2010", m2, "%Y-%m-%d", "single")
+
+        l1 = load_column_profile(user.id, "1020")
+        l2 = load_column_profile(user.id, "2010")
+        assert l1["date_col"] == 0
+        assert l2["date_col"] == 1
+        assert l1["amount_mode"] == "separate"
+        assert l2["amount_mode"] == "single"
+
+
+# ============================================================
+# CsvColumnProfile model
+# ============================================================
+
+class TestCsvColumnProfileModel:
+    def test_to_mapping_dict(self, db, user, accounts):
+        from app.models.csv_column_profile import CsvColumnProfile
+        profile = CsvColumnProfile(
+            user_id=user.id, account_code="1020",
+            date_col=0, desc_col=1, deposit_col=2, withdrawal_col=3,
+            amount_col=None, date_format="%Y-%m-%d", amount_mode="separate",
+        )
+        db.session.add(profile)
+        db.session.commit()
+        d = profile.to_mapping_dict()
+        assert d["date_col"] == 0
+        assert d["desc_col"] == 1
+        assert d["deposit_col"] == 2
+        assert d["withdrawal_col"] == 3
+        assert d["amount_col"] is None
+        assert d["date_format"] == "%Y-%m-%d"
+        assert d["amount_mode"] == "separate"
+
+    def test_unique_constraint(self, db, user, accounts):
+        from app.models.csv_column_profile import CsvColumnProfile
+        p1 = CsvColumnProfile(
+            user_id=user.id, account_code="1020",
+            date_col=0, desc_col=1, date_format="%Y/%m/%d",
+            amount_mode="separate",
+        )
+        db.session.add(p1)
+        db.session.commit()
+
+        p2 = CsvColumnProfile(
+            user_id=user.id, account_code="1020",
+            date_col=2, desc_col=3, date_format="%Y-%m-%d",
+            amount_mode="single",
+        )
+        db.session.add(p2)
+        with pytest.raises(Exception):
+            db.session.commit()
+        db.session.rollback()
+
+
+# ============================================================
+# detect_columns_by_ai
+# ============================================================
+
+class TestDetectColumnsByAi:
+    _HEADERS = ["日付", "摘要", "入金", "出金"]
+    _ROWS = [["2026/01/01", "テスト", "1000", ""]]
+
+    def test_no_ai_config_returns_none(self, app, db, user):
+        result = detect_columns_by_ai(user.id, self._HEADERS, self._ROWS)
+        assert result is None
+
+    @patch("app.services.ai_receipt._TEXT_PROVIDER_HANDLERS")
+    @patch("app.services.ai_receipt._get_ai_config")
+    @patch("app.models.ai_config.UserAIConfig")
+    def test_successful_detection(self, mock_model, mock_config,
+                                  mock_handlers, app, db, user):
+        mock_model.query.filter_by.return_value.first.return_value = MagicMock()
+        mock_config.return_value = (
+            "key", "openai", "gpt-4o", None, "", {}, False
+        )
+        mock_handler = MagicMock(return_value={
+            "date_col": 0, "desc_col": 1, "amount_mode": "separate",
+            "deposit_col": 2, "withdrawal_col": 3, "amount_col": None,
+            "date_format": "%Y/%m/%d",
+        })
+        mock_handlers.get.return_value = mock_handler
+
+        result = detect_columns_by_ai(user.id, self._HEADERS, self._ROWS)
+
+        assert result is not None
+        assert result["date_col"] == 0
+        assert result["desc_col"] == 1
+        assert result["amount_mode"] == "separate"
+        assert result["deposit_col"] == 2
+        assert result["withdrawal_col"] == 3
+        assert result["date_format"] == "%Y/%m/%d"
+
+    @patch("app.services.ai_receipt._TEXT_PROVIDER_HANDLERS")
+    @patch("app.services.ai_receipt._get_ai_config")
+    @patch("app.models.ai_config.UserAIConfig")
+    def test_single_column_mode(self, mock_model, mock_config,
+                                mock_handlers, app, db, user):
+        mock_model.query.filter_by.return_value.first.return_value = MagicMock()
+        mock_config.return_value = (
+            "key", "openai", "gpt-4o", None, "", {}, False
+        )
+        mock_handler = MagicMock(return_value={
+            "date_col": 0, "desc_col": 1, "amount_mode": "single",
+            "amount_col": 2, "date_format": "%Y/%m/%d",
+        })
+        mock_handlers.get.return_value = mock_handler
+
+        result = detect_columns_by_ai(
+            user.id, ["日付", "摘要", "金額"],
+            [["2026/01/01", "テスト", "-1000"]],
+        )
+        assert result is not None
+        assert result["amount_mode"] == "single"
+        assert result["amount_col"] == 2
+        assert result["deposit_col"] is None
+        assert result["withdrawal_col"] is None
+
+    @patch("app.services.ai_receipt._TEXT_PROVIDER_HANDLERS")
+    @patch("app.services.ai_receipt._get_ai_config")
+    @patch("app.models.ai_config.UserAIConfig")
+    def test_ai_error_returns_none(self, mock_model, mock_config,
+                                   mock_handlers, app, db, user):
+        mock_model.query.filter_by.return_value.first.return_value = MagicMock()
+        mock_config.return_value = (
+            "key", "openai", "gpt-4o", None, "", {}, False
+        )
+        mock_handler = MagicMock(side_effect=RuntimeError("API error"))
+        mock_handlers.get.return_value = mock_handler
+
+        result = detect_columns_by_ai(user.id, self._HEADERS, self._ROWS)
+        assert result is None
+
+    @patch("app.services.ai_receipt._TEXT_PROVIDER_HANDLERS")
+    @patch("app.services.ai_receipt._get_ai_config")
+    @patch("app.models.ai_config.UserAIConfig")
+    def test_invalid_column_index_returns_none(self, mock_model, mock_config,
+                                               mock_handlers, app, db, user):
+        mock_model.query.filter_by.return_value.first.return_value = MagicMock()
+        mock_config.return_value = (
+            "key", "openai", "gpt-4o", None, "", {}, False
+        )
+        mock_handler = MagicMock(return_value={
+            "date_col": 99, "desc_col": 1, "amount_mode": "separate",
+            "date_format": "%Y/%m/%d",
+        })
+        mock_handlers.get.return_value = mock_handler
+
+        result = detect_columns_by_ai(user.id, self._HEADERS, self._ROWS)
+        assert result is None
+
+    @patch("app.services.ai_receipt._get_ai_config")
+    @patch("app.models.ai_config.UserAIConfig")
+    def test_config_error_returns_none(self, mock_model, mock_config,
+                                       app, db, user):
+        mock_model.query.filter_by.return_value.first.return_value = MagicMock()
+        mock_config.side_effect = ValueError("API設定エラー")
+
+        result = detect_columns_by_ai(user.id, self._HEADERS, self._ROWS)
+        assert result is None
+
+
+# ============================================================
+# CSV取込 mapping ビューのプロファイル統合テスト
+# ============================================================
+
+class TestCsvImportMappingProfile:
+    _CSV = "日付,摘要,入金,出金\n2026/01/01,テスト,1000,\n"
+
+    def _setup_session(self, logged_in_client):
+        """セッションにCSVデータを設定"""
+        import base64
+        from app.views.helpers import save_import_data
+        key = save_import_data({
+            "raw_b64": base64.b64encode(self._CSV.encode()).decode("ascii"),
+        })
+        with logged_in_client.session_transaction() as sess:
+            sess["csv_data_key"] = key
+            sess["csv_payment_account_code"] = "1020"
+
+    def test_mapping_get_no_profile(self, db, logged_in_client, user, accounts):
+        self._setup_session(logged_in_client)
+        resp = logged_in_client.get("/csv-import/mapping")
+        assert resp.status_code == 200
+        html = resp.data.decode()
+        assert "保存済みプロファイル" not in html
+        assert "AI自動検出" not in html
+
+    def test_mapping_get_with_saved_profile(self, db, logged_in_client, user,
+                                            accounts):
+        mapping = {"date_col": 0, "desc_col": 1, "deposit_col": 2,
+                   "withdrawal_col": 3, "amount_col": None}
+        save_column_profile(user.id, "1020", mapping, "%Y/%m/%d", "separate")
+        self._setup_session(logged_in_client)
+
+        resp = logged_in_client.get("/csv-import/mapping")
+        assert resp.status_code == 200
+        html = resp.data.decode()
+        assert "保存済みプロファイル" in html
+
+    def test_mapping_post_saves_profile(self, db, logged_in_client, user,
+                                        accounts):
+        self._setup_session(logged_in_client)
+        resp = logged_in_client.post("/csv-import/mapping", data={
+            "date_col": "0",
+            "desc_col": "1",
+            "amount_mode": "separate",
+            "deposit_col": "2",
+            "withdrawal_col": "3",
+            "date_format": "%Y/%m/%d",
+        }, follow_redirects=False)
+        assert resp.status_code == 302
+
+        loaded = load_column_profile(user.id, "1020")
+        assert loaded is not None
+        assert loaded["date_col"] == 0
+        assert loaded["desc_col"] == 1
+        assert loaded["deposit_col"] == 2
+        assert loaded["withdrawal_col"] == 3
+
+    def test_mapping_post_updates_profile(self, db, logged_in_client, user,
+                                          accounts):
+        mapping = {"date_col": 0, "desc_col": 1, "deposit_col": 2,
+                   "withdrawal_col": 3, "amount_col": None}
+        save_column_profile(user.id, "1020", mapping, "%Y/%m/%d", "separate")
+        self._setup_session(logged_in_client)
+
+        resp = logged_in_client.post("/csv-import/mapping", data={
+            "date_col": "0",
+            "desc_col": "1",
+            "amount_mode": "separate",
+            "deposit_col": "2",
+            "withdrawal_col": "3",
+            "date_format": "%Y-%m-%d",
+        }, follow_redirects=False)
+        assert resp.status_code == 302
+
+        loaded = load_column_profile(user.id, "1020")
+        assert loaded["date_format"] == "%Y-%m-%d"
+
+    def test_saved_profile_with_out_of_range_col_ignored(self, db,
+                                                          logged_in_client,
+                                                          user, accounts):
+        """列数を超えるインデックスの保存済みプロファイルは無視される"""
+        mapping = {"date_col": 99, "desc_col": 1, "deposit_col": 2,
+                   "withdrawal_col": 3, "amount_col": None}
+        save_column_profile(user.id, "1020", mapping, "%Y/%m/%d", "separate")
+        self._setup_session(logged_in_client)
+
+        resp = logged_in_client.get("/csv-import/mapping")
+        assert resp.status_code == 200
+        html = resp.data.decode()
+        assert "保存済みプロファイル" not in html

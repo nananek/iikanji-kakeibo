@@ -8,6 +8,11 @@
   <div class="card-header">
     <strong>Step 2:</strong> 列マッピング
     <span class="text-muted ms-2">取込先: {{ payment_account.name }} / 全{{ total_rows }}件</span>
+    {% if mapping_source == "saved" %}
+    <span class="badge bg-success ms-2"><i class="bi bi-check-circle"></i> 保存済みプロファイル</span>
+    {% elif mapping_source == "ai" %}
+    <span class="badge bg-info ms-2"><i class="bi bi-stars"></i> AI自動検出</span>
+    {% endif %}
   </div>
   <div class="card-body">
     <form method="POST">
@@ -19,7 +24,7 @@
           <select class="form-select" name="date_col" id="dateCol" required>
             <option value="">-- 選択 --</option>
             {% for i in col_indices %}
-            <option value="{{ i }}">{{ headers[i] }}（{{ i + 1 }}列目）</option>
+            <option value="{{ i }}" {% if saved_mapping and saved_mapping.date_col == i %}selected{% endif %}>{{ headers[i] }}（{{ i + 1 }}列目）</option>
             {% endfor %}
           </select>
         </div>
@@ -27,7 +32,7 @@
           <label class="form-label"><strong>日付の形式</strong></label>
           <select class="form-select" name="date_format" required>
             {% for label, fmt in date_formats %}
-            <option value="{{ fmt }}">{{ label }}</option>
+            <option value="{{ fmt }}" {% if saved_mapping and saved_mapping.date_format == fmt %}selected{% endif %}>{{ label }}</option>
             {% endfor %}
           </select>
         </div>
@@ -36,7 +41,7 @@
           <select class="form-select" name="desc_col" id="descCol" required>
             <option value="">-- 選択 --</option>
             {% for i in col_indices %}
-            <option value="{{ i }}">{{ headers[i] }}（{{ i + 1 }}列目）</option>
+            <option value="{{ i }}" {% if saved_mapping and saved_mapping.desc_col == i %}selected{% endif %}>{{ headers[i] }}（{{ i + 1 }}列目）</option>
             {% endfor %}
           </select>
         </div>
@@ -46,16 +51,18 @@
         <label class="form-label"><strong>金額の列</strong></label>
         <div class="form-check mb-2">
           <input class="form-check-input" type="radio" name="amount_mode" id="modeSeparate"
-                 value="separate" checked onchange="toggleAmountMode()">
+                 value="separate"
+                 {% if not saved_mapping or saved_mapping.amount_mode == 'separate' %}checked{% endif %}
+                 onchange="toggleAmountMode()">
           <label class="form-check-label" for="modeSeparate">入金と出金が別の列</label>
         </div>
-        <div id="separateCols" class="row ms-4 mb-3">
+        <div id="separateCols" class="row ms-4 mb-3 {% if saved_mapping and saved_mapping.amount_mode == 'single' %}d-none{% endif %}">
           <div class="col-md-4">
             <label class="form-label">入金（預入・収入）の列</label>
             <select class="form-select" name="deposit_col" id="depositCol">
               <option value="">-- なし --</option>
               {% for i in col_indices %}
-              <option value="{{ i }}">{{ headers[i] }}（{{ i + 1 }}列目）</option>
+              <option value="{{ i }}" {% if saved_mapping and saved_mapping.deposit_col == i %}selected{% endif %}>{{ headers[i] }}（{{ i + 1 }}列目）</option>
               {% endfor %}
             </select>
           </div>
@@ -64,7 +71,7 @@
             <select class="form-select" name="withdrawal_col" id="withdrawalCol">
               <option value="">-- なし --</option>
               {% for i in col_indices %}
-              <option value="{{ i }}">{{ headers[i] }}（{{ i + 1 }}列目）</option>
+              <option value="{{ i }}" {% if saved_mapping and saved_mapping.withdrawal_col == i %}selected{% endif %}>{{ headers[i] }}（{{ i + 1 }}列目）</option>
               {% endfor %}
             </select>
           </div>
@@ -72,16 +79,18 @@
 
         <div class="form-check mb-2">
           <input class="form-check-input" type="radio" name="amount_mode" id="modeSingle"
-                 value="single" onchange="toggleAmountMode()">
+                 value="single"
+                 {% if saved_mapping and saved_mapping.amount_mode == 'single' %}checked{% endif %}
+                 onchange="toggleAmountMode()">
           <label class="form-check-label" for="modeSingle">入出金が1列（正=入金、負=出金）</label>
         </div>
-        <div id="singleCol" class="row ms-4 mb-3 d-none">
+        <div id="singleCol" class="row ms-4 mb-3 {% if not saved_mapping or saved_mapping.amount_mode != 'single' %}d-none{% endif %}">
           <div class="col-md-4">
             <label class="form-label">金額の列</label>
             <select class="form-select" name="amount_col" id="amountCol">
               <option value="">-- 選択 --</option>
               {% for i in col_indices %}
-              <option value="{{ i }}">{{ headers[i] }}（{{ i + 1 }}列目）</option>
+              <option value="{{ i }}" {% if saved_mapping and saved_mapping.amount_col == i %}selected{% endif %}>{{ headers[i] }}（{{ i + 1 }}列目）</option>
               {% endfor %}
             </select>
           </div>
@@ -163,5 +172,11 @@ function highlightColumns() {
     });
   });
 }
+
+// ページ読込時に保存済み/AI検出値を反映
+document.addEventListener('DOMContentLoaded', function() {
+  toggleAmountMode();
+  highlightColumns();
+});
 </script>
 {% endblock %}

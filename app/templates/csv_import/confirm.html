@@ -8,13 +8,15 @@
   var _importRows = {{ parsed | tojson }};
   var _closedPeriods = {{ closed_periods | tojson }};
   var _restrictedBefore = {{ restricted_before_year | tojson }};
+  var _defaultIncomeId = {{ default_income_id | tojson }};
+  var _defaultExpenseId = {{ default_expense_id | tojson }};
 </script>
 
 <div x-data="reconcileMode({
   csvRows: _importRows,
   paymentAccountCode: '{{ payment_account.code }}',
-  defaultIncomeId: {{ default_income_id | tojson }},
-  defaultExpenseId: {{ default_expense_id | tojson }}
+  defaultIncomeId: _defaultIncomeId,
+  defaultExpenseId: _defaultExpenseId
 })">
 
 <!-- タブヘッダー -->
@@ -41,8 +43,8 @@
   <div x-data="importConfirm({
     rows: _importRows,
     paymentAccountCode: '{{ payment_account.code }}',
-    defaultIncomeId: {{ default_income_id | tojson }},
-    defaultExpenseId: {{ default_expense_id | tojson }},
+    defaultIncomeId: _defaultIncomeId,
+    defaultExpenseId: _defaultExpenseId,
     closedPeriods: _closedPeriods,
     restrictedBeforeYear: _restrictedBefore
   })" @drag-select-update="_syncFromCheckboxes()">

@@ -19,7 +19,9 @@
         </div>
         {% endif %}
 
-        <form method="POST" id="uploadForm">
+        <form method="POST" id="uploadForm"
+              x-data="{ accountSelected: {{ 'true' if payment_account_code is defined and payment_account_code else 'false' }}, textEntered: {{ 'true' if raw_text is defined and raw_text else 'false' }} }"
+              @account-picked.window="accountSelected = true">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 
           <div class="mb-3">
@@ -42,21 +44,22 @@
             </div>
           </div>
 
-          <div class="mb-3">
+          <div class="mb-3" x-show="accountSelected" x-transition>
             <label class="form-label" for="raw_text">明細テキスト</label>
             <textarea class="form-control" name="raw_text" id="raw_text"
                       rows="15" required placeholder="銀行・クレカ等のWebページの明細部分をコピー＆ペーストしてください"
-                      {% if not has_config %}disabled{% endif %}>{{ raw_text if raw_text is defined else '' }}</textarea>
+                      {% if not has_config %}disabled{% endif %}
+                      @input="textEntered = ($event.target.value.trim().length > 0)">{{ raw_text if raw_text is defined else '' }}</textarea>
             <div class="form-text">
               Webページの明細部分を選択してコピー＆ペーストしてください。AIが自動で解析します。
             </div>
           </div>
 
           <button type="submit" class="btn btn-primary" id="submitBtn"
+                  x-show="textEntered" x-transition
                   {% if not has_config %}disabled{% endif %}>
             <i class="bi bi-robot"></i> AIで解析して次へ
           </button>
-          <a href="{{ url_for('cashbook.index') }}" class="btn btn-outline-secondary">キャンセル</a>
         </form>
       </div>
     </div>
@@ -110,6 +113,7 @@ function onPaymentSelected(code, name) {
   var span = document.getElementById('paymentAccountName');
   span.textContent = name;
   span.classList.remove('text-muted');
+  window.dispatchEvent(new CustomEvent('account-picked'));
 }
 
 (function() {
@@ -117,11 +121,6 @@ function onPaymentSelected(code, name) {
   var submitBtn = document.getElementById('submitBtn');
 
   form.addEventListener('submit', function(e) {
-    if (!document.getElementById('paymentAccountCode').value) {
-      e.preventDefault();
-      alert('取込先の口座を選択してください。');
-      return;
-    }
     submitBtn.disabled = true;
     submitBtn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status"></span> AIで解析中...';
   });

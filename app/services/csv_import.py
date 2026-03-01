@@ -2,6 +2,7 @@
 
 import csv
 import io
+import logging
 import re
 from datetime import date, datetime
 
@@ -189,3 +190,185 @@ def parse_csv_full(raw_bytes, mapping, date_format_str):
         })
 
     return results
+
+
+# --- 列プロファイル管理 ---
+
+logger = logging.getLogger(__name__)
+
+
+def save_column_profile(user_id, account_code, mapping_data, date_format,
+                        amount_mode):
+    """CSV列マッピングプロファイルを保存/更新する"""
+    from app.extensions import db
+    from app.models.csv_column_profile import CsvColumnProfile
+
+    profile = CsvColumnProfile.query.filter_by(
+        user_id=user_id, account_code=account_code
+    ).first()
+
+    fields = {
+        "date_col": mapping_data["date_col"],
+        "desc_col": mapping_data["desc_col"],
+        "deposit_col": mapping_data.get("deposit_col"),
+        "withdrawal_col": mapping_data.get("withdrawal_col"),
+        "amount_col": mapping_data.get("amount_col"),
+        "date_format": date_format,
+        "amount_mode": amount_mode,
+    }
+
+    if profile:
+        for k, v in fields.items():
+            setattr(profile, k, v)
+    else:
+        profile = CsvColumnProfile(
+            user_id=user_id, account_code=account_code, **fields
+        )
+        db.session.add(profile)
+    db.session.commit()
+    return profile
+
+
+def load_column_profile(user_id, account_code):
+    """保存済みCSV列マッピングプロファイルを読み込む
+
+    Returns:
+        dict or None
+    """
+    from app.models.csv_column_profile import CsvColumnProfile
+
+    profile = CsvColumnProfile.query.filter_by(
+        user_id=user_id, account_code=account_code
+    ).first()
+    if profile:
+        return profile.to_mapping_dict()
+    return None
+
+
+# --- AI列自動検出 ---
+
+CSV_COLUMN_DETECT_PROMPT = """あなたは日本の家計簿アプリのアシスタントです。
+以下はCSVファイルのヘッダーとサンプルデータです。列マッピングを推定してください。
+
+ヘッダー:
+{headers_text}
+
+サンプルデータ（先頭{sample_count}行）:
+{sample_text}
+
+以下のJSON形式のみを返してください。余計なテキストは不要です。
+
+{{
+  "date_col": 日付列のインデックス（0始まり）,
+  "desc_col": 摘要・説明列のインデックス（0始まり）,
+  "amount_mode": "separate" または "single",
+  "deposit_col": 入金列のインデックス（amount_mode が "separate" の場合、なければ null）,
+  "withdrawal_col": 出金列のインデックス（amount_mode が "separate" の場合、なければ null）,
+  "amount_col": 金額列のインデックス（amount_mode が "single" の場合、なければ null）,
+  "date_format": 日付のstrftime形式（例: "%Y/%m/%d", "%Y-%m-%d"）
+}}
+
+注意:
+- インデックスは0始まりの整数です
+- 日本の銀行・クレカCSVでよくあるパターンを考慮してください
+- 入金・出金が別列の場合は amount_mode を "separate" に
+- 正負の符号で入出金を区別する1列の場合は amount_mode を "single" に
+- 日付形式は実際のデータに合わせてください"""
+
+
+def detect_columns_by_ai(user_id, headers, sample_rows):
+    """AIを使ってCSVの列マッピングを推定する
+
+    Returns:
+        dict or None: マッピング結果。失敗時は None。
+    """
+    from app.models.ai_config import UserAIConfig
+    from app.services.ai_receipt import (
+        _get_ai_config, _TEXT_PROVIDER_HANDLERS, _extract_json,
+    )
+
+    config = UserAIConfig.query.filter_by(user_id=user_id).first()
+    if not config:
+        return None
+
+    try:
+        api_key, provider, model, _, __, extra_kw, ___ = _get_ai_config(
+            user_id
+        )
+    except (ValueError, RuntimeError):
+        return None
+
+    text_handler = _TEXT_PROVIDER_HANDLERS.get(provider)
+    if not text_handler:
+        return None
+
+    headers_text = ", ".join(f"[{i}] {h}" for i, h in enumerate(headers))
+    sample_lines = []
+    for row in sample_rows[:5]:
+        sample_lines.append(", ".join(row))
+    sample_text = "\n".join(sample_lines)
+
+    prompt = CSV_COLUMN_DETECT_PROMPT.format(
+        headers_text=headers_text,
+        sample_count=len(sample_lines),
+        sample_text=sample_text,
+    )
+
+    try:
+        text_kw = {"max_tokens": 500, **extra_kw}
+        result = text_handler(api_key, model, prompt, **text_kw)
+    except Exception:
+        logger.warning(
+            "AI column detection failed for user %s", user_id, exc_info=True,
+        )
+        return None
+
+    # バリデーション
+    num_cols = len(headers)
+    try:
+        date_col = int(result["date_col"])
+        desc_col = int(result["desc_col"])
+        if not (0 <= date_col < num_cols) or not (0 <= desc_col < num_cols):
+            return None
+
+        amount_mode = result.get("amount_mode", "separate")
+        date_format = result.get("date_format", "%Y/%m/%d")
+
+        mapping = {
+            "date_col": date_col,
+            "desc_col": desc_col,
+            "amount_mode": amount_mode,
+            "date_format": date_format,
+        }
+
+        if amount_mode == "single":
+            amount_col = result.get("amount_col")
+            if amount_col is not None:
+                amount_col = int(amount_col)
+                if 0 <= amount_col < num_cols:
+                    mapping["amount_col"] = amount_col
+            mapping.setdefault("amount_col", None)
+            mapping["deposit_col"] = None
+            mapping["withdrawal_col"] = None
+        else:
+            deposit_col = result.get("deposit_col")
+            withdrawal_col = result.get("withdrawal_col")
+            mapping["deposit_col"] = None
+            mapping["withdrawal_col"] = None
+            if deposit_col is not None:
+                deposit_col = int(deposit_col)
+                if 0 <= deposit_col < num_cols:
+                    mapping["deposit_col"] = deposit_col
+            if withdrawal_col is not None:
+                withdrawal_col = int(withdrawal_col)
+                if 0 <= withdrawal_col < num_cols:
+                    mapping["withdrawal_col"] = withdrawal_col
+            mapping["amount_col"] = None
+
+        return mapping
+    except (KeyError, TypeError, ValueError):
+        logger.warning(
+            "AI column detection returned invalid data for user %s",
+            user_id, exc_info=True,
+        )
+        return None

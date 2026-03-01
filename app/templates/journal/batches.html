@@ -30,6 +30,14 @@
           <td class="text-end">{{ batch.count }}件</td>
           <td>{{ batch.date_from.strftime('%Y-%m-%d') }} 〜 {{ batch.date_to.strftime('%Y-%m-%d') }}</td>
           <td class="text-center">
+            {% if batch.source == 'closing' %}
+              <span class="text-muted small">—</span>
+            {% elif not batch.deletable %}
+              <button type="button" class="btn btn-outline-danger btn-sm" disabled
+                      title="{{ batch.delete_reason }}">
+                <i class="bi bi-trash"></i> 取消
+              </button>
+            {% else %}
             <form method="POST" action="{{ url_for('journal.delete_batch', batch_id=batch.batch_id) }}"
                   style="display:inline;"
                   onsubmit="return confirm('このインポート（{{ batch.count }}件）をすべて削除しますか？この操作は取り消せません。');">
@@ -37,6 +45,7 @@
                 <i class="bi bi-trash"></i> 取消
               </button>
             </form>
+            {% endif %}
           </td>
         </tr>
         {% endfor %}
