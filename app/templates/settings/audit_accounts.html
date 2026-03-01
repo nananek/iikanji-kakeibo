@@ -33,7 +33,7 @@
              {% if grant.status == 'submitted' %}disabled{% endif %}>
       {% endif %}
       <label class="form-check-label">
-        {{ account.code }} {{ account.name }}
+        <span class="d-mobile-none">{{ account.code }}</span> {{ account.name }}
         {% if account.tax_category %}
           <span class="badge bg-info text-dark">{{ tax_category_labels.get(account.tax_category, account.tax_category) }}</span>
         {% endif %}

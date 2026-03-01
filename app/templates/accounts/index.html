@@ -34,7 +34,7 @@
       </colgroup>
       <thead class="table-light">
         <tr>
-          <th>コード</th>
+          <th class="d-mobile-none">コード</th>
           <th>科目名</th>
           <th>説明</th>
           <th></th>
@@ -43,7 +43,7 @@
       <tbody>
         {% for account in accounts %}
         <tr {% if not account.is_active %}class="text-muted"{% endif %}>
-          <td>{{ account.code }}</td>
+          <td class="d-mobile-none">{{ account.code }}</td>
           <td>
             {{ account.name }}
             {% if account.is_system %}

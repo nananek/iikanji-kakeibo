@@ -21,8 +21,9 @@
       {% for at, accts in grouped_accounts.items() %}
       <optgroup label="{{ at.name }}">
         {% for a in accts %}
-        <option value="{{ a.id }}" {% if a.id == account_id %}selected{% endif %}>
-          {{ a.code }} {{ a.name }}{% if not a.is_active %} (無効){% endif %}
+        <option value="{{ a.id }}" {% if a.id == account_id %}selected{% endif %}
+                data-code="{{ a.code }}">
+          {{ a.name }}{% if not a.is_active %} (無効){% endif %}
         </option>
         {% endfor %}
       </optgroup>
@@ -54,7 +55,7 @@
 
   <div class="card shadow-sm">
     <div class="card-header">
-      <strong>{{ selected_account.code }} {{ selected_account.name }}</strong>
+      <strong><span class="d-mobile-none">{{ selected_account.code }}</span> {{ selected_account.name }}</strong>
       <span class="text-muted ms-2">{{ year }}年 {{ range_label }}</span>
     </div>
     <div class="table-responsive">
@@ -306,6 +307,13 @@
 
 {% block scripts %}
 <script>
+// デスクトップ時は科目selectにコードを表示
+if (window.innerWidth > 576) {
+  document.querySelectorAll('#accountSelect option[data-code]').forEach(function(opt) {
+    opt.textContent = opt.dataset.code + ' ' + opt.textContent.trim();
+  });
+}
+
 // 期間バー ドラッグ選択
 (function() {
   var bar = document.getElementById('periodBar');

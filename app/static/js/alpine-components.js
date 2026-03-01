@@ -477,7 +477,8 @@ document.addEventListener('alpine:init', function() {
 
       select: function(id, name, typeCode) {
         if (window._acctSelectorCallback) {
-          window._acctSelectorCallback(id, name, typeCode);
+          var displayName = (typeof _acctNameById === 'function' ? _acctNameById(id) : '') || name;
+          window._acctSelectorCallback(id, displayName, typeCode);
         }
         this.modal.hide();
       }

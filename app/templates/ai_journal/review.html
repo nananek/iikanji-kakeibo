@@ -219,7 +219,7 @@
       <script>var _advancedLines = {{ selected.lines | tojson if selected.lines else '[]' }};</script>
       <div class="tab-pane fade {{ 'show active' if active_tab == 'advanced' }}" id="advancedMode" role="tabpanel">
         <form method="POST" id="advancedForm"
-              x-data="journalLines({ lines: _advancedLines, fullName: true })"
+              x-data="journalLines({ lines: _advancedLines })"
               @submit="serializeLines()">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <input type="hidden" name="mode" value="advanced">
