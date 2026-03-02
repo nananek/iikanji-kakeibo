@@ -567,6 +567,178 @@ class TestGetMonthProjection:
         assert result["days_elapsed"] == 20
         assert result["days_in_month"] == 28
 
+    def test_method_in_result(self, db, user, accounts):
+        """戻り値に method が含まれる"""
+        comparison = self._make_comparison(db, user, accounts)
+
+        with patch("app.services.tax.date") as mock_date:
+            mock_date.today.return_value = date(2026, 2, 15)
+            mock_date.side_effect = lambda *a, **kw: date(*a, **kw)
+            result = get_month_projection(user.id, 2026, 2, comparison)
+        assert result["method"] == "pro_rata"
+
+        with patch("app.services.tax.date") as mock_date:
+            mock_date.today.return_value = date(2026, 2, 15)
+            mock_date.side_effect = lambda *a, **kw: date(*a, **kw)
+            result = get_month_projection(user.id, 2026, 2, comparison, method="rolling28")
+        assert result["method"] == "rolling28"
+
+
+class TestRolling28Projection:
+    def test_rolling28_basic(self, db, user, accounts):
+        """rolling28: 過去28日の日平均 × 残り日数 + 今月実績"""
+        from datetime import timedelta
+
+        accounts["5010"].cost_type = "variable"
+        db.session.commit()
+
+        # 2/2~3/1 の28日間: 毎日 3000円
+        for i in range(28):
+            d = date(2026, 2, 2) + timedelta(days=i)
+            make_journal(db, user.id, "5010", "1010", 3000, entry_date=d)
+
+        # 3/2 に追加 2000円 → 3月実績 = 3000(3/1) + 2000(3/2) = 5000
+        make_journal(db, user.id, "5010", "1010", 2000, entry_date=date(2026, 3, 2))
+
+        comparison = get_monthly_comparison(user.id, 2026)
+
+        with patch("app.services.tax.date") as mock_date:
+            mock_date.today.return_value = date(2026, 3, 2)
+            mock_date.side_effect = lambda *a, **kw: date(*a, **kw)
+            result = get_month_projection(user.id, 2026, 3, comparison, method="rolling28")
+
+        food = [p for p in result["expense_projected"] if p["name"] == "食費"][0]
+        # 日平均 = 84000 / 28 = 3000, 残り = 31 - 2 = 29
+        # 予測 = 5000 + 3000 * 29 = 92000
+        assert food["actual"] == 5000
+        assert food["projected"] == 92000
+
+    def test_rolling28_no_history_fallback(self, db, user, accounts):
+        """rolling28: 28日ウィンドウにデータなし → pro_rata にフォールバック"""
+        accounts["5010"].cost_type = "variable"
+        db.session.commit()
+
+        # 仕訳を today に置く → yesterday までの28日ウィンドウには含まれない
+        make_journal(db, user.id, "5010", "1010", 40000, entry_date=date(2026, 3, 15))
+        comparison = get_monthly_comparison(user.id, 2026)
+
+        with patch("app.services.tax.date") as mock_date:
+            mock_date.today.return_value = date(2026, 3, 15)
+            mock_date.side_effect = lambda *a, **kw: date(*a, **kw)
+            result = get_month_projection(user.id, 2026, 3, comparison, method="rolling28")
+
+        food = [p for p in result["expense_projected"] if p["name"] == "食費"][0]
+        # フォールバック: 40000 * 31 / 15 = 82666
+        assert food["projected"] == int(40000 * 31 / 15)
+
+
+class TestDow28Projection:
+    def test_dow28_uniform(self, db, user, accounts):
+        """dow28: 均一データなら rolling28 と同じ結果"""
+        from datetime import timedelta
+
+        accounts["5010"].cost_type = "variable"
+        db.session.commit()
+
+        for i in range(28):
+            d = date(2026, 2, 2) + timedelta(days=i)
+            make_journal(db, user.id, "5010", "1010", 3000, entry_date=d)
+
+        make_journal(db, user.id, "5010", "1010", 2000, entry_date=date(2026, 3, 2))
+
+        comparison = get_monthly_comparison(user.id, 2026)
+
+        with patch("app.services.tax.date") as mock_date:
+            mock_date.today.return_value = date(2026, 3, 2)
+            mock_date.side_effect = lambda *a, **kw: date(*a, **kw)
+            result = get_month_projection(user.id, 2026, 3, comparison, method="dow28")
+
+        food = [p for p in result["expense_projected"] if p["name"] == "食費"][0]
+        assert food["projected"] == 92000
+
+    def test_dow28_weekday_variation(self, db, user, accounts):
+        """dow28: 曜日ごとに異なる金額で正しく計算される"""
+        from datetime import timedelta
+
+        accounts["5010"].cost_type = "variable"
+        db.session.commit()
+
+        # 曜日別金額: 月=4000, 火=2500, 水=3000, 木=2000, 金=3500, 土=5000, 日=3500
+        dow_amounts = {0: 4000, 1: 2500, 2: 3000, 3: 2000, 4: 3500, 5: 5000, 6: 3500}
+
+        # 2026-03-01 は日曜日。yesterday=3/1 から28日遡って 2/2～3/1
+        yesterday = date(2026, 3, 1)
+        for i in range(28):
+            d = yesterday - timedelta(days=i)
+            make_journal(db, user.id, "5010", "1010", dow_amounts[d.weekday()], entry_date=d)
+
+        # 3/2 に追加
+        make_journal(db, user.id, "5010", "1010", 1000, entry_date=date(2026, 3, 2))
+
+        comparison = get_monthly_comparison(user.id, 2026)
+
+        with patch("app.services.tax.date") as mock_date:
+            mock_date.today.return_value = date(2026, 3, 2)  # 月曜日
+            mock_date.side_effect = lambda *a, **kw: date(*a, **kw)
+            result = get_month_projection(user.id, 2026, 3, comparison, method="dow28")
+
+        food = [p for p in result["expense_projected"] if p["name"] == "食費"][0]
+        # 3月実績 = 3500(3/1日曜) + 1000(3/2) = 4500
+        # 残り: 3/3(火)～3/31(火) = 29日
+        # 残り曜日分布: 火5,水4,木4,金4,土4,日4,月4 = 29日
+        # 合計 = 2500*5 + 3000*4 + 2000*4 + 3500*4 + 5000*4 + 3500*4 + 4000*4
+        #       = 12500 + 12000 + 8000 + 14000 + 20000 + 14000 + 16000 = 96500
+        # 予測 = 4500 + 96500 = 101000
+        assert food["actual"] == 4500
+        assert food["projected"] == 101000
+
+    def test_dow28_no_history_fallback(self, db, user, accounts):
+        """dow28: 28日ウィンドウにデータなし → pro_rata にフォールバック"""
+        accounts["5010"].cost_type = "variable"
+        db.session.commit()
+
+        make_journal(db, user.id, "5010", "1010", 40000, entry_date=date(2026, 3, 15))
+        comparison = get_monthly_comparison(user.id, 2026)
+
+        with patch("app.services.tax.date") as mock_date:
+            mock_date.today.return_value = date(2026, 3, 15)
+            mock_date.side_effect = lambda *a, **kw: date(*a, **kw)
+            result = get_month_projection(user.id, 2026, 3, comparison, method="dow28")
+
+        food = [p for p in result["expense_projected"] if p["name"] == "食費"][0]
+        assert food["projected"] == int(40000 * 31 / 15)
+
+
+class TestProjectionMethodUnaffected:
+    def test_fixed_unaffected(self, db, user, accounts):
+        """固定費は method に影響されない"""
+        accounts["5020"].cost_type = "fixed"
+        db.session.commit()
+
+        make_journal(db, user.id, "5020", "1020", 90000, entry_date=date(2026, 1, 1))
+        comparison = get_monthly_comparison(user.id, 2026)
+
+        for m in ("pro_rata", "rolling28", "dow28"):
+            with patch("app.services.tax.date") as mock_date:
+                mock_date.today.return_value = date(2026, 2, 15)
+                mock_date.side_effect = lambda *a, **kw: date(*a, **kw)
+                result = get_month_projection(user.id, 2026, 2, comparison, method=m)
+            housing = [p for p in result["expense_projected"] if p["name"] == "住居費"][0]
+            assert housing["projected"] == 90000, f"method={m}"
+
+    def test_occasional_unaffected(self, db, user, accounts):
+        """随時費は method に影響されない"""
+        make_journal(db, user.id, "5010", "1010", 5000, entry_date=date(2026, 2, 10))
+        comparison = get_monthly_comparison(user.id, 2026)
+
+        for m in ("pro_rata", "rolling28", "dow28"):
+            with patch("app.services.tax.date") as mock_date:
+                mock_date.today.return_value = date(2026, 2, 15)
+                mock_date.side_effect = lambda *a, **kw: date(*a, **kw)
+                result = get_month_projection(user.id, 2026, 2, comparison, method=m)
+            food = [p for p in result["expense_projected"] if p["name"] == "食費"][0]
+            assert food["projected"] == food["actual"], f"method={m}"
+
 
 # =================================================================
 # get_income_expense_summary

@@ -264,9 +264,120 @@ def get_monthly_comparison(user_id, year):
     }
 
 
-def get_month_projection(user_id, year, month, comparison):
+def _get_daily_amounts_28d(user_id, reference_date):
+    """過去28日間の variable 科目の日別発生額を返す。
+
+    Returns:
+        dict: {account_code: {date: amount, ...}, ...}
+    """
+    from datetime import timedelta
+    from app.models.account import AccountType
+
+    start_date = reference_date - timedelta(days=27)
+
+    revenue_type = AccountType.query.filter_by(code="revenue").first()
+    expense_type = AccountType.query.filter_by(code="expense").first()
+    if not revenue_type or not expense_type:
+        return {}
+
+    # 費用: debit - credit
+    expense_rows = (
+        db.session.query(
+            Account.code,
+            JournalEntry.date,
+            (func.coalesce(func.sum(JournalEntryLine.debit_amount), 0)
+             - func.coalesce(func.sum(JournalEntryLine.credit_amount), 0)).label("amount"),
+        )
+        .join(JournalEntryLine, db.and_(
+            JournalEntryLine.account_user_id == Account.user_id,
+            JournalEntryLine.account_code == Account.code,
+        ))
+        .join(JournalEntry, JournalEntry.id == JournalEntryLine.journal_entry_id)
+        .filter(
+            Account.user_id == user_id,
+            Account.account_type_id == expense_type.id,
+            Account.is_active.is_(True),
+            Account.cost_type == "variable",
+            JournalEntry.date >= start_date,
+            JournalEntry.date <= reference_date,
+            JournalEntry.source != "closing",
+        )
+        .group_by(Account.code, JournalEntry.date)
+        .all()
+    )
+
+    # 収益: credit - debit
+    income_rows = (
+        db.session.query(
+            Account.code,
+            JournalEntry.date,
+            (func.coalesce(func.sum(JournalEntryLine.credit_amount), 0)
+             - func.coalesce(func.sum(JournalEntryLine.debit_amount), 0)).label("amount"),
+        )
+        .join(JournalEntryLine, db.and_(
+            JournalEntryLine.account_user_id == Account.user_id,
+            JournalEntryLine.account_code == Account.code,
+        ))
+        .join(JournalEntry, JournalEntry.id == JournalEntryLine.journal_entry_id)
+        .filter(
+            Account.user_id == user_id,
+            Account.account_type_id == revenue_type.id,
+            Account.is_active.is_(True),
+            Account.cost_type == "variable",
+            JournalEntry.date >= start_date,
+            JournalEntry.date <= reference_date,
+            JournalEntry.source != "closing",
+        )
+        .group_by(Account.code, JournalEntry.date)
+        .all()
+    )
+
+    result = {}
+    for row in expense_rows + income_rows:
+        if row.code not in result:
+            result[row.code] = {}
+        result[row.code][row.date] = int(row.amount)
+    return result
+
+
+def _project_rolling28(actual, daily_data, today, days_in_month, days_elapsed):
+    """rolling28: 過去28日間の日平均 × 残り日数 + 今月実績"""
+    if not daily_data:
+        return int(actual * days_in_month / days_elapsed) if days_elapsed > 0 else 0
+    total_28d = sum(daily_data.values())
+    daily_avg = total_28d / 28
+    remaining_days = days_in_month - days_elapsed
+    return actual + int(daily_avg * remaining_days)
+
+
+def _project_dow28(actual, daily_data, today, days_in_month, days_elapsed):
+    """dow28: 過去28日間の曜日別平均 × 残り各日の曜日 + 今月実績"""
+    from datetime import timedelta
+
+    if not daily_data:
+        return int(actual * days_in_month / days_elapsed) if days_elapsed > 0 else 0
+
+    # 曜日別集計（0=月, 6=日）— 28日 = 4週なので各曜日4回
+    dow_totals = [0] * 7
+    yesterday = today - timedelta(days=1)
+    for i in range(28):
+        d = yesterday - timedelta(days=i)
+        dow_totals[d.weekday()] += daily_data.get(d, 0)
+    dow_avg = [t / 4 for t in dow_totals]
+
+    # 残り日数の各曜日平均を合計
+    remaining_sum = 0
+    for day_offset in range(1, days_in_month - days_elapsed + 1):
+        future_date = today + timedelta(days=day_offset)
+        remaining_sum += dow_avg[future_date.weekday()]
+
+    return actual + int(remaining_sum)
+
+
+def get_month_projection(user_id, year, month, comparison, method="pro_rata"):
     """当月の着地予想を計算"""
     import calendar
+    from datetime import timedelta
 
     today = date.today()
     days_elapsed = today.day
@@ -274,6 +385,12 @@ def get_month_projection(user_id, year, month, comparison):
     m_idx = month - 1
 
     prev_idx = m_idx - 1  # 前月インデックス（1月なら-1=前年12月はデータなし→0扱い）
+
+    # rolling28 / dow28 用: 過去28日間データ（必要な場合のみ取得）
+    daily_amounts = {}
+    if method in ("rolling28", "dow28") and days_elapsed > 0:
+        yesterday = today - timedelta(days=1)
+        daily_amounts = _get_daily_amounts_28d(user_id, yesterday)
 
     def project(accounts):
         result = []
@@ -285,8 +402,19 @@ def get_month_projection(user_id, year, month, comparison):
                 prev = a["months"][prev_idx] if prev_idx >= 0 else 0
                 projected = prev if prev > 0 else actual
             elif ct == "variable":
-                # 変動: 経過日数で按分して月末着地を予測
-                projected = int(actual * days_in_month / days_elapsed) if days_elapsed > 0 else 0
+                if method == "rolling28" and days_elapsed > 0:
+                    projected = _project_rolling28(
+                        actual, daily_amounts.get(a["code"], {}),
+                        today, days_in_month, days_elapsed,
+                    )
+                elif method == "dow28" and days_elapsed > 0:
+                    projected = _project_dow28(
+                        actual, daily_amounts.get(a["code"], {}),
+                        today, days_in_month, days_elapsed,
+                    )
+                else:
+                    # 変動: 経過日数で按分して月末着地を予測
+                    projected = int(actual * days_in_month / days_elapsed) if days_elapsed > 0 else 0
             else:
                 # 随時: 実績をそのまま採用
                 projected = actual
@@ -305,6 +433,7 @@ def get_month_projection(user_id, year, month, comparison):
         "days_elapsed": days_elapsed,
         "days_in_month": days_in_month,
         "month": month,
+        "method": method,
         "expense_projected": expense_projected,
         "income_projected": income_projected,
         "expense_total_actual": comparison["expense_totals"][m_idx],

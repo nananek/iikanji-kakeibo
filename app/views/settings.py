@@ -40,6 +40,7 @@ def display():
         "settings/display.html",
         default_period=current_user.get_pref("reports_default_period", "all"),
         ledger_sort=current_user.get_pref("ledger_sort_order", "asc"),
+        projection_method=current_user.get_pref("projection_method", "pro_rata"),
     )
 
 
@@ -53,8 +54,12 @@ def display_save():
     sort = request.form.get("ledger_sort", "asc")
     if sort not in ("asc", "desc"):
         sort = "asc"
+    projection = request.form.get("projection_method", "pro_rata")
+    if projection not in ("pro_rata", "rolling28", "dow28"):
+        projection = "pro_rata"
     current_user.set_pref("reports_default_period", period)
     current_user.set_pref("ledger_sort_order", sort)
+    current_user.set_pref("projection_method", projection)
     db.session.commit()
     flash("表示設定を保存しました。", "success")
     return redirect(url_for("settings.display"))

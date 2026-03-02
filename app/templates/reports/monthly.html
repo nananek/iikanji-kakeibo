@@ -23,6 +23,8 @@
   <div class="card-header">
     <strong><i class="bi bi-bullseye"></i> {{ projection.month }}月 着地予想</strong>
     <span class="text-muted ms-2">{{ projection.days_elapsed }}日経過 / {{ projection.days_in_month }}日</span>
+    {% set method_labels = {'pro_rata': '日割按分', 'rolling28': '28日移動平均', 'dow28': '曜日別平均'} %}
+    <span class="badge bg-secondary ms-2">{{ method_labels.get(projection.method, '日割按分') }}</span>
   </div>
   <div class="card-body">
     <div class="progress mb-3" style="height: 6px;">

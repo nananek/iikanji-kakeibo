@@ -50,6 +50,32 @@
             <div class="form-text">元帳のデフォルトのソート順です。元帳画面でも切り替えできます。</div>
           </div>
 
+          <h6 class="mb-3">月次着地予想の予測方法</h6>
+          <div class="mb-4">
+            <div class="form-check mb-2">
+              <input class="form-check-input" type="radio" name="projection_method" id="proj_pro_rata"
+                     value="pro_rata" {% if projection_method == 'pro_rata' %}checked{% endif %}>
+              <label class="form-check-label" for="proj_pro_rata">
+                日割按分（経過日数で按分）
+              </label>
+            </div>
+            <div class="form-check mb-2">
+              <input class="form-check-input" type="radio" name="projection_method" id="proj_rolling28"
+                     value="rolling28" {% if projection_method == 'rolling28' %}checked{% endif %}>
+              <label class="form-check-label" for="proj_rolling28">
+                28日移動平均（過去28日の日平均で予測）
+              </label>
+            </div>
+            <div class="form-check">
+              <input class="form-check-input" type="radio" name="projection_method" id="proj_dow28"
+                     value="dow28" {% if projection_method == 'dow28' %}checked{% endif %}>
+              <label class="form-check-label" for="proj_dow28">
+                曜日別平均（過去4週間の曜日別平均で予測）
+              </label>
+            </div>
+            <div class="form-text">変動費の月末着地予想に使う計算方法です。固定費・随時費には影響しません。</div>
+          </div>
+
           <div class="d-flex gap-2">
             <button type="submit" class="btn btn-primary">保存</button>
             <a href="{{ url_for('settings.index') }}" class="btn btn-outline-secondary">戻る</a>

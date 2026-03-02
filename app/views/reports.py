@@ -746,8 +746,10 @@ def monthly():
     today = date.today()
     if year == today.year and today.day < \
             __import__("calendar").monthrange(year, today.month)[1]:
+        method = current_user.get_pref("projection_method", "pro_rata")
         projection = get_month_projection(
-            get_effective_user_id(), year, today.month, comparison
+            get_effective_user_id(), year, today.month, comparison,
+            method=method,
         )
 
     return render_template(

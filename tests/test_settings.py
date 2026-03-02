@@ -53,3 +53,35 @@ class TestSettingsIndex:
         resp = client.get("/settings/")
         html = resp.data.decode()
         assert "監査アクセス管理" not in html
+
+
+class TestDisplaySettings:
+    """GET/POST /settings/display — 表示設定（予測方法）"""
+
+    def test_display_shows_projection_method(self, db, logged_in_client):
+        resp = logged_in_client.get("/settings/display")
+        html = resp.data.decode()
+        assert "projection_method" in html
+        assert "日割按分" in html
+        assert "28日移動平均" in html
+        assert "曜日別平均" in html
+
+    def test_save_projection_method(self, db, logged_in_client, user):
+        resp = logged_in_client.post("/settings/display/save", data={
+            "default_period": "all",
+            "ledger_sort": "asc",
+            "projection_method": "rolling28",
+        }, follow_redirects=True)
+        assert resp.status_code == 200
+        db.session.refresh(user)
+        assert user.get_pref("projection_method") == "rolling28"
+
+    def test_invalid_projection_method_defaults(self, db, logged_in_client, user):
+        resp = logged_in_client.post("/settings/display/save", data={
+            "default_period": "all",
+            "ledger_sort": "asc",
+            "projection_method": "invalid",
+        }, follow_redirects=True)
+        assert resp.status_code == 200
+        db.session.refresh(user)
+        assert user.get_pref("projection_method") == "pro_rata"
