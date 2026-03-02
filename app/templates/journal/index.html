@@ -86,6 +86,12 @@
             <a href="#" onclick="openImagePreview('{{ url_for('ai_journal.voucher_image', voucher_id=entry.vouchers[0].id) }}');return false"
                title="証憑画像" class="text-success"><i class="bi bi-image"></i></a>
             {% endif %}
+            {% elif entry.source == 'csv' %}
+            <span class="badge bg-primary">CSV</span>
+            {% elif entry.source == 'ofx' %}
+            <span class="badge bg-primary">OFX</span>
+            {% elif entry.source == 'web' %}
+            <span class="badge bg-primary">Web</span>
             {% else %}
             <span class="badge bg-secondary">仕訳</span>
             {% endif %}

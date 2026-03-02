@@ -319,6 +319,7 @@ def confirm():
                         amount=amount,
                         description=description,
                         batch_id=batch_id,
+                        source="csv",
                     )
                 else:
                     create_transfer_entry(
@@ -329,6 +330,7 @@ def confirm():
                         amount=amount,
                         description=description,
                         batch_id=batch_id,
+                        source="csv",
                     )
                 imported += 1
             elif deposit > 0:
@@ -341,6 +343,7 @@ def confirm():
                     amount=deposit,
                     description=description,
                     batch_id=batch_id,
+                    source="csv",
                 )
                 imported += 1
             elif withdrawal > 0:
@@ -353,6 +356,7 @@ def confirm():
                     amount=withdrawal,
                     description=description,
                     batch_id=batch_id,
+                    source="csv",
                 )
                 imported += 1
             else:

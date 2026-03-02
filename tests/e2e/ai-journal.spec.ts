@@ -473,11 +473,12 @@ test.describe("仕訳編集画面 — tojson属性バグ", () => {
       .click();
     await page.waitForURL(/\/journal\/($|\?)/, { timeout: 10000 });
 
-    // 仕訳帳から編集リンクをクリック
+    // 日付と摘要でフィルターして目的の仕訳を表示
+    await page.goto(`${BASE_URL}/journal/?date_from=2026-01-15&date_to=2026-01-15&search=%E3%83%86%E3%82%B9%E3%83%88%E5%95%86%E5%BA%97`);
     const editLink = page.locator("table a[href*='/edit']").first();
     await expect(editLink).toBeVisible();
     await editLink.click();
-    await page.waitForURL(/\/journal\/\d+\/edit/);
+    await page.waitForURL(/\/(journal|cashbook)\/\d+\/edit/);
 
     // 日付が入っている
     const dateInput = page.locator("input[name='date']");
