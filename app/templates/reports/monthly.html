@@ -81,6 +81,32 @@
         </tr>
       </thead>
       <tbody>
+        {# --- 事業所得 --- #}
+        {% if biz_monthly and biz_monthly.total %}
+        <tr class="table-success fw-bold">
+          <td class="sticky-col" style="background:#d1e7dd !important;">
+            <i class="bi bi-briefcase"></i> 事業所得
+            <a href="{{ url_for('reports.tax_form_report', year=year) }}" class="ms-1 small text-decoration-none">
+              <i class="bi bi-box-arrow-up-right"></i>
+            </a>
+          </td>
+          <td class="d-mobile-none"></td>
+          {% for m in range(12) %}
+          <td class="text-end {% if current_month and m + 1 == current_month %}table-warning{% endif %}">
+            {% if biz_monthly.months[m] %}&yen;{{ "{:,}".format(biz_monthly.months[m]) }}
+            {% elif current_month and m + 1 > current_month %}&nbsp;
+            {% else %}0{% endif %}
+          </td>
+          {% endfor %}
+          <td class="text-end">&yen;{{ "{:,}".format(biz_monthly.total) }}</td>
+          {% set biz_months_with_data = [] %}
+          {% for m in range(12) %}{% if biz_monthly.months[m] != 0 %}{% if biz_months_with_data.append(1) %}{% endif %}{% endif %}{% endfor %}
+          <td class="text-end">
+            {% if biz_months_with_data|length > 0 %}&yen;{{ "{:,}".format((biz_monthly.total / biz_months_with_data|length)|round|int) }}{% else %}0{% endif %}
+          </td>
+        </tr>
+        {% endif %}
+
         {# --- 収入 --- #}
         <tr class="table-secondary">
           <td class="sticky-col" style="background:#e2e3e5 !important;"><strong>収入</strong></td>

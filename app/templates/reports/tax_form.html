@@ -1,0 +1,131 @@
+{% extends "base.html" %}
+{% block title %}青色申告決算書 - いいかんじ™家計簿{% endblock %}
+
+{% block content %}
+<h2><i class="bi bi-file-earmark-text"></i> 青色申告決算書（一般用）
+  <small class="text-muted">{{ year }}年</small>
+</h2>
+
+<form class="row g-3 mb-4 mt-2" method="GET">
+  <div class="col-auto">
+    <select name="year" class="form-select">
+      {% for y in range(year - 2, year + 2) %}
+      <option value="{{ y }}" {% if y == year %}selected{% endif %}>{{ y }}年</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="col-auto">
+    <button type="submit" class="btn btn-outline-secondary">表示</button>
+  </div>
+  <div class="col-auto ms-auto">
+    <a href="{{ url_for('settings.tax_form') }}" class="btn btn-outline-primary btn-sm">
+      <i class="bi bi-gear"></i> マッピング設定
+    </a>
+  </div>
+</form>
+
+{# --- P1: 損益計算書 --- #}
+<div class="card shadow-sm mb-4">
+  <div class="card-header"><strong>損益計算書</strong>（第1面）</div>
+  <div class="card-body p-0">
+    <table class="table table-sm table-hover mb-0">
+      <thead class="table-light">
+        <tr>
+          <th style="width:40px">欄</th>
+          <th>科目</th>
+          <th class="text-end" style="width:140px">金額</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% set current_section = [None] %}
+        {% for item in field_data %}
+          {% if item.field.page == 1 %}
+            {% if item.field.section != current_section[0] %}
+              {% if current_section.append(item.field.section) %}{% endif %}
+              {% if current_section.pop(0) is not none or true %}{% endif %}
+              <tr class="table-secondary">
+                <td colspan="3"><strong>{{ section_labels.get(item.field.section, item.field.section) }}</strong></td>
+              </tr>
+            {% endif %}
+            {% if item.field.is_subtotal %}
+            <tr class="table-info fw-bold">
+              <td class="text-muted"><small>{{ item.field.row_code }}</small></td>
+              <td>{{ item.field.name }}</td>
+              <td class="text-end">&yen;{{ "{:,}".format(item.amount) }}</td>
+            </tr>
+            {% else %}
+            <tr{% if item.field.is_user_defined and not item.codes %} class="text-muted"{% endif %}>
+              <td class="text-muted"><small>{{ item.field.row_code }}</small></td>
+              <td>
+                {{ item.field.name }}
+                {% if not item.codes and not item.field.is_subtotal %}
+                  <small class="text-muted">(未設定)</small>
+                {% endif %}
+              </td>
+              <td class="text-end">
+                {% if item.amount %}&yen;{{ "{:,}".format(item.amount) }}{% else %}-{% endif %}
+              </td>
+            </tr>
+            {% endif %}
+          {% endif %}
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{# --- P4: 貸借対照表 --- #}
+<div class="card shadow-sm mb-4">
+  <div class="card-header"><strong>貸借対照表</strong>（第4面）</div>
+  <div class="card-body p-0">
+    <table class="table table-sm table-hover mb-0">
+      <thead class="table-light">
+        <tr>
+          <th style="width:40px">欄</th>
+          <th>科目</th>
+          <th class="text-end" style="width:140px">期首</th>
+          <th class="text-end" style="width:140px">期末</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% set current_section = [None] %}
+        {% for item in field_data %}
+          {% if item.field.page == 4 %}
+            {% if item.field.section != current_section[0] %}
+              {% if current_section.append(item.field.section) %}{% endif %}
+              {% if current_section.pop(0) is not none or true %}{% endif %}
+              <tr class="table-secondary">
+                <td colspan="4"><strong>{{ section_labels.get(item.field.section, item.field.section) }}</strong></td>
+              </tr>
+            {% endif %}
+            {% if item.field.is_subtotal %}
+            <tr class="table-info fw-bold">
+              <td class="text-muted"><small>{{ item.field.row_code }}</small></td>
+              <td>{{ item.field.name }}</td>
+              <td class="text-end">&yen;{{ "{:,}".format(item.opening|default(0)) }}</td>
+              <td class="text-end">&yen;{{ "{:,}".format(item.amount) }}</td>
+            </tr>
+            {% else %}
+            <tr{% if item.field.is_user_defined and not item.codes %} class="text-muted"{% endif %}>
+              <td class="text-muted"><small>{{ item.field.row_code }}</small></td>
+              <td>
+                {{ item.field.name }}
+                {% if not item.codes and not item.field.is_subtotal %}
+                  <small class="text-muted">(未設定)</small>
+                {% endif %}
+              </td>
+              <td class="text-end">
+                {% if item.opening %}&yen;{{ "{:,}".format(item.opening) }}{% else %}-{% endif %}
+              </td>
+              <td class="text-end">
+                {% if item.amount %}&yen;{{ "{:,}".format(item.amount) }}{% else %}-{% endif %}
+              </td>
+            </tr>
+            {% endif %}
+          {% endif %}
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

@@ -353,13 +353,20 @@ def bs():
 @login_required
 def pl():
     """損益計算書"""
+    from app.services.tax_form import get_business_account_codes, get_business_income
+
     year = request.args.get("year", date.today().year, type=int)
     month = request.args.get("month", 0, type=int)
+    user_id = get_effective_user_id()
 
     if month:
-        summary = get_income_expense_summary(get_effective_user_id(), year, month)
+        summary = get_income_expense_summary(user_id, year, month)
     else:
-        summary = get_income_expense_summary(get_effective_user_id(), year)
+        summary = get_income_expense_summary(user_id, year)
+
+    # 事業科目の判定
+    biz_codes = get_business_account_codes(user_id)
+    biz_income = get_business_income(user_id, year, month or None)
 
     # 科目別内訳
     revenue_type = AccountType.query.filter_by(code="revenue").first()
@@ -375,9 +382,10 @@ def pl():
         end = date(year + 1, 1, 1)
 
     def get_breakdown(type_id, amount_col):
-        return (
+        q = (
             db.session.query(
                 Account.name,
+                Account.code,
                 func.coalesce(func.sum(amount_col), 0).label("total"),
             )
             .join(JournalEntryLine, db.and_(
@@ -386,12 +394,17 @@ def pl():
             ))
             .join(JournalEntry, JournalEntry.id == JournalEntryLine.journal_entry_id)
             .filter(
-                Account.user_id == get_effective_user_id(),
+                Account.user_id == user_id,
                 Account.account_type_id == type_id,
                 JournalEntry.date >= start,
                 JournalEntry.date < end,
             )
-            .group_by(Account.name, Account.code)
+        )
+        # 事業科目がある場合はP/Lから除外
+        if biz_codes:
+            q = q.filter(Account.code.notin_(biz_codes))
+        return (
+            q.group_by(Account.name, Account.code)
             .order_by(Account.code)
             .having(func.sum(amount_col) > 0)
             .all()
@@ -413,6 +426,7 @@ def pl():
         summary=summary,
         income_breakdown=income_breakdown,
         expense_breakdown=expense_breakdown,
+        biz_income=biz_income,
     )
 
 
@@ -735,12 +749,49 @@ def ledger():
     )
 
 
+@bp.route("/tax-form")
+@login_required
+def tax_form_report():
+    """青色申告決算書レポート"""
+    from app.services.tax_form import get_tax_form_report
+
+    year = request.args.get("year", date.today().year, type=int)
+    user_id = get_effective_user_id()
+
+    field_data = get_tax_form_report(user_id, year)
+
+    section_labels = {
+        "revenue": "売上（収入）",
+        "cost_of_sales": "売上原価",
+        "expenses": "経費",
+        "income": "所得金額",
+        "bs_assets": "資産の部",
+        "bs_liabilities": "負債・資本の部",
+    }
+
+    return render_template(
+        "reports/tax_form.html",
+        year=year,
+        field_data=field_data,
+        section_labels=section_labels,
+    )
+
+
 @bp.route("/monthly")
 @login_required
 def monthly():
     """月次比較レポート"""
+    from app.services.tax_form import get_business_account_codes
+
     year = request.args.get("year", date.today().year, type=int)
-    comparison = get_monthly_comparison(get_effective_user_id(), year)
+    user_id = get_effective_user_id()
+    comparison = get_monthly_comparison(user_id, year)
+
+    # 事業科目を折りたたみ
+    biz_codes = get_business_account_codes(user_id)
+    biz_monthly = None
+    if biz_codes:
+        biz_monthly = _collapse_business_accounts(comparison, biz_codes)
 
     projection = None
     today = date.today()
@@ -748,7 +799,7 @@ def monthly():
             __import__("calendar").monthrange(year, today.month)[1]:
         method = current_user.get_pref("projection_method", "pro_rata")
         projection = get_month_projection(
-            get_effective_user_id(), year, today.month, comparison,
+            user_id, year, today.month, comparison,
             method=method,
         )
 
@@ -758,4 +809,45 @@ def monthly():
         current_month=today.month if year == today.year else None,
         comparison=comparison,
         projection=projection,
+        biz_monthly=biz_monthly,
     )
+
+
+def _collapse_business_accounts(comparison, biz_codes):
+    """事業科目を comparison から除外し、事業所得の月次データを返す"""
+    biz_revenue_months = [0] * 12
+    biz_expense_months = [0] * 12
+
+    # 事業科目を抽出して除外
+    household_income = []
+    household_expense = []
+
+    for a in comparison["income_accounts"]:
+        if a["code"] in biz_codes:
+            for i in range(12):
+                biz_revenue_months[i] += a["months"][i]
+        else:
+            household_income.append(a)
+
+    for a in comparison["expense_accounts"]:
+        if a["code"] in biz_codes:
+            for i in range(12):
+                biz_expense_months[i] += a["months"][i]
+        else:
+            household_expense.append(a)
+
+    # comparison を家計簿科目のみに差し替え
+    comparison["income_accounts"] = household_income
+    comparison["expense_accounts"] = household_expense
+
+    # 合計も再計算
+    for i in range(12):
+        comparison["income_totals"][i] = sum(a["months"][i] for a in household_income)
+        comparison["expense_totals"][i] = sum(a["months"][i] for a in household_expense)
+
+    biz_income_months = [biz_revenue_months[i] - biz_expense_months[i] for i in range(12)]
+
+    return {
+        "months": biz_income_months,
+        "total": sum(biz_income_months),
+    }

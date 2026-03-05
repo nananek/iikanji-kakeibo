@@ -1,8 +1,10 @@
 """青色申告決算書マッピングのテスト"""
 import pytest
+from datetime import date
 
 from app.models.tax_form import TaxFormField, TaxFormMapping
 from app.models.account import Account
+from app.models.journal import JournalEntry, JournalEntryLine
 from app.services.tax_form import (
     get_form_fields,
     get_mappable_fields,
@@ -12,6 +14,9 @@ from app.services.tax_form import (
     remove_mapping,
     bulk_create_accounts,
     save_mappings,
+    get_business_account_codes,
+    get_business_income,
+    get_tax_form_report,
 )
 
 
@@ -230,3 +235,202 @@ class TestSettingsView:
         resp = logged_in_client.get("/settings/")
         assert resp.status_code == 200
         assert "青色申告決算書" in resp.data.decode()
+
+
+class TestBusinessAccountCodes:
+    def test_no_mappings_returns_empty(self, db, user, accounts):
+        result = get_business_account_codes(user.id)
+        assert result == set()
+
+    def test_returns_mapped_codes(self, db, user, accounts, tax_fields):
+        set_mapping(user.id, "4010", tax_fields["1"].id)
+        set_mapping(user.id, "5010", tax_fields["8"].id)
+        db.session.commit()
+
+        result = get_business_account_codes(user.id)
+        assert result == {"4010", "5010"}
+
+
+class TestBusinessIncome:
+    def test_no_mappings(self, db, user, accounts):
+        result = get_business_income(user.id, 2026)
+        assert result["has_mappings"] is False
+        assert result["income"] == 0
+
+    def test_calculates_income(self, db, user, accounts, account_types, tax_fields):
+        # 事業用科目を作成してマッピング
+        biz_rev = Account(
+            user_id=user.id, code="9010", name="売上",
+            account_type_id=account_types["revenue"].id,
+            is_active=True, display_order=100,
+        )
+        biz_exp = Account(
+            user_id=user.id, code="9210", name="租税公課",
+            account_type_id=account_types["expense"].id,
+            is_active=True, display_order=110,
+        )
+        db.session.add_all([biz_rev, biz_exp])
+        db.session.commit()
+
+        set_mapping(user.id, "9010", tax_fields["1"].id)
+        set_mapping(user.id, "9210", tax_fields["8"].id)
+        db.session.commit()
+
+        # 仕訳: 売上 100,000
+        entry1 = JournalEntry(
+            user_id=user.id, date=date(2026, 3, 1),
+            entry_number=1, description="売上", source="journal",
+        )
+        entry1.lines = [
+            JournalEntryLine(account_user_id=user.id, account_code="1010",
+                             debit_amount=100000, credit_amount=0),
+            JournalEntryLine(account_user_id=user.id, account_code="9010",
+                             debit_amount=0, credit_amount=100000),
+        ]
+        db.session.add(entry1)
+
+        # 仕訳: 租税公課 30,000
+        entry2 = JournalEntry(
+            user_id=user.id, date=date(2026, 3, 5),
+            entry_number=2, description="租税公課", source="journal",
+        )
+        entry2.lines = [
+            JournalEntryLine(account_user_id=user.id, account_code="9210",
+                             debit_amount=30000, credit_amount=0),
+            JournalEntryLine(account_user_id=user.id, account_code="1010",
+                             debit_amount=0, credit_amount=30000),
+        ]
+        db.session.add(entry2)
+        db.session.commit()
+
+        result = get_business_income(user.id, 2026)
+        assert result["has_mappings"] is True
+        assert result["revenue"] == 100000
+        assert result["expense"] == 30000
+        assert result["income"] == 70000
+
+    def test_monthly_filter(self, db, user, accounts, account_types, tax_fields):
+        biz_rev = Account(
+            user_id=user.id, code="9010", name="売上",
+            account_type_id=account_types["revenue"].id,
+            is_active=True, display_order=100,
+        )
+        db.session.add(biz_rev)
+        db.session.commit()
+        set_mapping(user.id, "9010", tax_fields["1"].id)
+        db.session.commit()
+
+        for m in (1, 2, 3):
+            entry = JournalEntry(
+                user_id=user.id, date=date(2026, m, 15),
+                entry_number=m, description=f"{m}月売上", source="journal",
+            )
+            entry.lines = [
+                JournalEntryLine(account_user_id=user.id, account_code="1010",
+                                 debit_amount=10000, credit_amount=0),
+                JournalEntryLine(account_user_id=user.id, account_code="9010",
+                                 debit_amount=0, credit_amount=10000),
+            ]
+            db.session.add(entry)
+        db.session.commit()
+
+        result_year = get_business_income(user.id, 2026)
+        assert result_year["revenue"] == 30000
+
+        result_jan = get_business_income(user.id, 2026, 1)
+        assert result_jan["revenue"] == 10000
+
+
+class TestTaxFormReport:
+    def test_report_loads(self, logged_in_client, db, tax_fields):
+        resp = logged_in_client.get("/reports/tax-form")
+        assert resp.status_code == 200
+        assert "青色申告決算書" in resp.data.decode()
+
+    def test_report_with_data(self, db, user, accounts, account_types, tax_fields):
+        biz_rev = Account(
+            user_id=user.id, code="9010", name="売上",
+            account_type_id=account_types["revenue"].id,
+            is_active=True, display_order=100,
+        )
+        db.session.add(biz_rev)
+        db.session.commit()
+        set_mapping(user.id, "9010", tax_fields["1"].id)
+        db.session.commit()
+
+        entry = JournalEntry(
+            user_id=user.id, date=date(2026, 6, 1),
+            entry_number=1, description="売上", source="journal",
+        )
+        entry.lines = [
+            JournalEntryLine(account_user_id=user.id, account_code="1010",
+                             debit_amount=50000, credit_amount=0),
+            JournalEntryLine(account_user_id=user.id, account_code="9010",
+                             debit_amount=0, credit_amount=50000),
+        ]
+        db.session.add(entry)
+        db.session.commit()
+
+        data = get_tax_form_report(user.id, 2026)
+        # 売上欄に50000が入っている
+        revenue_item = next(d for d in data if d["field"].row_code == "1")
+        assert revenue_item["amount"] == 50000
+
+    def test_reports_index_has_link(self, logged_in_client, db):
+        resp = logged_in_client.get("/reports/")
+        assert resp.status_code == 200
+        assert "青色申告決算書" in resp.data.decode()
+
+
+class TestPLBusinessCollapse:
+    def test_pl_shows_business_income(self, logged_in_client, db, user, accounts, account_types, tax_fields):
+        biz_rev = Account(
+            user_id=user.id, code="9010", name="売上",
+            account_type_id=account_types["revenue"].id,
+            is_active=True, display_order=100,
+        )
+        db.session.add(biz_rev)
+        db.session.commit()
+        set_mapping(user.id, "9010", tax_fields["1"].id)
+        db.session.commit()
+
+        entry = JournalEntry(
+            user_id=user.id, date=date(2026, 1, 15),
+            entry_number=1, description="売上", source="journal",
+        )
+        entry.lines = [
+            JournalEntryLine(account_user_id=user.id, account_code="1010",
+                             debit_amount=200000, credit_amount=0),
+            JournalEntryLine(account_user_id=user.id, account_code="9010",
+                             debit_amount=0, credit_amount=200000),
+        ]
+        db.session.add(entry)
+        db.session.commit()
+
+        resp = logged_in_client.get("/reports/pl?year=2026")
+        html = resp.data.decode()
+        assert resp.status_code == 200
+        assert "事業所得" in html
+        # 売上（個別科目）は表示されない
+        assert "売上" not in html or "事業所得" in html
+
+    def test_pl_without_mappings_shows_all(self, logged_in_client, db, user, accounts, account_types):
+        """マッピングなし時は従来通り全科目表示"""
+        entry = JournalEntry(
+            user_id=user.id, date=date(2026, 1, 15),
+            entry_number=1, description="給与", source="journal",
+        )
+        entry.lines = [
+            JournalEntryLine(account_user_id=user.id, account_code="1010",
+                             debit_amount=300000, credit_amount=0),
+            JournalEntryLine(account_user_id=user.id, account_code="4010",
+                             debit_amount=0, credit_amount=300000),
+        ]
+        db.session.add(entry)
+        db.session.commit()
+
+        resp = logged_in_client.get("/reports/pl?year=2026")
+        html = resp.data.decode()
+        assert resp.status_code == 200
+        assert "給与収入" in html
+        assert "事業所得" not in html

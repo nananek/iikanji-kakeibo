@@ -57,10 +57,21 @@
     <div class="card shadow-sm">
       <div class="card-header"><strong>収入の内訳</strong></div>
       <div class="card-body p-0">
-        {% if income_breakdown %}
+        {% if income_breakdown or (biz_income and biz_income.has_mappings and biz_income.income) %}
         <table class="table table-sm mb-0">
           <tbody>
-            {% for name, total in income_breakdown %}
+            {% if biz_income and biz_income.has_mappings and biz_income.income %}
+            <tr class="table-success">
+              <td>
+                <i class="bi bi-briefcase"></i> <strong>事業所得</strong>
+                <a href="{{ url_for('reports.tax_form_report', year=year) }}" class="ms-1 small text-decoration-none">
+                  <i class="bi bi-box-arrow-up-right"></i> 内訳
+                </a>
+              </td>
+              <td class="text-end"><strong>&yen;{{ "{:,}".format(biz_income.income) }}</strong></td>
+            </tr>
+            {% endif %}
+            {% for name, code, total in income_breakdown %}
             <tr>
               <td>{{ name }}</td>
               <td class="text-end">&yen;{{ "{:,}".format(total|int) }}</td>
@@ -81,7 +92,7 @@
         {% if expense_breakdown %}
         <table class="table table-sm mb-0">
           <tbody>
-            {% for name, total in expense_breakdown %}
+            {% for name, code, total in expense_breakdown %}
             <tr>
               <td>{{ name }}</td>
               <td class="text-end">&yen;{{ "{:,}".format(total|int) }}</td>
