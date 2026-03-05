@@ -1,0 +1,142 @@
+{% extends "base.html" %}
+{% block title %}青色申告決算書 - いいかんじ™家計簿{% endblock %}
+
+{% block content %}
+<div class="row">
+  <div class="col-xl-10">
+    <h2><i class="bi bi-file-earmark-text"></i> 青色申告決算書</h2>
+    <p class="text-muted">決算書の各欄に勘定科目を割り当てます。欄から科目を一括作成することもできます。</p>
+
+    {# --- 一括科目作成 --- #}
+    <div class="card shadow-sm mb-4">
+      <div class="card-header d-flex justify-content-between align-items-center"
+           data-bs-toggle="collapse" data-bs-target="#bulkCreatePanel" role="button">
+        <h6 class="mb-0"><i class="bi bi-plus-circle"></i> 決算書欄から科目を一括作成</h6>
+        <i class="bi bi-chevron-down"></i>
+      </div>
+      <div id="bulkCreatePanel" class="collapse">
+        <div class="card-body">
+          <p class="small text-muted mb-3">
+            チェックした欄に対応する勘定科目（9000番台）を一括作成し、自動的にマッピングします。
+            既にコードが存在する場合はマッピングのみ設定します。
+          </p>
+          <form method="POST" action="{{ url_for('settings.tax_form_bulk_create') }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+            {% set current_section = [None] %}
+            {% for field in fields %}
+              {% if not field.is_subtotal and field.suggested_code %}
+                {% if field.section != current_section[0] %}
+                  {% if current_section[0] is not none %}</div>{% endif %}
+                  {% if current_section.append(field.section) %}{% endif %}
+                  {% if current_section.pop(0) is not none or true %}{% endif %}
+                  <h6 class="mt-3 mb-2 text-primary">
+                    <i class="bi bi-caret-right-fill"></i>
+                    {{ section_labels.get(field.section, field.section) }}
+                    {% if field.page == 4 %}(B/S){% endif %}
+                  </h6>
+                  <div class="row row-cols-2 row-cols-md-3 row-cols-lg-4 g-2">
+                {% endif %}
+                {% set already_mapped = field.id in field_mappings %}
+                <div class="col">
+                  <div class="form-check">
+                    <input class="form-check-input" type="checkbox" name="field_ids"
+                           value="{{ field.id }}" id="bulk_{{ field.id }}"
+                           {% if already_mapped %}checked disabled{% endif %}>
+                    <label class="form-check-label {% if already_mapped %}text-muted{% endif %}"
+                           for="bulk_{{ field.id }}">
+                      <small class="text-muted">{{ field.row_code }}</small>
+                      {{ field.name }}
+                      <small class="text-muted">({{ field.suggested_code }})</small>
+                      {% if already_mapped %}
+                        <i class="bi bi-check-circle-fill text-success" title="設定済み"></i>
+                      {% endif %}
+                    </label>
+                  </div>
+                </div>
+              {% endif %}
+            {% endfor %}
+            {% if current_section[0] is not none %}</div>{% endif %}
+
+            <div class="mt-3 d-flex gap-2 align-items-center">
+              <button type="submit" class="btn btn-primary btn-sm">
+                <i class="bi bi-plus-lg"></i> 選択した欄の科目を作成
+              </button>
+              <button type="button" class="btn btn-outline-secondary btn-sm"
+                      onclick="document.querySelectorAll('#bulkCreatePanel input[type=checkbox]:not(:disabled)').forEach(c => c.checked = !c.checked)">
+                選択反転
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+
+    {# --- マッピング設定 --- #}
+    <div class="card shadow-sm">
+      <div class="card-header">
+        <h6 class="mb-0"><i class="bi bi-link-45deg"></i> 科目マッピング</h6>
+      </div>
+      <div class="card-body">
+        <p class="small text-muted mb-3">
+          各勘定科目を決算書のどの欄に集計するか設定します。
+          マッピングされていない科目は決算書に反映されません。
+        </p>
+        <form method="POST" action="{{ url_for('settings.tax_form_save_mappings') }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+          <div class="table-responsive">
+            <table class="table table-sm table-hover">
+              <thead class="table-light">
+                <tr>
+                  <th style="width:80px">コード</th>
+                  <th>科目名</th>
+                  <th>区分</th>
+                  <th style="min-width:250px">決算書の欄</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for account in accounts %}
+                <tr>
+                  <td><code>{{ account.code }}</code></td>
+                  <td>{{ account.name }}</td>
+                  <td><small class="text-muted">{{ account.account_type.name }}</small></td>
+                  <td>
+                    <select name="mapping_{{ account.code }}" class="form-select form-select-sm">
+                      <option value="">-- 未設定 --</option>
+                      {% set current_section2 = [None] %}
+                      {% for field in fields %}
+                        {% if field.section != current_section2[0] %}
+                          {% if current_section2[0] is not none %}</optgroup>{% endif %}
+                          {% if current_section2.append(field.section) %}{% endif %}
+                          {% if current_section2.pop(0) is not none or true %}{% endif %}
+                          <optgroup label="{{ section_labels.get(field.section, field.section) }}{% if field.page == 4 %} (B/S){% endif %}">
+                        {% endif %}
+                        <option value="{{ field.id }}"
+                                {% if account_to_field.get(account.code) == field.id %}selected{% endif %}
+                                {% if field.account_type_code != account.account_type.code %}class="text-muted"{% endif %}>
+                          {{ field.row_code }}. {{ field.name }}
+                        </option>
+                      {% endfor %}
+                      {% if current_section2[0] is not none %}</optgroup>{% endif %}
+                    </select>
+                  </td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+
+          <div class="d-flex gap-2">
+            <button type="submit" class="btn btn-primary">
+              <i class="bi bi-save"></i> マッピングを保存
+            </button>
+            <a href="{{ url_for('settings.index') }}" class="btn btn-outline-secondary">戻る</a>
+          </div>
+        </form>
+      </div>
+    </div>
+
+  </div>
+</div>
+{% endblock %}

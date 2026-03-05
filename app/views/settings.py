@@ -607,6 +607,100 @@ def audit_accounts_save(grant_id):
 # --- 自動取込 ---
 
 
+# --- 青色申告決算書 ---
+
+
+@bp.route("/tax-form")
+@login_required
+def tax_form():
+    """青色申告決算書 科目マッピング設定"""
+    from app.services.tax_form import get_mappable_fields, get_user_mappings, get_account_mapping
+
+    form_type = request.args.get("form_type", "general")
+    user_id = get_effective_user_id()
+
+    fields = get_mappable_fields(form_type)
+    field_mappings = get_user_mappings(user_id, form_type)
+    account_to_field = get_account_mapping(user_id, form_type)
+
+    # ユーザーの全科目
+    accounts = (
+        Account.query
+        .filter_by(user_id=user_id, is_active=True)
+        .order_by(Account.code)
+        .all()
+    )
+
+    account_types = AccountType.query.order_by(AccountType.display_order).all()
+
+    # セクション名ラベル
+    section_labels = {
+        "revenue": "売上（収入）",
+        "cost_of_sales": "売上原価",
+        "expenses": "経費",
+        "income": "所得金額",
+        "bs_assets": "資産の部",
+        "bs_liabilities": "負債・資本の部",
+    }
+
+    return render_template(
+        "settings/tax_form.html",
+        form_type=form_type,
+        fields=fields,
+        field_mappings=field_mappings,
+        account_to_field=account_to_field,
+        accounts=accounts,
+        account_types=account_types,
+        section_labels=section_labels,
+    )
+
+
+@bp.route("/tax-form/save-mappings", methods=["POST"])
+@login_required
+def tax_form_save_mappings():
+    """マッピングの一括保存"""
+    from app.services.tax_form import save_mappings
+
+    user_id = get_effective_user_id()
+    mapping_data = []
+
+    for key, value in request.form.items():
+        if key.startswith("mapping_") and value:
+            account_code = key.replace("mapping_", "")
+            mapping_data.append({
+                "account_code": account_code,
+                "field_id": value,
+            })
+
+    save_mappings(user_id, mapping_data)
+    db.session.commit()
+    flash("決算書マッピングを保存しました。", "success")
+    return redirect(url_for("settings.tax_form"))
+
+
+@bp.route("/tax-form/bulk-create", methods=["POST"])
+@login_required
+def tax_form_bulk_create():
+    """決算書欄から科目を一括作成"""
+    from app.services.tax_form import bulk_create_accounts
+
+    user_id = get_effective_user_id()
+    field_ids = [int(fid) for fid in request.form.getlist("field_ids") if fid]
+
+    if not field_ids:
+        flash("科目を作成する欄を選択してください。", "warning")
+        return redirect(url_for("settings.tax_form"))
+
+    created, skipped = bulk_create_accounts(user_id, field_ids)
+    db.session.commit()
+
+    msg = f"{created}件の科目を作成しました。"
+    if skipped:
+        msg += f"（{len(skipped)}件はコードが既存のためマッピングのみ設定）"
+    flash(msg, "success")
+    return redirect(url_for("settings.tax_form"))
+
+
 @bp.route("/auto-import")
 @login_required
 def auto_import():
