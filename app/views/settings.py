@@ -674,10 +674,12 @@ def tax_form_save_mappings():
                 "field_id": value,
             })
 
-    save_mappings(user_id, mapping_data)
+    form_type = request.form.get("form_type", "general")
+    if form_type not in ("general", "real_estate"):
+        form_type = "general"
+    save_mappings(user_id, mapping_data, form_type=form_type)
     db.session.commit()
     flash("決算書マッピングを保存しました。", "success")
-    form_type = request.form.get("form_type", "general")
     return redirect(url_for("settings.tax_form", form_type=form_type))
 
 
