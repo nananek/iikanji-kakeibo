@@ -35,8 +35,8 @@ class TaxFormMapping(db.Model):
             name="fk_tax_mapping_account",
         ),
         db.UniqueConstraint(
-            "user_id", "account_code", "field_id",
-            name="uq_tax_mapping_user_account_field",
+            "user_id", "account_code",
+            name="uq_tax_mapping_user_account",
         ),
     )
 

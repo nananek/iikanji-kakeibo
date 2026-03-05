@@ -891,7 +891,7 @@ class TestMonthlyCollapse:
 
 
 class TestMultiFormTypeMapping:
-    """複数form_typeでのマッピング制御テスト"""
+    """複数form_type間の排他制御テスト（全科目が1つのform_typeにのみ所属）"""
 
     @pytest.fixture
     def re_fields(self, db):
@@ -900,7 +900,6 @@ class TestMultiFormTypeMapping:
         defs = [
             ("real_estate", 1, "revenue", "1", "賃貸料", "revenue", "9510", False, 2000),
             ("real_estate", 4, "bs_assets", "A1", "現金", "asset", None, False, 2100),
-            ("real_estate", 4, "bs_assets", "AT", "資産合計", "asset", None, True, 2200),
         ]
         for ft, pg, sec, rc, nm, atc, sc, sub, do in defs:
             f = TaxFormField(
@@ -913,23 +912,8 @@ class TestMultiFormTypeMapping:
         db.session.commit()
         return fields
 
-    def test_asset_shared_across_form_types(self, db, user, accounts, account_types, tax_fields, re_fields):
-        """資産科目は複数form_typeにマッピング可能"""
-        general_bs = [f for f in tax_fields.values()
-                      if f.section == "bs_assets" and not f.is_subtotal]
-        assert general_bs, "一般用にB/S資産欄がない"
-
-        set_mapping(user.id, "1010", general_bs[0].id)
-        set_mapping(user.id, "1010", re_fields["A1"].id)
-        db.session.commit()
-
-        general_map = get_account_mapping(user.id, "general")
-        re_map = get_account_mapping(user.id, "real_estate")
-        assert "1010" in general_map
-        assert "1010" in re_map
-
-    def test_revenue_exclusive_to_one_form_type(self, db, user, accounts, account_types, tax_fields, re_fields):
-        """収益科目は1つのform_typeにのみ。set_mappingで他form_typeから自動削除"""
+    def test_set_mapping_moves_to_new_form_type(self, db, user, accounts, account_types, tax_fields, re_fields):
+        """set_mappingで他form_typeから自動削除（全科目共通）"""
         set_mapping(user.id, "4010", tax_fields["1"].id)
         db.session.commit()
         assert "4010" in get_account_mapping(user.id, "general")
@@ -941,18 +925,26 @@ class TestMultiFormTypeMapping:
         assert "4010" not in get_account_mapping(user.id, "general")
         assert "4010" in get_account_mapping(user.id, "real_estate")
 
-    def test_expense_exclusive_on_save(self, db, user, accounts, account_types, tax_fields, re_fields):
-        """save_mappingsで費用科目が他form_typeから削除される"""
-        # 不動産用に費用をマッピング
-        re_exp = TaxFormField(
-            form_type="real_estate", page=1, section="expenses",
-            row_code="8", name="租税公課", account_type_code="expense",
-            display_order=2300,
-        )
-        db.session.add(re_exp)
+    def test_asset_also_exclusive(self, db, user, accounts, account_types, tax_fields, re_fields):
+        """資産科目も1つのform_typeにのみ（二重計上防止）"""
+        general_bs = [f for f in tax_fields.values()
+                      if f.section == "bs_assets" and not f.is_subtotal]
+        assert general_bs
+
+        set_mapping(user.id, "1010", general_bs[0].id)
+        db.session.commit()
+        assert "1010" in get_account_mapping(user.id, "general")
+
+        # 不動産用にマッピング → 一般用から削除
+        set_mapping(user.id, "1010", re_fields["A1"].id)
         db.session.commit()
 
-        set_mapping(user.id, "5010", re_exp.id)
+        assert "1010" not in get_account_mapping(user.id, "general")
+        assert "1010" in get_account_mapping(user.id, "real_estate")
+
+    def test_save_mappings_removes_from_other_form_type(self, db, user, accounts, account_types, tax_fields, re_fields):
+        """save_mappingsで科目が他form_typeから削除される"""
+        set_mapping(user.id, "5010", re_fields["1"].id)
         db.session.commit()
         assert "5010" in get_account_mapping(user.id, "real_estate")
 
@@ -965,26 +957,22 @@ class TestMultiFormTypeMapping:
         assert "5010" in get_account_mapping(user.id, "general")
         assert "5010" not in get_account_mapping(user.id, "real_estate")
 
-    def test_save_scoped_asset_preserved(self, db, user, accounts, account_types, tax_fields, re_fields):
-        """save_mappingsで資産科目は他form_typeに影響しない"""
-        # 不動産用にB/S資産をマッピング
-        set_mapping(user.id, "1010", re_fields["A1"].id)
+    def test_save_mappings_does_not_affect_unrelated(self, db, user, accounts, account_types, tax_fields, re_fields):
+        """save_mappingsで無関係な科目の他form_typeマッピングは残る"""
+        # 不動産用に4010をマッピング
+        set_mapping(user.id, "4010", re_fields["1"].id)
         db.session.commit()
 
-        # 一般用で同じ資産科目を保存
-        general_bs = [f for f in tax_fields.values()
-                      if f.section == "bs_assets" and not f.is_subtotal]
+        # 一般用で5010のみ保存 → 不動産用の4010には影響なし
         save_mappings(user.id, [
-            {"account_code": "1010", "field_id": general_bs[0].id},
+            {"account_code": "5010", "field_id": tax_fields["8"].id},
         ], form_type="general")
         db.session.commit()
 
-        # 両方に存在
-        assert "1010" in get_account_mapping(user.id, "general")
-        assert "1010" in get_account_mapping(user.id, "real_estate")
+        assert "4010" in get_account_mapping(user.id, "real_estate")
 
-    def test_set_mapping_updates_within_form_type(self, db, user, accounts, tax_fields):
-        """同一form_type内でset_mappingすると既存を更新"""
+    def test_set_mapping_replaces_within_form_type(self, db, user, accounts, tax_fields):
+        """同一form_type内でset_mappingすると欄を変更"""
         set_mapping(user.id, "4010", tax_fields["1"].id)
         db.session.commit()
 

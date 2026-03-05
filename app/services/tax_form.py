@@ -10,11 +10,6 @@ from app.models.account import Account, AccountType
 from app.models.journal import JournalEntry, JournalEntryLine
 
 
-# 複数の決算書form_typeで共用可能な科目区分（B/S科目）
-# 損益科目・純資産は1つのform_typeのみ
-SHAREABLE_ACCOUNT_TYPES = {"asset", "liability"}
-
-
 def get_form_fields(form_type="general"):
     """決算書の欄定義を取得（小計欄を含む）"""
     return (
@@ -67,49 +62,20 @@ def get_account_mapping(user_id, form_type="general"):
 
 
 def set_mapping(user_id, account_code, field_id):
-    """科目のマッピングを設定。同一form_type内で既存があれば更新。
+    """科目のマッピングを設定（既存があれば更新）。
 
-    損益・純資産科目の場合、他form_typeの同一科目マッピングを自動削除する。
+    1科目は1つのform_typeにのみ所属できる。
+    他form_typeの同一科目マッピングは自動削除される。
     """
-    field = db.session.get(TaxFormField, field_id)
-    if not field:
-        return
-    # 同じform_type内の既存マッピングを検索
-    existing = (
-        TaxFormMapping.query
-        .join(TaxFormField)
-        .filter(
-            TaxFormMapping.user_id == user_id,
-            TaxFormMapping.account_code == account_code,
-            TaxFormField.form_type == field.form_type,
-        )
-        .first()
-    )
-    if existing:
-        existing.field_id = field_id
-    else:
-        db.session.add(TaxFormMapping(
-            user_id=user_id,
-            account_code=account_code,
-            field_id=field_id,
-        ))
-
-    # 損益・純資産科目は他form_typeのマッピングを削除
-    account = Account.query.filter_by(user_id=user_id, code=account_code).first()
-    if account and account.account_type.code not in SHAREABLE_ACCOUNT_TYPES:
-        stale = (
-            TaxFormMapping.query
-            .join(TaxFormField)
-            .filter(
-                TaxFormMapping.user_id == user_id,
-                TaxFormMapping.account_code == account_code,
-                TaxFormField.form_type != field.form_type,
-            )
-            .all()
-        )
-        for m in stale:
-            db.session.delete(m)
-
+    # 既存マッピングを全form_typeから削除
+    TaxFormMapping.query.filter_by(
+        user_id=user_id, account_code=account_code,
+    ).delete()
+    db.session.add(TaxFormMapping(
+        user_id=user_id,
+        account_code=account_code,
+        field_id=field_id,
+    ))
     db.session.flush()
 
 
@@ -487,11 +453,11 @@ def _compute_subtotals(field_data):
 def save_mappings(user_id, mapping_data, form_type="general"):
     """マッピングを一括保存（form_typeスコープ）。mapping_data: [{account_code, field_id}, ...]
 
-    損益・純資産科目は1つのform_typeのみに所属できる。
-    他のform_typeに同じ科目があれば自動削除される。
-    資産・負債科目は複数form_typeで共用可能。
+    該当form_typeの既存マッピングを全削除して再作成する。
+    新たにマッピングする科目が他form_typeに存在する場合も削除される
+    （1科目は1つのform_typeにのみ所属可能）。
     """
-    # 該当form_typeの既存マッピングのみ削除
+    # 該当form_typeの既存マッピングを削除
     existing = (
         TaxFormMapping.query
         .join(TaxFormField)
@@ -505,40 +471,35 @@ def save_mappings(user_id, mapping_data, form_type="general"):
         db.session.delete(m)
     db.session.flush()
 
-    # 科目区分マップ
-    account_types = {
-        a.code: a.account_type.code
-        for a in Account.query.filter_by(user_id=user_id).all()
-    }
-
-    exclusive_codes = []  # 排他制御が必要な科目コード
+    # 新しいマッピング対象の科目コードを収集
+    new_items = []
     for item in mapping_data:
         code = item.get("account_code")
         field_id = item.get("field_id")
         if code and field_id:
-            db.session.add(TaxFormMapping(
-                user_id=user_id,
-                account_code=code,
-                field_id=int(field_id),
-            ))
-            # 損益・純資産科目は他form_typeから削除
-            at_code = account_types.get(code)
-            if at_code and at_code not in SHAREABLE_ACCOUNT_TYPES:
-                exclusive_codes.append(code)
+            new_items.append((code, int(field_id)))
 
-    if exclusive_codes:
-        # 他form_typeの同一科目マッピングを削除
+    # 他form_typeの同一科目マッピングを先に削除（排他制御）
+    new_codes = [code for code, _ in new_items]
+    if new_codes:
         stale = (
             TaxFormMapping.query
             .join(TaxFormField)
             .filter(
                 TaxFormMapping.user_id == user_id,
-                TaxFormMapping.account_code.in_(exclusive_codes),
+                TaxFormMapping.account_code.in_(new_codes),
                 TaxFormField.form_type != form_type,
             )
             .all()
         )
         for m in stale:
             db.session.delete(m)
+        db.session.flush()
 
+    for code, field_id in new_items:
+        db.session.add(TaxFormMapping(
+            user_id=user_id,
+            account_code=code,
+            field_id=field_id,
+        ))
     db.session.flush()
