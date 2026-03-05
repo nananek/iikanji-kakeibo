@@ -756,9 +756,12 @@ def tax_form_report():
     from app.services.tax_form import get_tax_form_report
 
     year = request.args.get("year", date.today().year, type=int)
+    form_type = request.args.get("form_type", "general")
+    if form_type not in ("general", "real_estate"):
+        form_type = "general"
     user_id = get_effective_user_id()
 
-    field_data = get_tax_form_report(user_id, year)
+    field_data = get_tax_form_report(user_id, year, form_type=form_type)
 
     section_labels = {
         "revenue": "売上（収入）",
@@ -772,6 +775,7 @@ def tax_form_report():
     return render_template(
         "reports/tax_form.html",
         year=year,
+        form_type=form_type,
         field_data=field_data,
         section_labels=section_labels,
     )

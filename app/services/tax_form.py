@@ -216,10 +216,10 @@ def get_business_income(user_id, year, month=None):
     }
 
 
-def get_tax_form_report(user_id, year):
+def get_tax_form_report(user_id, year, form_type="general"):
     """決算書レポート用データ。各欄の金額を集計する。"""
-    fields = get_form_fields("general")
-    field_mappings = get_user_mappings(user_id, "general")
+    fields = get_form_fields(form_type)
+    field_mappings = get_user_mappings(user_id, form_type)
 
     start = date(year, 1, 1)
     end = date(year + 1, 1, 1)

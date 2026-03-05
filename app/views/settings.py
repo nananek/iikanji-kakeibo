@@ -617,6 +617,8 @@ def tax_form():
     from app.services.tax_form import get_mappable_fields, get_user_mappings, get_account_mapping
 
     form_type = request.args.get("form_type", "general")
+    if form_type not in ("general", "real_estate"):
+        form_type = "general"
     user_id = get_effective_user_id()
 
     fields = get_mappable_fields(form_type)
@@ -675,7 +677,8 @@ def tax_form_save_mappings():
     save_mappings(user_id, mapping_data)
     db.session.commit()
     flash("決算書マッピングを保存しました。", "success")
-    return redirect(url_for("settings.tax_form"))
+    form_type = request.form.get("form_type", "general")
+    return redirect(url_for("settings.tax_form", form_type=form_type))
 
 
 @bp.route("/tax-form/bulk-create", methods=["POST"])
@@ -687,9 +690,11 @@ def tax_form_bulk_create():
     user_id = get_effective_user_id()
     field_ids = [int(fid) for fid in request.form.getlist("field_ids") if fid]
 
+    form_type = request.form.get("form_type", "general")
+
     if not field_ids:
         flash("科目を作成する欄を選択してください。", "warning")
-        return redirect(url_for("settings.tax_form"))
+        return redirect(url_for("settings.tax_form", form_type=form_type))
 
     created, skipped = bulk_create_accounts(user_id, field_ids)
     db.session.commit()
@@ -698,7 +703,7 @@ def tax_form_bulk_create():
     if skipped:
         msg += f"（{len(skipped)}件はコードが既存のためマッピングのみ設定）"
     flash(msg, "success")
-    return redirect(url_for("settings.tax_form"))
+    return redirect(url_for("settings.tax_form", form_type=form_type))
 
 
 @bp.route("/auto-import")

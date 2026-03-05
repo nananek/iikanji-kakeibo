@@ -236,6 +236,36 @@ class TestSettingsView:
         assert resp.status_code == 200
         assert "青色申告決算書" in resp.data.decode()
 
+    def test_tax_form_tabs_shown(self, logged_in_client, db, tax_fields):
+        """タブが表示され、一般用がアクティブ"""
+        resp = logged_in_client.get("/settings/tax-form")
+        html = resp.data.decode()
+        assert "一般用" in html
+        assert "不動産所得用" in html
+
+    def test_tax_form_tab_general_active(self, logged_in_client, db, tax_fields):
+        resp = logged_in_client.get("/settings/tax-form?form_type=general")
+        html = resp.data.decode()
+        # 一般用タブがアクティブ
+        assert 'form_type=general' in html
+
+    def test_tax_form_tab_real_estate(self, logged_in_client, db, tax_fields):
+        """不動産所得用タブに切り替え可能"""
+        resp = logged_in_client.get("/settings/tax-form?form_type=real_estate")
+        assert resp.status_code == 200
+        html = resp.data.decode()
+        assert "不動産所得用" in html
+
+    def test_bulk_create_preserves_form_type(self, logged_in_client, db, user, account_types, tax_fields):
+        """一括作成後にform_typeが引き継がれる"""
+        resp = logged_in_client.post(
+            "/settings/tax-form/bulk-create",
+            data={"field_ids": [str(tax_fields["1"].id)], "form_type": "general"},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 302
+        assert "form_type=general" in resp.headers["Location"]
+
 
 class TestBusinessAccountCodes:
     def test_no_mappings_returns_empty(self, db, user, accounts):
@@ -380,6 +410,25 @@ class TestTaxFormReport:
         resp = logged_in_client.get("/reports/")
         assert resp.status_code == 200
         assert "青色申告決算書" in resp.data.decode()
+
+    def test_report_tabs_shown(self, logged_in_client, db, tax_fields):
+        """レポート画面にタブが表示される"""
+        resp = logged_in_client.get("/reports/tax-form")
+        html = resp.data.decode()
+        assert "一般用" in html
+        assert "不動産所得用" in html
+
+    def test_report_form_type_param(self, logged_in_client, db, tax_fields):
+        """form_typeパラメータでタブ切替"""
+        resp = logged_in_client.get("/reports/tax-form?form_type=real_estate")
+        assert resp.status_code == 200
+
+    def test_report_invalid_form_type(self, logged_in_client, db, tax_fields):
+        """不正なform_typeはgeneralにフォールバック"""
+        resp = logged_in_client.get("/reports/tax-form?form_type=invalid")
+        assert resp.status_code == 200
+        html = resp.data.decode()
+        assert "一般用" in html
 
 
 class TestPLBusinessCollapse:
