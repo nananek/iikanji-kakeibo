@@ -101,7 +101,7 @@ test.describe("AI証憑仕訳 — レビュー画面（下書きから）", () =
     await page.goto(`${BASE_URL}/ai-journal/drafts`);
 
     // ドラフトが存在する
-    const reviewLink = page.locator("a", { hasText: "仕訳を作成" }).first();
+    const reviewLink = page.locator("a", { hasText: "編集" }).first();
     await expect(reviewLink).toBeVisible();
     await reviewLink.click();
 
@@ -113,7 +113,7 @@ test.describe("AI証憑仕訳 — レビュー画面（下書きから）", () =
   test("かんたんモードが初期表示される", async ({ page }) => {
     // 下書きのレビュー画面に直接遷移
     await page.goto(`${BASE_URL}/ai-journal/drafts`);
-    await page.locator("a", { hasText: "仕訳を作成" }).first().click();
+    await page.locator("a", { hasText: "編集" }).first().click();
     await page.waitForURL(/\/ai-journal\/review/);
 
     // かんたんモードタブがアクティブ
@@ -130,7 +130,7 @@ test.describe("AI証憑仕訳 — 仕訳モード（タブ切り替え）", () =
   test.beforeEach(async ({ page }) => {
     await login(page);
     await page.goto(`${BASE_URL}/ai-journal/drafts`);
-    await page.locator("a", { hasText: "仕訳を作成" }).first().click();
+    await page.locator("a", { hasText: "編集" }).first().click();
     await page.waitForURL(/\/ai-journal\/review/);
   });
 
@@ -429,7 +429,7 @@ test.describe("AI証憑仕訳 — 下書き保存・やり直し確認", () => {
 
   test("saved ドラフトには一覧に戻るボタンが表示される", async ({ page }) => {
     await page.goto(`${BASE_URL}/ai-journal/drafts`);
-    await page.locator("a", { hasText: "仕訳を作成" }).first().click();
+    await page.locator("a", { hasText: "編集" }).first().click();
     await page.waitForURL(/\/ai-journal\/review/);
 
     // 「一覧に戻る」ボタンが表示される
