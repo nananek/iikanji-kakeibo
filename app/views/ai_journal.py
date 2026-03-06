@@ -166,10 +166,20 @@ def drafts():
                         "count": len(suggestions),
                     }
                     # 合計金額を計算
+                    lines = s.get("lines", [])
                     total = sum(
-                        l.get("debit_amount", 0) for l in s.get("lines", [])
+                        l.get("debit_amount", 0) for l in lines
                     )
                     summary["amount"] = total
+                    # 借方・貸方の科目名
+                    summary["debit_accounts"] = [
+                        l.get("account_name", l.get("account_code", ""))
+                        for l in lines if l.get("debit_amount")
+                    ]
+                    summary["credit_accounts"] = [
+                        l.get("account_name", l.get("account_code", ""))
+                        for l in lines if l.get("credit_amount")
+                    ]
                     # コンプライアンスチェック結果
                     compliance = s.get("compliance")
                     if isinstance(compliance, dict):

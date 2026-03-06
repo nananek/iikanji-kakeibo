@@ -56,6 +56,13 @@
           {% if s.title %}<div><strong>{{ s.title }}</strong></div>{% endif %}
           {% if s.date %}<div class="text-muted">{{ s.date }}</div>{% endif %}
           {% if s.description %}<div>{{ s.description }}</div>{% endif %}
+          {% if s.debit_accounts or s.credit_accounts %}
+          <div class="text-muted" style="font-size: 0.8rem;">
+            <span>{{ s.debit_accounts|join(' / ') }}</span>
+            <i class="bi bi-arrow-right mx-1"></i>
+            <span>{{ s.credit_accounts|join(' / ') }}</span>
+          </div>
+          {% endif %}
           {% if s.amount %}<div class="text-primary">&yen;{{ '{:,}'.format(s.amount) }}</div>{% endif %}
           {% if s.count and s.count > 1 %}
           <div class="text-muted">他 {{ s.count - 1 }} 件の仕訳案</div>
