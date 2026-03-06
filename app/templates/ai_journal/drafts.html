@@ -65,9 +65,16 @@
       </div>
       <div class="card-footer d-flex gap-2">
         {% if d.status != 'done' %}
+        <form method="POST" action="{{ url_for('ai_journal.drafts_quick_accept', draft_id=d.id) }}"
+              class="flex-fill">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button type="submit" class="btn btn-success btn-sm w-100">
+            <i class="bi bi-check-lg"></i> 案1で登録
+          </button>
+        </form>
         <a href="{{ url_for('ai_journal.drafts_review', draft_id=d.id) }}"
-           class="btn btn-primary btn-sm flex-fill">
-          <i class="bi bi-journal-text"></i> 仕訳を作成
+           class="btn btn-outline-primary btn-sm">
+          <i class="bi bi-pencil-square"></i> 編集
         </a>
         {% else %}
         <a href="{{ url_for('ai_journal.drafts_review', draft_id=d.id) }}"

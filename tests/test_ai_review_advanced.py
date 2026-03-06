@@ -7,6 +7,7 @@ import pytest
 from app.extensions import db
 from app.models.ai_draft import AIDraft
 from app.models.journal import JournalEntry
+from app.models.voucher import Voucher
 
 
 class TestAdvancedModePost:
@@ -132,6 +133,110 @@ class TestAdvancedModePost:
         assert "advancedMode" in html
         assert "仕訳モード" in html
         assert "lines_json" in html
+
+
+class TestQuickAccept:
+    """下書き一覧からの案1クイックアクセプト"""
+
+    def _make_draft(self, db_sess, user_id, accounts, status="analyzed"):
+        suggestions = [{
+            "title": "テスト仕訳",
+            "description": "desc",
+            "date": "2026-01-15",
+            "entry_description": "テスト購入",
+            "lines": [
+                {"account_code": accounts["5010"].code, "account_name": "食費",
+                 "debit_amount": 1000, "credit_amount": 0},
+                {"account_code": accounts["1010"].code, "account_name": "現金",
+                 "debit_amount": 0, "credit_amount": 1000},
+            ],
+        }]
+        draft = AIDraft(
+            user_id=user_id,
+            image_key="vouchers/1/test.jpg",
+            image_mime="image/jpeg",
+            suggestions_json=json.dumps(suggestions, ensure_ascii=False),
+            status=status,
+        )
+        db_sess.session.add(draft)
+        db_sess.session.commit()
+        return draft
+
+    def test_quick_accept_creates_entry(self, db, logged_in_client, user, accounts):
+        """案1でクイックアクセプトすると仕訳が作成される"""
+        draft = self._make_draft(db, user.id, accounts)
+
+        resp = logged_in_client.post(
+            f"/ai-journal/drafts/{draft.id}/quick-accept",
+            follow_redirects=True,
+        )
+        assert resp.status_code == 200
+
+        entry = JournalEntry.query.filter_by(source="ai_receipt").first()
+        assert entry is not None
+        assert entry.description == "テスト購入"
+        assert len(entry.lines) == 2
+
+        # ドラフトが削除され、Voucher が作成されている
+        assert AIDraft.query.get(draft.id) is None
+        voucher = Voucher.query.filter_by(journal_entry_id=entry.id).first()
+        assert voucher is not None
+
+    def test_quick_accept_done_draft_rejected(self, db, logged_in_client, user, accounts):
+        """仕訳登録済みのドラフトはクイックアクセプトできない"""
+        draft = self._make_draft(db, user.id, accounts, status="done")
+
+        resp = logged_in_client.post(
+            f"/ai-journal/drafts/{draft.id}/quick-accept",
+            follow_redirects=True,
+        )
+        assert resp.status_code == 200
+        assert JournalEntry.query.filter_by(source="ai_receipt").first() is None
+
+    def test_quick_accept_other_user_rejected(self, db, logged_in_client, user, accounts):
+        """他ユーザーのドラフトはクイックアクセプトできない"""
+        from app.models.user import User
+        other = User(username="other", email="other@example.com")
+        other.set_password("pass")
+        db.session.add(other)
+        db.session.commit()
+
+        draft = self._make_draft(db, other.id, accounts)
+
+        resp = logged_in_client.post(
+            f"/ai-journal/drafts/{draft.id}/quick-accept",
+            follow_redirects=True,
+        )
+        assert resp.status_code == 200
+        assert JournalEntry.query.filter_by(source="ai_receipt").first() is None
+
+    def test_quick_accept_no_suggestions(self, db, logged_in_client, user):
+        """suggestions が空のドラフトはクイックアクセプトできない"""
+        draft = AIDraft(
+            user_id=user.id,
+            image_key="vouchers/1/test.jpg",
+            image_mime="image/jpeg",
+            suggestions_json="[]",
+            status="analyzed",
+        )
+        db.session.add(draft)
+        db.session.commit()
+
+        resp = logged_in_client.post(
+            f"/ai-journal/drafts/{draft.id}/quick-accept",
+            follow_redirects=True,
+        )
+        assert resp.status_code == 200
+        assert JournalEntry.query.filter_by(source="ai_receipt").first() is None
+
+    def test_drafts_page_shows_quick_accept_button(self, db, logged_in_client, user, accounts):
+        """下書き一覧に「案1で登録」ボタンが表示される"""
+        self._make_draft(db, user.id, accounts)
+
+        resp = logged_in_client.get("/ai-journal/drafts")
+        html = resp.data.decode()
+        assert "案1で登録" in html
+        assert "quick-accept" in html
 
 
 class TestReviewButtons:
