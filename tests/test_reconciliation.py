@@ -6,6 +6,8 @@ from unittest.mock import patch
 import pytest
 
 from tests.conftest import make_journal
+from app.models.journal import JournalEntry, JournalEntryLine
+from app.services.accounting import get_next_entry_number
 from app.services.reconciliation import (
     find_matches, find_ai_matches, _format_csv_rows, _format_journal_rows,
 )
@@ -467,6 +469,36 @@ class TestEdgeCases:
         ]
         result = find_matches(user.id, cc_account.code, csv_rows)
         assert result["csv_results"][0]["status"] == "matched"
+
+    def test_multi_line_same_account_aggregated(self, db, user, accounts, cc_account):
+        """同一仕訳の同一口座が複数行でも合算してマッチする"""
+        entry = JournalEntry(
+            user_id=user.id, date=date(2026, 1, 10),
+            entry_number=get_next_entry_number(user.id),
+            description="ゲーム課金", source="cashbook",
+        )
+        db.session.add(entry)
+        db.session.flush()
+        # 借方: 費用 ¥51,060
+        db.session.add(JournalEntryLine(
+            journal_entry_id=entry.id, account_user_id=user.id,
+            account_code="5010", debit_amount=51060, credit_amount=0,
+        ))
+        # 貸方: CC ¥12,000 × 4行 + ¥610 × 2行 + ¥1,840 = ¥51,060
+        for amt in [12000, 12000, 12000, 12000, 610, 610, 1840]:
+            db.session.add(JournalEntryLine(
+                journal_entry_id=entry.id, account_user_id=user.id,
+                account_code=cc_account.code, debit_amount=0, credit_amount=amt,
+            ))
+        db.session.commit()
+
+        csv_rows = [
+            {"date": "2026-01-10", "description": "ゲーム課金",
+             "withdrawal": 51060, "deposit": 0},
+        ]
+        result = find_matches(user.id, cc_account.code, csv_rows)
+        assert result["csv_results"][0]["status"] == "matched"
+        assert result["csv_results"][0]["matches"][0]["amount"] == 51060
 
     def test_all_dates_invalid_returns_all_unmatched(self, db, user, accounts, cc_account):
         """全CSV���の日付が不正 ��� 早期リターン"""

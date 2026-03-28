@@ -83,8 +83,27 @@ def find_matches(user_id, payment_account_code, csv_rows):
         .all()
     )
 
-    # Phase 3: 相手科目名をバッチ取得
-    entry_ids = list({c.entry_id for c in candidates})
+    # Phase 3: 同一 entry_id の行を合算（同一口座が複数行に分かれるケース対応）
+    entry_agg = {}
+    for c in candidates:
+        credit = int(c.credit_amount) if c.credit_amount else 0
+        debit = int(c.debit_amount) if c.debit_amount else 0
+        if c.entry_id in entry_agg:
+            entry_agg[c.entry_id]["credit"] += credit
+            entry_agg[c.entry_id]["debit"] += debit
+        else:
+            entry_agg[c.entry_id] = {
+                "entry_id": c.entry_id,
+                "date": c.date,
+                "description": c.description,
+                "source": c.source,
+                "credit": credit,
+                "debit": debit,
+            }
+    agg_candidates = list(entry_agg.values())
+
+    # Phase 4: 相手科目名をバッチ取得
+    entry_ids = list(entry_agg.keys())
     counterpart_map = {}
     if entry_ids:
         counterparts = (
@@ -105,17 +124,15 @@ def find_matches(user_id, payment_account_code, csv_rows):
         for cp in counterparts:
             counterpart_map.setdefault(cp.journal_entry_id, []).append(cp.name)
 
-    # Phase 4: 金額インデックス構築
+    # Phase 5: 金額インデックス構築（合算済み）
     amount_index = defaultdict(list)
-    for c in candidates:
-        credit = int(c.credit_amount) if c.credit_amount else 0
-        debit = int(c.debit_amount) if c.debit_amount else 0
-        if credit > 0:
-            amount_index[(credit, "withdrawal")].append(c)
-        if debit > 0:
-            amount_index[(debit, "deposit")].append(c)
+    for c in agg_candidates:
+        if c["credit"] > 0:
+            amount_index[(c["credit"], "withdrawal")].append(c)
+        if c["debit"] > 0:
+            amount_index[(c["debit"], "deposit")].append(c)
 
-    # Phase 5: 各CSV行をマッチング
+    # Phase 6: 各CSV行をマッチング
     used_entry_ids = set()
     results = []
 
@@ -148,16 +165,16 @@ def find_matches(user_id, payment_account_code, csv_rows):
         potential = amount_index.get((amount, direction), [])
         matched = []
         for c in potential:
-            if c.entry_id in used_entry_ids:
+            if c["entry_id"] in used_entry_ids:
                 continue
-            if abs((c.date - csv_date).days) <= MATCH_DATE_TOLERANCE:
-                cat_names = counterpart_map.get(c.entry_id, [])
+            if abs((c["date"] - csv_date).days) <= MATCH_DATE_TOLERANCE:
+                cat_names = counterpart_map.get(c["entry_id"], [])
                 matched.append({
-                    "entry_id": c.entry_id,
-                    "date": c.date.isoformat(),
-                    "description": c.description,
+                    "entry_id": c["entry_id"],
+                    "date": c["date"].isoformat(),
+                    "description": c["description"],
                     "amount": amount,
-                    "source": c.source,
+                    "source": c["source"],
                     "category_name": ", ".join(cat_names),
                 })
 
@@ -172,37 +189,35 @@ def find_matches(user_id, payment_account_code, csv_rows):
         else:
             results.append({"csv_index": i, "status": "unmatched", "matches": []})
 
-    # Phase 6: CSV にマッチしなかった仕訳を検出 (journal_only)
+    # Phase 7: CSV にマッチしなかった仕訳を検出 (journal_only)
     referenced_ids = set()
     for r in results:
         for m in r["matches"]:
             referenced_ids.add(m["entry_id"])
 
     journal_only = []
-    for c in candidates:
-        if c.entry_id in referenced_ids:
+    for c in agg_candidates:
+        if c["entry_id"] in referenced_ids:
             continue
-        credit = int(c.credit_amount) if c.credit_amount else 0
-        debit = int(c.debit_amount) if c.debit_amount else 0
-        if credit > 0:
-            amount, direction = credit, "withdrawal"
-        elif debit > 0:
-            amount, direction = debit, "deposit"
+        if c["credit"] > 0:
+            amount, direction = c["credit"], "withdrawal"
+        elif c["debit"] > 0:
+            amount, direction = c["debit"], "deposit"
         else:
             continue
-        cat_names = counterpart_map.get(c.entry_id, [])
+        cat_names = counterpart_map.get(c["entry_id"], [])
         journal_only.append({
-            "entry_id": c.entry_id,
-            "date": c.date.isoformat(),
-            "description": c.description,
+            "entry_id": c["entry_id"],
+            "date": c["date"].isoformat(),
+            "description": c["description"],
             "amount": amount,
             "direction": direction,
-            "source": c.source,
+            "source": c["source"],
             "category_name": ", ".join(cat_names),
         })
 
-    # Phase 7: 日計サマリーを構築
-    daily_summary = _build_daily_summary(csv_rows, results, candidates,
+    # Phase 8: 日計サマリーを構築
+    daily_summary = _build_daily_summary(csv_rows, results, agg_candidates,
                                          counterpart_map, used_entry_ids)
 
     return {
@@ -231,18 +246,12 @@ def _build_daily_summary(csv_rows, csv_results, candidates, counterpart_map,
         csv_by_date[d]["deposit"] += int(row.get("deposit") or 0)
 
     # 仕訳側: 日付ごとの件数・貸方(出金)合計・借方(入金)合計
-    # 支払元口座の行: credit=出金(CSV withdrawal相当), debit=入金(CSV deposit相当)
+    # candidates は合算済み dict リスト（entry_id ごとに1要素）
     journal_by_date = defaultdict(lambda: {"count": 0, "withdrawal": 0, "deposit": 0})
-    seen_entries = set()
     for c in candidates:
-        if c.entry_id in seen_entries:
-            continue
-        seen_entries.add(c.entry_id)
-        credit = int(c.credit_amount) if c.credit_amount else 0
-        debit = int(c.debit_amount) if c.debit_amount else 0
-        journal_by_date[c.date]["count"] += 1
-        journal_by_date[c.date]["withdrawal"] += credit
-        journal_by_date[c.date]["deposit"] += debit
+        journal_by_date[c["date"]]["count"] += 1
+        journal_by_date[c["date"]]["withdrawal"] += c["credit"]
+        journal_by_date[c["date"]]["deposit"] += c["debit"]
 
     # 全日付を統合してサマリー生成
     all_dates = sorted(set(csv_by_date.keys()) | set(journal_by_date.keys()))
