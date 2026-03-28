@@ -433,3 +433,60 @@ class TestFindAiMatches:
             mock_config.return_value = ("key", "openai", "gpt-4", None, "", {}, False)
             assert find_ai_matches(user.id, [], [{"entry_id": 1}]) == []
             assert find_ai_matches(user.id, [{"csv_index": 0}], []) == []
+
+
+class TestEdgeCases:
+    """エッジケースのテスト"""
+
+    def test_csv_date_as_date_object(self, db, user, accounts, cc_account):
+        """CSV行のdateがdateオブジェクト（文字列でない）でもマッチする"""
+        make_journal(db, user.id, "5010", cc_account.code, 1000,
+                     entry_date=date(2026, 1, 10))
+        csv_rows = [
+            {"date": date(2026, 1, 10), "description": "テスト", "withdrawal": 1000, "deposit": 0},
+        ]
+        result = find_matches(user.id, cc_account.code, csv_rows)
+        assert result["csv_results"][0]["status"] == "matched"
+
+    def test_csv_invalid_date_string(self, db, user, accounts, cc_account):
+        """不正な日付文字列はunmatchedになる"""
+        make_journal(db, user.id, "5010", cc_account.code, 1000,
+                     entry_date=date(2026, 1, 10))
+        csv_rows = [
+            {"date": "invalid-date", "description": "テスト", "withdrawal": 1000, "deposit": 0},
+        ]
+        result = find_matches(user.id, cc_account.code, csv_rows)
+        assert result["csv_results"][0]["status"] == "unmatched"
+
+    def test_journal_only_deposit_direction(self, db, user, accounts, cc_account):
+        """journal_onlyでdeposit方向（debit > 0）の仕訳も検出される"""
+        make_journal(db, user.id, cc_account.code, "5010", 500,
+                     entry_date=date(2026, 1, 10), source="journal")
+        csv_rows = [
+            {"date": "2026-01-10", "description": "別取引", "withdrawal": 9999, "deposit": 0},
+        ]
+        result = find_matches(user.id, cc_account.code, csv_rows)
+        assert len(result["journal_only"]) == 1
+        assert result["journal_only"][0]["direction"] == "deposit"
+
+    def test_ai_invalid_json_response(self, db, user, accounts):
+        """AIが不正なJSONを返すと例外が発生する"""
+        mock_response = 'This is not JSON at all'
+        unmatched = [{"csv_index": 0, "date": "2026-01-10", "description": "テスト", "amount": 500}]
+        journal = [{"entry_id": 1, "date": "2026-01-10", "description": "x", "amount": 499, "category_name": "雑"}]
+
+        with patch("app.services.ai_receipt._get_ai_config") as mock_config, \
+             patch("app.services.ai_receipt._TEXT_PROVIDER_HANDLERS", {"openai": lambda *a, **kw: mock_response}):
+            mock_config.return_value = ("key", "openai", "gpt-4", None, "", {}, False)
+            with pytest.raises(Exception):
+                find_ai_matches(user.id, unmatched, journal)
+
+    def test_all_dates_from_date_objects(self, db, user, accounts, cc_account):
+        """CSV行のdateが全てdateオブジェクトでも日付範囲が正しく算出される"""
+        make_journal(db, user.id, "5010", cc_account.code, 2000,
+                     entry_date=date(2026, 2, 1))
+        csv_rows = [
+            {"date": date(2026, 2, 1), "description": "テスト", "withdrawal": 2000, "deposit": 0},
+        ]
+        result = find_matches(user.id, cc_account.code, csv_rows)
+        assert result["csv_results"][0]["status"] == "matched"
