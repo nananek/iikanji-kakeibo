@@ -83,27 +83,23 @@ def find_matches(user_id, payment_account_code, csv_rows):
         .all()
     )
 
-    # Phase 3: 同一 entry_id の行を合算（同一口座が複数行に分かれるケース対応）
-    entry_agg = {}
-    for c in candidates:
+    # Phase 3: 各行にユニークIDを付与（同一entry_idの複数行を個別にマッチング可能に）
+    line_candidates = []
+    for idx, c in enumerate(candidates):
         credit = int(c.credit_amount) if c.credit_amount else 0
         debit = int(c.debit_amount) if c.debit_amount else 0
-        if c.entry_id in entry_agg:
-            entry_agg[c.entry_id]["credit"] += credit
-            entry_agg[c.entry_id]["debit"] += debit
-        else:
-            entry_agg[c.entry_id] = {
-                "entry_id": c.entry_id,
-                "date": c.date,
-                "description": c.description,
-                "source": c.source,
-                "credit": credit,
-                "debit": debit,
-            }
-    agg_candidates = list(entry_agg.values())
+        line_candidates.append({
+            "_line_id": idx,  # 行単位のユニークID
+            "entry_id": c.entry_id,
+            "date": c.date,
+            "description": c.description,
+            "source": c.source,
+            "credit": credit,
+            "debit": debit,
+        })
 
     # Phase 4: 相手科目名をバッチ取得
-    entry_ids = list(entry_agg.keys())
+    entry_ids = list({c.entry_id for c in candidates})
     counterpart_map = {}
     if entry_ids:
         counterparts = (
@@ -124,16 +120,16 @@ def find_matches(user_id, payment_account_code, csv_rows):
         for cp in counterparts:
             counterpart_map.setdefault(cp.journal_entry_id, []).append(cp.name)
 
-    # Phase 5: 金額インデックス構築（合算済み）
+    # Phase 5: 金額インデックス構築（行単位）
     amount_index = defaultdict(list)
-    for c in agg_candidates:
+    for c in line_candidates:
         if c["credit"] > 0:
             amount_index[(c["credit"], "withdrawal")].append(c)
         if c["debit"] > 0:
             amount_index[(c["debit"], "deposit")].append(c)
 
-    # Phase 6: 各CSV行をマッチング
-    used_entry_ids = set()
+    # Phase 6: 各CSV行をマッチング（行単位で重複排除）
+    used_line_ids = set()
     results = []
 
     for i, row in enumerate(csv_rows):
@@ -165,11 +161,12 @@ def find_matches(user_id, payment_account_code, csv_rows):
         potential = amount_index.get((amount, direction), [])
         matched = []
         for c in potential:
-            if c["entry_id"] in used_entry_ids:
+            if c["_line_id"] in used_line_ids:
                 continue
             if abs((c["date"] - csv_date).days) <= MATCH_DATE_TOLERANCE:
                 cat_names = counterpart_map.get(c["entry_id"], [])
                 matched.append({
+                    "_line_id": c["_line_id"],
                     "entry_id": c["entry_id"],
                     "date": c["date"].isoformat(),
                     "description": c["description"],
@@ -182,22 +179,22 @@ def find_matches(user_id, payment_account_code, csv_rows):
         matched.sort(key=lambda m: abs((date.fromisoformat(m["date"]) - csv_date).days))
 
         if len(matched) == 1:
-            used_entry_ids.add(matched[0]["entry_id"])
+            used_line_ids.add(matched[0]["_line_id"])
             results.append({"csv_index": i, "status": "matched", "matches": matched})
         elif len(matched) > 1:
             results.append({"csv_index": i, "status": "multiple", "matches": matched})
         else:
             results.append({"csv_index": i, "status": "unmatched", "matches": []})
 
-    # Phase 7: CSV にマッチしなかった仕訳を検出 (journal_only)
-    referenced_ids = set()
+    # Phase 7: CSV にマッチしなかった仕訳行を検出 (journal_only)
+    referenced_line_ids = set()
     for r in results:
         for m in r["matches"]:
-            referenced_ids.add(m["entry_id"])
+            referenced_line_ids.add(m.get("_line_id"))
 
     journal_only = []
-    for c in agg_candidates:
-        if c["entry_id"] in referenced_ids:
+    for c in line_candidates:
+        if c["_line_id"] in referenced_line_ids:
             continue
         if c["credit"] > 0:
             amount, direction = c["credit"], "withdrawal"
@@ -217,8 +214,13 @@ def find_matches(user_id, payment_account_code, csv_rows):
         })
 
     # Phase 8: 日計サマリーを構築
-    daily_summary = _build_daily_summary(csv_rows, results, agg_candidates,
-                                         counterpart_map, used_entry_ids)
+    daily_summary = _build_daily_summary(csv_rows, results, line_candidates,
+                                         counterpart_map, used_line_ids)
+
+    # _line_id を JSON 出力から除去
+    for r in results:
+        for m in r["matches"]:
+            m.pop("_line_id", None)
 
     return {
         "csv_results": results,
@@ -245,8 +247,7 @@ def _build_daily_summary(csv_rows, csv_results, candidates, counterpart_map,
         csv_by_date[d]["withdrawal"] += int(row.get("withdrawal") or 0)
         csv_by_date[d]["deposit"] += int(row.get("deposit") or 0)
 
-    # 仕訳側: 日付ごとの件数・貸方(出金)合計・借方(入金)合計
-    # candidates は合算済み dict リスト（entry_id ごとに1要素）
+    # 仕訳側: 日付ごとの件数・貸方(出金)合計・借方(入金)合計（行単位）
     journal_by_date = defaultdict(lambda: {"count": 0, "withdrawal": 0, "deposit": 0})
     for c in candidates:
         journal_by_date[c["date"]]["count"] += 1
