@@ -16,7 +16,8 @@
   csvRows: _importRows,
   paymentAccountCode: '{{ payment_account.code }}',
   defaultIncomeId: _defaultIncomeId,
-  defaultExpenseId: _defaultExpenseId
+  defaultExpenseId: _defaultExpenseId,
+  hasAiConfig: {{ has_ai_config | tojson }}
 })">
 
 <!-- タブヘッダー -->

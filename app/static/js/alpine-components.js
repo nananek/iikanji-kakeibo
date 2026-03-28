@@ -507,6 +507,7 @@ document.addEventListener('alpine:init', function() {
     var paymentAccountCode = config.paymentAccountCode;
     var defaultIncomeId = config.defaultIncomeId || 0;
     var defaultExpenseId = config.defaultExpenseId || 0;
+    var hasAiConfig = config.hasAiConfig || false;
     var sourceLabels = {
       'journal': '仕訳', 'cashbook': '出納帳', 'ai_receipt': 'AI証憑',
       'csv': 'CSV', 'ofx': 'OFX', 'web': 'Web', 'closing': '決算',
@@ -517,6 +518,10 @@ document.addEventListener('alpine:init', function() {
       reconcileLoaded: false,
       reconcileLoading: false,
       reconcileRows: [],
+      dailySummary: [],
+      journalOnly: [],
+      hasAiConfig: hasAiConfig,
+      aiReconcileLoading: false,
 
       get matchedCount() {
         var c = 0;
@@ -535,6 +540,15 @@ document.addEventListener('alpine:init', function() {
         for (var i = 0; i < this.reconcileRows.length; i++)
           if (this.reconcileRows[i].status === 'unmatched') c++;
         return c;
+      },
+      get discrepancyCount() {
+        var c = 0;
+        for (var i = 0; i < this.dailySummary.length; i++)
+          if (this.dailySummary[i].has_discrepancy) c++;
+        return c;
+      },
+      get journalOnlyCount() {
+        return this.journalOnly.length;
       },
       get reconcileImportCount() {
         var c = 0;
@@ -567,9 +581,12 @@ document.addEventListener('alpine:init', function() {
         .then(function(res) { return res.json(); })
         .then(function(data) {
           if (data.error) { alert(data.error); return; }
+          self.dailySummary = data.daily_summary || [];
+          self.journalOnly = data.journal_only || [];
+          var csvResults = data.csv_results || [];
           self.reconcileRows = [];
-          for (var i = 0; i < data.length; i++) {
-            var r = data[i];
+          for (var i = 0; i < csvResults.length; i++) {
+            var r = csvResults[i];
             var csv = csvRows[r.csv_index] || {};
             var row = {
               csv_index: r.csv_index,
@@ -643,6 +660,60 @@ document.addEventListener('alpine:init', function() {
           if (row.status === 'multiple' && row.selectedMatchIndex >= 0) continue;
           row.enabled = checked;
         }
+      },
+
+      runAiReconcile: function() {
+        this.aiReconcileLoading = true;
+        var self = this;
+        fetch('/csv-import/ai-reconcile', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': Alpine.store('csrf').token,
+          },
+        })
+        .then(function(res) { return res.json(); })
+        .then(function(data) {
+          if (data.error) { showToast(data.error, 'danger'); return; }
+          var matches = data.matches || [];
+          for (var m = 0; m < matches.length; m++) {
+            var ai = matches[m];
+            for (var r = 0; r < self.reconcileRows.length; r++) {
+              var row = self.reconcileRows[r];
+              if (row.csv_index === ai.csv_index && row.status === 'unmatched') {
+                // journal_only から該当仕訳の情報を取得
+                var jnl = null;
+                for (var j = 0; j < self.journalOnly.length; j++) {
+                  if (self.journalOnly[j].entry_id === ai.entry_id) {
+                    jnl = self.journalOnly[j];
+                    break;
+                  }
+                }
+                if (jnl) {
+                  row.status = 'ai_suggested';
+                  row.matches = [{
+                    entry_id: jnl.entry_id,
+                    date: jnl.date,
+                    description: jnl.description,
+                    amount: jnl.amount,
+                    source: jnl.source,
+                    category_name: jnl.category_name,
+                    confidence: ai.confidence,
+                    reason: ai.reason,
+                  }];
+                  row.selectedMatchIndex = 0;
+                  row.matchInfo = row.matches[0];
+                  row.enabled = false;
+                }
+                break;
+              }
+            }
+          }
+          if (matches.length === 0) { showToast('AI照合候補が見つかりませんでした。', 'info'); }
+          else { showToast('AI照合: ' + matches.length + '件の候補が見つかりました。', 'success'); }
+        })
+        .catch(function(err) { showToast('AI照合に失敗しました: ' + err.message, 'danger'); })
+        .finally(function() { self.aiReconcileLoading = false; });
       },
 
       serializeReconcileRows: function() {

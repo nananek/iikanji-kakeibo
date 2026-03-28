@@ -7,7 +7,94 @@
 </div>
 
 <template x-if="reconcileLoaded">
-  <div class="card shadow-sm mt-4">
+<div>
+  {# --- 日計サマリー --- #}
+  <div class="card shadow-sm mt-4" x-show="dailySummary.length > 0">
+    <div class="card-header d-flex justify-content-between align-items-center">
+      <strong><i class="bi bi-calendar-check"></i> 日計サマリー</strong>
+      <span class="badge bg-danger" x-show="discrepancyCount > 0">
+        <i class="bi bi-exclamation-triangle"></i> 過不足 <span x-text="discrepancyCount"></span>日
+      </span>
+    </div>
+    <div class="card-body p-0">
+      <div class="table-responsive" style="max-height: 300px; overflow-y: auto;">
+        <table class="table table-sm table-hover mb-0">
+          <thead class="table-light sticky-top">
+            <tr>
+              <th>日付</th>
+              <th class="text-end">CSV件数</th>
+              <th class="text-end">CSV合計</th>
+              <th class="text-end">仕訳件数</th>
+              <th class="text-end">仕訳合計</th>
+              <th class="text-end">差額</th>
+            </tr>
+          </thead>
+          <tbody>
+            <template x-for="day in dailySummary" :key="day.date">
+              <tr :class="{
+                'table-danger': day.has_discrepancy && day.csv_count > 0 && day.journal_count > 0,
+                'table-warning': day.has_discrepancy && (day.csv_count === 0 || day.journal_count === 0),
+              }">
+                <td x-text="day.date"></td>
+                <td class="text-end" x-text="day.csv_count"></td>
+                <td class="text-end" x-text="'\u00a5' + day.csv_total.toLocaleString()"></td>
+                <td class="text-end" x-text="day.journal_count"></td>
+                <td class="text-end" x-text="'\u00a5' + day.journal_total.toLocaleString()"></td>
+                <td class="text-end fw-bold" :class="{
+                  'text-danger': day.diff_amount > 0,
+                  'text-primary': day.diff_amount < 0,
+                }">
+                  <template x-if="day.diff_amount !== 0">
+                    <span x-text="(day.diff_amount > 0 ? '+' : '') + '\u00a5' + day.diff_amount.toLocaleString()"></span>
+                  </template>
+                  <template x-if="day.diff_amount === 0 && day.diff_count !== 0">
+                    <span class="text-warning">件数差 <span x-text="day.diff_count > 0 ? '+' + day.diff_count : day.diff_count"></span></span>
+                  </template>
+                </td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  {# --- 仕訳のみ（CSV未照合） --- #}
+  <div class="card shadow-sm mt-3" x-show="journalOnly.length > 0">
+    <div class="card-header">
+      <strong><i class="bi bi-journal-x"></i> 仕訳のみ（CSV未照合）</strong>
+      <span class="badge bg-info ms-2" x-text="journalOnlyCount + '件'"></span>
+    </div>
+    <div class="card-body p-0">
+      <div class="table-responsive" style="max-height: 250px; overflow-y: auto;">
+        <table class="table table-sm table-hover mb-0">
+          <thead class="table-light sticky-top">
+            <tr>
+              <th>日付</th>
+              <th>摘要</th>
+              <th class="text-end">金額</th>
+              <th>科目</th>
+              <th>ソース</th>
+            </tr>
+          </thead>
+          <tbody>
+            <template x-for="j in journalOnly" :key="j.entry_id">
+              <tr class="table-info">
+                <td x-text="j.date"></td>
+                <td class="text-truncate" style="max-width:200px" x-text="j.description"></td>
+                <td class="text-end fw-bold" x-text="'\u00a5' + j.amount.toLocaleString()"></td>
+                <td><span class="badge bg-light text-dark" x-text="j.category_name"></span></td>
+                <td><span class="badge bg-info text-dark" x-text="sourceLabel(j.source)"></span></td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  {# --- 明細照合テーブル --- #}
+  <div class="card shadow-sm mt-3">
     <div class="card-header">
       <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
         <div>
@@ -20,6 +107,12 @@
           <span class="badge bg-success"><i class="bi bi-check-circle"></i> 照合済み <span x-text="matchedCount"></span>件</span>
           <span class="badge bg-warning text-dark" x-show="multipleCount > 0"><i class="bi bi-question-circle"></i> 複数候補 <span x-text="multipleCount"></span>件</span>
           <span class="badge bg-secondary"><i class="bi bi-dash-circle"></i> 未照合 <span x-text="unmatchedCount"></span>件</span>
+          <button type="button" class="btn btn-sm btn-outline-info" x-show="hasAiConfig && unmatchedCount > 0 && journalOnly.length > 0"
+                  @click="runAiReconcile()" :disabled="aiReconcileLoading">
+            <template x-if="aiReconcileLoading"><span class="spinner-border spinner-border-sm"></span></template>
+            <template x-if="!aiReconcileLoading"><i class="bi bi-robot"></i></template>
+            AI照合
+          </button>
         </div>
       </div>
     </div>
@@ -46,6 +139,7 @@
                 <tr :class="{
                   'table-success': row.status === 'matched',
                   'table-warning': row.status === 'multiple',
+                  'table-info': row.status === 'ai_suggested',
                 }">
                   <td>
                     <input type="checkbox" class="form-check-input"
@@ -82,6 +176,19 @@
                         <span class="text-muted" x-text="row.matchInfo.description"></span>
                         <span class="badge bg-light text-dark" x-text="row.matchInfo.category_name"></span>
                         <span class="badge bg-info text-dark" x-text="sourceLabel(row.matchInfo.source)"></span>
+                      </div>
+                    </template>
+
+                    <!-- ai_suggested: AI照合候補 -->
+                    <template x-if="row.status === 'ai_suggested'">
+                      <div class="small">
+                        <i class="bi bi-robot text-info"></i>
+                        <span x-text="row.matchInfo.date"></span>
+                        <span class="text-muted" x-text="row.matchInfo.description"></span>
+                        <span class="badge bg-light text-dark" x-text="row.matchInfo.category_name"></span>
+                        <span class="badge" :class="row.matchInfo.confidence >= 0.7 ? 'bg-success' : 'bg-warning text-dark'"
+                              x-text="Math.round(row.matchInfo.confidence * 100) + '%'"></span>
+                        <span class="text-muted small" x-text="row.matchInfo.reason"></span>
                       </div>
                     </template>
 
@@ -132,4 +239,5 @@
       </form>
     </div>
   </div>
+</div>{# /reconcileLoaded wrapper #}
 </template>

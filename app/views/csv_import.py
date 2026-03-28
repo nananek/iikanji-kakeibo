@@ -404,3 +404,45 @@ def reconcile():
 
     results = find_matches(get_effective_user_id(), payment_account_code, parsed)
     return jsonify(results)
+
+
+@bp.route("/ai-reconcile", methods=["POST"])
+@login_required
+def ai_reconcile():
+    """AI照合API — unmatched行の照合候補をAIで提案"""
+    from app.services.reconciliation import find_matches, find_ai_matches
+
+    data_key = session.get("csv_data_key")
+    payment_account_code = session.get("csv_payment_account_code")
+    parsed = load_import_data(data_key)
+    if not parsed or not payment_account_code:
+        return jsonify({"error": "データがありません"}), 400
+
+    user_id = get_effective_user_id()
+    results = find_matches(user_id, payment_account_code, parsed)
+
+    # unmatched CSV行と journal_only を AI に渡す
+    unmatched_csv = []
+    for r in results["csv_results"]:
+        if r["status"] == "unmatched":
+            csv = parsed[r["csv_index"]]
+            amount = int(csv.get("withdrawal") or 0) or int(csv.get("deposit") or 0)
+            if amount:
+                unmatched_csv.append({
+                    "csv_index": r["csv_index"],
+                    "date": csv.get("date", ""),
+                    "description": csv.get("description", ""),
+                    "amount": amount,
+                })
+
+    journal_candidates = results["journal_only"]
+
+    if not unmatched_csv or not journal_candidates:
+        return jsonify({"matches": []})
+
+    try:
+        ai_matches = find_ai_matches(user_id, unmatched_csv, journal_candidates)
+    except (ValueError, RuntimeError) as e:
+        return jsonify({"error": str(e)}), 400
+
+    return jsonify({"matches": ai_matches})
