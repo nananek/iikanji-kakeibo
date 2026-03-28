@@ -49,49 +49,31 @@ class TestFindMatches:
         assert m["source"] == "ai_receipt"
         assert "食費" in m["category_name"]
 
-    def test_date_within_tolerance(self, db, user, accounts, cc_account):
-        """金額一致・日付+3日 → matched"""
+    def test_date_mismatch_unmatched(self, db, user, accounts, cc_account):
+        """金額一致・日付不一致 → unmatched（日付完全一致のみ）"""
         make_journal(
             db, user.id,
             acct_debit_code="5010",
             acct_credit_code=cc_account.code,
             amount=2000,
-            entry_date=date(2026, 1, 13),
+            entry_date=date(2026, 1, 11),
             source="cashbook",
         )
         csv_rows = [
             {"date": "2026-01-10", "description": "スーパー", "withdrawal": 2000, "deposit": 0},
         ]
         results = self._csv_results(user.id, cc_account.code, csv_rows)
-        assert results[0]["status"] == "matched"
-        assert len(results[0]["matches"]) == 1
-
-    def test_date_outside_tolerance(self, db, user, accounts, cc_account):
-        """金額一致・日付+6日 → unmatched（許容範囲外）"""
-        make_journal(
-            db, user.id,
-            acct_debit_code="5010",
-            acct_credit_code=cc_account.code,
-            amount=3000,
-            entry_date=date(2026, 1, 16),
-            source="cashbook",
-        )
-        csv_rows = [
-            {"date": "2026-01-10", "description": "ドラッグストア", "withdrawal": 3000, "deposit": 0},
-        ]
-        results = self._csv_results(user.id, cc_account.code, csv_rows)
         assert results[0]["status"] == "unmatched"
-        assert results[0]["matches"] == []
 
     def test_multiple_candidates(self, db, user, accounts, cc_account):
-        """同金額の仕訳が2件 → multiple"""
-        for d in (date(2026, 1, 9), date(2026, 1, 11)):
+        """同日同金額の仕訳が2件 → multiple"""
+        for _ in range(2):
             make_journal(
                 db, user.id,
                 acct_debit_code="5010",
                 acct_credit_code=cc_account.code,
                 amount=1000,
-                entry_date=d,
+                entry_date=date(2026, 1, 10),
                 source="cashbook",
             )
         csv_rows = [
@@ -181,30 +163,23 @@ class TestFindMatches:
         results = self._csv_results(user.id, cc_account.code, csv_rows)
         assert results[0]["status"] == "unmatched"
 
-    def test_matches_sorted_by_date_proximity(self, db, user, accounts, cc_account):
-        """複数候補は日付が近い順にソートされる"""
-        make_journal(
-            db, user.id,
-            acct_debit_code="5010",
-            acct_credit_code=cc_account.code,
-            amount=1200,
-            entry_date=date(2026, 1, 14),  # +4日
-        )
-        make_journal(
-            db, user.id,
-            acct_debit_code="5010",
-            acct_credit_code=cc_account.code,
-            amount=1200,
-            entry_date=date(2026, 1, 11),  # +1日
-        )
+    def test_multiple_same_day_same_amount(self, db, user, accounts, cc_account):
+        """同日同金額の複数仕訳は全て候補に含まれる"""
+        for desc in ("仕訳A", "仕訳B"):
+            make_journal(
+                db, user.id,
+                acct_debit_code="5010",
+                acct_credit_code=cc_account.code,
+                amount=1200,
+                entry_date=date(2026, 1, 10),
+                description=desc,
+            )
         csv_rows = [
             {"date": "2026-01-10", "description": "テスト", "withdrawal": 1200, "deposit": 0},
         ]
         results = self._csv_results(user.id, cc_account.code, csv_rows)
         assert results[0]["status"] == "multiple"
-        # 日付が近い方(1/11)が先
-        assert results[0]["matches"][0]["date"] == "2026-01-11"
-        assert results[0]["matches"][1]["date"] == "2026-01-14"
+        assert len(results[0]["matches"]) == 2
 
     def test_other_user_entries_not_matched(self, db, user, accounts, cc_account,
                                             second_user, second_user_accounts):
@@ -277,13 +252,13 @@ class TestJournalOnly:
 
     def test_journal_only_excludes_multiple_candidates(self, db, user, accounts, cc_account):
         """multiple候補に含まれる仕訳も journal_only に含まれない"""
-        for d in (date(2026, 1, 9), date(2026, 1, 11)):
+        for _ in range(2):
             make_journal(
                 db, user.id,
                 acct_debit_code="5010",
                 acct_credit_code=cc_account.code,
                 amount=1000,
-                entry_date=d,
+                entry_date=date(2026, 1, 10),
             )
         csv_rows = [
             {"date": "2026-01-10", "description": "ランチ", "withdrawal": 1000, "deposit": 0},
@@ -330,24 +305,24 @@ class TestDailySummary:
 
     def test_journal_only_day(self, db, user, accounts, cc_account):
         """仕訳にのみ存在する日 → 差異あり"""
+        # CSV日付と同日に別金額の仕訳を作成（検索範囲に入る）
         make_journal(
             db, user.id,
             acct_debit_code="5010",
             acct_credit_code=cc_account.code,
             amount=800,
-            entry_date=date(2026, 1, 15),
+            entry_date=date(2026, 1, 10),
         )
-        # CSV は 1/10 のみ（1/15 の仕訳を検索範囲に含めるために日付が必要）
         csv_rows = [
-            {"date": "2026-01-10", "description": "別日", "withdrawal": 999, "deposit": 0},
+            {"date": "2026-01-10", "description": "別金額", "withdrawal": 999, "deposit": 0},
         ]
         result = find_matches(user.id, cc_account.code, csv_rows)
         summary = result["daily_summary"]
-        day_15 = [s for s in summary if s["date"] == "2026-01-15"]
-        assert len(day_15) == 1
-        assert day_15[0]["journal_count"] == 1
-        assert day_15[0]["csv_count"] == 0
-        assert day_15[0]["has_discrepancy"] is True
+        day_10 = [s for s in summary if s["date"] == "2026-01-10"]
+        assert len(day_10) == 1
+        assert day_10[0]["journal_count"] == 1
+        assert day_10[0]["csv_count"] == 1
+        assert day_10[0]["has_discrepancy"] is True  # 金額差
 
     def test_same_day_count_discrepancy(self, db, user, accounts, cc_account):
         """同日同額でCSV3件・仕訳2件 → 件数差異を検出"""

@@ -7,7 +7,7 @@ from app.extensions import db
 from app.models.account import Account
 from app.models.journal import JournalEntry, JournalEntryLine
 
-MATCH_DATE_TOLERANCE = 5  # 日付許容範囲（±日）
+MATCH_DATE_TOLERANCE = 0  # 日付完全一致のみ
 
 
 def find_matches(user_id, payment_account_code, csv_rows):
