@@ -6,7 +6,9 @@ from unittest.mock import patch
 import pytest
 
 from tests.conftest import make_journal
-from app.services.reconciliation import find_matches, find_ai_matches
+from app.services.reconciliation import (
+    find_matches, find_ai_matches, _format_csv_rows, _format_journal_rows,
+)
 
 
 @pytest.fixture
@@ -490,3 +492,87 @@ class TestEdgeCases:
         ]
         result = find_matches(user.id, cc_account.code, csv_rows)
         assert result["csv_results"][0]["status"] == "matched"
+
+    def test_all_dates_invalid_returns_all_unmatched(self, db, user, accounts, cc_account):
+        """全CSV���の日付が不正 ��� 早期リターン"""
+        csv_rows = [
+            {"date": "invalid", "description": "1", "withdrawal": 1000, "deposit": 0},
+            {"date": "bad", "description": "2", "withdrawal": 500, "deposit": 0},
+        ]
+        result = find_matches(user.id, cc_account.code, csv_rows)
+        for r in result["csv_results"]:
+            assert r["status"] == "unmatched"
+        assert result["daily_summary"] == []
+
+    def test_daily_summary_skips_invalid_dates(self, db, user, accounts, cc_account):
+        """date=Noneや不正文字列のCSV行はサマリーから除外"""
+        make_journal(db, user.id, "5010", cc_account.code, 1000,
+                     entry_date=date(2026, 1, 10))
+        csv_rows = [
+            {"date": "2026-01-10", "description": "正常", "withdrawal": 1000, "deposit": 0},
+            {"date": None, "description": "日付なし", "withdrawal": 500, "deposit": 0},
+            {"date": "invalid", "description": "不正", "withdrawal": 300, "deposit": 0},
+        ]
+        result = find_matches(user.id, cc_account.code, csv_rows)
+        day = [s for s in result["daily_summary"] if s["date"] == "2026-01-10"]
+        assert len(day) == 1
+        assert day[0]["csv_count"] == 1
+
+
+class TestAiMatchesAdditional:
+    """AI照合の追加テスト"""
+
+    def test_unsupported_provider(self, db, user, accounts):
+        """未対応プロバイダーはValueError"""
+        unmatched = [{"csv_index": 0, "date": "2026-01-10", "description": "x", "amount": 500}]
+        journal = [{"entry_id": 1, "date": "2026-01-10", "description": "y", "amount": 500, "category_name": "雑"}]
+        with patch("app.services.ai_receipt._get_ai_config") as mock_config, \
+             patch("app.services.ai_receipt._TEXT_PROVIDER_HANDLERS", {}):
+            mock_config.return_value = ("key", "unknown", "model", None, "", {}, False)
+            with pytest.raises(ValueError, match="未対応"):
+                find_ai_matches(user.id, unmatched, journal)
+
+    def test_no_matches_key_in_response(self, db, user, accounts):
+        """AI応答にmatchesキーがない場合は空リスト"""
+        mock_response = '{"error": "parse failed"}'
+        unmatched = [{"csv_index": 0, "date": "2026-01-10", "description": "x", "amount": 500}]
+        journal = [{"entry_id": 1, "date": "2026-01-10", "description": "y", "amount": 500, "category_name": "雑"}]
+        with patch("app.services.ai_receipt._get_ai_config") as mock_config, \
+             patch("app.services.ai_receipt._TEXT_PROVIDER_HANDLERS", {"openai": lambda *a, **kw: mock_response}), \
+             patch("app.services.ai_receipt._extract_json", return_value={"error": "parse failed"}):
+            mock_config.return_value = ("key", "openai", "gpt-4", None, "", {}, False)
+            results = find_ai_matches(user.id, unmatched, journal)
+        assert results == []
+
+
+class TestFormatHelpers:
+    """_format_csv_rows / _format_journal_rows"""
+
+    def test_format_csv_rows(self):
+        rows = [
+            {"csv_index": 0, "date": "2026-01-10", "description": "コンビニ", "amount": 1500},
+            {"csv_index": 1, "date": "2026-01-11", "description": "スーパー", "amount": 3000},
+        ]
+        result = _format_csv_rows(rows)
+        lines = result.split("\n")
+        assert len(lines) == 2
+        assert "[0]" in lines[0]
+        assert "1,500" in lines[0]
+
+    def test_format_csv_rows_missing_fields(self):
+        rows = [{"csv_index": 0}]
+        result = _format_csv_rows(rows)
+        assert "[0]" in result
+
+    def test_format_journal_rows(self):
+        rows = [{"entry_id": 42, "date": "2026-01-10", "description": "Amazon",
+                 "amount": 1480, "category_name": "日用品"}]
+        result = _format_journal_rows(rows)
+        assert "[ID:42]" in result
+        assert "1,480" in result
+        assert "(日用品)" in result
+
+    def test_format_journal_rows_missing_fields(self):
+        rows = [{"entry_id": 1}]
+        result = _format_journal_rows(rows)
+        assert "[ID:1]" in result
