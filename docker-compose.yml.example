@@ -17,7 +17,7 @@ services:
     restart: unless-stopped
 
   web:
-    image: ghcr.io/nananek/iikanji-kakeibo:3.5.4
+    image: ghcr.io/nananek/iikanji-kakeibo:3.5.5
     network_mode: service:tailscale
     volumes:
       - vouchers:/app/data/vouchers
