@@ -523,6 +523,58 @@ document.addEventListener('alpine:init', function() {
       hasAiConfig: hasAiConfig,
       aiReconcileLoading: false,
       hoveredDay: null,
+      _hoverTimer: null,
+
+      hoverEnter: function(dateStr) {
+        var self = this;
+        clearTimeout(this._hoverTimer);
+        this.hoveredDay = dateStr;
+      },
+      hoverLeave: function() {
+        var self = this;
+        this._hoverTimer = setTimeout(function() { self.hoveredDay = null; }, 150);
+      },
+
+      getDayDiff: function(dateStr) {
+        if (!dateStr) return { csv: [], journal: [] };
+        var csv = [];
+        for (var i = 0; i < this.reconcileRows.length; i++) {
+          var r = this.reconcileRows[i];
+          if (r.date === dateStr) {
+            csv.push({
+              description: r.description,
+              amount: r.withdrawal || r.deposit || 0,
+              status: r.status,
+              matchInfo: r.matchInfo,
+            });
+          }
+        }
+        csv.sort(function(a, b) { return b.amount - a.amount; });
+        var journal = [];
+        // journal_only
+        for (var i = 0; i < this.journalOnly.length; i++) {
+          var j = this.journalOnly[i];
+          if (j.date === dateStr) {
+            journal.push({
+              description: j.description, amount: j.amount,
+              category_name: j.category_name, source: j.source, matched: false,
+            });
+          }
+        }
+        // matched 仕訳
+        for (var i = 0; i < this.reconcileRows.length; i++) {
+          var r = this.reconcileRows[i];
+          if (r.date === dateStr && r.status === 'matched' && r.matchInfo) {
+            journal.push({
+              description: r.matchInfo.description, amount: r.matchInfo.amount,
+              category_name: r.matchInfo.category_name, source: r.matchInfo.source,
+              matched: true,
+            });
+          }
+        }
+        journal.sort(function(a, b) { return b.amount - a.amount; });
+        return { csv: csv, journal: journal };
+      },
 
       get matchedCount() {
         var c = 0;
@@ -573,25 +625,6 @@ document.addEventListener('alpine:init', function() {
 
       sourceLabel: function(src) {
         return sourceLabels[src] || src;
-      },
-
-      getDayRows: function(dateStr, type) {
-        if (!dateStr) return [];
-        if (type === 'csv') {
-          // その日のCSV行（unmatched のみ）
-          return this.reconcileRows.filter(function(r) {
-            return r.date === dateStr && r.status !== 'matched';
-          });
-        } else if (type === 'journal') {
-          // その日の journal_only
-          return this.journalOnly.filter(function(j) { return j.date === dateStr; });
-        } else if (type === 'matched') {
-          // その日の matched CSV行（照合済み仕訳情報付き）
-          return this.reconcileRows.filter(function(r) {
-            return r.date === dateStr && r.status === 'matched' && r.matchInfo;
-          });
-        }
-        return [];
       },
 
       switchTab: function(tab) {

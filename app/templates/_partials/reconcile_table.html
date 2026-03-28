@@ -35,9 +35,9 @@
                 'table-danger': day.has_discrepancy && day.csv_count > 0 && day.journal_count > 0,
                 'table-warning': day.has_discrepancy && (day.csv_count === 0 || day.journal_count === 0),
               }"
-              style="cursor: pointer; position: relative;"
-              @mouseenter="day.has_discrepancy && (hoveredDay = day.date)"
-              @mouseleave="hoveredDay = null">
+              style="cursor: pointer;"
+              @mouseenter="day.has_discrepancy && hoverEnter(day.date)"
+              @mouseleave="hoverLeave()">
                 <td x-text="day.date"></td>
                 <td class="text-end" x-text="day.csv_count"></td>
                 <td class="text-end" x-text="'\u00a5' + day.csv_total.toLocaleString()"></td>
@@ -83,48 +83,51 @@
           </tfoot>
         </table>
       </div>
-      {# ホバーdiffポップオーバー #}
+      {# ホバーdiff — 左右2列 #}
       <div x-show="hoveredDay" x-cloak
+           @mouseenter="hoverEnter(hoveredDay)"
+           @mouseleave="hoverLeave()"
            class="card shadow border position-absolute"
-           style="z-index: 1050; min-width: 400px; max-width: 500px; right: 0; top: 0;">
-        <div class="card-body p-2" style="font-size: 0.8rem; max-height: 300px; overflow-y: auto;">
-          <div class="mb-2">
-            <strong class="text-danger"><i class="bi bi-file-earmark-text"></i> CSV明細</strong>
-            <template x-for="r in getDayRows(hoveredDay, 'csv')" :key="r.csv_index">
-              <div class="d-flex justify-content-between" :class="{'text-muted': r.status === 'matched'}">
-                <span>
-                  <i class="bi" :class="r.status === 'matched' ? 'bi-check text-success' : 'bi-dash text-secondary'"></i>
-                  <span x-text="r.description"></span>
-                </span>
-                <span class="text-nowrap ms-2" x-text="'\u00a5' + (r.withdrawal || r.deposit || 0).toLocaleString()"></span>
-              </div>
-            </template>
-            <div x-show="getDayRows(hoveredDay, 'csv').length === 0" class="text-muted">(なし)</div>
-          </div>
-          <div>
-            <strong class="text-primary"><i class="bi bi-journal-text"></i> 仕訳</strong>
-            <template x-for="j in getDayRows(hoveredDay, 'journal')" :key="j.entry_id">
-              <div class="d-flex justify-content-between">
-                <span>
-                  <i class="bi bi-dash text-secondary"></i>
-                  <span x-text="j.description"></span>
-                  <span class="badge bg-light text-dark" x-text="j.category_name"></span>
-                </span>
-                <span class="text-nowrap ms-2" x-text="'\u00a5' + j.amount.toLocaleString()"></span>
-              </div>
-            </template>
-            {# matched仕訳も表示 #}
-            <template x-for="r in getDayRows(hoveredDay, 'matched')" :key="'m' + r.csv_index">
-              <div class="d-flex justify-content-between text-muted">
-                <span>
-                  <i class="bi bi-check text-success"></i>
-                  <span x-text="r.matchInfo.description"></span>
-                  <span class="badge bg-light text-dark" x-text="r.matchInfo.category_name"></span>
-                </span>
-                <span class="text-nowrap ms-2" x-text="'\u00a5' + r.matchInfo.amount.toLocaleString()"></span>
-              </div>
-            </template>
-            <div x-show="getDayRows(hoveredDay, 'journal').length === 0 && getDayRows(hoveredDay, 'matched').length === 0" class="text-muted">(なし)</div>
+           style="z-index: 1050; width: 600px; right: 0; top: 0;">
+        <div class="card-header py-1 px-2 d-flex justify-content-between">
+          <small class="fw-bold" x-text="hoveredDay"></small>
+          <small class="text-muted" x-text="'差額: ¥' + Math.abs(
+            (getDayDiff(hoveredDay).csv.reduce(function(s,r){return s+r.amount},0)) -
+            (getDayDiff(hoveredDay).journal.reduce(function(s,r){return s+r.amount},0))
+          ).toLocaleString()"></small>
+        </div>
+        <div class="card-body p-0" style="font-size: 0.8rem; max-height: 300px; overflow-y: auto;">
+          <div class="row g-0">
+            {# 左: CSV明細 #}
+            <div class="col-6 border-end" style="min-height: 40px;">
+              <div class="px-2 py-1 bg-light border-bottom"><strong>CSV明細</strong></div>
+              <template x-for="(r, ri) in getDayDiff(hoveredDay).csv" :key="ri">
+                <div class="d-flex justify-content-between px-2 py-1 border-bottom"
+                     :class="r.status === 'matched' ? 'text-muted' : ''">
+                  <span class="text-truncate" style="max-width: 180px;">
+                    <i class="bi" :class="r.status === 'matched' ? 'bi-check-lg text-success' : 'bi-x-lg text-danger'" style="font-size:0.7rem"></i>
+                    <span x-text="r.description"></span>
+                  </span>
+                  <span class="text-nowrap" x-text="'\u00a5' + r.amount.toLocaleString()"></span>
+                </div>
+              </template>
+              <div x-show="getDayDiff(hoveredDay).csv.length === 0" class="px-2 py-1 text-muted">(なし)</div>
+            </div>
+            {# 右: 仕訳 #}
+            <div class="col-6" style="min-height: 40px;">
+              <div class="px-2 py-1 bg-light border-bottom"><strong>仕訳</strong></div>
+              <template x-for="(j, ji) in getDayDiff(hoveredDay).journal" :key="ji">
+                <div class="d-flex justify-content-between px-2 py-1 border-bottom"
+                     :class="j.matched ? 'text-muted' : ''">
+                  <span class="text-truncate" style="max-width: 180px;">
+                    <i class="bi" :class="j.matched ? 'bi-check-lg text-success' : 'bi-x-lg text-primary'" style="font-size:0.7rem"></i>
+                    <span x-text="j.description"></span>
+                  </span>
+                  <span class="text-nowrap" x-text="'\u00a5' + j.amount.toLocaleString()"></span>
+                </div>
+              </template>
+              <div x-show="getDayDiff(hoveredDay).journal.length === 0" class="px-2 py-1 text-muted">(なし)</div>
+            </div>
           </div>
         </div>
       </div>
