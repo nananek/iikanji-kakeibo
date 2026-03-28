@@ -5,6 +5,16 @@ title: リリースノート
 
 # リリースノート
 
+## v3.5.6
+
+**セキュリティ強化 — Dependabot対応 + Code Scanning修正**
+
+- Flask 3.1.0→3.1.3, Werkzeug 3.1.3→3.1.6, cryptography >=46.0.6 に更新（CVE-2025/2026対応）
+- 仕訳一括削除のリダイレクトURLにオープンリダイレクト対策を追加
+- Passkey登録画面のエラー表示をtextContentに変更（XSS対策）
+- GitHub セキュリティ機能を有効化（Dependabot alerts/updates, Secret scanning, Code scanning, Private vulnerability reporting）
+- pytest 689件
+
 ## v3.5.5
 
 **照合を行単位マッチングに変更**
