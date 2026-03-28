@@ -54,6 +54,30 @@
               </tr>
             </template>
           </tbody>
+          <tfoot class="table-dark">
+            <tr>
+              <th>合計</th>
+              <th class="text-end" x-text="summaryTotals.csv_count"></th>
+              <th class="text-end" x-text="'\u00a5' + summaryTotals.csv_total.toLocaleString()"></th>
+              <th class="text-end" x-text="summaryTotals.journal_count"></th>
+              <th class="text-end" x-text="'\u00a5' + summaryTotals.journal_total.toLocaleString()"></th>
+              <th class="text-end fw-bold" :class="{
+                'text-danger': summaryTotals.diff_amount > 0,
+                'text-info': summaryTotals.diff_amount < 0,
+                'text-success': summaryTotals.diff_amount === 0 && summaryTotals.diff_count === 0,
+              }">
+                <template x-if="summaryTotals.diff_amount === 0 && summaryTotals.diff_count === 0">
+                  <span><i class="bi bi-check-circle-fill"></i> 一致</span>
+                </template>
+                <template x-if="summaryTotals.diff_amount !== 0">
+                  <span x-text="(summaryTotals.diff_amount > 0 ? 'CSV+' : '仕訳+') + '\u00a5' + Math.abs(summaryTotals.diff_amount).toLocaleString()"></span>
+                </template>
+                <template x-if="summaryTotals.diff_amount === 0 && summaryTotals.diff_count !== 0">
+                  <span>件数差 <span x-text="summaryTotals.diff_count > 0 ? '+' + summaryTotals.diff_count : summaryTotals.diff_count"></span></span>
+                </template>
+              </th>
+            </tr>
+          </tfoot>
         </table>
       </div>
     </div>

@@ -541,6 +541,19 @@ document.addEventListener('alpine:init', function() {
           if (this.reconcileRows[i].status === 'unmatched') c++;
         return c;
       },
+      get summaryTotals() {
+        var t = { csv_count: 0, csv_total: 0, journal_count: 0, journal_total: 0, diff_count: 0, diff_amount: 0 };
+        for (var i = 0; i < this.dailySummary.length; i++) {
+          var d = this.dailySummary[i];
+          t.csv_count += d.csv_count;
+          t.csv_total += d.csv_total;
+          t.journal_count += d.journal_count;
+          t.journal_total += d.journal_total;
+        }
+        t.diff_count = t.csv_count - t.journal_count;
+        t.diff_amount = t.csv_total - t.journal_total;
+        return t;
+      },
       get discrepancyCount() {
         var c = 0;
         for (var i = 0; i < this.dailySummary.length; i++)
