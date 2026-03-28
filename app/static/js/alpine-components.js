@@ -199,20 +199,26 @@ document.addEventListener('alpine:init', function() {
           fetch(url)
             .then(function(r) { return r.json(); })
             .then(function(data) {
-              self.editingCode = data.code;
+              self.editingCode = copy ? null : data.code;
               self.editingTypeId = data.account_type_id;
-              self.wasActive = data.is_active;
+              self.wasActive = copy ? true : data.is_active;
               self.modalTitle = copy ? 'コピーして追加' : '科目を編集';
               self.code = data.code;
-              self.codeReadOnly = !copy && data.is_system;
+              self.codeReadOnly = false;
               self.name = data.name;
               self.accountTypeId = String(data.account_type_id);
-              self.typeDisabled = !copy && data.is_system;
+              self.typeDisabled = false;
               self.description = data.description;
               self.taxCategory = data.tax_category;
               self.costType = data.cost_type;
-              self.isActive = data.is_active;
-              self.activeDisabled = !copy && !!data.system_role;
+              self.isActive = true;
+              self.activeDisabled = false;
+              if (!copy) {
+                self.codeReadOnly = data.is_system;
+                self.typeDisabled = data.is_system;
+                self.isActive = data.is_active;
+                self.activeDisabled = !!data.system_role;
+              }
               self.getModal().show();
             });
         } else {
