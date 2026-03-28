@@ -377,7 +377,7 @@ class TestFindAiMatches:
 
     def test_ai_matches_returns_results(self, db, user, accounts, cc_account):
         """AIが照合候補を返す"""
-        mock_response = '{"matches": [{"csv_index": 0, "entry_id": 99, "confidence": 0.8, "reason": "摘要類似"}]}'
+        mock_response = {"matches": [{"csv_index": 0, "entry_id": 99, "confidence": 0.8, "reason": "摘要類似"}]}
         unmatched = [{"csv_index": 0, "date": "2026-01-10", "description": "アマゾン", "amount": 1500}]
         journal = [{"entry_id": 99, "date": "2026-01-10", "description": "Amazon", "amount": 1480, "category_name": "日用品"}]
 
@@ -393,7 +393,7 @@ class TestFindAiMatches:
 
     def test_ai_matches_filters_low_confidence(self, db, user, accounts):
         """confidence 0.3未満は除外される"""
-        mock_response = '{"matches": [{"csv_index": 0, "entry_id": 1, "confidence": 0.2, "reason": "低確信"}]}'
+        mock_response = {"matches": [{"csv_index": 0, "entry_id": 1, "confidence": 0.2, "reason": "低確信"}]}
         unmatched = [{"csv_index": 0, "date": "2026-01-10", "description": "何か", "amount": 500}]
         journal = [{"entry_id": 1, "date": "2026-01-10", "description": "別", "amount": 999, "category_name": "雑費"}]
 
@@ -446,17 +446,17 @@ class TestEdgeCases:
         assert len(result["journal_only"]) == 1
         assert result["journal_only"][0]["direction"] == "deposit"
 
-    def test_ai_invalid_json_response(self, db, user, accounts):
-        """AIが不正なJSONを返すと例外が発生する"""
-        mock_response = 'This is not JSON at all'
+    def test_ai_non_dict_response_ignored(self, db, user, accounts):
+        """text handlerがdict以外を返しても空リストを返す"""
+        mock_response = "unexpected string"
         unmatched = [{"csv_index": 0, "date": "2026-01-10", "description": "テスト", "amount": 500}]
         journal = [{"entry_id": 1, "date": "2026-01-10", "description": "x", "amount": 499, "category_name": "雑"}]
 
         with patch("app.services.ai_receipt._get_ai_config") as mock_config, \
              patch("app.services.ai_receipt._TEXT_PROVIDER_HANDLERS", {"openai": lambda *a, **kw: mock_response}):
             mock_config.return_value = ("key", "openai", "gpt-4", None, "", {}, False)
-            with pytest.raises(Exception):
-                find_ai_matches(user.id, unmatched, journal)
+            results = find_ai_matches(user.id, unmatched, journal)
+        assert results == []
 
     def test_all_dates_from_date_objects(self, db, user, accounts, cc_account):
         """CSV行のdateが全てdateオブジェクトでも日付範囲が正しく算出される"""
@@ -509,12 +509,11 @@ class TestAiMatchesAdditional:
 
     def test_no_matches_key_in_response(self, db, user, accounts):
         """AI応答にmatchesキーがない場合は空リスト"""
-        mock_response = '{"error": "parse failed"}'
+        mock_response = {"error": "parse failed"}
         unmatched = [{"csv_index": 0, "date": "2026-01-10", "description": "x", "amount": 500}]
         journal = [{"entry_id": 1, "date": "2026-01-10", "description": "y", "amount": 500, "category_name": "雑"}]
         with patch("app.services.ai_receipt._get_ai_config") as mock_config, \
-             patch("app.services.ai_receipt._TEXT_PROVIDER_HANDLERS", {"openai": lambda *a, **kw: mock_response}), \
-             patch("app.services.ai_receipt._extract_json", return_value={"error": "parse failed"}):
+             patch("app.services.ai_receipt._TEXT_PROVIDER_HANDLERS", {"openai": lambda *a, **kw: mock_response}):
             mock_config.return_value = ("key", "openai", "gpt-4", None, "", {}, False)
             results = find_ai_matches(user.id, unmatched, journal)
         assert results == []
