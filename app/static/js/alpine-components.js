@@ -522,6 +522,7 @@ document.addEventListener('alpine:init', function() {
       journalOnly: [],
       hasAiConfig: hasAiConfig,
       aiReconcileLoading: false,
+      hoveredDay: null,
 
       get matchedCount() {
         var c = 0;
@@ -572,6 +573,25 @@ document.addEventListener('alpine:init', function() {
 
       sourceLabel: function(src) {
         return sourceLabels[src] || src;
+      },
+
+      getDayRows: function(dateStr, type) {
+        if (!dateStr) return [];
+        if (type === 'csv') {
+          // その日のCSV行（unmatched のみ）
+          return this.reconcileRows.filter(function(r) {
+            return r.date === dateStr && r.status !== 'matched';
+          });
+        } else if (type === 'journal') {
+          // その日の journal_only
+          return this.journalOnly.filter(function(j) { return j.date === dateStr; });
+        } else if (type === 'matched') {
+          // その日の matched CSV行（照合済み仕訳情報付き）
+          return this.reconcileRows.filter(function(r) {
+            return r.date === dateStr && r.status === 'matched' && r.matchInfo;
+          });
+        }
+        return [];
       },
 
       switchTab: function(tab) {

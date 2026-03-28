@@ -215,8 +215,8 @@ def find_matches(user_id, payment_account_code, csv_rows):
 def _build_daily_summary(csv_rows, csv_results, candidates, counterpart_map,
                          used_entry_ids):
     """日付ごとのCSV vs 仕訳の比較サマリーを生成する。"""
-    # CSV側: 日付ごとの件数・合計
-    csv_by_date = defaultdict(lambda: {"count": 0, "total": 0})
+    # CSV側: 日付ごとの件数・出金合計・入金合計
+    csv_by_date = defaultdict(lambda: {"count": 0, "withdrawal": 0, "deposit": 0})
     for row in csv_rows:
         d = row.get("date")
         if not d:
@@ -226,12 +226,13 @@ def _build_daily_summary(csv_rows, csv_results, candidates, counterpart_map,
                 d = date.fromisoformat(d)
             except ValueError:
                 continue
-        amount = int(row.get("withdrawal") or 0) + int(row.get("deposit") or 0)
         csv_by_date[d]["count"] += 1
-        csv_by_date[d]["total"] += amount
+        csv_by_date[d]["withdrawal"] += int(row.get("withdrawal") or 0)
+        csv_by_date[d]["deposit"] += int(row.get("deposit") or 0)
 
-    # 仕訳側: 日付ごとの件数・合計（支払元口座の行のみ）
-    journal_by_date = defaultdict(lambda: {"count": 0, "total": 0})
+    # 仕訳側: 日付ごとの件数・貸方(出金)合計・借方(入金)合計
+    # 支払元口座の行: credit=出金(CSV withdrawal相当), debit=入金(CSV deposit相当)
+    journal_by_date = defaultdict(lambda: {"count": 0, "withdrawal": 0, "deposit": 0})
     seen_entries = set()
     for c in candidates:
         if c.entry_id in seen_entries:
@@ -239,24 +240,30 @@ def _build_daily_summary(csv_rows, csv_results, candidates, counterpart_map,
         seen_entries.add(c.entry_id)
         credit = int(c.credit_amount) if c.credit_amount else 0
         debit = int(c.debit_amount) if c.debit_amount else 0
-        amount = credit + debit
         journal_by_date[c.date]["count"] += 1
-        journal_by_date[c.date]["total"] += amount
+        journal_by_date[c.date]["withdrawal"] += credit
+        journal_by_date[c.date]["deposit"] += debit
 
     # 全日付を統合してサマリー生成
     all_dates = sorted(set(csv_by_date.keys()) | set(journal_by_date.keys()))
     summary = []
     for d in all_dates:
-        csv_info = csv_by_date.get(d, {"count": 0, "total": 0})
-        jnl_info = journal_by_date.get(d, {"count": 0, "total": 0})
-        diff_amount = csv_info["total"] - jnl_info["total"]
+        csv_info = csv_by_date.get(d, {"count": 0, "withdrawal": 0, "deposit": 0})
+        jnl_info = journal_by_date.get(d, {"count": 0, "withdrawal": 0, "deposit": 0})
+        csv_total = csv_info["withdrawal"] + csv_info["deposit"]
+        jnl_total = jnl_info["withdrawal"] + jnl_info["deposit"]
+        diff_amount = csv_total - jnl_total
         diff_count = csv_info["count"] - jnl_info["count"]
         summary.append({
             "date": d.isoformat(),
             "csv_count": csv_info["count"],
-            "csv_total": csv_info["total"],
+            "csv_withdrawal": csv_info["withdrawal"],
+            "csv_deposit": csv_info["deposit"],
+            "csv_total": csv_total,
             "journal_count": jnl_info["count"],
-            "journal_total": jnl_info["total"],
+            "journal_withdrawal": jnl_info["withdrawal"],
+            "journal_deposit": jnl_info["deposit"],
+            "journal_total": jnl_total,
             "diff_count": diff_count,
             "diff_amount": diff_amount,
             "has_discrepancy": diff_amount != 0 or diff_count != 0,

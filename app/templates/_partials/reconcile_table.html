@@ -9,7 +9,7 @@
 <template x-if="reconcileLoaded">
 <div>
   {# --- 日計サマリー --- #}
-  <div class="card shadow-sm mt-4" x-show="dailySummary.length > 0">
+  <div class="card shadow-sm mt-4 position-relative" x-show="dailySummary.length > 0">
     <div class="card-header d-flex justify-content-between align-items-center">
       <strong><i class="bi bi-calendar-check"></i> 日計サマリー</strong>
       <span class="badge bg-danger" x-show="discrepancyCount > 0">
@@ -30,11 +30,14 @@
             </tr>
           </thead>
           <tbody>
-            <template x-for="day in dailySummary" :key="day.date">
+            <template x-for="(day, dayIdx) in dailySummary" :key="day.date">
               <tr :class="{
                 'table-danger': day.has_discrepancy && day.csv_count > 0 && day.journal_count > 0,
                 'table-warning': day.has_discrepancy && (day.csv_count === 0 || day.journal_count === 0),
-              }">
+              }"
+              style="cursor: pointer; position: relative;"
+              @mouseenter="day.has_discrepancy && (hoveredDay = day.date)"
+              @mouseleave="hoveredDay = null">
                 <td x-text="day.date"></td>
                 <td class="text-end" x-text="day.csv_count"></td>
                 <td class="text-end" x-text="'\u00a5' + day.csv_total.toLocaleString()"></td>
@@ -79,6 +82,51 @@
             </tr>
           </tfoot>
         </table>
+      </div>
+      {# ホバーdiffポップオーバー #}
+      <div x-show="hoveredDay" x-cloak
+           class="card shadow border position-absolute"
+           style="z-index: 1050; min-width: 400px; max-width: 500px; right: 0; top: 0;">
+        <div class="card-body p-2" style="font-size: 0.8rem; max-height: 300px; overflow-y: auto;">
+          <div class="mb-2">
+            <strong class="text-danger"><i class="bi bi-file-earmark-text"></i> CSV明細</strong>
+            <template x-for="r in getDayRows(hoveredDay, 'csv')" :key="r.csv_index">
+              <div class="d-flex justify-content-between" :class="{'text-muted': r.status === 'matched'}">
+                <span>
+                  <i class="bi" :class="r.status === 'matched' ? 'bi-check text-success' : 'bi-dash text-secondary'"></i>
+                  <span x-text="r.description"></span>
+                </span>
+                <span class="text-nowrap ms-2" x-text="'\u00a5' + (r.withdrawal || r.deposit || 0).toLocaleString()"></span>
+              </div>
+            </template>
+            <div x-show="getDayRows(hoveredDay, 'csv').length === 0" class="text-muted">(なし)</div>
+          </div>
+          <div>
+            <strong class="text-primary"><i class="bi bi-journal-text"></i> 仕訳</strong>
+            <template x-for="j in getDayRows(hoveredDay, 'journal')" :key="j.entry_id">
+              <div class="d-flex justify-content-between">
+                <span>
+                  <i class="bi bi-dash text-secondary"></i>
+                  <span x-text="j.description"></span>
+                  <span class="badge bg-light text-dark" x-text="j.category_name"></span>
+                </span>
+                <span class="text-nowrap ms-2" x-text="'\u00a5' + j.amount.toLocaleString()"></span>
+              </div>
+            </template>
+            {# matched仕訳も表示 #}
+            <template x-for="r in getDayRows(hoveredDay, 'matched')" :key="'m' + r.csv_index">
+              <div class="d-flex justify-content-between text-muted">
+                <span>
+                  <i class="bi bi-check text-success"></i>
+                  <span x-text="r.matchInfo.description"></span>
+                  <span class="badge bg-light text-dark" x-text="r.matchInfo.category_name"></span>
+                </span>
+                <span class="text-nowrap ms-2" x-text="'\u00a5' + r.matchInfo.amount.toLocaleString()"></span>
+              </div>
+            </template>
+            <div x-show="getDayRows(hoveredDay, 'journal').length === 0 && getDayRows(hoveredDay, 'matched').length === 0" class="text-muted">(なし)</div>
+          </div>
+        </div>
       </div>
     </div>
   </div>
