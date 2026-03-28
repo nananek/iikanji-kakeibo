@@ -1,6 +1,8 @@
 import json
 from datetime import date
 
+from urllib.parse import urlparse
+
 from flask import Blueprint, render_template, redirect, url_for, flash, request, jsonify, make_response
 from flask_login import login_required, current_user
 from sqlalchemy import func
@@ -730,6 +732,9 @@ def bulk_delete():
     """仕訳の一括削除"""
     entry_ids = request.form.getlist("entry_ids", type=int)
     redirect_url = request.form.get("redirect_url") or url_for("journal.index")
+    parsed = urlparse(redirect_url)
+    if parsed.netloc or parsed.scheme:
+        redirect_url = url_for("journal.index")
 
     if not entry_ids:
         flash("削除する仕訳が選択されていません。", "warning")

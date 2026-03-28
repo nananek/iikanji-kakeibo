@@ -106,7 +106,12 @@ document.getElementById("btn-register-passkey").addEventListener("click", async 
     if (e.name === "NotAllowedError") {
       statusEl.innerHTML = '<span class="text-warning"><i class="bi bi-exclamation-triangle"></i> キャンセルされました。</span>';
     } else {
-      statusEl.innerHTML = '<span class="text-danger"><i class="bi bi-x-circle"></i> ' + e.message + '</span>';
+      var errSpan = document.createElement('span');
+      errSpan.className = 'text-danger';
+      errSpan.innerHTML = '<i class="bi bi-x-circle"></i> ';
+      errSpan.appendChild(document.createTextNode(e.message));
+      statusEl.innerHTML = '';
+      statusEl.appendChild(errSpan);
     }
     btn.disabled = false;
   }
