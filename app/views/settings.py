@@ -1,4 +1,5 @@
 import json
+import re
 from datetime import date, datetime, timezone
 
 from flask import Blueprint, render_template, redirect, url_for, flash, request, jsonify, make_response
@@ -23,6 +24,19 @@ from app.services.fiscal import (
 )
 
 bp = Blueprint("settings", __name__, url_prefix="/settings")
+
+# HTTP ステータスコード形式のエラーはそのまま返し、
+# それ以外の内部例外メッセージは隠蔽する
+_HTTP_STATUS_RE = re.compile(r"^HTTP \d{3}$")
+
+
+def _safe_connection_error(err: str | None) -> str:
+    """接続テストのエラーメッセージを安全な形に変換する。"""
+    if not err:
+        return "不明なエラー"
+    if _HTTP_STATUS_RE.match(err):
+        return err
+    return "サーバーに接続できませんでした。URL・認証情報を確認してください。"
 
 
 @bp.route("/")
@@ -816,7 +830,7 @@ def auto_import_source_test():
     if ok:
         files = provider.list_files()
         return jsonify({"ok": True, "message": f"接続成功（{len(files)}件のファイルを検出）"})
-    return jsonify({"ok": False, "message": f"接続失敗: {err}"}), 400
+    return jsonify({"ok": False, "message": f"接続失敗: {_safe_connection_error(err)}"}), 400
 
 
 @bp.route("/auto-import/sources/<int:source_id>/test", methods=["POST"])
@@ -837,7 +851,7 @@ def auto_import_source_test_existing(source_id):
     if ok:
         files = provider.list_files()
         return jsonify({"ok": True, "message": f"接続成功（{len(files)}件のファイルを検出）"})
-    return jsonify({"ok": False, "message": f"接続失敗: {err}"}), 400
+    return jsonify({"ok": False, "message": f"接続失敗: {_safe_connection_error(err)}"}), 400
 
 
 @bp.route("/auto-import/sources/<int:source_id>/toggle", methods=["POST"])

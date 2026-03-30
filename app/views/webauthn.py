@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime, timezone
 from urllib.parse import urlparse
 
@@ -21,6 +22,8 @@ from webauthn.helpers.structs import (
 from app.extensions import db
 from app.models.user import User
 from app.models.webauthn import WebAuthnCredential
+
+logger = logging.getLogger(__name__)
 
 bp = Blueprint("webauthn", __name__, url_prefix="/webauthn")
 
@@ -83,8 +86,9 @@ def register_verify():
             expected_rp_id=rp_id,
             expected_origin=origin,
         )
-    except Exception as e:
-        return jsonify(error=f"検証に失敗しました: {e}"), 400
+    except Exception:
+        logger.warning("WebAuthn registration verification failed", exc_info=True)
+        return jsonify(error="検証に失敗しました。もう一度お試しください。"), 400
 
     transports = ",".join(body.get("response", {}).get("transports", []))
 
@@ -154,8 +158,9 @@ def authenticate_verify():
             credential_public_key=stored.credential_public_key,
             credential_current_sign_count=stored.current_sign_count,
         )
-    except Exception as e:
-        return jsonify(error=f"認証に失敗しました: {e}"), 400
+    except Exception:
+        logger.warning("WebAuthn authentication verification failed", exc_info=True)
+        return jsonify(error="認証に失敗しました。もう一度お試しください。"), 400
 
     # sign_count 更新
     stored.current_sign_count = verification.new_sign_count

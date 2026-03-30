@@ -26,6 +26,8 @@ _PROPFIND_BODY = """\
 class WebDAVProvider:
     """WebDAV (Nextcloud 等) からファイルを取得するプロバイダー"""
 
+    _ALLOWED_SCHEMES = {"http", "https"}
+
     def __init__(
         self,
         url: str,
@@ -33,6 +35,12 @@ class WebDAVProvider:
         password: str,
         file_extensions: list[str] | None = None,
     ):
+        from urllib.parse import urlparse
+        parsed = urlparse(url)
+        if parsed.scheme not in self._ALLOWED_SCHEMES:
+            raise ValueError(
+                f"許可されていないURLスキームです: {parsed.scheme}"
+            )
         self.url = url.rstrip("/") + "/"
         self.auth = (username, password)
         self.extensions = {

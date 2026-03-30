@@ -21,13 +21,17 @@ def _check_captcha() -> bool:
     return True
 
 
+def _is_safe_redirect_url(target: str) -> bool:
+    """リダイレクト先が内部 URL かどうかを検証する（オープンリダイレクト防止）。"""
+    parsed = urlparse(target)
+    return not parsed.scheme and not parsed.netloc
+
+
 def _safe_next_url(fallback):
     """next パラメータが内部 URL であれば返す。外部 URL は無視する。"""
     next_page = request.args.get("next")
-    if next_page:
-        parsed = urlparse(next_page)
-        if not parsed.netloc and not parsed.scheme:
-            return next_page
+    if next_page and _is_safe_redirect_url(next_page):
+        return next_page
     return fallback
 
 bp = Blueprint("auth", __name__)
