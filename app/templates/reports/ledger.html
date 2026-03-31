@@ -281,6 +281,9 @@
         <button type="button" class="btn btn-outline-danger me-auto" id="modalDeleteBtn" onclick="deleteEntry()">
           <i class="bi bi-trash"></i> 削除
         </button>
+        <button type="button" class="btn btn-outline-info" id="modalCopyBtn" onclick="copyEntry()">
+          <i class="bi bi-copy"></i> 複写
+        </button>
         <button type="button" class="btn btn-outline-success" id="modalAttachBtn" onclick="toggleVoucherUpload()">
           <i class="bi bi-file-image"></i> 証憑追加
         </button>
@@ -531,10 +534,12 @@ function modalUpdateTotals() {
 }
 
 var PERIOD_NAMES = {'0':'期首振戻月','13':'決算月1','14':'決算月2','15':'決算月3','16':'損益振替'};
+var isCopyMode = false;
 
 function openEditModal(entryId) {
   currentEntryId = entryId;
   currentHasVoucher = false;
+  isCopyMode = false;
   document.getElementById('modalError').classList.add('d-none');
   document.getElementById('modalLinesBody').innerHTML = '';
 
@@ -586,6 +591,7 @@ function openEditModal(entryId) {
       document.getElementById('modalDeleteBtn').style.display = ro ? 'none' : '';
       document.getElementById('modalAddLineBtn').style.display = ro ? 'none' : '';
       document.getElementById('modalAttachBtn').style.display = ro ? 'none' : '';
+      document.getElementById('modalCopyBtn').style.display = '';
       document.getElementById('voucherUploadArea').classList.add('d-none');
 
       // 行削除ボタンの表示制御
@@ -657,6 +663,45 @@ function deleteEntry() {
   });
 }
 
+function copyEntry() {
+  isCopyMode = true;
+  currentEntryId = null;
+
+  // タイトル変更
+  document.getElementById('modalTitleIcon').innerHTML = '<i class="bi bi-copy"></i>';
+  document.getElementById('modalTitleText').textContent = '伝票複写';
+  document.getElementById('modalEntryNum').textContent = '(新規)';
+
+  // 日付を今日に変更
+  document.getElementById('modalDate').value = new Date().toISOString().slice(0, 10);
+  document.getElementById('modalDate').disabled = false;
+  document.getElementById('modalDesc').disabled = false;
+
+  // 計上期間を期中にリセット
+  var fpSelect = document.getElementById('modalFiscalPeriod');
+  fpSelect.style.display = '';
+  fpSelect.value = '';
+  var fpText = document.getElementById('modalFiscalPeriodText');
+  if (fpText) fpText.style.display = 'none';
+
+  // 証憑プレビュー非表示
+  document.getElementById('modalVoucherPreview').classList.add('d-none');
+  document.getElementById('modalVoucherPreview').innerHTML = '';
+
+  // ボタン表示制御
+  document.getElementById('modalSaveBtn').style.display = '';
+  document.getElementById('modalDeleteBtn').style.display = 'none';
+  document.getElementById('modalAttachBtn').style.display = 'none';
+  document.getElementById('modalCopyBtn').style.display = 'none';
+  document.getElementById('modalAddLineBtn').style.display = '';
+  document.getElementById('voucherUploadArea').classList.add('d-none');
+
+  // 明細行を編集可能に
+  document.querySelectorAll('#modalLinesBody input').forEach(function(el) { el.disabled = false; });
+  document.querySelectorAll('#modalLinesBody button').forEach(function(el) { el.disabled = false; });
+  document.querySelectorAll('#modalLinesBody .modal-remove-btn').forEach(function(btn) { btn.style.display = ''; });
+}
+
 function saveEntry() {
   var lines = [];
   document.querySelectorAll('#modalLinesBody tr').forEach(function(tr) {
@@ -680,7 +725,8 @@ function saveEntry() {
   var saveBtn = document.getElementById('modalSaveBtn');
   saveBtn.disabled = true;
 
-  fetch('/journal/' + currentEntryId + '/edit-api', {
+  var apiUrl = isCopyMode ? '/journal/create-api' : '/journal/' + currentEntryId + '/edit-api';
+  fetch(apiUrl, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',

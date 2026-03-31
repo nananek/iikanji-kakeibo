@@ -658,6 +658,84 @@ def edit_api(entry_id):
     return jsonify({"ok": True, "entry_number": entry.entry_number})
 
 
+@bp.route("/create-api", methods=["POST"])
+@login_required
+def create_api():
+    """仕訳をJSON APIで新規作成する（モーダル複写用）"""
+    user_id = get_effective_user_id()
+    data = request.get_json()
+    if not data:
+        return jsonify({"error": "リクエストが不正です。"}), 400
+
+    entry_date_str = data.get("date")
+    description = data.get("description", "").strip()
+    lines_data = data.get("lines", [])
+
+    if not entry_date_str or not description:
+        return jsonify({"error": "日付と摘要は必須です。"}), 400
+    if not lines_data:
+        return jsonify({"error": "仕訳明細を1行以上入力してください。"}), 400
+
+    parsed = []
+    for line in lines_data:
+        acode = line.get("account_code")
+        if not acode:
+            continue
+        parsed.append({
+            "account_code": acode,
+            "debit_amount": int(line.get("debit_amount", 0) or 0),
+            "credit_amount": int(line.get("credit_amount", 0) or 0),
+            "description": line.get("description", ""),
+        })
+
+    if not parsed:
+        return jsonify({"error": "仕訳明細を1行以上入力してください。"}), 400
+
+    total_debit = sum(l["debit_amount"] for l in parsed)
+    total_credit = sum(l["credit_amount"] for l in parsed)
+    if total_debit != total_credit:
+        return jsonify({
+            "error": f"貸借が一致しません（借方: {total_debit:,}, 貸方: {total_credit:,}）"
+        }), 400
+
+    raw_period = data.get("fiscal_period")
+    fiscal_period = int(raw_period) if raw_period not in (None, "") else None
+    if fiscal_period == 16:
+        return jsonify({"error": "損益振替期間には手動で仕訳を追加できません。"}), 400
+
+    try:
+        entry_date = date.fromisoformat(entry_date_str)
+    except ValueError:
+        return jsonify({"error": "日付の形式が不正です。"}), 400
+
+    entry_date = adjust_date_for_fiscal_period(entry_date, fiscal_period)
+    period = fiscal_period if fiscal_period is not None else entry_date.month
+    err = check_period_open_for_new(user_id, entry_date.year, period)
+    if err:
+        return jsonify({"error": err}), 400
+
+    # 提出済みロック科目チェック
+    locked_codes = get_submitted_account_codes(user_id)
+    if locked_codes:
+        used_codes = {l["account_code"] for l in parsed}
+        if used_codes & locked_codes:
+            return jsonify({"error": "提出済みの税務科目を含むため登録できません。"}), 400
+
+    try:
+        entry = create_journal_entry(
+            user_id=user_id,
+            date=entry_date,
+            description=description,
+            lines_data=parsed,
+            source="journal",
+            fiscal_period=fiscal_period,
+        )
+        db.session.commit()
+        return jsonify({"ok": True, "entry_number": entry.entry_number})
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+
+
 def log_voucher_orphan(entry, user_id):
     """仕訳削除前に紐づく証憑の孤立化ログを記録する。"""
     vouchers = Voucher.query.filter_by(journal_entry_id=entry.id).all()
