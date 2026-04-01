@@ -19,6 +19,8 @@ services:
   web:
     image: ghcr.io/nananek/iikanji-kakeibo:3.6.0
     network_mode: service:tailscale
+    environment:
+      - TZ=Asia/Tokyo
     volumes:
       - vouchers:/app/data/vouchers
     env_file:
