@@ -182,6 +182,18 @@ class TestListJournals:
         assert data["total"] == 2
         assert len(data["journals"]) == 2
 
+    def test_amounts_returned_as_int(self, client, db, user, accounts, auth_header):
+        """debit/credit は文字列ではなく整数で返す（クライアント互換性）"""
+        make_journal(db, user.id, "5010", "1010",
+                     1500, entry_date=date(2026, 2, 15))
+        resp = client.get("/api/v1/journals", headers=auth_header)
+        data = resp.get_json()
+        line = data["journals"][0]["lines"][0]
+        assert isinstance(line["debit"], int), \
+            f"debit should be int, got {type(line['debit']).__name__}"
+        assert isinstance(line["credit"], int), \
+            f"credit should be int, got {type(line['credit']).__name__}"
+
     def test_date_filter(self, client, db, user, accounts, auth_header):
         make_journal(db, user.id, "5010", "1010",
                      1000, entry_date=date(2026, 1, 15))
