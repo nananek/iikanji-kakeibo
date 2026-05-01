@@ -26,3 +26,10 @@ migrations/versions/*.pyc
 docker-compose.yml
 volumes/
 node_modules/
+
+# テスト・実行時生成物
+data/
+test-results/
+.coverage
+.pytest_cache/
+playwright-report/

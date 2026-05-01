@@ -191,8 +191,8 @@ def _entry_to_dict(entry):
         "lines": [
             {
                 "account_code": line.account_code,
-                "debit": line.debit_amount,
-                "credit": line.credit_amount,
+                "debit": int(line.debit_amount or 0),
+                "credit": int(line.credit_amount or 0),
                 "description": line.description or "",
             }
             for line in entry.lines
