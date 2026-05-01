@@ -1,0 +1,350 @@
+"""CSV / OFX / Web 取込ビューのテスト
+
+ファイル/テキスト → 解析 → confirm → 一括取込のフローを mock 経由で検証。
+"""
+
+import io
+import json
+from datetime import date
+from unittest.mock import patch
+
+from app.models.journal import JournalEntry
+
+
+# --- CSV Import ---
+
+
+class TestCsvImportUpload:
+    def test_unauthenticated(self, client):
+        resp = client.get("/csv-import/")
+        assert resp.status_code in (302, 401)
+
+    def test_get_renders_form(self, logged_in_client, accounts):
+        resp = logged_in_client.get("/csv-import/")
+        assert resp.status_code == 200
+
+    def test_post_no_file(self, logged_in_client, accounts):
+        resp = logged_in_client.post("/csv-import/", data={
+            "payment_account_code": "1010",
+        })
+        assert resp.status_code == 200  # form 再表示
+
+    def test_post_no_payment_account(self, logged_in_client, accounts):
+        csv_bytes = b"date,description,amount\n2026-02-15,test,1000"
+        resp = logged_in_client.post("/csv-import/", data={
+            "csv_file": (io.BytesIO(csv_bytes), "test.csv"),
+        }, content_type="multipart/form-data")
+        assert resp.status_code == 200
+
+    def test_post_oversized_file(self, logged_in_client, accounts):
+        big = b"x" * (6 * 1024 * 1024)  # 6MB
+        resp = logged_in_client.post("/csv-import/", data={
+            "csv_file": (io.BytesIO(big), "big.csv"),
+            "payment_account_code": "1010",
+        }, content_type="multipart/form-data")
+        assert resp.status_code == 200
+
+    def test_post_unparseable_csv(self, logged_in_client, accounts):
+        resp = logged_in_client.post("/csv-import/", data={
+            "csv_file": (io.BytesIO(b""), "empty.csv"),
+            "payment_account_code": "1010",
+        }, content_type="multipart/form-data")
+        assert resp.status_code == 200
+
+    def test_post_valid_csv_redirects_to_mapping(self, logged_in_client, accounts):
+        csv_bytes = (
+            "日付,摘要,金額\n"
+            "2026-02-15,スーパー,1000\n"
+            "2026-02-16,コンビニ,500\n"
+        ).encode("utf-8")
+        resp = logged_in_client.post("/csv-import/", data={
+            "csv_file": (io.BytesIO(csv_bytes), "test.csv"),
+            "payment_account_code": "1010",
+        }, content_type="multipart/form-data")
+        assert resp.status_code in (302, 303)
+        assert "/csv-import/mapping" in resp.headers["Location"]
+
+
+class TestCsvImportMapping:
+    def test_no_data_redirects_to_upload(self, logged_in_client, accounts):
+        resp = logged_in_client.get("/csv-import/mapping")
+        assert resp.status_code in (302, 303)
+        assert "/csv-import/" in resp.headers["Location"]
+
+    def test_get_after_upload(self, logged_in_client, accounts):
+        csv_bytes = (
+            "日付,摘要,出金,入金\n"
+            "2026-02-15,スーパー,1000,0\n"
+        ).encode("utf-8")
+        # Upload first
+        logged_in_client.post("/csv-import/", data={
+            "csv_file": (io.BytesIO(csv_bytes), "test.csv"),
+            "payment_account_code": "1010",
+        }, content_type="multipart/form-data")
+        # Now get mapping page
+        resp = logged_in_client.get("/csv-import/mapping")
+        assert resp.status_code == 200
+
+
+# --- OFX Import ---
+
+
+_OFX_SAMPLE = b"""OFXHEADER:100
+DATA:OFXSGML
+VERSION:102
+SECURITY:NONE
+ENCODING:USASCII
+
+<OFX>
+<BANKMSGSRSV1>
+<STMTTRNRS>
+<STMTRS>
+<CURDEF>JPY
+<BANKACCTFROM>
+<BANKID>0001
+<ACCTID>1234567
+<ACCTTYPE>SAVINGS
+</BANKACCTFROM>
+<BANKTRANLIST>
+<DTSTART>20260201
+<DTEND>20260228
+<STMTTRN>
+<TRNTYPE>DEBIT
+<DTPOSTED>20260215
+<TRNAMT>-1500
+<FITID>TX001
+<NAME>SUPERMARKET
+</STMTTRN>
+<STMTTRN>
+<TRNTYPE>CREDIT
+<DTPOSTED>20260225
+<TRNAMT>250000
+<FITID>TX002
+<NAME>SALARY
+</STMTTRN>
+</BANKTRANLIST>
+</STMTRS>
+</STMTTRNRS>
+</BANKMSGSRSV1>
+</OFX>"""
+
+
+class TestOfxImportUpload:
+    def test_unauthenticated(self, client):
+        resp = client.get("/ofx-import/")
+        assert resp.status_code in (302, 401)
+
+    def test_get_renders_form(self, logged_in_client, accounts):
+        resp = logged_in_client.get("/ofx-import/")
+        assert resp.status_code == 200
+
+    def test_post_no_file(self, logged_in_client, accounts):
+        resp = logged_in_client.post("/ofx-import/", data={
+            "payment_account_code": "1010",
+        })
+        assert resp.status_code == 200
+
+    def test_post_no_account(self, logged_in_client, accounts):
+        resp = logged_in_client.post("/ofx-import/", data={
+            "ofx_file": (io.BytesIO(_OFX_SAMPLE), "test.ofx"),
+        }, content_type="multipart/form-data")
+        assert resp.status_code == 200
+
+    def test_post_invalid_ofx(self, logged_in_client, accounts):
+        resp = logged_in_client.post("/ofx-import/", data={
+            "ofx_file": (io.BytesIO(b"not-ofx"), "test.ofx"),
+            "payment_account_code": "1010",
+        }, content_type="multipart/form-data")
+        # parse 失敗または 0件 → 200 で再表示
+        assert resp.status_code == 200
+
+    def test_post_valid_ofx_redirects(self, logged_in_client, accounts):
+        with patch("app.views.ofx_import.parse_ofx") as mock_parse:
+            mock_parse.return_value = {
+                "account_id": "1234567",
+                "rows": [
+                    {"date": "2026-02-15", "description": "X",
+                     "deposit": 0, "withdrawal": 1500},
+                ],
+            }
+            resp = logged_in_client.post("/ofx-import/", data={
+                "ofx_file": (io.BytesIO(_OFX_SAMPLE), "test.ofx"),
+                "payment_account_code": "1010",
+            }, content_type="multipart/form-data")
+        assert resp.status_code in (302, 303)
+        assert "/ofx-import/confirm" in resp.headers["Location"]
+
+
+class TestOfxImportConfirm:
+    def test_no_data_redirects(self, logged_in_client, accounts):
+        resp = logged_in_client.get("/ofx-import/confirm")
+        assert resp.status_code in (302, 303)
+        assert "/ofx-import" in resp.headers["Location"]
+
+    def test_full_flow_imports_entries(self, db, logged_in_client, user, accounts):
+        # mock parse_ofx → upload → confirm
+        with patch("app.views.ofx_import.parse_ofx") as mock_parse:
+            mock_parse.return_value = {
+                "account_id": "X",
+                "rows": [
+                    {"date": "2026-02-15", "description": "支払",
+                     "deposit": 0, "withdrawal": 1500},
+                    {"date": "2026-02-25", "description": "給与",
+                     "deposit": 250000, "withdrawal": 0},
+                ],
+            }
+            logged_in_client.post("/ofx-import/", data={
+                "ofx_file": (io.BytesIO(_OFX_SAMPLE), "x.ofx"),
+                "payment_account_code": "1010",
+            }, content_type="multipart/form-data")
+
+        # confirm GET
+        resp = logged_in_client.get("/ofx-import/confirm")
+        assert resp.status_code == 200
+
+        # confirm POST: 取込実行
+        rows = [
+            {"enabled": True, "date": "2026-02-15", "description": "支払",
+             "deposit": 0, "withdrawal": 1500, "category_code": "5010"},
+            {"enabled": True, "date": "2026-02-25", "description": "給与",
+             "deposit": 250000, "withdrawal": 0, "category_code": "4010"},
+        ]
+        resp = logged_in_client.post("/ofx-import/confirm", data={
+            "import_rows": json.dumps(rows),
+            "old_year_action": "skip",
+        })
+        assert resp.status_code in (302, 303)
+        # 2件取り込み
+        assert JournalEntry.query.filter_by(
+            user_id=user.id, source="ofx"
+        ).count() == 2
+
+    def test_disabled_rows_skipped(self, db, logged_in_client, user, accounts):
+        with patch("app.views.ofx_import.parse_ofx") as mock_parse:
+            mock_parse.return_value = {
+                "account_id": "X",
+                "rows": [{"date": "2026-02-15", "description": "x",
+                          "deposit": 0, "withdrawal": 100}],
+            }
+            logged_in_client.post("/ofx-import/", data={
+                "ofx_file": (io.BytesIO(b"x"), "x.ofx"),
+                "payment_account_code": "1010",
+            }, content_type="multipart/form-data")
+
+        rows = [
+            {"enabled": False, "date": "2026-02-15",
+             "deposit": 0, "withdrawal": 100, "category_code": "5010"},
+        ]
+        resp = logged_in_client.post("/ofx-import/confirm", data={
+            "import_rows": json.dumps(rows),
+            "old_year_action": "skip",
+        })
+        assert resp.status_code in (302, 303)
+        assert JournalEntry.query.filter_by(
+            user_id=user.id, source="ofx"
+        ).count() == 0
+
+    def test_post_no_data_redirects(self, logged_in_client, accounts):
+        resp = logged_in_client.post("/ofx-import/confirm", data={})
+        assert resp.status_code in (302, 303)
+
+
+# --- Web Import ---
+
+
+class TestWebImportUpload:
+    def test_unauthenticated(self, client):
+        resp = client.get("/web-import/")
+        assert resp.status_code in (302, 401)
+
+    def test_get_renders_form(self, logged_in_client, accounts):
+        resp = logged_in_client.get("/web-import/")
+        assert resp.status_code == 200
+
+    def test_post_empty_text(self, logged_in_client, accounts):
+        resp = logged_in_client.post("/web-import/", data={
+            "raw_text": "",
+            "payment_account_code": "1010",
+        })
+        assert resp.status_code == 200
+
+    def test_post_too_long_text(self, logged_in_client, accounts):
+        resp = logged_in_client.post("/web-import/", data={
+            "raw_text": "x" * 200_001,
+            "payment_account_code": "1010",
+        })
+        assert resp.status_code == 200
+
+    def test_post_no_payment_account(self, logged_in_client, accounts):
+        resp = logged_in_client.post("/web-import/", data={
+            "raw_text": "some content",
+        })
+        assert resp.status_code == 200
+
+    def test_post_ai_failure_shows_error(self, logged_in_client, accounts):
+        with patch("app.views.web_import.parse_web_text") as mock_parse:
+            mock_parse.side_effect = ValueError("AI解析エラー")
+            resp = logged_in_client.post("/web-import/", data={
+                "raw_text": "明細テキスト",
+                "payment_account_code": "1010",
+            })
+        assert resp.status_code == 200
+
+    def test_post_no_results(self, logged_in_client, accounts):
+        with patch("app.views.web_import.parse_web_text") as mock_parse:
+            mock_parse.return_value = []
+            resp = logged_in_client.post("/web-import/", data={
+                "raw_text": "明細テキスト",
+                "payment_account_code": "1010",
+            })
+        assert resp.status_code == 200
+
+    def test_post_success_redirects(self, logged_in_client, accounts):
+        with patch("app.views.web_import.parse_web_text") as mock_parse:
+            mock_parse.return_value = [
+                {"date": "2026-02-15", "description": "x",
+                 "deposit": 0, "withdrawal": 100},
+            ]
+            resp = logged_in_client.post("/web-import/", data={
+                "raw_text": "明細テキスト",
+                "payment_account_code": "1010",
+            })
+        assert resp.status_code in (302, 303)
+        assert "/web-import/confirm" in resp.headers["Location"]
+
+
+class TestWebImportConfirm:
+    def test_no_data_redirects(self, logged_in_client, accounts):
+        resp = logged_in_client.get("/web-import/confirm")
+        assert resp.status_code in (302, 303)
+
+    def test_full_flow(self, db, logged_in_client, user, accounts):
+        with patch("app.views.web_import.parse_web_text") as mock_parse:
+            mock_parse.return_value = [
+                {"date": "2026-02-15", "description": "セブン",
+                 "deposit": 0, "withdrawal": 500},
+            ]
+            logged_in_client.post("/web-import/", data={
+                "raw_text": "明細",
+                "payment_account_code": "1010",
+            })
+
+        resp = logged_in_client.get("/web-import/confirm")
+        assert resp.status_code == 200
+
+        rows = [
+            {"enabled": True, "date": "2026-02-15", "description": "セブン",
+             "deposit": 0, "withdrawal": 500, "category_code": "5010"},
+        ]
+        resp = logged_in_client.post("/web-import/confirm", data={
+            "import_rows": json.dumps(rows),
+            "old_year_action": "skip",
+        })
+        assert resp.status_code in (302, 303)
+        assert JournalEntry.query.filter_by(
+            user_id=user.id, source="web"
+        ).count() == 1
+
+    def test_post_no_rows(self, logged_in_client, accounts):
+        resp = logged_in_client.post("/web-import/confirm", data={})
+        assert resp.status_code in (302, 303)
