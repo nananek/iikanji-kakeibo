@@ -27,6 +27,11 @@ def create_app(config_class=Config):
     csrf.exempt(webauthn_bp)
     from app.views.api import bp as api_bp
     csrf.exempt(api_bp)
+    # OAuth Device Flow のクライアント向けエンドポイントは CSRF 免除
+    # (ブラウザ向けの authorize エンドポイントは CSRF 保護を維持)
+    from app.views.oauth import device_authorization, token as oauth_token_view
+    csrf.exempt(device_authorization)
+    csrf.exempt(oauth_token_view)
 
     # Before-request hook for audit permission control
     @app.before_request

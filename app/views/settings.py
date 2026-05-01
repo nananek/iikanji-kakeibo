@@ -12,6 +12,7 @@ from app.models.account import Account, AccountType
 from app.models.webauthn import WebAuthnCredential
 from app.models.ai_config import UserAIConfig
 from app.models.api_key import APIKey, ALL_SCOPES, SCOPE_LABELS, SCOPE_DEPENDENCIES
+from app.models.oauth import OAuthToken
 from app.models.audit import AuditGrant, AuditGrantAccount
 from app.models.auto_import import AutoImportSource, WebhookConfig
 from app.services.ai_receipt import (
@@ -278,6 +279,44 @@ def api_key_delete(key_id):
 
     flash(f"APIキー「{name}」を削除しました。", "success")
     return redirect(url_for("settings.api_keys"))
+
+
+# --- OAuth トークン管理 ---
+
+
+@bp.route("/oauth-tokens")
+@login_required
+def oauth_tokens():
+    """OAuth Device Flow で発行したアクセストークンの一覧"""
+    tokens = (
+        OAuthToken.query.filter_by(user_id=current_user.id, is_active=True)
+        .order_by(OAuthToken.created_at.desc())
+        .all()
+    )
+    return render_template("settings/oauth_tokens.html", tokens=tokens)
+
+
+@bp.route("/oauth-tokens/<int:token_id>/revoke", methods=["POST"])
+@login_required
+def oauth_token_revoke(token_id):
+    """OAuth トークンの取り消し"""
+    token = OAuthToken.query.filter_by(
+        id=token_id, user_id=current_user.id
+    ).first_or_404()
+    name = token.name
+    token.is_active = False
+    token.revoked_at = datetime.now(timezone.utc)
+    db.session.commit()
+
+    if request.headers.get("HX-Request"):
+        resp = make_response("", 200)
+        resp.headers["HX-Trigger"] = json.dumps(
+            {"showToast": {"message": f"トークン「{name}」を取り消しました。", "type": "success"}}
+        )
+        return resp
+
+    flash(f"トークン「{name}」を取り消しました。", "success")
+    return redirect(url_for("settings.oauth_tokens"))
 
 
 # --- 月次確定 ---

@@ -5,6 +5,20 @@ title: リリースノート
 
 # リリースノート
 
+## v3.7.0
+
+**OAuth Device Authorization Grant 認証**
+
+- TUI / CLI クライアント向けに OAuth 2.0 Device Authorization Grant (RFC 8628) を実装
+- `POST /oauth/device` でクライアントが device_code / user_code を取得
+- ユーザーは `/oauth/device` でブラウザから user_code を入力して承認/拒否
+- `POST /oauth/token` でクライアントがポーリングしてアクセストークンを取得
+- 設定 → OAuthトークンで承認済みクライアントの一覧表示・取り消し
+- 既存 Bearer 認証ミドルウェアが APIキー (`ik_*`) と OAuthトークン (`ikt_*`) の両方を受け入れる
+- OAuthトークンはデフォルトで全スコープを付与
+- マイグレーション 032: `oauth_devices`, `oauth_tokens` テーブル追加
+- pytest 733件（うち新規 38 件: device_code発行/ポーリング/承認・拒否/期限切れ/Bearer統合/IDOR）
+
 ## v3.6.0
 
 **伝票複写機能**

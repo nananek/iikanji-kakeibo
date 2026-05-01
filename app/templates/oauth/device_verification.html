@@ -1,0 +1,99 @@
+{% extends "base.html" %}
+{% block title %}デバイス接続 - いいかんじ™家計簿{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-lg-6 col-md-8">
+    <h2><i class="bi bi-display"></i> デバイス接続</h2>
+    <p class="text-muted">
+      クライアントアプリ（TUI / CLI など）に表示されたコードを入力して接続を承認します。
+    </p>
+
+    {% if not device %}
+    <div class="card">
+      <div class="card-body">
+        <form method="GET" action="{{ url_for('oauth.device_verification') }}">
+          <div class="mb-3">
+            <label for="code" class="form-label">デバイスコード</label>
+            <input type="text" name="code" id="code" class="form-control form-control-lg font-monospace text-center"
+                   placeholder="XXXX-XXXX" autocomplete="off" autocapitalize="characters"
+                   value="{{ code or '' }}" required>
+            <div class="form-text">クライアントアプリに表示された 8 文字のコードを入力してください。</div>
+          </div>
+          <button type="submit" class="btn btn-primary">
+            <i class="bi bi-arrow-right-circle"></i> 続ける
+          </button>
+        </form>
+      </div>
+    </div>
+
+    {% elif expired %}
+    <div class="alert alert-warning">
+      <i class="bi bi-clock-history"></i>
+      このコードは期限切れです。クライアントで新しいコードを発行してください。
+    </div>
+    <a href="{{ url_for('oauth.device_verification') }}" class="btn btn-secondary">
+      <i class="bi bi-arrow-left"></i> 戻る
+    </a>
+
+    {% elif device.status == 'approved' %}
+    <div class="alert alert-success">
+      <i class="bi bi-check-circle"></i>
+      接続を承認しました。クライアントに戻ってください。
+    </div>
+
+    {% elif device.status == 'denied' %}
+    <div class="alert alert-info">
+      <i class="bi bi-x-circle"></i>
+      接続を拒否しました。
+    </div>
+
+    {% elif device.status == 'consumed' %}
+    <div class="alert alert-secondary">
+      <i class="bi bi-check2-all"></i>
+      このコードは既に使用されました。
+    </div>
+
+    {% elif device.status == 'expired' %}
+    <div class="alert alert-warning">
+      <i class="bi bi-clock-history"></i>
+      このコードは期限切れです。クライアントで新しいコードを発行してください。
+    </div>
+
+    {% else %}
+    <div class="card">
+      <div class="card-body">
+        <p>以下のクライアントアプリからの接続を承認しますか？</p>
+        <dl class="row mb-3">
+          <dt class="col-sm-4">クライアント</dt>
+          <dd class="col-sm-8">{{ device.client_name or '不明なクライアント' }}</dd>
+          <dt class="col-sm-4">コード</dt>
+          <dd class="col-sm-8 font-monospace">{{ device.user_code }}</dd>
+        </dl>
+        <div class="alert alert-warning small">
+          <i class="bi bi-exclamation-triangle"></i>
+          承認すると、このクライアントは長期間あなたのアカウントの全機能にアクセスできます。
+          見覚えがない場合は拒否してください。
+        </div>
+        <form method="POST" action="{{ url_for('oauth.device_authorize') }}" class="d-flex gap-2">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <input type="hidden" name="user_code" value="{{ device.user_code }}">
+          <button type="submit" name="decision" value="approve" class="btn btn-primary">
+            <i class="bi bi-check-circle"></i> 承認
+          </button>
+          <button type="submit" name="decision" value="deny" class="btn btn-outline-danger">
+            <i class="bi bi-x-circle"></i> 拒否
+          </button>
+        </form>
+      </div>
+    </div>
+    {% endif %}
+
+    <h5 class="mt-4">発行済みOAuthトークン</h5>
+    <p class="text-muted small">
+      <a href="{{ url_for('settings.oauth_tokens') }}">トークン一覧</a>から
+      接続済みクライアントを取り消すことができます。
+    </p>
+  </div>
+</div>
+{% endblock %}

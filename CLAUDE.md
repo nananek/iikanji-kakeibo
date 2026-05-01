@@ -63,6 +63,7 @@
 | auditor | `/auditor` | 監査ダッシュボード・代理閲覧 |
 | vouchers | `/vouchers` | 証憑一覧（電帳法検索要件対応） |
 | api | `/api/v1` | REST API（仕訳CRUD・AI証憑仕訳・Bearer認証） |
+| oauth | `/oauth` | OAuth 2.0 Device Authorization Grant (RFC 8628) |
 
 ### モデル (`app/models/`)
 
@@ -86,6 +87,8 @@
 | VoucherAuditLog | voucher_audit_logs | voucher_id, user_id, action (orphaned/hash_verified/hash_mismatch), detail (JSON) |
 | BalanceCache | balance_caches | user_id, year, period, account_code, cumulative_debit, cumulative_credit |
 | WebAuthnCredential | webauthn_credentials | credential_id, credential_public_key, current_sign_count |
+| OAuthDevice | oauth_devices | device_code_hash, user_code, user_id, status (pending/approved/denied/expired/consumed), expires_at |
+| OAuthToken | oauth_tokens | user_id, name, token_hash, token_prefix, is_active, last_used_at, revoked_at |
 
 ### サービス (`app/services/`)
 

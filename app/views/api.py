@@ -10,6 +10,7 @@ from flask import Blueprint, jsonify, request, g
 
 from app.extensions import db, limiter
 from app.models.api_key import APIKey
+from app.models.oauth import OAuthToken
 from app.models.ai_config import UserAIConfig
 from app.models.ai_draft import AIDraft
 from app.models.journal import JournalEntry
@@ -29,8 +30,10 @@ bp = Blueprint("api", __name__, url_prefix="/api/v1")
 
 
 def api_key_required(scope=None):
-    """Authorization: Bearer ik_xxx ヘッダーで認証するデコレータ
+    """Authorization: Bearer <token> ヘッダーで認証するデコレータ
 
+    APIキー (ik_*) と OAuth Device Flow トークン (ikt_*) の両方を受け入れる。
+    OAuthToken は全スコープを暗黙的に持つ。
     scope を指定すると、API キーにそのスコープがあるか追加チェックする。
     """
 
@@ -41,8 +44,24 @@ def api_key_required(scope=None):
             if not auth.startswith("Bearer "):
                 return jsonify({"error": "Authorization ヘッダーが必要です。"}), 401
 
-            raw_key = auth[7:]
-            key_hash = APIKey.hash_key(raw_key)
+            raw = auth[7:]
+            now = datetime.now(timezone.utc)
+
+            # OAuth Device Flow トークン
+            if raw.startswith("ikt_"):
+                token_hash = OAuthToken.hash_token(raw)
+                token = OAuthToken.query.filter_by(
+                    token_hash=token_hash, is_active=True
+                ).first()
+                if not token:
+                    return jsonify({"error": "無効なトークンです。"}), 401
+                token.last_used_at = now
+                db.session.commit()
+                g.api_user_id = token.user_id
+                return f(*args, **kwargs)
+
+            # 従来のAPIキー
+            key_hash = APIKey.hash_key(raw)
             api_key = APIKey.query.filter_by(key_hash=key_hash, is_active=True).first()
             if not api_key:
                 return jsonify({"error": "無効な API キーです。"}), 401
@@ -55,7 +74,7 @@ def api_key_required(scope=None):
                     403,
                 )
 
-            api_key.last_used_at = datetime.now(timezone.utc)
+            api_key.last_used_at = now
             db.session.commit()
 
             g.api_user_id = api_key.user_id

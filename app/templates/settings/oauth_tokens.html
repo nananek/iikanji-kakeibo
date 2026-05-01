@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block title %}OAuthトークン - いいかんじ™家計簿{% endblock %}
+
+{% block content %}
+<div class="row">
+  <div class="col-lg-8">
+    <h2><i class="bi bi-shield-lock"></i> OAuthトークン</h2>
+    <p class="text-muted">
+      TUI / CLI クライアントから OAuth Device Flow 経由で承認した接続を管理します。
+      新しい接続は <a href="{{ url_for('oauth.device_verification') }}">デバイス接続</a> から承認してください。
+    </p>
+
+    <div class="card">
+      <div class="card-header">
+        <i class="bi bi-list-ul"></i> 承認済みクライアント
+      </div>
+      {% if tokens %}
+      <div class="table-responsive">
+        <table class="table table-hover mb-0">
+          <thead>
+            <tr>
+              <th>名前</th>
+              <th>プレフィクス</th>
+              <th>承認日</th>
+              <th>最終利用</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for t in tokens %}
+            <tr>
+              <td>{{ t.name }}</td>
+              <td><code>{{ t.token_prefix }}</code></td>
+              <td>{{ t.created_at.strftime('%Y/%m/%d %H:%M') }}</td>
+              <td>
+                {% if t.last_used_at %}
+                  {{ t.last_used_at.strftime('%Y/%m/%d %H:%M') }}
+                {% else %}
+                  <span class="text-muted">未使用</span>
+                {% endif %}
+              </td>
+              <td class="text-end">
+                <button type="button" class="btn btn-sm btn-outline-danger"
+                        hx-post="{{ url_for('settings.oauth_token_revoke', token_id=t.id) }}"
+                        hx-confirm="このトークンを取り消しますか？クライアントは再度承認が必要になります。"
+                        hx-target="closest tr" hx-swap="outerHTML swap:0.3s">
+                  <i class="bi bi-x-octagon"></i> 取り消し
+                </button>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <div class="card-body text-muted text-center py-4">
+        <i class="bi bi-shield-lock" style="font-size: 2rem;"></i>
+        <p class="mt-2 mb-0">承認済みのクライアントはありません。</p>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% endblock %}
