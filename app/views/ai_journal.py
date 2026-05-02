@@ -7,7 +7,7 @@ from datetime import date as date_type
 
 from flask import (
     Blueprint, render_template, redirect, url_for, flash, request, session,
-    jsonify,
+    jsonify, make_response,
 )
 from flask_login import login_required, current_user
 
@@ -251,43 +251,55 @@ def drafts_delete(draft_id):
 @login_required
 def drafts_quick_accept(draft_id):
     """案1をそのまま仕訳登録する"""
+    is_hx = request.headers.get("HX-Request")
+
+    def _hx_error(msg, redirect_endpoint="ai_journal.drafts", **redirect_kwargs):
+        if is_hx:
+            resp = make_response("", 422)
+            resp.headers["HX-Reswap"] = "none"
+            resp.headers["HX-Trigger"] = json.dumps(
+                {"showToast": {"message": msg, "type": "danger"}}
+            )
+            return resp
+        flash(msg, "danger")
+        return redirect(url_for(redirect_endpoint, **redirect_kwargs))
+
     draft = AIDraft.query.get_or_404(draft_id)
     user_id = get_effective_user_id()
     if draft.user_id != user_id:
-        flash("権限がありません。", "danger")
-        return redirect(url_for("ai_journal.drafts"))
+        return _hx_error("権限がありません。")
 
     if draft.status == "done":
-        flash("この下書きは仕訳登録済みです。", "warning")
-        return redirect(url_for("ai_journal.drafts"))
+        return _hx_error("この下書きは仕訳登録済みです。")
 
     if not draft.suggestions_json:
-        flash("解析データがありません。", "warning")
-        return redirect(url_for("ai_journal.drafts"))
+        return _hx_error("解析データがありません。")
 
     try:
         suggestions = json.loads(draft.suggestions_json)
     except (json.JSONDecodeError, IndexError):
-        flash("解析データが不正です。", "danger")
-        return redirect(url_for("ai_journal.drafts"))
+        return _hx_error("解析データが不正です。")
 
     if not suggestions:
-        flash("仕訳案がありません。", "warning")
-        return redirect(url_for("ai_journal.drafts"))
+        return _hx_error("仕訳案がありません。")
 
     selected = suggestions[0]
     entry_date_str = selected.get("date", "")
     description = selected.get("entry_description", "").strip()
 
     if not entry_date_str or not description:
-        flash("案1の日付または摘要が不足しています。レビュー画面で確認してください。", "danger")
-        return redirect(url_for("ai_journal.drafts_review", draft_id=draft_id))
+        return _hx_error(
+            "案1の日付または摘要が不足しています。レビュー画面で確認してください。",
+            "ai_journal.drafts_review", draft_id=draft_id,
+        )
 
     try:
         entry_date = date_type.fromisoformat(entry_date_str)
     except ValueError:
-        flash("案1の日付が不正です。レビュー画面で確認してください。", "danger")
-        return redirect(url_for("ai_journal.drafts_review", draft_id=draft_id))
+        return _hx_error(
+            "案1の日付が不正です。レビュー画面で確認してください。",
+            "ai_journal.drafts_review", draft_id=draft_id,
+        )
 
     lines_data = [
         {
@@ -301,22 +313,25 @@ def drafts_quick_accept(draft_id):
     ]
 
     if not lines_data:
-        flash("案1に仕訳明細がありません。レビュー画面で確認してください。", "danger")
-        return redirect(url_for("ai_journal.drafts_review", draft_id=draft_id))
+        return _hx_error(
+            "案1に仕訳明細がありません。レビュー画面で確認してください。",
+            "ai_journal.drafts_review", draft_id=draft_id,
+        )
 
     # 提出済みロック科目チェック
     locked_codes = get_submitted_account_codes(user_id)
     if locked_codes:
         used_codes = {line["account_code"] for line in lines_data}
         if used_codes & locked_codes:
-            flash("提出済みの税務科目を含むため登録できません。", "danger")
-            return redirect(url_for("ai_journal.drafts_review", draft_id=draft_id))
+            return _hx_error(
+                "提出済みの税務科目を含むため登録できません。",
+                "ai_journal.drafts_review", draft_id=draft_id,
+            )
 
     # 確定済み期間チェック
     err = check_period_open_for_new(user_id, entry_date.year, entry_date.month)
     if err:
-        flash(err, "danger")
-        return redirect(url_for("ai_journal.drafts_review", draft_id=draft_id))
+        return _hx_error(err, "ai_journal.drafts_review", draft_id=draft_id)
 
     try:
         entry = create_journal_entry(
@@ -329,11 +344,18 @@ def drafts_quick_accept(draft_id):
         _update_discord_done(draft, entry.entry_number)
         create_voucher_from_draft(draft, entry.id)
         db.session.commit()
-        flash(f"伝票 #{entry.entry_number} を登録しました。", "success")
     except ValueError as e:
-        flash(str(e), "danger")
-        return redirect(url_for("ai_journal.drafts_review", draft_id=draft_id))
+        return _hx_error(str(e), "ai_journal.drafts_review", draft_id=draft_id)
 
+    msg = f"伝票 #{entry.entry_number} を登録しました。"
+    if is_hx:
+        resp = make_response("", 200)
+        resp.headers["HX-Trigger"] = json.dumps(
+            {"showToast": {"message": msg, "type": "success"}}
+        )
+        return resp
+
+    flash(msg, "success")
     return redirect(url_for("ai_journal.drafts"))
 
 

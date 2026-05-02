@@ -72,7 +72,9 @@
       </div>
       <div class="card-footer d-flex gap-2">
         {% if d.status != 'done' %}
-        <form method="POST" action="{{ url_for('ai_journal.drafts_quick_accept', draft_id=d.id) }}"
+        <form hx-post="{{ url_for('ai_journal.drafts_quick_accept', draft_id=d.id) }}"
+              hx-target="closest .col-md-6"
+              hx-swap="outerHTML swap:0.3s"
               class="flex-fill">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <button type="submit" class="btn btn-success btn-sm w-100">
