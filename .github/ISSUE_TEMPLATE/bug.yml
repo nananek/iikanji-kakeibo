@@ -1,0 +1,23 @@
+name: バグ報告
+description: 不具合を報告する
+labels: ["bug"]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: 何が起きましたか?
+      placeholder: 期待される動作と実際の動作
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: 再現手順
+      placeholder: |
+        1. ...
+        2. ...
+  - type: input
+    id: version
+    attributes:
+      label: バージョン
+      placeholder: v3.7.0
