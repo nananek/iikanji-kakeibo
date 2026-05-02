@@ -237,6 +237,45 @@ class TestQuickAccept:
         html = resp.data.decode()
         assert "案1で登録" in html
         assert "quick-accept" in html
+        # htmx attributes for in-place update
+        assert "hx-post" in html
+        assert "hx-swap" in html
+
+    def test_quick_accept_htmx_returns_empty_with_toast(self, db, logged_in_client, user, accounts):
+        """HX-Request の場合、空ボディ＋HX-Trigger でトースト表示"""
+        draft = self._make_draft(db, user.id, accounts)
+
+        resp = logged_in_client.post(
+            f"/ai-journal/drafts/{draft.id}/quick-accept",
+            headers={"HX-Request": "true"},
+        )
+        assert resp.status_code == 200
+        assert resp.data == b""
+        trigger = json.loads(resp.headers["HX-Trigger"])
+        assert "showToast" in trigger
+        assert "登録しました" in trigger["showToast"]["message"]
+        assert trigger["showToast"]["type"] == "success"
+
+    def test_quick_accept_htmx_error_returns_422(self, db, logged_in_client, user):
+        """HX-Request でエラー時は 422 + Reswap=none + danger トースト"""
+        draft = AIDraft(
+            user_id=user.id,
+            image_key="vouchers/1/test.jpg",
+            image_mime="image/jpeg",
+            suggestions_json="[]",
+            status="analyzed",
+        )
+        db.session.add(draft)
+        db.session.commit()
+
+        resp = logged_in_client.post(
+            f"/ai-journal/drafts/{draft.id}/quick-accept",
+            headers={"HX-Request": "true"},
+        )
+        assert resp.status_code == 422
+        assert resp.headers.get("HX-Reswap") == "none"
+        trigger = json.loads(resp.headers["HX-Trigger"])
+        assert trigger["showToast"]["type"] == "danger"
 
 
 class TestReviewButtons:
