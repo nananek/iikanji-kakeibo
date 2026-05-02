@@ -5,6 +5,20 @@ title: リリースノート
 
 # リリースノート
 
+## v3.7.1
+
+**保守リリース — API 整数シリアライズ修正・テスト網羅・依存更新**
+
+- **API 修正**: `/api/v1/journals` の仕訳明細で `debit` / `credit` を整数で返すよう修正（従来は `Decimal` → 文字列としてシリアライズされていた）。TUI / `client-py` 互換性向上
+- **テスト網羅率向上**: 60% → 94%、テスト数 734 → 1421 件（13 PR にわたる強化）
+  - SSRF 対策 `validate_external_url`、CAPTCHA 全プロバイダ、AI 証憑（OpenAI/Gemini/Claude/Ollama）、監査権限 (Lv1/Lv2/Lv3)、Passkey 登録/認証、WebDAV 自動取込、確定期間ロック、CSV/OFX/Web 取込、S3 ストレージ、画像配信 ETag 等を網羅
+- **依存更新**:
+  - Python 3.12-alpine → 3.14-alpine
+  - cryptography ≥47.0.0 / flask-limiter 4.1.1 / boto3 1.43.1 / gunicorn 25.3.0
+  - sqlalchemy 2.0.49 / alembic 1.18.4 / werkzeug 3.1.8 / flask-migrate 4.1.0 / flask-wtf 1.3.0 / email-validator 2.3.0 / psycopg2-binary 2.9.12 / python-dotenv 1.2.2
+  - GitHub Actions: docker/build-push v7, docker/login v4, docker/metadata v6, actions/setup-python v6, actions/deploy-pages v5
+- **GitHub 整備**: Issue/PR テンプレート、Dependabot、Dependency Review ワークフロー、CodeQL を有効化
+
 ## v3.7.0
 
 **OAuth Device Authorization Grant 認証**
