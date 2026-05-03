@@ -166,7 +166,7 @@ def api_key_raw(db, user):
         name="テスト用キー",
         key_hash=key_hash,
         key_prefix=key_prefix,
-        scopes="journals:create,journals:read,journals:delete,ai:analyze",
+        scopes="journals:create,journals:read,journals:delete,ai:analyze,reports:read",
         is_active=True,
     )
     db.session.add(key)
