@@ -98,13 +98,11 @@ def compute_trial_balance(user_id, year, pf=0, pt=15):
                 else:
                     opening = year_c - year_d
         elif pf > 0:
+            # pf >= 1 なので period_range_filter は必ず非 None
             prior_filter = period_range_filter(year, 0, pf - 1)
             if is_bs:
-                if prior_filter is not None:
-                    pd, pc = _query_sum(account.code, [prior_filter])
-                    pd, pc = int(pd), int(pc)
-                else:
-                    pd, pc = 0, 0
+                pd, pc = _query_sum(account.code, [prior_filter])
+                pd, pc = int(pd), int(pc)
                 bd, bc = _query_sum(
                     account.code,
                     [JournalEntry.date < start_of_year],
@@ -115,7 +113,7 @@ def compute_trial_balance(user_id, year, pf=0, pt=15):
                     opening = (pd + bd) - (pc + bc)
                 else:
                     opening = (pc + bc) - (pd + bd)
-            elif is_pl and prior_filter is not None:
+            elif is_pl:
                 pd, pc = _query_sum(account.code, [prior_filter])
                 if is_debit_normal:
                     opening = int(pd) - int(pc)
