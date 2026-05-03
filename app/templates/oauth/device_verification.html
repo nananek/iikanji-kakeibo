@@ -72,19 +72,25 @@
         </dl>
         <div class="alert alert-warning small">
           <i class="bi bi-exclamation-triangle"></i>
-          承認すると、このクライアントは長期間あなたのアカウントの全機能にアクセスできます。
+          承認すると、このクライアントは長期間あなたのアカウントにアクセスできます。
           見覚えがない場合は拒否してください。
         </div>
-        <form method="POST" action="{{ url_for('oauth.device_authorize') }}" class="d-flex gap-2">
+        <form method="POST" action="{{ url_for('oauth.device_authorize') }}" class="d-flex flex-wrap gap-2">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <input type="hidden" name="user_code" value="{{ device.user_code }}">
           <button type="submit" name="decision" value="approve" class="btn btn-primary">
-            <i class="bi bi-check-circle"></i> 承認
+            <i class="bi bi-check-circle"></i> 全権限で承認
+          </button>
+          <button type="submit" name="decision" value="approve_readonly" class="btn btn-outline-primary">
+            <i class="bi bi-eye"></i> 読み取り専用で承認
           </button>
           <button type="submit" name="decision" value="deny" class="btn btn-outline-danger">
             <i class="bi bi-x-circle"></i> 拒否
           </button>
         </form>
+        <p class="form-text mt-2">
+          <strong>読み取り専用</strong>: 仕訳・証憑の閲覧・分析のみ可能。新規作成や削除はできません。
+        </p>
       </div>
     </div>
     {% endif %}

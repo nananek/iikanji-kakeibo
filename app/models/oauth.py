@@ -41,6 +41,7 @@ class OAuthDevice(db.Model):
     created_at = db.Column(db.DateTime, nullable=False, default=_now_utc)
     expires_at = db.Column(db.DateTime, nullable=False)
     last_polled_at = db.Column(db.DateTime, nullable=True)
+    read_only = db.Column(db.Boolean, nullable=False, default=False)
 
     user = db.relationship(
         "User", backref=db.backref("oauth_devices", lazy="dynamic")
@@ -103,6 +104,7 @@ class OAuthToken(db.Model):
     created_at = db.Column(db.DateTime, nullable=False, default=_now_utc)
     last_used_at = db.Column(db.DateTime, nullable=True)
     revoked_at = db.Column(db.DateTime, nullable=True)
+    read_only = db.Column(db.Boolean, nullable=False, default=False)
 
     user = db.relationship(
         "User", backref=db.backref("oauth_tokens", lazy="dynamic")

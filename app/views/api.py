@@ -29,12 +29,13 @@ from app.models.voucher_audit_log import VoucherAuditLog
 bp = Blueprint("api", __name__, url_prefix="/api/v1")
 
 
-def api_key_required(scope=None):
+def api_key_required(scope=None, write=False):
     """Authorization: Bearer <token> ヘッダーで認証するデコレータ
 
     APIキー (ik_*) と OAuth Device Flow トークン (ikt_*) の両方を受け入れる。
     OAuthToken は全スコープを暗黙的に持つ。
     scope を指定すると、API キーにそのスコープがあるか追加チェックする。
+    write=True を指定したエンドポイントは、read_only な OAuth トークンからは拒否される。
     """
 
     def decorator(f):
@@ -55,6 +56,13 @@ def api_key_required(scope=None):
                 ).first()
                 if not token:
                     return jsonify({"error": "無効なトークンです。"}), 401
+                if write and token.read_only:
+                    return (
+                        jsonify(
+                            {"error": "このトークンは読み取り専用です。"}
+                        ),
+                        403,
+                    )
                 token.last_used_at = now
                 db.session.commit()
                 g.api_user_id = token.user_id
@@ -89,7 +97,7 @@ def api_key_required(scope=None):
 
 
 @bp.route("/journals", methods=["POST"])
-@api_key_required(scope="journals:create")
+@api_key_required(scope="journals:create", write=True)
 def create_journal():
     """仕訳起票 API"""
     data = request.get_json(silent=True)
@@ -265,7 +273,7 @@ def get_journal(entry_id):
 
 
 @bp.route("/journals/<int:entry_id>", methods=["DELETE"])
-@api_key_required(scope="journals:delete")
+@api_key_required(scope="journals:delete", write=True)
 def delete_journal(entry_id):
     """仕訳削除 API"""
     user_id = g.api_user_id
@@ -301,7 +309,7 @@ _ALLOWED_MIME_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
 
 @bp.route("/ai/analyze", methods=["POST"])
 @limiter.limit("30/hour")
-@api_key_required(scope="ai:analyze")
+@api_key_required(scope="ai:analyze", write=True)
 def ai_analyze():
     """画像を AI 解析して下書きを作成する。
 
@@ -453,7 +461,7 @@ def ai_draft_detail(draft_id):
 
 
 @bp.route("/ai/drafts/<int:draft_id>", methods=["DELETE"])
-@api_key_required(scope="ai:analyze")
+@api_key_required(scope="ai:analyze", write=True)
 def ai_draft_delete(draft_id):
     """下書き削除 API"""
     draft = AIDraft.query.filter_by(
