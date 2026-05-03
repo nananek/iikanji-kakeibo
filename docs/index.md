@@ -48,12 +48,17 @@ AIが証憑を読み取って仕訳を提案。
 
 ## REST API
 
-外部プログラムから仕訳の起票・閲覧・削除、AI 証憑仕訳ができる REST API を提供しています。API キーによる Bearer 認証で、設定画面からキーの発行・スコープ管理が可能です。
+外部プログラムから仕訳の起票・閲覧・削除、AI 証憑仕訳、レポート取得ができる REST API を提供しています。API キーまたは OAuth 2.0 Device Flow による Bearer 認証に対応。OAuth は「全権限」または「読み取り専用」で承認可能です。
 
 - [REST API リファレンス]({{ '/api/' | relative_url }}) — 認証・エンドポイント・エラーコード
 - [仕訳 API]({{ '/api/journals.html' | relative_url }}) — 仕訳の CRUD 操作
 - [AI 証憑仕訳 API]({{ '/api/ai-drafts.html' | relative_url }}) — 画像解析・下書き管理
 - [証憑 API]({{ '/api/vouchers.html' | relative_url }}) — 証憑一覧・画像取得・ハッシュ検証・操作ログ
+- [レポート API]({{ '/api/reports.html' | relative_url }}) — 試算表・損益計算書・月次比較・確定申告集計
+
+## MCP サーバー
+
+[`iikanji-mcp`](https://github.com/nananek/iikanji-kakeibo-client-mcp) を使うと、Claude Desktop 等の MCP クライアントから財務分析が可能になります。OAuth 読み取り専用トークンと組み合わせれば、構造的に書き込み不可で安全。
 
 ## Python クライアント
 

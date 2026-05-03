@@ -18,12 +18,26 @@ https://your-server.example.com/api/v1
 すべての API リクエストに `Authorization` ヘッダーが必要です。
 
 ```
-Authorization: Bearer ik_xxxxxxx
+Authorization: Bearer <token>
 ```
 
-API キーはサーバーの **設定 > API キー管理** から発行できます。キーは `ik_` プレフィックスで始まります。
+トークンは 2 種類サポート:
 
-## スコープ
+### API キー (`ik_*`)
+
+サーバーの **設定 > API キー管理** から発行。スコープ単位で権限を選択。
+
+### OAuth Device Flow トークン (`ikt_*`)
+
+RFC 8628 OAuth 2.0 Device Authorization Grant に対応。CLI / TUI / MCP サーバーなどブラウザを起動できないクライアントから利用可能。
+
+1. クライアントが `POST /oauth/device` を呼び `device_code` / `user_code` / `verification_uri_complete` を取得
+2. ユーザーは `verification_uri_complete` をブラウザで開き、ログインして **「全権限で承認」** または **「読み取り専用で承認」** を選択
+3. クライアントは `POST /oauth/token` をポーリングしてアクセストークン (`ikt_*`) を取得
+
+OAuth トークンは API キーのスコープチェックを暗黙にスキップします (全スコープ相当)。ただし **読み取り専用** で承認したトークンは、書き込み系エンドポイント (`POST /journals`, `DELETE /journals/:id`, `POST /ai/analyze`, `DELETE /ai/drafts/:id`) を呼ぶと **403** で拒否されます。
+
+## スコープ (API キーのみ)
 
 API キー発行時にスコープ（権限）を選択します。
 
@@ -33,6 +47,7 @@ API キー発行時にスコープ（権限）を選択します。
 | `journals:read` | 仕訳閲覧 | `GET /journals`, `GET /journals/:id` |
 | `journals:delete` | 仕訳削除 | `DELETE /journals/:id` |
 | `ai:analyze` | AI 証憑仕訳 | `POST /ai/analyze`, `GET/DELETE /ai/drafts` |
+| `reports:read` | レポート閲覧 | `GET /reports/*` |
 
 `journals:delete` は `journals:read` スコープを前提とします（削除対象を閲覧できる必要があるため）。
 
@@ -132,3 +147,12 @@ API キー発行時にスコープ（権限）を選択します。
 | GET | `/api/v1/vouchers/:id/image` | [証憑画像](vouchers.html#証憑画像) | `journals:read` |
 | GET | `/api/v1/vouchers/:id/verify` | [ハッシュ検証](vouchers.html#ハッシュ検証) | `journals:read` |
 | GET | `/api/v1/vouchers/:id/logs` | [操作ログ](vouchers.html#操作ログ) | `journals:read` |
+
+### レポート API
+
+| メソッド | パス | 説明 | スコープ |
+|---------|------|------|---------|
+| GET | `/api/v1/reports/trial-balance` | [試算表](reports.html#試算表) | `reports:read` |
+| GET | `/api/v1/reports/income-statement` | [損益計算書](reports.html#損益計算書) | `reports:read` |
+| GET | `/api/v1/reports/monthly` | [月次比較](reports.html#月次比較) | `reports:read` |
+| GET | `/api/v1/reports/tax` | [確定申告集計](reports.html#確定申告集計) | `reports:read` |

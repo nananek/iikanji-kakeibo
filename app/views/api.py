@@ -29,12 +29,13 @@ from app.models.voucher_audit_log import VoucherAuditLog
 bp = Blueprint("api", __name__, url_prefix="/api/v1")
 
 
-def api_key_required(scope=None):
+def api_key_required(scope=None, write=False):
     """Authorization: Bearer <token> ヘッダーで認証するデコレータ
 
     APIキー (ik_*) と OAuth Device Flow トークン (ikt_*) の両方を受け入れる。
     OAuthToken は全スコープを暗黙的に持つ。
     scope を指定すると、API キーにそのスコープがあるか追加チェックする。
+    write=True を指定したエンドポイントは、read_only な OAuth トークンからは拒否される。
     """
 
     def decorator(f):
@@ -55,6 +56,13 @@ def api_key_required(scope=None):
                 ).first()
                 if not token:
                     return jsonify({"error": "無効なトークンです。"}), 401
+                if write and token.read_only:
+                    return (
+                        jsonify(
+                            {"error": "このトークンは読み取り専用です。"}
+                        ),
+                        403,
+                    )
                 token.last_used_at = now
                 db.session.commit()
                 g.api_user_id = token.user_id
@@ -89,7 +97,7 @@ def api_key_required(scope=None):
 
 
 @bp.route("/journals", methods=["POST"])
-@api_key_required(scope="journals:create")
+@api_key_required(scope="journals:create", write=True)
 def create_journal():
     """仕訳起票 API"""
     data = request.get_json(silent=True)
@@ -265,7 +273,7 @@ def get_journal(entry_id):
 
 
 @bp.route("/journals/<int:entry_id>", methods=["DELETE"])
-@api_key_required(scope="journals:delete")
+@api_key_required(scope="journals:delete", write=True)
 def delete_journal(entry_id):
     """仕訳削除 API"""
     user_id = g.api_user_id
@@ -301,7 +309,7 @@ _ALLOWED_MIME_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
 
 @bp.route("/ai/analyze", methods=["POST"])
 @limiter.limit("30/hour")
-@api_key_required(scope="ai:analyze")
+@api_key_required(scope="ai:analyze", write=True)
 def ai_analyze():
     """画像を AI 解析して下書きを作成する。
 
@@ -453,7 +461,7 @@ def ai_draft_detail(draft_id):
 
 
 @bp.route("/ai/drafts/<int:draft_id>", methods=["DELETE"])
-@api_key_required(scope="ai:analyze")
+@api_key_required(scope="ai:analyze", write=True)
 def ai_draft_delete(draft_id):
     """下書き削除 API"""
     draft = AIDraft.query.filter_by(
@@ -664,6 +672,128 @@ def api_voucher_logs(voucher_id):
             }
             for log in logs
         ],
+    })
+
+
+# --- レポート API (read-only) ---
+
+
+@bp.route("/reports/trial-balance", methods=["GET"])
+@api_key_required(scope="reports:read")
+def api_trial_balance():
+    """試算表 API
+
+    Query: year (default: 当年), period_from (0-16, default: 0),
+    period_to (0-16, default: 15)
+    """
+    from app.services.reports import compute_trial_balance
+
+    year = request.args.get("year", type=int) or date_type.today().year
+    pf = request.args.get("period_from", 0, type=int)
+    pt = request.args.get("period_to", 15, type=int)
+
+    balances = compute_trial_balance(g.api_user_id, year, pf, pt)
+    return jsonify({
+        "ok": True,
+        "year": year,
+        "period_from": max(0, min(16, pf)),
+        "period_to": max(pf, min(16, pt)),
+        "balances": balances,
+    })
+
+
+@bp.route("/reports/income-statement", methods=["GET"])
+@api_key_required(scope="reports:read")
+def api_income_statement():
+    """損益計算書 API
+
+    Query: year (default: 当年), month (1-12, optional)
+    """
+    from app.services.reports import compute_income_statement
+
+    year = request.args.get("year", type=int) or date_type.today().year
+    month = request.args.get("month", type=int)
+    if month is not None and not (1 <= month <= 12):
+        return jsonify({"error": "month は 1-12 で指定してください。"}), 400
+
+    data = compute_income_statement(g.api_user_id, year, month)
+    return jsonify({"ok": True, "year": year, "month": month, **data})
+
+
+@bp.route("/reports/monthly", methods=["GET"])
+@api_key_required(scope="reports:read")
+def api_monthly_comparison():
+    """月次比較 API
+
+    Query: year (default: 当年)
+    """
+    from app.services.tax import get_monthly_comparison
+
+    year = request.args.get("year", type=int) or date_type.today().year
+    data = get_monthly_comparison(g.api_user_id, year)
+    return jsonify({
+        "ok": True,
+        "year": year,
+        "expense_accounts": data["expense_accounts"],
+        "income_accounts": data["income_accounts"],
+        "expense_totals": [int(v) for v in data["expense_totals"]],
+        "income_totals": [int(v) for v in data["income_totals"]],
+    })
+
+
+@bp.route("/reports/tax", methods=["GET"])
+@api_key_required(scope="reports:read")
+def api_tax_summary():
+    """確定申告集計 API
+
+    Query: year (default: 当年)
+    """
+    from app.services.tax import get_tax_summary, get_medical_summary
+
+    year = request.args.get("year", type=int) or date_type.today().year
+    tax = get_tax_summary(g.api_user_id, year)
+    medical = get_medical_summary(g.api_user_id, year)
+
+    tax_serializable = {
+        cat: {
+            "label": v["label"],
+            "total": int(v["total"]),
+            "accounts": [
+                {"name": a["name"], "amount": int(a["amount"])}
+                for a in v["accounts"]
+            ],
+        }
+        for cat, v in tax.items()
+    }
+    medical_serializable = {
+        "total_paid": int(medical.get("total_paid", 0) or 0),
+        "total_reimbursed": int(medical.get("total_reimbursed", 0) or 0),
+        "net_total": int(medical.get("net_total", 0) or 0),
+        "by_patient": [
+            {
+                "name": p.get("name", ""),
+                "paid": int(p.get("paid", 0) or 0),
+                "reimbursed": int(p.get("reimbursed", 0) or 0),
+                "net": int(p.get("net", 0) or 0),
+                "hospitals": [
+                    {
+                        "name": h.get("name", ""),
+                        "paid": int(h.get("paid", 0) or 0),
+                        "reimbursed": int(h.get("reimbursed", 0) or 0),
+                        "net": int(h.get("net", 0) or 0),
+                        "provider_type": h.get("provider_type", ""),
+                    }
+                    for h in p.get("hospitals", [])
+                ],
+            }
+            for p in medical.get("by_patient", [])
+        ],
+    }
+    return jsonify({
+        "ok": True,
+        "year": year,
+        "tax_summary": tax_serializable,
+        "medical_summary": medical_serializable,
     })
 
 

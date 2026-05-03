@@ -97,8 +97,11 @@
 
 - 仕訳の起票・閲覧・削除、AI 証憑仕訳、証憑管理を外部プログラムから操作
 - 証憑一覧・画像取得・ハッシュ検証・操作ログの API を提供
-- API キーによる Bearer 認証、スコープ管理
-- Python クライアント [`iikanji`](https://github.com/nananek/iikanji-kakeibo-client-py) 対応
+- レポート API: 試算表・損益計算書・月次比較・確定申告集計を JSON で取得
+- 認証は **API キー** または **OAuth 2.0 Device Flow** (RFC 8628) の Bearer トークン
+- OAuth トークンは「全権限」または **「読み取り専用」** で承認可能。読取専用トークンは仕訳作成・削除・AI 解析が構造的に拒否される
+- Python クライアント [`iikanji`](https://github.com/nananek/iikanji-kakeibo-client-py) (CLI/SDK) と TUI クライアント [`iikanji-tui`](https://github.com/nananek/iikanji-kakeibo-client-tui) を提供
+- **MCP サーバー** [`iikanji-mcp`](https://github.com/nananek/iikanji-kakeibo-client-mcp) — Claude Desktop 等の MCP クライアントから財務分析を実行
 
 ### その他
 
