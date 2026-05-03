@@ -5,6 +5,22 @@ title: リリースノート
 
 # リリースノート
 
+## v3.8.0
+
+**レポート API + OAuth 読み取り専用トークン (MCP 連携の基盤)**
+
+- **OAuth 読み取り専用トークン** — Device Flow 承認時に「読み取り専用で承認」を選択すると、書き込み系エンドポイント (`POST /journals`, `DELETE /journals/:id`, `POST /ai/analyze`, `DELETE /ai/drafts/:id`) が 403 で拒否されるトークンを発行
+  - 設定 → OAuth トークンの一覧に「読取専用」バッジを表示
+  - マイグレーション 033: `oauth_devices` / `oauth_tokens` に `read_only` カラム
+- **レポート API** — 財務分析向け JSON エンドポイントを追加 (新スコープ `reports:read`)
+  - `GET /api/v1/reports/trial-balance` — 試算表 (期間範囲指定)
+  - `GET /api/v1/reports/income-statement` — 損益計算書 (科目別内訳付き)
+  - `GET /api/v1/reports/monthly` — 月次収支比較
+  - `GET /api/v1/reports/tax` — 確定申告集計 (社会保険料・医療費控除等)
+- **MCP サーバー** — 別リポジトリ [`iikanji-kakeibo-client-mcp`](https://github.com/nananek/iikanji-kakeibo-client-mcp) を新設。Claude Desktop 等から read-only で財務分析が可能
+- 既存トークン・APIキーへの影響なし (`read_only=False` デフォルト)
+- pytest 1475件、サーバー全体カバレッジ 94% 維持
+
 ## v3.7.2
 
 **AI 証憑案1クイックアクセプトの htmx 化 + テスト網羅**
