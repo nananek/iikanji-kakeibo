@@ -1,11 +1,17 @@
-"""/api/v1/reports/* のテスト"""
+"""/api/v1/reports/* のテスト + services/reports.py 単体テスト"""
 
 from datetime import date
 
 import pytest
 
 from app.models.api_key import APIKey
+from app.models.balance_cache import BalanceCache
+from app.models.fiscal import FiscalClose
 from app.models.oauth import OAuthToken
+from app.services.balance_cache import compute_balance_cache
+from app.services.reports import (
+    compute_income_statement, compute_trial_balance,
+)
 from tests.conftest import _auth_header, make_journal
 
 
@@ -193,3 +199,82 @@ class TestTaxReport:
         body = resp.get_json()
         for cat_data in body["tax_summary"].values():
             assert cat_data["total"] != 99999
+
+
+# --- services/reports.py 単体テスト ---
+
+
+class TestComputeTrialBalanceCacheHit:
+    """確定済み残高キャッシュを使うパスのテスト"""
+
+    def _seed_for_cache(self, db, user, accounts):
+        """1月に仕訳作成 → 1月確定 + キャッシュ生成"""
+        make_journal(db, user.id, "5010", "1010", 1000, entry_date=date(2026, 1, 10))
+        make_journal(db, user.id, "1020", "4010", 50000, entry_date=date(2026, 1, 20))
+        db.session.add(FiscalClose(user_id=user.id, year=2026, closed_period=1))
+        db.session.commit()
+        compute_balance_cache(user.id, 2026, 1)
+        db.session.commit()
+
+    def test_cache_hit_for_pl_account(self, db, user, accounts):
+        """P/L 科目: キャッシュから当年累計を取得して期首残高を計算"""
+        self._seed_for_cache(db, user, accounts)
+        # 2 月以降を見る (pf=2 → cache の period=1 を参照)
+        balances = compute_trial_balance(user.id, 2026, pf=2, pt=12)
+        item_5010 = next(b for b in balances if b["account_code"] == "5010")
+        # 5010 (expense, debit normal): キャッシュから opening = 1000 (1月分)
+        assert item_5010["opening"] == 1000
+
+    def test_cache_hit_for_bs_account_debit_normal(self, db, user, accounts):
+        """B/S 借方科目 (現金 1010): cache + 前年以前を合算"""
+        self._seed_for_cache(db, user, accounts)
+        balances = compute_trial_balance(user.id, 2026, pf=2, pt=12)
+        item_1010 = next(b for b in balances if b["account_code"] == "1010")
+        # 1010 (asset, debit normal): 借方 0, 貸方 1000 → 当年累計の opening = -1000
+        assert item_1010["opening"] == -1000
+
+    def test_cache_hit_for_bs_account_credit_normal(self, db, user, accounts):
+        """B/S 貸方科目 (純資産): cache 路の credit-normal 分岐"""
+        # 元入金 (credit normal) を 1月に発生させる
+        make_journal(db, user.id, "1010", "3010", 200000, entry_date=date(2026, 1, 5))
+        db.session.add(FiscalClose(user_id=user.id, year=2026, closed_period=1))
+        db.session.commit()
+        compute_balance_cache(user.id, 2026, 1)
+        db.session.commit()
+
+        balances = compute_trial_balance(user.id, 2026, pf=2, pt=12)
+        item_3010 = next(b for b in balances if b["account_code"] == "3010")
+        # 3010 (equity, credit normal): credit 200000 - debit 0 = 200000
+        assert item_3010["opening"] == 200000
+
+    def test_no_cache_fallback_pf_gt_0(self, db, user, accounts):
+        """確定がない (pf > 0 だがキャッシュ未生成): フォールバック計算"""
+        # 1月に仕訳、確定なし
+        make_journal(db, user.id, "5010", "1010", 800, entry_date=date(2026, 1, 10))
+        # FiscalClose なし → use_cache=False, elif pf>0 ブランチへ
+        balances = compute_trial_balance(user.id, 2026, pf=2, pt=12)
+        item_5010 = next(b for b in balances if b["account_code"] == "5010")
+        # 5010 expense debit normal、フォールバックで前期 (1月) を集計
+        assert item_5010["opening"] == 800
+
+    def test_no_cache_fallback_bs_account(self, db, user, accounts):
+        """B/S 科目 (現金) の non-cache フォールバック路"""
+        make_journal(db, user.id, "1010", "4010", 50000, entry_date=date(2026, 1, 5))
+        balances = compute_trial_balance(user.id, 2026, pf=2, pt=12)
+        item_1010 = next(b for b in balances if b["account_code"] == "1010")
+        # 1010 asset debit normal: 1月の借方 50000 → opening = 50000
+        assert item_1010["opening"] == 50000
+
+
+class TestComputeIncomeStatementFallback:
+    """compute_income_statement の特殊パス"""
+
+    def test_no_account_types_returns_zero(self, db, user):
+        """AccountType が存在しない場合は空サマリーを返す"""
+        # account_types fixture を使わず、空状態
+        result = compute_income_statement(user.id, 2026)
+        assert result["income_total"] == 0
+        assert result["expense_total"] == 0
+        assert result["net_income"] == 0
+        assert result["income_breakdown"] == []
+        assert result["expense_breakdown"] == []
