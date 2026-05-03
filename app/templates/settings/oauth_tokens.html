@@ -29,7 +29,12 @@
           <tbody>
             {% for t in tokens %}
             <tr>
-              <td>{{ t.name }}</td>
+              <td>
+                {{ t.name }}
+                {% if t.read_only %}
+                <span class="badge bg-info ms-1"><i class="bi bi-eye"></i> 読取専用</span>
+                {% endif %}
+              </td>
               <td><code>{{ t.token_prefix }}</code></td>
               <td>{{ t.created_at.strftime('%Y/%m/%d %H:%M') }}</td>
               <td>

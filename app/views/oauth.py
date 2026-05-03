@@ -123,6 +123,7 @@ def token():
         name=name[:100],
         token_hash=token_hash,
         token_prefix=prefix,
+        read_only=device.read_only,
     )
     device.status = "consumed"
     db.session.add(oauth_token)
@@ -195,6 +196,10 @@ def device_authorize():
 
     device.status = "approved"
     device.user_id = current_user.id
+    device.read_only = (decision == "approve_readonly")
     db.session.commit()
-    flash("接続を承認しました。クライアントに戻ってください。", "success")
+    if device.read_only:
+        flash("読み取り専用で接続を承認しました。クライアントに戻ってください。", "success")
+    else:
+        flash("接続を承認しました。クライアントに戻ってください。", "success")
     return redirect(url_for("oauth.device_verification", code=raw))

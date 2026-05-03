@@ -415,6 +415,127 @@ class TestBearerAuthIntegration:
         assert body["total"] == 0
 
 
+class TestReadOnlyOAuthToken:
+    """read_only な OAuth トークンの権限制御"""
+
+    def _make_ro_token(self, db, user):
+        raw, h, prefix = OAuthToken.generate()
+        token = OAuthToken(
+            user_id=user.id,
+            name="ro-test",
+            token_hash=h,
+            token_prefix=prefix,
+            read_only=True,
+        )
+        db.session.add(token)
+        db.session.commit()
+        return raw
+
+    def test_readonly_can_read_journals(self, client, db, user, accounts):
+        raw = self._make_ro_token(db, user)
+        resp = client.get(
+            "/api/v1/journals",
+            headers={"Authorization": f"Bearer {raw}"},
+        )
+        assert resp.status_code == 200
+
+    def test_readonly_blocks_create_journal(self, client, db, user, accounts):
+        raw = self._make_ro_token(db, user)
+        resp = client.post(
+            "/api/v1/journals",
+            headers={"Authorization": f"Bearer {raw}"},
+            json={
+                "date": "2026-01-15",
+                "description": "ro reject test",
+                "lines": [
+                    {"account_code": "5010", "debit": 100},
+                    {"account_code": "1010", "credit": 100},
+                ],
+            },
+        )
+        assert resp.status_code == 403
+        assert "読み取り専用" in resp.get_json()["error"]
+
+    def test_readonly_blocks_delete_journal(self, client, db, user, accounts):
+        from app.services.accounting import create_journal_entry
+        from datetime import date as date_type
+        entry = create_journal_entry(
+            user_id=user.id,
+            date=date_type(2026, 1, 15),
+            description="del test",
+            lines_data=[
+                {"account_code": "5010", "debit_amount": 100, "credit_amount": 0, "description": ""},
+                {"account_code": "1010", "debit_amount": 0, "credit_amount": 100, "description": ""},
+            ],
+            source="api",
+        )
+        db.session.commit()
+        raw = self._make_ro_token(db, user)
+        resp = client.delete(
+            f"/api/v1/journals/{entry.id}",
+            headers={"Authorization": f"Bearer {raw}"},
+        )
+        assert resp.status_code == 403
+
+
+class TestDeviceAuthorizeReadOnly:
+    """デバイス承認時の読み取り専用フラグ伝播"""
+
+    def test_approve_readonly_sets_flag_on_device(self, logged_in_client, db, user):
+        resp = logged_in_client.post("/oauth/device", json={"client_name": "TUI"})
+        user_code = resp.get_json()["user_code"]
+        logged_in_client.post("/oauth/device/authorize", data={
+            "user_code": user_code, "decision": "approve_readonly",
+        })
+        device = OAuthDevice.query.first()
+        assert device.status == "approved"
+        assert device.read_only is True
+
+    def test_approve_default_is_not_readonly(self, logged_in_client, db, user):
+        resp = logged_in_client.post("/oauth/device", json={"client_name": "TUI"})
+        user_code = resp.get_json()["user_code"]
+        logged_in_client.post("/oauth/device/authorize", data={
+            "user_code": user_code, "decision": "approve",
+        })
+        device = OAuthDevice.query.first()
+        assert device.read_only is False
+
+    def test_token_inherits_read_only_from_device(self, client, logged_in_client, db, user):
+        # 1. デバイス発行
+        resp = client.post("/oauth/device")
+        device_code = resp.get_json()["device_code"]
+        user_code = resp.get_json()["user_code"]
+        # 2. ユーザー承認 (読み取り専用)
+        logged_in_client.post("/oauth/device/authorize", data={
+            "user_code": user_code, "decision": "approve_readonly",
+        })
+        # 3. トークン取得
+        from app.views.oauth import DEVICE_GRANT_TYPE
+        # ポーリング間隔を回避するため device の last_polled_at を一旦リセット
+        device = OAuthDevice.query.first()
+        device.last_polled_at = None
+        db.session.commit()
+        token_resp = client.post("/oauth/token", json={
+            "grant_type": DEVICE_GRANT_TYPE, "device_code": device_code,
+        })
+        assert token_resp.status_code == 200
+        # 4. 発行された OAuthToken は read_only=True を継承
+        token = OAuthToken.query.first()
+        assert token.read_only is True
+
+    def test_settings_page_shows_readonly_badge(self, logged_in_client, db, user):
+        token = OAuthToken(
+            user_id=user.id, name="ro-test",
+            token_hash="x" * 64, token_prefix="ikt_xx...",
+            read_only=True,
+        )
+        db.session.add(token)
+        db.session.commit()
+        resp = logged_in_client.get("/settings/oauth-tokens")
+        assert resp.status_code == 200
+        assert "読取専用" in resp.data.decode()
+
+
 class TestSettingsOAuthTokens:
     """設定画面の OAuth トークン一覧/取消"""
 
