@@ -8,6 +8,15 @@ import pytest
 from app.services.sources.webdav import WebDAVProvider
 
 
+@pytest.fixture(autouse=True)
+def _mock_dns_to_public(monkeypatch):
+    """example.com 等のテスト用ホスト名を公開 IP に解決させ、実DNSを叩かない。
+    SSRF 検証ロジック自体のテストは getaddrinfo を直接モックして上書きする。"""
+    def _fake(host, *args, **kwargs):
+        return [(2, 1, 6, "", ("93.184.216.34", 0))]
+    monkeypatch.setattr("socket.getaddrinfo", _fake)
+
+
 class TestWebDAVInit:
     def test_http_allowed(self):
         p = WebDAVProvider("http://example.com/dav", "user", "pass")
@@ -25,6 +34,77 @@ class TestWebDAVInit:
     def test_file_scheme_blocked(self):
         with pytest.raises(ValueError):
             WebDAVProvider("file:///etc/passwd", "u", "p")
+
+    def test_loopback_blocked(self, monkeypatch):
+        monkeypatch.setattr(
+            "socket.getaddrinfo",
+            lambda *a, **kw: [(2, 1, 6, "", ("127.0.0.1", 0))],
+        )
+        with pytest.raises(ValueError) as exc:
+            WebDAVProvider("http://internal.test/dav", "u", "p")
+        assert "プライベート" in str(exc.value) or "ローカル" in str(exc.value)
+
+    def test_loopback_ipv6_blocked(self, monkeypatch):
+        monkeypatch.setattr(
+            "socket.getaddrinfo",
+            lambda *a, **kw: [(10, 1, 6, "", ("::1", 0, 0, 0))],
+        )
+        with pytest.raises(ValueError) as exc:
+            WebDAVProvider("http://internal.test/dav", "u", "p")
+        assert "プライベート" in str(exc.value) or "ローカル" in str(exc.value)
+
+    def test_link_local_blocked(self, monkeypatch):
+        # AWS / GCP メタデータエンドポイント (169.254.169.254) は link-local
+        monkeypatch.setattr(
+            "socket.getaddrinfo",
+            lambda *a, **kw: [(2, 1, 6, "", ("169.254.169.254", 0))],
+        )
+        with pytest.raises(ValueError) as exc:
+            WebDAVProvider("http://metadata.test/latest/meta-data/", "u", "p")
+        assert "プライベート" in str(exc.value) or "ローカル" in str(exc.value)
+
+    def test_unresolvable_host_blocked(self, monkeypatch):
+        import socket as _socket
+
+        def _raise(*a, **kw):
+            raise _socket.gaierror("no such host")
+
+        monkeypatch.setattr("socket.getaddrinfo", _raise)
+        with pytest.raises(ValueError) as exc:
+            WebDAVProvider("http://nonexistent.invalid/dav", "u", "p")
+        assert "解決" in str(exc.value)
+
+
+class TestSafeUrlReValidation:
+    """test_connection / list_files / download_file が毎回 URL を再検証することを確認"""
+
+    def test_test_connection_rejects_loopback(self, monkeypatch):
+        p = WebDAVProvider("https://example.com/dav", "u", "p")
+        monkeypatch.setattr(
+            "socket.getaddrinfo",
+            lambda *a, **kw: [(2, 1, 6, "", ("127.0.0.1", 0))],
+        )
+        ok, err = p.test_connection()
+        assert ok is False
+        assert err is not None
+
+    def test_list_files_rejects_loopback(self, monkeypatch):
+        p = WebDAVProvider("https://example.com/dav", "u", "p")
+        monkeypatch.setattr(
+            "socket.getaddrinfo",
+            lambda *a, **kw: [(2, 1, 6, "", ("127.0.0.1", 0))],
+        )
+        # list_files は例外を握り潰して空リスト返却
+        assert p.list_files() == []
+
+    def test_download_file_rejects_loopback(self, monkeypatch):
+        p = WebDAVProvider("https://example.com/dav", "u", "p")
+        monkeypatch.setattr(
+            "socket.getaddrinfo",
+            lambda *a, **kw: [(2, 1, 6, "", ("127.0.0.1", 0))],
+        )
+        with pytest.raises(ValueError):
+            p.download_file("receipt.jpg")
 
     def test_default_extensions(self):
         p = WebDAVProvider("https://example.com/dav", "u", "p")
