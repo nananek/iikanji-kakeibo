@@ -5,6 +5,7 @@ import os
 import tempfile
 import uuid
 from datetime import date, datetime
+from urllib.parse import urlparse
 
 from app.models.account import Account, AccountType
 
@@ -37,6 +38,28 @@ def safe_user_error(exc: Exception, fallback: str = "処理に失敗しました
     if any(tok in msg for tok in _UNSAFE_ERROR_TOKENS):
         return fallback
     return msg
+
+
+def is_safe_internal_path(target) -> bool:
+    """target がアプリ内部の相対パス（'/foo/bar'）であれば True を返す。
+
+    オープンリダイレクト対策として redirect() に渡す前に必ず使う。
+    以下は全て False:
+    - 空・None・str 以外
+    - 先頭が '/' でない
+    - '//evil.com' '/\\evil.com' などのプロトコル相対 / バックスラッシュ
+    - urlparse で scheme / netloc が検出される
+    """
+    if not isinstance(target, str) or not target:
+        return False
+    if not target.startswith("/"):
+        return False
+    if target.startswith("//") or target.startswith("/\\"):
+        return False
+    parsed = urlparse(target)
+    if parsed.scheme or parsed.netloc:
+        return False
+    return True
 
 
 def check_deadline(receipt_date, uploaded_date):
