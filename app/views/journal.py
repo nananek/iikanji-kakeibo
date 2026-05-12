@@ -1,8 +1,6 @@
 import json
 from datetime import date
 
-from urllib.parse import urlparse
-
 from flask import Blueprint, render_template, redirect, url_for, flash, request, jsonify, make_response
 from flask_login import login_required, current_user
 from sqlalchemy import func
@@ -22,7 +20,7 @@ from app.services.audit import (
     is_acting_as_auditor, get_permission_level,
     get_proprietor_account_code, mask_account_name,
 )
-from app.views.helpers import get_grouped_accounts, safe_user_error
+from app.views.helpers import get_grouped_accounts, is_safe_internal_path, safe_user_error
 
 bp = Blueprint("journal", __name__, url_prefix="/journal")
 
@@ -811,10 +809,9 @@ def delete(entry_id):
 def bulk_delete():
     """仕訳の一括削除"""
     entry_ids = request.form.getlist("entry_ids", type=int)
-    redirect_url = request.form.get("redirect_url") or url_for("journal.index")
-    parsed = urlparse(redirect_url)
-    if parsed.netloc or parsed.scheme:
-        redirect_url = url_for("journal.index")
+    raw_redirect = request.form.get("redirect_url", "")
+    fallback_url = url_for("journal.index")
+    redirect_url = raw_redirect if is_safe_internal_path(raw_redirect) else fallback_url
 
     if not entry_ids:
         flash("削除する仕訳が選択されていません。", "warning")
