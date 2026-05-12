@@ -22,7 +22,7 @@ from app.services.audit import (
     is_acting_as_auditor, get_permission_level,
     get_proprietor_account_code, mask_account_name,
 )
-from app.views.helpers import get_grouped_accounts
+from app.views.helpers import get_grouped_accounts, safe_user_error
 
 bp = Blueprint("journal", __name__, url_prefix="/journal")
 
@@ -733,7 +733,9 @@ def create_api():
         db.session.commit()
         return jsonify({"ok": True, "entry_number": entry.entry_number})
     except ValueError as e:
-        return jsonify({"error": str(e)}), 400
+        from flask import current_app
+        current_app.logger.exception("create_journal_entry failed (journal)")
+        return jsonify({"error": safe_user_error(e)}), 400
 
 
 def log_voucher_orphan(entry, user_id):
@@ -1031,6 +1033,10 @@ def ai_suggest_categories():
         result = suggest_categories_by_ai(user_id, payment_account_code, rows)
         return jsonify(result)
     except ValueError as e:
-        return jsonify({"error": str(e)}), 400
+        from flask import current_app
+        current_app.logger.exception("suggest_categories_by_ai validation failed")
+        return jsonify({"error": safe_user_error(e)}), 400
     except RuntimeError as e:
-        return jsonify({"error": str(e)}), 500
+        from flask import current_app
+        current_app.logger.exception("suggest_categories_by_ai runtime error")
+        return jsonify({"error": safe_user_error(e)}), 500

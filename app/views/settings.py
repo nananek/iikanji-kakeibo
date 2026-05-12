@@ -23,6 +23,7 @@ from app.models.fiscal import FiscalClose
 from app.services.fiscal import (
     PERIOD_LABELS, get_closed_period, close_period, reopen_period, is_year_open,
 )
+from app.views.helpers import safe_user_error
 
 bp = Blueprint("settings", __name__, url_prefix="/settings")
 
@@ -884,7 +885,9 @@ def auto_import_source_test_existing(source_id):
     try:
         provider = _build_provider(source)
     except ValueError as e:
-        return jsonify({"ok": False, "message": str(e)}), 400
+        from flask import current_app
+        current_app.logger.exception("_build_provider failed")
+        return jsonify({"ok": False, "message": safe_user_error(e)}), 400
 
     ok, err = provider.test_connection()
     if ok:

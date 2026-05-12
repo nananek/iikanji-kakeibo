@@ -23,6 +23,7 @@ from app.services.storage import (
     get_storage_backend, make_storage_key, make_thumbnail_key,
     store_image_with_thumbnail,
 )
+from app.views.helpers import safe_user_error
 from app.services.voucher import create_voucher_from_draft
 from app.models.voucher import Voucher
 from app.views.helpers import get_grouped_accounts, check_deadline
@@ -90,7 +91,9 @@ def analyze():
             get_effective_user_id(), image_bytes, mime_type, comment=comment
         )
     except (ValueError, RuntimeError) as e:
-        return jsonify({"error": str(e)}), 400
+        from flask import current_app
+        current_app.logger.exception("analyze_and_suggest failed")
+        return jsonify({"error": safe_user_error(e)}), 400
 
     suggestions_data = [asdict(s) for s in suggestions]
     suggestions_json = json.dumps(suggestions_data, ensure_ascii=False)

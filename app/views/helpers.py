@@ -11,6 +11,34 @@ from app.models.account import Account, AccountType
 DEADLINE_DAYS = 67  # 電帳法: 約2ヶ月+7営業日
 
 
+_UNSAFE_ERROR_TOKENS = (
+    "Traceback",
+    "/app/",
+    'File "',
+    " line ",
+    "<class ",
+    "psycopg",
+    "sqlalchemy",
+)
+
+
+def safe_user_error(exc: Exception, fallback: str = "処理に失敗しました") -> str:
+    """例外メッセージを API レスポンスに含めるときの sanitizer。
+
+    業務ロジックが投げた ValueError 等の短い説明文はユーザー向けに残しつつ、
+    スタックトレース由来の文字列・内部パス・長文は fallback で置換する。
+    フル例外は呼び出し側で logger に残すこと。
+    """
+    msg = exc.args[0] if getattr(exc, "args", None) else ""
+    if not isinstance(msg, str) or not msg:
+        return fallback
+    if len(msg) > 200 or "\n" in msg or "\r" in msg:
+        return fallback
+    if any(tok in msg for tok in _UNSAFE_ERROR_TOKENS):
+        return fallback
+    return msg
+
+
 def check_deadline(receipt_date, uploaded_date):
     """入力期限チェック。期限超過なら True を返す。"""
     if not receipt_date or not uploaded_date:

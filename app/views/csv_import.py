@@ -25,6 +25,7 @@ from app.services.fiscal import (
 )
 from app.views.helpers import (
     get_grouped_accounts, save_import_data, load_import_data, delete_import_data,
+    safe_user_error,
 )
 
 bp = Blueprint("csv_import", __name__, url_prefix="/csv-import")
@@ -443,6 +444,8 @@ def ai_reconcile():
     try:
         ai_matches = find_ai_matches(user_id, unmatched_csv, journal_candidates)
     except (ValueError, RuntimeError) as e:
-        return jsonify({"error": str(e)}), 400
+        from flask import current_app
+        current_app.logger.exception("find_ai_matches failed")
+        return jsonify({"error": safe_user_error(e)}), 400
 
     return jsonify({"matches": ai_matches})
