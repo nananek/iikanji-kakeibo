@@ -1,4 +1,4 @@
-import { execSync, spawn, ChildProcess } from "child_process";
+import { execSync, execFileSync, spawnSync, spawn, ChildProcess } from "child_process";
 import * as path from "path";
 import * as fs from "fs";
 
@@ -112,44 +112,84 @@ with app.app_context():
 `;
 
 /**
+ * Python を CI / docker 双方向けに stdin 経由で起動する。
+ * shell 補間を介さないため、引数のサニタイズ抜けに依存しない。
+ */
+function runPython(stdinScript: string, timeoutMs = 30000) {
+  const [cmd, ...args] = process.env.CI
+    ? ["python", "-"]
+    : ["docker", "compose", "exec", "-T", "web", "python", "-"];
+  const result = spawnSync(cmd, args, {
+    input: stdinScript,
+    encoding: "utf-8",
+    timeout: timeoutMs,
+  });
+  if (result.status !== 0) {
+    throw new Error(`python invocation failed (status=${result.status}): ${result.stderr}`);
+  }
+  return result.stdout;
+}
+
+/** account_code を 4 桁数字（標準科目コード）に限定する */
+function sanitizeAccountCode(c: unknown, fallback: string) {
+  return typeof c === "string" && /^\d{4}$/.test(c) ? c : fallback;
+}
+
+/**
  * E2Eテスト用ユーザーをDBに作成し、モック AI サーバーをコンテナ内で起動する。
  */
 export default function globalSetup() {
-  const escaped = SETUP_SCRIPT.replace(/"/g, '\\"');
-  const execCmd = process.env.CI
-    ? `python -c "${escaped}"`
-    : `docker compose exec -T web python -c "${escaped}"`;
-
-  const result = execSync(execCmd, { encoding: "utf-8", timeout: 30000 });
+  const result = runPython(SETUP_SCRIPT);
   console.log("global-setup:", result.trim());
 
-  // ACCOUNT_CODES を抽出
+  // ACCOUNT_CODES を抽出（数字 4 桁のみ許可）
   const match = result.match(/ACCOUNT_CODES=(\{.*\})/);
-  const codes = match ? JSON.parse(match[1]) : { cash: "1010", food: "5010" };
+  const parsed = match ? JSON.parse(match[1]) : {};
+  const codes = {
+    cash: sanitizeAccountCode(parsed.cash, "1010"),
+    food: sanitizeAccountCode(parsed.food, "5010"),
+  };
 
-  // モック AI サーバーをコンテナ内で起動（バックグラウンド）
+  // モック AI サーバーをコンテナ内で起動（引数は spawn の配列で渡す）
   const mockScript = path.resolve(__dirname, "mock-ai-server.py");
-  const mockCmd = process.env.CI
-    ? `nohup python ${mockScript} --cash-code ${codes.cash} --food-code ${codes.food} > /tmp/mock-ai.log 2>&1 &`
-    : `docker compose exec -T -d web python /app/tests/e2e/mock-ai-server.py --cash-code ${codes.cash} --food-code ${codes.food}`;
-
-  execSync(mockCmd, { encoding: "utf-8", timeout: 10000 });
+  if (process.env.CI) {
+    // CI: nohup でバックグラウンド起動。引数は配列で安全に渡す。
+    const child = spawn(
+      "python",
+      [mockScript, "--cash-code", codes.cash, "--food-code", codes.food],
+      {
+        detached: true,
+        stdio: ["ignore", fs.openSync("/tmp/mock-ai.log", "a"), fs.openSync("/tmp/mock-ai.log", "a")],
+      },
+    );
+    child.unref();
+  } else {
+    execFileSync(
+      "docker",
+      [
+        "compose", "exec", "-T", "-d", "web",
+        "python", "/app/tests/e2e/mock-ai-server.py",
+        "--cash-code", codes.cash,
+        "--food-code", codes.food,
+      ],
+      { encoding: "utf-8", timeout: 10000 },
+    );
+  }
 
   // サーバー起動を待つ
-  const checkScript = `import urllib.request, json; r = urllib.request.urlopen(urllib.request.Request('http://localhost:11435/v1/chat/completions', data=json.dumps({'messages':[]}).encode(), headers={'Content-Type':'application/json'})); print('OK', r.status)`;
-  const checkCmd = process.env.CI
-    ? `python -c "${checkScript}"`
-    : `docker compose exec -T web python -c "${checkScript}"`;
-
+  const checkScript = `import urllib.request, json
+r = urllib.request.urlopen(urllib.request.Request('http://localhost:11435/v1/chat/completions', data=json.dumps({'messages':[]}).encode(), headers={'Content-Type':'application/json'}))
+print('OK', r.status)
+`;
   for (let i = 0; i < 5; i++) {
     try {
-      const check = execSync(checkCmd, { encoding: "utf-8", timeout: 5000 });
+      const check = runPython(checkScript, 5000);
       if (check.includes("OK")) {
         console.log("global-setup: mock AI server started");
         return;
       }
     } catch {
-      execSync("sleep 1");
+      execFileSync("sleep", ["1"]);
     }
   }
   console.warn("global-setup: mock AI server may not have started");
