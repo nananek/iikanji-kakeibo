@@ -79,6 +79,17 @@ def find_matches(user_id, payment_account_code, csv_rows):
     date_min = csv_date_min - timedelta(days=MATCH_DATE_TOLERANCE)
     date_max = csv_date_max + timedelta(days=MATCH_DATE_TOLERANCE)
 
+    # CSV 行に含まれる方向 (withdrawal/deposit) を抽出。
+    # 「カード会社未達」は CSV で取り込まれる予定の方向の取引に限定する。
+    # 例: クレカ明細 CSV は出金のみが載るため、引き落とし仕訳
+    # (現金支払・銀行から CC 未払金への振替) は未達対象外。
+    csv_directions = set()
+    for row in csv_rows:
+        if int(row.get("withdrawal") or 0) > 0:
+            csv_directions.add("withdrawal")
+        if int(row.get("deposit") or 0) > 0:
+            csv_directions.add("deposit")
+
     # Phase 2: 支払元口座の仕訳を一括取得
     candidates = (
         db.session.query(
@@ -301,6 +312,9 @@ def find_matches(user_id, payment_account_code, csv_rows):
         elif c["debit"] > 0:
             amount, direction = c["debit"], "deposit"
         else:
+            continue
+        # CSV に出現しない方向の仕訳は未達対象外 (引き落としや返金等)
+        if csv_directions and direction not in csv_directions:
             continue
         cat_names = counterpart_map.get(c["entry_id"], [])
         days_since = (today - c["date"]).days

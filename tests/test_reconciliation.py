@@ -457,11 +457,15 @@ class TestEdgeCases:
         assert result["csv_results"][0]["status"] == "unmatched"
 
     def test_journal_only_deposit_direction(self, db, user, accounts, cc_account):
-        """journal_onlyでdeposit方向（debit > 0）の仕訳も検出される"""
+        """journal_only で deposit 方向の仕訳が検出される (CSV も deposit を含む場合)。
+
+        v3.10.2 以降、journal_only は CSV と同方向の仕訳のみを対象とする。
+        deposit 方向の仕訳を検出するには CSV にも deposit 行が含まれている必要がある。
+        """
         make_journal(db, user.id, cc_account.code, "5010", 500,
                      entry_date=date(2026, 1, 10), source="journal")
         csv_rows = [
-            {"date": "2026-01-10", "description": "別取引", "withdrawal": 9999, "deposit": 0},
+            {"date": "2026-01-10", "description": "別取引", "withdrawal": 0, "deposit": 9999},
         ]
         result = find_matches(user.id, cc_account.code, csv_rows)
         assert len(result["journal_only"]) == 1
@@ -949,3 +953,75 @@ class TestJournalOnlyRangeLimit:
         assert result["csv_results"][0]["matches"][0]["date_band"] == "warn"
         # journal_only は空（マッチ済み）
         assert result["journal_only"] == []
+
+
+class TestJournalOnlyDirectionFilter:
+    """journal_only は CSV と同じ方向の仕訳のみを対象とする
+
+    クレカ明細 CSV は出金 (withdrawal) のみが載るため、引き落とし仕訳
+    (CC 未払金を銀行から支払う = CC 口座への deposit) は未達対象外。
+    """
+
+    def test_excludes_payoff_journal_when_csv_is_withdrawal_only(
+        self, db, user, accounts, cc_account
+    ):
+        """出金のみの CSV のとき、引き落とし仕訳 (CC 口座へのdeposit) は除外"""
+        # 通常の利用仕訳 (出金方向: 食費 / CC、CC は credit > 0)
+        make_journal(db, user.id, "5010", cc_account.code, 1500,
+                     entry_date=date(2026, 4, 16), source="ai_receipt",
+                     description="コンビニ")
+        # 引き落とし仕訳 (CC / 普通預金、CC は debit > 0 = deposit 方向)
+        make_journal(db, user.id, cc_account.code, "1020", 50000,
+                     entry_date=date(2026, 4, 27), source="journal",
+                     description="（カ）ジエーシービー 引き落とし")
+        # CSV は出金行のみ
+        result = find_matches(user.id, cc_account.code, [
+            _csv_row("2026-04-16", 9999),  # 別金額で意図的に未マッチ
+            _csv_row("2026-04-27", 8888),
+        ])
+        # journal_only には withdrawal 方向の仕訳のみ
+        descriptions = [j["description"] for j in result["journal_only"]]
+        assert "コンビニ" in descriptions
+        assert "（カ）ジエーシービー 引き落とし" not in descriptions
+
+    def test_excludes_refund_journal_when_csv_is_deposit_only(
+        self, db, user, accounts, cc_account
+    ):
+        """入金のみの CSV のとき、通常の利用仕訳 (withdrawal 方向) は除外"""
+        # 返金/入金 (CC 口座への debit = deposit 方向)
+        make_journal(db, user.id, cc_account.code, "5010", 500,
+                     entry_date=date(2026, 4, 16), source="ai_receipt",
+                     description="返金")
+        # 通常の支払い (withdrawal 方向)
+        make_journal(db, user.id, "5010", cc_account.code, 1500,
+                     entry_date=date(2026, 4, 20), source="ai_receipt",
+                     description="通常購入")
+        # CSV は deposit のみ
+        result = find_matches(user.id, cc_account.code, [
+            {"row_num": 1, "date": "2026-04-16", "description": "返金",
+             "deposit": 9999, "withdrawal": 0},
+            {"row_num": 2, "date": "2026-04-20", "description": "別の入金",
+             "deposit": 8888, "withdrawal": 0},
+        ])
+        descriptions = [j["description"] for j in result["journal_only"]]
+        assert "返金" in descriptions
+        assert "通常購入" not in descriptions
+
+    def test_includes_both_directions_when_csv_has_both(
+        self, db, user, accounts, cc_account
+    ):
+        """CSV に両方向が混在する場合は両方向の仕訳を対象とする"""
+        make_journal(db, user.id, "5010", cc_account.code, 1500,
+                     entry_date=date(2026, 4, 16), source="ai_receipt",
+                     description="出金仕訳")
+        make_journal(db, user.id, cc_account.code, "5010", 500,
+                     entry_date=date(2026, 4, 20), source="ai_receipt",
+                     description="入金仕訳")
+        result = find_matches(user.id, cc_account.code, [
+            _csv_row("2026-04-16", 9999),  # withdrawal
+            {"row_num": 2, "date": "2026-04-20", "description": "返金",
+             "deposit": 8888, "withdrawal": 0},  # deposit
+        ])
+        descriptions = [j["description"] for j in result["journal_only"]]
+        assert "出金仕訳" in descriptions
+        assert "入金仕訳" in descriptions
