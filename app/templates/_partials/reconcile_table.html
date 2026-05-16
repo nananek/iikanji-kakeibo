@@ -176,10 +176,16 @@
           <strong>照合結果</strong>
           <span class="text-muted ms-2">取込先: {{ payment_account.name }}</span>
         </div>
-        <div class="d-flex gap-2 align-items-center">
+        <div class="d-flex gap-2 align-items-center flex-wrap">
           <button type="button" class="btn btn-sm btn-outline-secondary" @click="toggleAllReconcile(true)">全選択</button>
           <button type="button" class="btn btn-sm btn-outline-secondary" @click="toggleAllReconcile(false)">全解除</button>
-          <span class="badge bg-success"><i class="bi bi-check-circle"></i> 照合済み <span x-text="matchedCount"></span>件</span>
+          <span class="badge bg-success"><i class="bi bi-check-circle"></i> 照合済 <span x-text="matchedExactCount"></span>件</span>
+          <span class="badge bg-warning text-dark" x-show="matchedWarnCount > 0">
+            <i class="bi bi-calendar-event"></i> 日付ズレ <span x-text="matchedWarnCount"></span>件
+          </span>
+          <span class="badge bg-warning text-dark" x-show="matchedCautionCount > 0">
+            <i class="bi bi-exclamation-triangle"></i> 要確認 <span x-text="matchedCautionCount"></span>件
+          </span>
           <span class="badge bg-warning text-dark" x-show="multipleCount > 0"><i class="bi bi-question-circle"></i> 複数候補 <span x-text="multipleCount"></span>件</span>
           <span class="badge bg-secondary"><i class="bi bi-dash-circle"></i> 未照合 <span x-text="unmatchedCount"></span>件</span>
           <button type="button" class="btn btn-sm btn-outline-info" x-show="hasAiConfig && unmatchedCount > 0 && journalOnly.length > 0"
@@ -212,8 +218,8 @@
             <tbody>
               <template x-for="(row, index) in reconcileRows" :key="row.csv_index">
                 <tr :class="{
-                  'table-success': row.status === 'matched',
-                  'table-warning': row.status === 'multiple',
+                  'table-success': row.status === 'matched' && row.matchInfo && (!row.matchInfo.date_band || row.matchInfo.date_band === 'exact'),
+                  'table-warning': (row.status === 'matched' && row.matchInfo && row.matchInfo.date_band && row.matchInfo.date_band !== 'exact') || row.status === 'multiple',
                   'table-info': row.status === 'ai_suggested',
                 }">
                   <td>
@@ -222,13 +228,30 @@
                            :disabled="row.status === 'matched' || (row.status === 'multiple' && row.selectedMatchIndex >= 0)">
                   </td>
                   <td>
-                    <span class="badge" :class="{
-                      'bg-success': row.status === 'matched',
-                      'bg-warning text-dark': row.status === 'multiple',
-                      'bg-secondary': row.status === 'unmatched'
-                    }">
-                      <span x-text="row.status === 'matched' ? '照合済' : row.status === 'multiple' ? '複数候補' : '未照合'"></span>
-                    </span>
+                    <template x-if="row.status === 'matched' && row.matchInfo && row.matchInfo.date_band === 'warn'">
+                      <span class="badge bg-warning text-dark"
+                            :title="'CSV ' + row.date + ' ⇄ 仕訳 ' + row.matchInfo.date + ' (差 ' + (row.matchInfo.date_diff_days > 0 ? '+' : '') + row.matchInfo.date_diff_days + '日)'">
+                        <i class="bi bi-calendar-event"></i> 日付ズレ<span x-text="' ' + (row.matchInfo.date_diff_days > 0 ? '+' : '') + row.matchInfo.date_diff_days + '日'"></span>
+                      </span>
+                    </template>
+                    <template x-if="row.status === 'matched' && row.matchInfo && row.matchInfo.date_band === 'caution'">
+                      <span class="badge bg-warning text-dark"
+                            :title="'CSV ' + row.date + ' ⇄ 仕訳 ' + row.matchInfo.date + ' (差 ' + (row.matchInfo.date_diff_days > 0 ? '+' : '') + row.matchInfo.date_diff_days + '日)'">
+                        <i class="bi bi-exclamation-triangle"></i> 要確認<span x-text="' ' + (row.matchInfo.date_diff_days > 0 ? '+' : '') + row.matchInfo.date_diff_days + '日'"></span>
+                      </span>
+                    </template>
+                    <template x-if="row.status === 'matched' && row.matchInfo && (!row.matchInfo.date_band || row.matchInfo.date_band === 'exact')">
+                      <span class="badge bg-success"><i class="bi bi-check-circle"></i> 照合済</span>
+                    </template>
+                    <template x-if="row.status === 'multiple'">
+                      <span class="badge bg-warning text-dark">複数候補</span>
+                    </template>
+                    <template x-if="row.status === 'unmatched'">
+                      <span class="badge bg-secondary">未照合</span>
+                    </template>
+                    <template x-if="row.status === 'ai_suggested'">
+                      <span class="badge bg-info text-dark">AI候補</span>
+                    </template>
                   </td>
                   <td x-text="row.date || '(不明)'"></td>
                   <td class="text-truncate" style="max-width:200px" x-text="row.description"></td>
@@ -246,11 +269,24 @@
                     <!-- matched: 既存仕訳情報 -->
                     <template x-if="row.status === 'matched'">
                       <div class="small">
-                        <i class="bi bi-link-45deg text-success"></i>
-                        <span x-text="row.matchInfo.date"></span>
-                        <span class="text-muted" x-text="row.matchInfo.description"></span>
-                        <span class="badge bg-light text-dark" x-text="row.matchInfo.category_name"></span>
-                        <span class="badge bg-info text-dark" x-text="sourceLabel(row.matchInfo.source)"></span>
+                        <div>
+                          <i class="bi bi-link-45deg text-success"></i>
+                          <span x-text="row.matchInfo.date"></span>
+                          <span class="text-muted" x-text="row.matchInfo.description"></span>
+                          <span class="badge bg-light text-dark" x-text="row.matchInfo.category_name"></span>
+                          <span class="badge bg-info text-dark" x-text="sourceLabel(row.matchInfo.source)"></span>
+                        </div>
+                        <template x-if="row.matchInfo && row.matchInfo.date_band && row.matchInfo.date_band !== 'exact' && row.date">
+                          <div class="mt-1">
+                            <button type="button" class="btn btn-sm btn-outline-primary"
+                                    @click="snapDate(index)" :disabled="row.snapping"
+                                    :title="'仕訳の日付を ' + row.date + ' に変更して exact 照合にします'">
+                              <template x-if="row.snapping"><span class="spinner-border spinner-border-sm me-1"></span></template>
+                              <template x-if="!row.snapping"><i class="bi bi-calendar-check"></i></template>
+                              <span x-text="' 日付を ' + row.date + ' に合わせる'"></span>
+                            </button>
+                          </div>
+                        </template>
                       </div>
                     </template>
 

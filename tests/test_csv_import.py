@@ -654,3 +654,96 @@ class TestCsvImportMappingProfile:
         assert resp.status_code == 200
         html = resp.data.decode()
         assert "保存済みプロファイル" not in html
+
+
+# ============================================================
+# POST /csv-import/match/snap-date
+# ============================================================
+
+class TestSnapMatchDate:
+    """日付ズレ修正アクション (snap-date) のテスト"""
+
+    def _make_entry(self, db, user, entry_date, amount=1500):
+        """支払元 1020 への credit を持つ仕訳を作成して返す。"""
+        from tests.conftest import make_journal
+        return make_journal(
+            db, user.id,
+            acct_debit_code="5010",
+            acct_credit_code="1020",
+            amount=amount,
+            entry_date=entry_date,
+            source="ai_receipt",
+        )
+
+    def test_updates_journal_date_to_csv_date(self, db, user, logged_in_client,
+                                              accounts, account_types):
+        entry = self._make_entry(db, user, date(2026, 5, 1))
+        resp = logged_in_client.post(
+            "/csv-import/match/snap-date",
+            json={"entry_id": entry.id, "csv_date": "2026-05-03"},
+        )
+        assert resp.status_code == 200
+        body = resp.get_json()
+        assert body["success"] is True
+        assert body["new_date"] == "2026-05-03"
+        assert body["date_band"] == "exact"
+        assert body["date_diff_days"] == 0
+
+        from app.models.journal import JournalEntry
+        refreshed = JournalEntry.query.get(entry.id)
+        assert refreshed.date == date(2026, 5, 3)
+
+    def test_missing_payload_returns_400(self, logged_in_client, accounts,
+                                          account_types):
+        resp = logged_in_client.post("/csv-import/match/snap-date", json={})
+        assert resp.status_code == 400
+
+    def test_invalid_date_format_returns_400(self, db, user, logged_in_client,
+                                             accounts, account_types):
+        entry = self._make_entry(db, user, date(2026, 5, 1))
+        resp = logged_in_client.post(
+            "/csv-import/match/snap-date",
+            json={"entry_id": entry.id, "csv_date": "not-a-date"},
+        )
+        assert resp.status_code == 400
+
+    def test_other_user_entry_returns_404(self, db, user, logged_in_client,
+                                          second_user, second_user_accounts,
+                                          accounts, account_types):
+        from tests.conftest import make_journal
+        their_entry = make_journal(
+            db, second_user.id,
+            acct_debit_code="5010", acct_credit_code="1010",
+            amount=1500, entry_date=date(2026, 5, 1),
+        )
+        resp = logged_in_client.post(
+            "/csv-import/match/snap-date",
+            json={"entry_id": their_entry.id, "csv_date": "2026-05-03"},
+        )
+        assert resp.status_code == 404
+
+    def test_rejects_closed_period(self, db, user, logged_in_client, accounts,
+                                   account_types):
+        """移動先が確定済み月なら 400 を返し、日付は変更されない"""
+        from app.models.fiscal import FiscalClose
+        entry = self._make_entry(db, user, date(2026, 5, 1))
+        # 2026 年 4 月までを確定済みに
+        fc = FiscalClose(user_id=user.id, year=2026, closed_period=4)
+        db.session.add(fc)
+        db.session.commit()
+        # 移動先 2026-04-15 はロック中
+        resp = logged_in_client.post(
+            "/csv-import/match/snap-date",
+            json={"entry_id": entry.id, "csv_date": "2026-04-15"},
+        )
+        assert resp.status_code == 400
+        body = resp.get_json()
+        assert "確定" in body["error"]
+        # 仕訳の日付は変わらない
+        from app.models.journal import JournalEntry
+        assert JournalEntry.query.get(entry.id).date == date(2026, 5, 1)
+
+    def test_unauthenticated_redirects(self, client, accounts, account_types):
+        resp = client.post("/csv-import/match/snap-date",
+                           json={"entry_id": 1, "csv_date": "2026-05-01"})
+        assert resp.status_code in (302, 401)
