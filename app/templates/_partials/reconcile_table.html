@@ -53,6 +53,10 @@
                   <template x-if="day.diff_amount === 0 && day.diff_count !== 0">
                     <span class="text-warning">件数差 <span x-text="day.diff_count > 0 ? '+' + day.diff_count : day.diff_count"></span></span>
                   </template>
+                  <template x-if="day.pending_card_amount > 0">
+                    <div class="text-muted small fw-normal"
+                         x-text="'うちカード未達 ¥' + day.pending_card_amount.toLocaleString()"></div>
+                  </template>
                 </td>
               </tr>
             </template>
@@ -134,14 +138,29 @@
     </div>
   </div>
 
-  {# --- 仕訳のみ（CSV未照合） --- #}
-  <div class="card shadow-sm mt-3" x-show="journalOnly.length > 0">
-    <div class="card-header">
-      <strong><i class="bi bi-journal-x"></i> 仕訳のみ（CSV未照合）</strong>
-      <span class="badge bg-info ms-2" x-text="journalOnlyCount + '件'"></span>
+  {# --- カード会社未達（レシート起票済み・明細未到着） --- #}
+  <div class="card shadow-sm mt-3 border-warning" x-show="visibleJournalOnly.length > 0">
+    <div class="card-header bg-warning bg-opacity-25">
+      <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+        <div>
+          <strong><i class="bi bi-credit-card-2-front"></i> カード会社未達</strong>
+          <span class="text-muted ms-2 small">レシート起票済み・明細未到着</span>
+        </div>
+        <div class="d-flex gap-2 align-items-center">
+          <span class="badge bg-warning text-dark" x-text="visibleJournalOnly.length + '件'"></span>
+          <span class="badge bg-light text-dark"
+                x-text="'¥' + journalOnlyTotal.toLocaleString()"></span>
+          <button type="button" class="btn btn-sm btn-outline-secondary"
+                  x-show="hiddenJournalOnlyIds.length > 0"
+                  @click="resetHiddenJournalOnly()"
+                  :title="hiddenJournalOnlyIds.length + ' 件の非表示を解除'">
+            <i class="bi bi-arrow-counterclockwise"></i> 非表示を戻す
+          </button>
+        </div>
+      </div>
     </div>
     <div class="card-body p-0">
-      <div class="table-responsive" style="max-height: 250px; overflow-y: auto;">
+      <div class="table-responsive" style="max-height: 280px; overflow-y: auto;">
         <table class="table table-sm table-hover mb-0">
           <thead class="table-light sticky-top">
             <tr>
@@ -149,17 +168,38 @@
               <th>摘要</th>
               <th class="text-end">金額</th>
               <th>科目</th>
-              <th>ソース</th>
+              <th>経過</th>
+              <th class="text-end" style="width:120px"></th>
             </tr>
           </thead>
           <tbody>
-            <template x-for="j in journalOnly" :key="j.entry_id">
-              <tr class="table-info">
+            <template x-for="j in visibleJournalOnly" :key="j.entry_id">
+              <tr class="table-warning">
                 <td x-text="j.date"></td>
                 <td class="text-truncate" style="max-width:200px" x-text="j.description"></td>
                 <td class="text-end fw-bold" x-text="'\u00a5' + j.amount.toLocaleString()"></td>
-                <td><span class="badge bg-light text-dark" x-text="j.category_name"></span></td>
-                <td><span class="badge bg-info text-dark" x-text="sourceLabel(j.source)"></span></td>
+                <td>
+                  <span class="badge bg-light text-dark" x-text="j.category_name"></span>
+                  <span class="badge bg-info text-dark" x-text="sourceLabel(j.source)"></span>
+                </td>
+                <td>
+                  <span class="badge"
+                        :class="j.is_stale ? 'bg-danger' : 'bg-secondary'"
+                        x-text="(j.is_stale ? '\u9577\u671f\u672a\u7740 ' : '') + j.days_since_journal + '\u65e5'"></span>
+                </td>
+                <td class="text-end">
+                  <a :href="'/journal/' + j.entry_id + '/edit'"
+                     target="_blank" rel="noopener"
+                     class="btn btn-sm btn-outline-primary"
+                     title="\u65b0\u3057\u3044\u30bf\u30d6\u3067\u4ed5\u8a33\u7de8\u96c6\u753b\u9762\u3092\u958b\u304d\u307e\u3059">
+                    <i class="bi bi-pencil"></i> \u7de8\u96c6
+                  </a>
+                  <button type="button" class="btn btn-sm btn-outline-secondary"
+                          @click="hideJournalOnly(j.entry_id)"
+                          title="\u3053\u306e\u30ab\u30fc\u30c9\u3067\u306f\u6271\u308f\u306a\u3044\uff08\u4e00\u6642\u7684\u306b\u96a0\u3059\uff09">
+                    <i class="bi bi-x"></i>
+                  </button>
+                </td>
               </tr>
             </template>
           </tbody>

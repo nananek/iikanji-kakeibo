@@ -276,11 +276,13 @@ def find_matches(user_id, payment_account_code, csv_rows):
             results.append({"csv_index": i, "status": "matched", "matches": [my_match]})
 
     # Phase 7: CSV にマッチしなかった仕訳行を検出 (journal_only)
+    # 「カード会社未達」= レシート起票済みだが CSV にまだ反映されていない仕訳
     referenced_line_ids = set()
     for r in results:
         for m in r["matches"]:
             referenced_line_ids.add(m.get("_line_id"))
 
+    today = date.today()
     journal_only = []
     for c in line_candidates:
         if c["_line_id"] in referenced_line_ids:
@@ -292,6 +294,7 @@ def find_matches(user_id, payment_account_code, csv_rows):
         else:
             continue
         cat_names = counterpart_map.get(c["entry_id"], [])
+        days_since = (today - c["date"]).days
         journal_only.append({
             "entry_id": c["entry_id"],
             "date": c["date"].isoformat(),
@@ -300,11 +303,15 @@ def find_matches(user_id, payment_account_code, csv_rows):
             "direction": direction,
             "source": c["source"],
             "category_name": ", ".join(cat_names),
+            "days_since_journal": days_since,
+            "is_stale": days_since > 30,
         })
+    # 経過日数の降順（古いほど目立つ）
+    journal_only.sort(key=lambda j: -j["days_since_journal"])
 
-    # Phase 8: 日計サマリーを構築（日跨ぎマッチ件数も計算）
+    # Phase 8: 日計サマリーを構築（日跨ぎマッチ件数 + カード未達内訳）
     daily_summary = _build_daily_summary(
-        csv_rows, results, line_candidates, csv_meta
+        csv_rows, results, line_candidates, csv_meta, journal_only
     )
 
     # _line_id を JSON 出力から除去
@@ -319,12 +326,16 @@ def find_matches(user_id, payment_account_code, csv_rows):
     }
 
 
-def _build_daily_summary(csv_rows, csv_results, candidates, csv_meta):
+def _build_daily_summary(csv_rows, csv_results, candidates, csv_meta,
+                         journal_only=None):
     """日付ごとのCSV vs 仕訳の比較サマリーを生成する。
 
     集計は CSV/仕訳それぞれの本来日付で行う（日跨ぎマッチを片側にコピーしない）。
     日跨ぎマッチした件数は cross_day_matched として CSV 日付側の行に記録する。
+    pending_card_amount はその日の journal_only 合計（カード会社未達金額）を表す。
     """
+    if journal_only is None:
+        journal_only = []
     # CSV側: 日付ごとの件数・出金合計・入金合計
     csv_by_date = defaultdict(lambda: {"count": 0, "withdrawal": 0, "deposit": 0})
     for row in csv_rows:
@@ -360,6 +371,15 @@ def _build_daily_summary(csv_rows, csv_results, candidates, csv_meta):
         if match and match.get("date_diff_days", 0) != 0:
             cross_day_by_csv_date[m["csv_date"]] += 1
 
+    # カード会社未達: その日の journal_only 合計
+    pending_by_date = defaultdict(int)
+    for j in journal_only:
+        try:
+            jd = date.fromisoformat(j["date"])
+        except (ValueError, TypeError):
+            continue
+        pending_by_date[jd] += int(j.get("amount") or 0)
+
     # 全日付を統合してサマリー生成
     all_dates = sorted(set(csv_by_date.keys()) | set(journal_by_date.keys()))
     summary = []
@@ -384,6 +404,7 @@ def _build_daily_summary(csv_rows, csv_results, candidates, csv_meta):
             "diff_amount": diff_amount,
             "has_discrepancy": diff_amount != 0 or diff_count != 0,
             "cross_day_matched": cross_day_by_csv_date.get(d, 0),
+            "pending_card_amount": pending_by_date.get(d, 0),
         })
 
     return summary
