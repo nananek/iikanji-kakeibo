@@ -769,3 +769,101 @@ class TestDailySummaryCrossDay:
         result = find_matches(user.id, cc_account.code, [_csv_row("2026-01-10", 1500)])
         summary = {d["date"]: d for d in result["daily_summary"]}
         assert summary["2026-01-10"]["cross_day_matched"] == 0
+
+
+class TestPendingCardUnreceived:
+    """「カード会社未達」(journal_only の経過日数情報・日計内訳) のテスト"""
+
+    def test_journal_only_has_days_since_field(self, db, user, accounts, cc_account):
+        """journal_only 各要素に days_since_journal が付く"""
+        # 仕訳: 1/10 → CSV 1/10 別金額 → 仕訳は journal_only に入る
+        make_journal(db, user.id, "5010", cc_account.code, 1500,
+                     entry_date=date(2026, 1, 10), source="ai_receipt")
+        result = find_matches(user.id, cc_account.code, [_csv_row("2026-01-10", 9999)])
+        assert len(result["journal_only"]) == 1
+        j = result["journal_only"][0]
+        assert "days_since_journal" in j
+        assert isinstance(j["days_since_journal"], int)
+        # is_stale フィールドも入る
+        assert "is_stale" in j
+        assert isinstance(j["is_stale"], bool)
+
+    def test_journal_only_is_stale_when_over_30days(self, db, user, accounts,
+                                                    cc_account, monkeypatch):
+        """30 日超なら is_stale=True"""
+        # 仕訳は 31 日前
+        old_date = date(2026, 1, 10)
+        today = date(2026, 2, 11)  # 32 日後
+        import app.services.reconciliation as recon_mod
+
+        class _FakeDate(date):
+            @classmethod
+            def today(cls):
+                return today
+        monkeypatch.setattr(recon_mod, "date", _FakeDate)
+
+        make_journal(db, user.id, "5010", cc_account.code, 1500,
+                     entry_date=old_date, source="ai_receipt")
+        result = find_matches(user.id, cc_account.code, [_csv_row(old_date, 9999)])
+        j = result["journal_only"][0]
+        assert j["days_since_journal"] == 32
+        assert j["is_stale"] is True
+
+    def test_journal_only_not_stale_within_30days(self, db, user, accounts,
+                                                  cc_account, monkeypatch):
+        """30 日以内なら is_stale=False"""
+        old_date = date(2026, 1, 10)
+        today = date(2026, 1, 25)  # 15 日後
+        import app.services.reconciliation as recon_mod
+
+        class _FakeDate(date):
+            @classmethod
+            def today(cls):
+                return today
+        monkeypatch.setattr(recon_mod, "date", _FakeDate)
+
+        make_journal(db, user.id, "5010", cc_account.code, 1500,
+                     entry_date=old_date, source="ai_receipt")
+        result = find_matches(user.id, cc_account.code, [_csv_row(old_date, 9999)])
+        j = result["journal_only"][0]
+        assert j["days_since_journal"] == 15
+        assert j["is_stale"] is False
+
+    def test_journal_only_sorted_by_days_desc(self, db, user, accounts, cc_account):
+        """journal_only は経過日数の降順（古いものが先頭）"""
+        # 別日 3 件のレシート仕訳を作って全部 journal_only に
+        make_journal(db, user.id, "5010", cc_account.code, 100,
+                     entry_date=date(2026, 1, 5), source="ai_receipt",
+                     description="古い")
+        make_journal(db, user.id, "5010", cc_account.code, 200,
+                     entry_date=date(2026, 1, 10), source="ai_receipt",
+                     description="新しい")
+        make_journal(db, user.id, "5010", cc_account.code, 300,
+                     entry_date=date(2026, 1, 8), source="ai_receipt",
+                     description="中間")
+        # CSV は別金額 1 行（マッチさせず全てを journal_only に）
+        result = find_matches(user.id, cc_account.code,
+                              [_csv_row("2026-01-10", 9999)])
+        assert len(result["journal_only"]) == 3
+        descs = [j["description"] for j in result["journal_only"]]
+        assert descs == ["古い", "中間", "新しい"]
+
+    def test_daily_summary_has_pending_card_amount(self, db, user, accounts, cc_account):
+        """日計サマリーに pending_card_amount が含まれ、その日の未達合計が立つ"""
+        make_journal(db, user.id, "5010", cc_account.code, 1500,
+                     entry_date=date(2026, 1, 10), source="ai_receipt")
+        # 別金額の CSV → 仕訳は journal_only に
+        result = find_matches(user.id, cc_account.code,
+                              [_csv_row("2026-01-10", 9999)])
+        summary = {d["date"]: d for d in result["daily_summary"]}
+        assert summary["2026-01-10"]["pending_card_amount"] == 1500
+
+    def test_pending_card_amount_zero_when_all_matched(self, db, user, accounts,
+                                                       cc_account):
+        """全てマッチしていれば pending_card_amount は 0"""
+        make_journal(db, user.id, "5010", cc_account.code, 1500,
+                     entry_date=date(2026, 1, 10), source="ai_receipt")
+        result = find_matches(user.id, cc_account.code,
+                              [_csv_row("2026-01-10", 1500)])
+        summary = {d["date"]: d for d in result["daily_summary"]}
+        assert summary["2026-01-10"]["pending_card_amount"] == 0

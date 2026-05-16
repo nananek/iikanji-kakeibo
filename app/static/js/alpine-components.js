@@ -520,6 +520,7 @@ document.addEventListener('alpine:init', function() {
       reconcileRows: [],
       dailySummary: [],
       journalOnly: [],
+      hiddenJournalOnlyIds: [],
       hasAiConfig: hasAiConfig,
       aiReconcileLoading: false,
       hoveredDay: null,
@@ -643,6 +644,19 @@ document.addEventListener('alpine:init', function() {
       get journalOnlyCount() {
         return this.journalOnly.length;
       },
+      get visibleJournalOnly() {
+        var hidden = this.hiddenJournalOnlyIds;
+        if (!hidden.length) return this.journalOnly;
+        return this.journalOnly.filter(function(j) {
+          return hidden.indexOf(j.entry_id) === -1;
+        });
+      },
+      get journalOnlyTotal() {
+        var total = 0;
+        var visible = this.visibleJournalOnly;
+        for (var i = 0; i < visible.length; i++) total += visible[i].amount || 0;
+        return total;
+      },
       get reconcileImportCount() {
         var c = 0;
         for (var i = 0; i < this.reconcileRows.length; i++)
@@ -652,6 +666,15 @@ document.addEventListener('alpine:init', function() {
 
       sourceLabel: function(src) {
         return sourceLabels[src] || src;
+      },
+
+      hideJournalOnly: function(entryId) {
+        if (this.hiddenJournalOnlyIds.indexOf(entryId) === -1) {
+          this.hiddenJournalOnlyIds.push(entryId);
+        }
+      },
+      resetHiddenJournalOnly: function() {
+        this.hiddenJournalOnlyIds = [];
       },
 
       switchTab: function(tab) {
