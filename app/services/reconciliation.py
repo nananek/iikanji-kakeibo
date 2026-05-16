@@ -74,8 +74,10 @@ def find_matches(user_id, payment_account_code, csv_rows):
             "daily_summary": [],
         }
 
-    date_min = min(all_dates) - timedelta(days=MATCH_DATE_TOLERANCE)
-    date_max = max(all_dates) + timedelta(days=MATCH_DATE_TOLERANCE)
+    csv_date_min = min(all_dates)
+    csv_date_max = max(all_dates)
+    date_min = csv_date_min - timedelta(days=MATCH_DATE_TOLERANCE)
+    date_max = csv_date_max + timedelta(days=MATCH_DATE_TOLERANCE)
 
     # Phase 2: 支払元口座の仕訳を一括取得
     candidates = (
@@ -286,6 +288,13 @@ def find_matches(user_id, payment_account_code, csv_rows):
     journal_only = []
     for c in line_candidates:
         if c["_line_id"] in referenced_line_ids:
+            continue
+        # CSV 取込範囲外の仕訳は journal_only に含めない:
+        # csv_date_min より古いものは前回 CSV で照合済みのはず、
+        # csv_date_max より新しいものは未来取込予定で今回の判断材料にならない。
+        # マッチング候補としては ±7 日のトレランス範囲で取得しているが、
+        # 「カード会社未達」として報告するのは CSV 範囲内に限る。
+        if c["date"] < csv_date_min or c["date"] > csv_date_max:
             continue
         if c["credit"] > 0:
             amount, direction = c["credit"], "withdrawal"

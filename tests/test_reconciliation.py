@@ -830,8 +830,10 @@ class TestPendingCardUnreceived:
         assert j["is_stale"] is False
 
     def test_journal_only_sorted_by_days_desc(self, db, user, accounts, cc_account):
-        """journal_only は経過日数の降順（古いものが先頭）"""
-        # 別日 3 件のレシート仕訳を作って全部 journal_only に
+        """journal_only は経過日数の降順（古いものが先頭）。
+
+        CSV 取込範囲を 1/5〜1/10 に揃え、3 件全てを範囲内に収める。
+        """
         make_journal(db, user.id, "5010", cc_account.code, 100,
                      entry_date=date(2026, 1, 5), source="ai_receipt",
                      description="古い")
@@ -841,9 +843,11 @@ class TestPendingCardUnreceived:
         make_journal(db, user.id, "5010", cc_account.code, 300,
                      entry_date=date(2026, 1, 8), source="ai_receipt",
                      description="中間")
-        # CSV は別金額 1 行（マッチさせず全てを journal_only に）
-        result = find_matches(user.id, cc_account.code,
-                              [_csv_row("2026-01-10", 9999)])
+        # CSV の min/max を 1/5〜1/10 にして 3 件を全て範囲内に入れる
+        result = find_matches(user.id, cc_account.code, [
+            _csv_row("2026-01-05", 9999),
+            _csv_row("2026-01-10", 9998),
+        ])
         assert len(result["journal_only"]) == 3
         descs = [j["description"] for j in result["journal_only"]]
         assert descs == ["古い", "中間", "新しい"]
@@ -867,3 +871,81 @@ class TestPendingCardUnreceived:
                               [_csv_row("2026-01-10", 1500)])
         summary = {d["date"]: d for d in result["daily_summary"]}
         assert summary["2026-01-10"]["pending_card_amount"] == 0
+
+
+class TestJournalOnlyRangeLimit:
+    """journal_only は CSV 取込範囲内の仕訳に限定される
+
+    レシート起票仕訳が CSV 日付範囲外（過去）にあるとき、それは前回 CSV で
+    既に照合済みのはず。今回の「カード会社未達」リストには含めない。
+    """
+
+    def test_excludes_journal_before_csv_min_date(self, db, user, accounts, cc_account):
+        """CSV 範囲 (4/16〜5/15) の前にある仕訳 (4/10) は journal_only に含めない。
+
+        トレランス ±7 日の取得範囲には入るが、未達としては報告しない。
+        """
+        make_journal(db, user.id, "5010", cc_account.code, 500,
+                     entry_date=date(2026, 4, 10), source="ai_receipt",
+                     description="範囲外（過去）")
+        # CSV は 4/16 から
+        result = find_matches(user.id, cc_account.code, [
+            _csv_row("2026-04-16", 9999),
+            _csv_row("2026-05-15", 8888),
+        ])
+        # 過去の仕訳は journal_only から除外される
+        entry_ids = [j.get("entry_id") for j in result["journal_only"]]
+        # 4/10 の仕訳は範囲外なので含まれない
+        assert all(j["date"] >= "2026-04-16" for j in result["journal_only"])
+
+    def test_excludes_journal_after_csv_max_date(self, db, user, accounts, cc_account):
+        """CSV 範囲 (4/16〜5/15) の後にある仕訳 (5/20) は journal_only に含めない。"""
+        make_journal(db, user.id, "5010", cc_account.code, 600,
+                     entry_date=date(2026, 5, 20), source="ai_receipt",
+                     description="範囲外（未来）")
+        result = find_matches(user.id, cc_account.code, [
+            _csv_row("2026-04-16", 9999),
+            _csv_row("2026-05-15", 8888),
+        ])
+        assert all(j["date"] <= "2026-05-15" for j in result["journal_only"])
+
+    def test_includes_journal_within_csv_range(self, db, user, accounts, cc_account):
+        """CSV 範囲内（4/16〜5/15）の仕訳は別金額でも journal_only に含まれる。"""
+        make_journal(db, user.id, "5010", cc_account.code, 700,
+                     entry_date=date(2026, 5, 1), source="ai_receipt",
+                     description="範囲内")
+        result = find_matches(user.id, cc_account.code, [
+            _csv_row("2026-04-16", 9999),
+            _csv_row("2026-05-15", 8888),
+        ])
+        assert len(result["journal_only"]) == 1
+        assert result["journal_only"][0]["description"] == "範囲内"
+
+    def test_includes_journal_on_boundary(self, db, user, accounts, cc_account):
+        """CSV 範囲の境界日 (min/max と同日) の仕訳は含まれる。"""
+        make_journal(db, user.id, "5010", cc_account.code, 100,
+                     entry_date=date(2026, 4, 16), source="ai_receipt",
+                     description="min 境界")
+        make_journal(db, user.id, "5010", cc_account.code, 200,
+                     entry_date=date(2026, 5, 15), source="ai_receipt",
+                     description="max 境界")
+        result = find_matches(user.id, cc_account.code, [
+            _csv_row("2026-04-16", 9999),
+            _csv_row("2026-05-15", 8888),
+        ])
+        descs = sorted(j["description"] for j in result["journal_only"])
+        assert descs == ["max 境界", "min 境界"]
+
+    def test_matching_still_uses_tolerance(self, db, user, accounts, cc_account):
+        """範囲制限は journal_only にだけ効き、マッチング自体は ±7 日トレランスで動く"""
+        # 仕訳 4/14 (CSV min 4/16 の 2 日前)
+        make_journal(db, user.id, "5010", cc_account.code, 1000,
+                     entry_date=date(2026, 4, 14), source="ai_receipt")
+        # CSV 4/16 (差 +2)
+        result = find_matches(user.id, cc_account.code,
+                              [_csv_row("2026-04-16", 1000)])
+        # マッチング自体は成立（warn band）
+        assert result["csv_results"][0]["status"] == "matched"
+        assert result["csv_results"][0]["matches"][0]["date_band"] == "warn"
+        # journal_only は空（マッチ済み）
+        assert result["journal_only"] == []
