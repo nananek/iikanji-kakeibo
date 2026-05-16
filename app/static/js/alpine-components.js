@@ -582,6 +582,33 @@ document.addEventListener('alpine:init', function() {
           if (this.reconcileRows[i].status === 'matched') c++;
         return c;
       },
+      get matchedExactCount() {
+        var c = 0;
+        for (var i = 0; i < this.reconcileRows.length; i++) {
+          var r = this.reconcileRows[i];
+          if (r.status === 'matched' && r.matchInfo &&
+              (!r.matchInfo.date_band || r.matchInfo.date_band === 'exact')) c++;
+        }
+        return c;
+      },
+      get matchedWarnCount() {
+        var c = 0;
+        for (var i = 0; i < this.reconcileRows.length; i++) {
+          var r = this.reconcileRows[i];
+          if (r.status === 'matched' && r.matchInfo &&
+              r.matchInfo.date_band === 'warn') c++;
+        }
+        return c;
+      },
+      get matchedCautionCount() {
+        var c = 0;
+        for (var i = 0; i < this.reconcileRows.length; i++) {
+          var r = this.reconcileRows[i];
+          if (r.status === 'matched' && r.matchInfo &&
+              r.matchInfo.date_band === 'caution') c++;
+        }
+        return c;
+      },
       get multipleCount() {
         var c = 0;
         for (var i = 0; i < this.reconcileRows.length; i++)
@@ -667,6 +694,7 @@ document.addEventListener('alpine:init', function() {
               matchInfo: null,
               category_code: '',
               category_name: '',
+              snapping: false,
             };
             if (r.status === 'matched') {
               row.selectedMatchIndex = 0;
@@ -689,6 +717,43 @@ document.addEventListener('alpine:init', function() {
         })
         .catch(function(err) { alert('照合に失敗しました: ' + err.message); })
         .finally(function() { self.reconcileLoading = false; });
+      },
+
+      snapDate: function(rowIdx) {
+        var row = this.reconcileRows[rowIdx];
+        if (!row || !row.matchInfo || !row.date) return;
+        if (row.snapping) return;
+        row.snapping = true;
+        var self = this;
+        fetch('/csv-import/match/snap-date', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': Alpine.store('csrf').token,
+          },
+          body: JSON.stringify({
+            entry_id: row.matchInfo.entry_id,
+            csv_date: row.date,
+          }),
+        })
+        .then(function(res) {
+          return res.json().then(function(body) { return { ok: res.ok, body: body }; });
+        })
+        .then(function(r) {
+          if (!r.ok || !r.body.success) {
+            showToast(r.body.error || '日付の更新に失敗しました', 'danger');
+            return;
+          }
+          // matchInfo を在席のまま更新（exact に昇格）
+          row.matchInfo.date = r.body.new_date;
+          row.matchInfo.date_diff_days = 0;
+          row.matchInfo.date_band = 'exact';
+          showToast('仕訳の日付を ' + r.body.new_date + ' に変更しました', 'success');
+        })
+        .catch(function(err) {
+          showToast('日付の更新に失敗しました: ' + err.message, 'danger');
+        })
+        .finally(function() { row.snapping = false; });
       },
 
       selectMatch: function(rowIdx, matchIdx) {

@@ -7,7 +7,22 @@ from app.extensions import db
 from app.models.account import Account
 from app.models.journal import JournalEntry, JournalEntryLine
 
-MATCH_DATE_TOLERANCE = 0  # 日付完全一致のみ
+# 照合対象とする日付差の上限（これを超えると unmatched 扱い）
+MATCH_DATE_TOLERANCE = 7
+
+# バッジ階段の境界（含む）
+MATCH_DATE_BAND_EXACT = 0   # 0 日: 完全一致
+MATCH_DATE_BAND_WARN = 3    # 1〜3 日: 日付ズレ
+MATCH_DATE_BAND_CAUTION = 7  # 4〜7 日: 要確認
+
+
+def _classify_band(diff_days_abs: int) -> str:
+    """日付差の絶対値からバッジカテゴリを返す。"""
+    if diff_days_abs <= MATCH_DATE_BAND_EXACT:
+        return "exact"
+    if diff_days_abs <= MATCH_DATE_BAND_WARN:
+        return "warn"
+    return "caution"
 
 
 def find_matches(user_id, payment_account_code, csv_rows):
@@ -128,21 +143,19 @@ def find_matches(user_id, payment_account_code, csv_rows):
         if c["debit"] > 0:
             amount_index[(c["debit"], "deposit")].append(c)
 
-    # Phase 6: 各CSV行をマッチング（行単位で重複排除）
-    used_line_ids = set()
-    results = []
-
+    # Phase 6a: 各 CSV 行について、トレランス内の全候補を列挙する（確定はしない）
+    csv_meta = []  # {csv_index, csv_date, amount, direction, candidates}
     for i, row in enumerate(csv_rows):
         raw_date = row.get("date")
         if not raw_date:
-            results.append({"csv_index": i, "status": "unmatched", "matches": []})
+            csv_meta.append({"csv_index": i, "csv_date": None})
             continue
 
         if isinstance(raw_date, str):
             try:
                 csv_date = date.fromisoformat(raw_date)
             except ValueError:
-                results.append({"csv_index": i, "status": "unmatched", "matches": []})
+                csv_meta.append({"csv_index": i, "csv_date": None})
                 continue
         else:
             csv_date = raw_date
@@ -155,36 +168,112 @@ def find_matches(user_id, payment_account_code, csv_rows):
         elif deposit > 0:
             amount, direction = deposit, "deposit"
         else:
-            results.append({"csv_index": i, "status": "unmatched", "matches": []})
+            csv_meta.append({"csv_index": i, "csv_date": csv_date})
             continue
 
         potential = amount_index.get((amount, direction), [])
-        matched = []
+        candidates_for_row = []
         for c in potential:
-            if c["_line_id"] in used_line_ids:
-                continue
-            if abs((c["date"] - csv_date).days) <= MATCH_DATE_TOLERANCE:
-                cat_names = counterpart_map.get(c["entry_id"], [])
-                matched.append({
-                    "_line_id": c["_line_id"],
-                    "entry_id": c["entry_id"],
-                    "date": c["date"].isoformat(),
-                    "description": c["description"],
-                    "amount": amount,
-                    "source": c["source"],
-                    "category_name": ", ".join(cat_names),
+            diff = (csv_date - c["date"]).days  # 符号付き: CSV - 仕訳
+            if abs(diff) <= MATCH_DATE_TOLERANCE:
+                candidates_for_row.append({
+                    "line_id": c["_line_id"],
+                    "diff": diff,
+                    "candidate": c,
                 })
 
-        # 日付が近い順にソート
-        matched.sort(key=lambda m: abs((date.fromisoformat(m["date"]) - csv_date).days))
+        csv_meta.append({
+            "csv_index": i,
+            "csv_date": csv_date,
+            "amount": amount,
+            "direction": direction,
+            "candidates": candidates_for_row,
+        })
 
-        if len(matched) == 1:
-            used_line_ids.add(matched[0]["_line_id"])
-            results.append({"csv_index": i, "status": "matched", "matches": matched})
-        elif len(matched) > 1:
-            results.append({"csv_index": i, "status": "multiple", "matches": matched})
-        else:
+    # Phase 6b: 距離が小さい順に貪欲確定
+    # 各 (csv_index, line_id) ペアを距離で全列挙してソート → 早い者勝ち
+    pair_pool = []
+    for meta in csv_meta:
+        if "candidates" not in meta:
+            continue
+        for cand in meta["candidates"]:
+            pair_pool.append((
+                abs(cand["diff"]),  # 第一キー: 距離
+                meta["csv_index"],  # 第二キー: CSV 順（安定的な tiebreaker）
+                meta,
+                cand,
+            ))
+    pair_pool.sort(key=lambda x: (x[0], x[1]))
+
+    assigned_csv = {}  # csv_index -> {line_id, diff, candidate}
+    used_line_ids = set()
+    for _, _, meta, cand in pair_pool:
+        if meta["csv_index"] in assigned_csv:
+            continue
+        if cand["line_id"] in used_line_ids:
+            continue
+        assigned_csv[meta["csv_index"]] = cand
+        used_line_ids.add(cand["line_id"])
+
+    # Phase 6c: 結果リスト構築 + multiple 判定
+    results = []
+    for meta in csv_meta:
+        i = meta["csv_index"]
+        if "candidates" not in meta or meta.get("csv_date") is None or not meta["candidates"]:
             results.append({"csv_index": i, "status": "unmatched", "matches": []})
+            continue
+
+        csv_date = meta["csv_date"]
+        amount = meta["amount"]
+        candidates_for_row = meta["candidates"]
+
+        # 全候補を matches 形式で構築（距離小さい順）
+        candidates_for_row.sort(key=lambda x: abs(x["diff"]))
+        all_matches = []
+        for cand in candidates_for_row:
+            c = cand["candidate"]
+            cat_names = counterpart_map.get(c["entry_id"], [])
+            diff = cand["diff"]
+            all_matches.append({
+                "_line_id": c["_line_id"],
+                "entry_id": c["entry_id"],
+                "date": c["date"].isoformat(),
+                "description": c["description"],
+                "amount": amount,
+                "source": c["source"],
+                "category_name": ", ".join(cat_names),
+                "date_diff_days": diff,
+                "date_band": _classify_band(abs(diff)),
+            })
+
+        # 当該 CSV 行が貪欲法で確定したか？
+        assigned = assigned_csv.get(i)
+        if assigned is None:
+            # 他の CSV 行に全候補を奪われた → unmatched
+            results.append({"csv_index": i, "status": "unmatched", "matches": []})
+            continue
+
+        # 確定した候補のみを残し、残候補（別 CSV 行に取られたもの）は除外
+        my_match = next(
+            (m for m in all_matches if m["_line_id"] == assigned["line_id"]),
+            None,
+        )
+        if my_match is None:
+            results.append({"csv_index": i, "status": "unmatched", "matches": []})
+            continue
+
+        remaining = [
+            m for m in all_matches
+            if m["_line_id"] == assigned["line_id"]
+            or m["_line_id"] not in used_line_ids
+        ]
+        # 確定したものを先頭に
+        remaining.sort(key=lambda m: (m["_line_id"] != assigned["line_id"], abs(m["date_diff_days"])))
+
+        if len(remaining) >= 2:
+            results.append({"csv_index": i, "status": "multiple", "matches": remaining})
+        else:
+            results.append({"csv_index": i, "status": "matched", "matches": [my_match]})
 
     # Phase 7: CSV にマッチしなかった仕訳行を検出 (journal_only)
     referenced_line_ids = set()
@@ -213,9 +302,10 @@ def find_matches(user_id, payment_account_code, csv_rows):
             "category_name": ", ".join(cat_names),
         })
 
-    # Phase 8: 日計サマリーを構築
-    daily_summary = _build_daily_summary(csv_rows, results, line_candidates,
-                                         counterpart_map, used_line_ids)
+    # Phase 8: 日計サマリーを構築（日跨ぎマッチ件数も計算）
+    daily_summary = _build_daily_summary(
+        csv_rows, results, line_candidates, csv_meta
+    )
 
     # _line_id を JSON 出力から除去
     for r in results:
@@ -229,9 +319,12 @@ def find_matches(user_id, payment_account_code, csv_rows):
     }
 
 
-def _build_daily_summary(csv_rows, csv_results, candidates, counterpart_map,
-                         used_entry_ids):
-    """日付ごとのCSV vs 仕訳の比較サマリーを生成する。"""
+def _build_daily_summary(csv_rows, csv_results, candidates, csv_meta):
+    """日付ごとのCSV vs 仕訳の比較サマリーを生成する。
+
+    集計は CSV/仕訳それぞれの本来日付で行う（日跨ぎマッチを片側にコピーしない）。
+    日跨ぎマッチした件数は cross_day_matched として CSV 日付側の行に記録する。
+    """
     # CSV側: 日付ごとの件数・出金合計・入金合計
     csv_by_date = defaultdict(lambda: {"count": 0, "withdrawal": 0, "deposit": 0})
     for row in csv_rows:
@@ -253,6 +346,19 @@ def _build_daily_summary(csv_rows, csv_results, candidates, counterpart_map,
         journal_by_date[c["date"]]["count"] += 1
         journal_by_date[c["date"]]["withdrawal"] += c["credit"]
         journal_by_date[c["date"]]["deposit"] += c["debit"]
+
+    # 日跨ぎマッチ件数（CSV 側日付に集計）
+    cross_day_by_csv_date = defaultdict(int)
+    meta_by_csv_index = {m["csv_index"]: m for m in csv_meta}
+    for r in csv_results:
+        if r["status"] != "matched":
+            continue
+        m = meta_by_csv_index.get(r["csv_index"])
+        if not m or m.get("csv_date") is None:
+            continue
+        match = r["matches"][0] if r["matches"] else None
+        if match and match.get("date_diff_days", 0) != 0:
+            cross_day_by_csv_date[m["csv_date"]] += 1
 
     # 全日付を統合してサマリー生成
     all_dates = sorted(set(csv_by_date.keys()) | set(journal_by_date.keys()))
@@ -277,6 +383,7 @@ def _build_daily_summary(csv_rows, csv_results, candidates, counterpart_map,
             "diff_count": diff_count,
             "diff_amount": diff_amount,
             "has_discrepancy": diff_amount != 0 or diff_count != 0,
+            "cross_day_matched": cross_day_by_csv_date.get(d, 0),
         })
 
     return summary
