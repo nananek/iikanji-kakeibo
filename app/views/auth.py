@@ -1,12 +1,12 @@
 from flask import Blueprint, render_template, redirect, url_for, flash, request
 from flask_login import login_user, logout_user, login_required, current_user
-from urllib.parse import urlparse
 
 from app.extensions import db, limiter
 from app.models.user import User
 from app.forms.auth import LoginForm, RegisterForm
 from app.services.seed import seed_accounts_for_user
 from app.services.captcha import is_captcha_enabled, get_captcha_response_field, verify_captcha_token
+from app.views.helpers import is_safe_internal_path
 
 
 def _check_captcha() -> bool:
@@ -21,16 +21,10 @@ def _check_captcha() -> bool:
     return True
 
 
-def _is_safe_redirect_url(target: str) -> bool:
-    """リダイレクト先が内部 URL かどうかを検証する（オープンリダイレクト防止）。"""
-    parsed = urlparse(target)
-    return not parsed.scheme and not parsed.netloc
-
-
-def _safe_next_url(fallback):
-    """next パラメータが内部 URL であれば返す。外部 URL は無視する。"""
-    next_page = request.args.get("next")
-    if next_page and _is_safe_redirect_url(next_page):
+def _safe_next_url(fallback: str) -> str:
+    """next パラメータがアプリ内部の相対パスならそれを、そうでなければ fallback を返す。"""
+    next_page = request.args.get("next", "")
+    if is_safe_internal_path(next_page):
         return next_page
     return fallback
 

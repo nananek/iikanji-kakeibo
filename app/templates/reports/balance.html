@@ -235,7 +235,9 @@
 
   function navigate(pfVal, ptVal) {
     var year = document.getElementById('yearSelect').value;
-    location.href = '?year=' + year + '&pf=' + pfVal + '&pt=' + ptVal;
+    location.href = '?year=' + encodeURIComponent(year)
+      + '&pf=' + encodeURIComponent(pfVal)
+      + '&pt=' + encodeURIComponent(ptVal);
   }
 
   function getPeriod(btn) {

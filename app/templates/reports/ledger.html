@@ -325,14 +325,16 @@ if (window.innerWidth > 576) {
   var dragStart = null;
   var dragEnd = null;
 
-  var currentSort = '{{ sort|default("asc") }}';
+  var currentSort = {{ sort|default("asc")|tojson }};
 
   function navigate(pfVal, ptVal) {
     var year = document.getElementById('yearSelect').value;
     var acctCode = document.getElementById('accountSelect').value;
-    var url = '?year=' + year + '&pf=' + pfVal + '&pt=' + ptVal;
-    if (acctCode) url += '&account_code=' + acctCode;
-    if (currentSort !== 'asc') url += '&sort=' + currentSort;
+    var url = '?year=' + encodeURIComponent(year)
+      + '&pf=' + encodeURIComponent(pfVal)
+      + '&pt=' + encodeURIComponent(ptVal);
+    if (acctCode) url += '&account_code=' + encodeURIComponent(acctCode);
+    if (currentSort !== 'asc') url += '&sort=' + encodeURIComponent(currentSort);
     location.href = url;
   }
 

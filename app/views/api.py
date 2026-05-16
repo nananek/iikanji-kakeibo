@@ -25,6 +25,7 @@ from app.services.storage import (
 from app.services.voucher import create_voucher_from_draft
 from app.models.voucher import Voucher
 from app.models.voucher_audit_log import VoucherAuditLog
+from app.views.helpers import safe_user_error
 
 bp = Blueprint("api", __name__, url_prefix="/api/v1")
 
@@ -158,7 +159,9 @@ def create_journal():
             source=source,
         )
     except ValueError as e:
-        return jsonify({"error": str(e)}), 400
+        from flask import current_app
+        current_app.logger.exception("create_journal_entry failed (API)")
+        return jsonify({"error": safe_user_error(e)}), 400
 
     # draft_id が指定されていれば下書きを削除する
     draft_id = data.get("draft_id")
@@ -348,7 +351,9 @@ def ai_analyze():
             user_id, image_bytes, mime_type, comment=comment or None,
         )
     except (ValueError, RuntimeError) as e:
-        return jsonify({"error": str(e)}), 400
+        from flask import current_app
+        current_app.logger.exception("analyze_and_suggest failed (API)")
+        return jsonify({"error": safe_user_error(e)}), 400
 
     suggestions_data = [asdict(s) for s in suggestions]
     suggestions_json = json.dumps(suggestions_data, ensure_ascii=False)

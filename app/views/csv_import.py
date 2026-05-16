@@ -9,6 +9,7 @@ from flask_login import login_required, current_user
 from app.extensions import db
 from app.models.account import Account, AccountType
 from app.models.ai_config import UserAIConfig
+from app.models.journal import JournalEntry
 from app.services.audit import get_effective_user_id, get_submitted_account_codes
 from app.services.csv_import import (
     parse_csv_preview,
@@ -22,9 +23,11 @@ from app.services.accounting import create_cashbook_entry, create_transfer_entry
 from app.services.fiscal import (
     check_period_open_for_new, get_restricted_before_year, is_year_open,
     get_capital_account_code, get_closed_periods_for_dates,
+    check_entry_modifiable,
 )
 from app.views.helpers import (
     get_grouped_accounts, save_import_data, load_import_data, delete_import_data,
+    safe_user_error,
 )
 
 bp = Blueprint("csv_import", __name__, url_prefix="/csv-import")
@@ -443,6 +446,64 @@ def ai_reconcile():
     try:
         ai_matches = find_ai_matches(user_id, unmatched_csv, journal_candidates)
     except (ValueError, RuntimeError) as e:
-        return jsonify({"error": str(e)}), 400
+        from flask import current_app
+        current_app.logger.exception("find_ai_matches failed")
+        return jsonify({"error": safe_user_error(e)}), 400
 
     return jsonify({"matches": ai_matches})
+
+
+@bp.route("/match/snap-date", methods=["POST"])
+@login_required
+def snap_match_date():
+    """日付ズレ照合の修正アクション: 仕訳の日付を CSV 日付に合わせる。
+
+    レシート起票時の日付と CSV 上の計上日がズレているケース（クレジットカードの
+    利用日 vs 計上日）で、ユーザーが「これは同じ取引」と判断したときに使う。
+    結果として `date_band: "exact"` に変わり、再照合不要で表示が更新される。
+    """
+    from datetime import date as _date
+    from flask import current_app
+
+    payload = request.get_json(silent=True) or {}
+    entry_id = payload.get("entry_id")
+    csv_date_str = payload.get("csv_date")
+
+    if not entry_id or not csv_date_str:
+        return jsonify({"error": "entry_id と csv_date が必要です"}), 400
+
+    try:
+        csv_date = _date.fromisoformat(str(csv_date_str))
+    except (ValueError, TypeError):
+        return jsonify({"error": "CSV 日付の形式が不正です"}), 400
+
+    user_id = get_effective_user_id()
+    entry = JournalEntry.query.filter_by(id=entry_id, user_id=user_id).first()
+    if entry is None:
+        return jsonify({"error": "仕訳が見つかりません"}), 404
+
+    # 移動元（現在の仕訳）が変更可能か
+    err = check_entry_modifiable(user_id, entry)
+    if err:
+        return jsonify({"error": err}), 400
+
+    # 移動先の期間がオープンか（同じ仕訳でも別月に移すとロック中の月かもしれない）
+    err = check_period_open_for_new(user_id, csv_date.year, csv_date.month)
+    if err:
+        return jsonify({"error": err}), 400
+
+    old_date = entry.date.isoformat()
+    entry.date = csv_date
+    db.session.commit()
+    current_app.logger.info(
+        "snap_match_date: entry_id=%s user=%s %s -> %s",
+        entry_id, user_id, old_date, csv_date.isoformat(),
+    )
+
+    return jsonify({
+        "success": True,
+        "entry_id": entry_id,
+        "new_date": csv_date.isoformat(),
+        "date_diff_days": 0,
+        "date_band": "exact",
+    })

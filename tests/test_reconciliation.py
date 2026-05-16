@@ -51,14 +51,33 @@ class TestFindMatches:
         assert m["source"] == "ai_receipt"
         assert "食費" in m["category_name"]
 
-    def test_date_mismatch_unmatched(self, db, user, accounts, cc_account):
-        """金額一致・日付不一致 → unmatched（日付完全一致のみ）"""
+    def test_date_within_tolerance_matched(self, db, user, accounts, cc_account):
+        """金額一致・日付 1 日差 → matched (warn band)。
+        旧仕様 (TOLERANCE=0) では unmatched だったが、±7 日まで許容するようになった。"""
         make_journal(
             db, user.id,
             acct_debit_code="5010",
             acct_credit_code=cc_account.code,
             amount=2000,
             entry_date=date(2026, 1, 11),
+            source="cashbook",
+        )
+        csv_rows = [
+            {"date": "2026-01-10", "description": "スーパー", "withdrawal": 2000, "deposit": 0},
+        ]
+        results = self._csv_results(user.id, cc_account.code, csv_rows)
+        assert results[0]["status"] == "matched"
+        assert results[0]["matches"][0]["date_band"] == "warn"
+        assert results[0]["matches"][0]["date_diff_days"] == -1
+
+    def test_date_beyond_tolerance_unmatched(self, db, user, accounts, cc_account):
+        """8 日差 (トレランス外) → unmatched"""
+        make_journal(
+            db, user.id,
+            acct_debit_code="5010",
+            acct_credit_code=cc_account.code,
+            amount=2000,
+            entry_date=date(2026, 1, 18),
             source="cashbook",
         )
         csv_rows = [
@@ -585,3 +604,266 @@ class TestFormatHelpers:
         rows = [{"entry_id": 1}]
         result = _format_journal_rows(rows)
         assert "[ID:1]" in result
+
+
+# --- 日付トレランス±7日と段階バッジ ---
+
+
+def _csv_row(d, amount, description="購入", direction="withdrawal"):
+    return {
+        "row_num": 1,
+        "date": d if isinstance(d, str) else d.isoformat(),
+        "description": description,
+        "deposit": amount if direction == "deposit" else 0,
+        "withdrawal": amount if direction == "withdrawal" else 0,
+    }
+
+
+class TestClassifyBand:
+    """_classify_band() のバッジ境界値テスト"""
+
+    def test_exact_at_zero(self):
+        from app.services.reconciliation import _classify_band
+        assert _classify_band(0) == "exact"
+
+    def test_warn_lower_bound(self):
+        from app.services.reconciliation import _classify_band
+        assert _classify_band(1) == "warn"
+
+    def test_warn_upper_bound(self):
+        from app.services.reconciliation import _classify_band
+        assert _classify_band(3) == "warn"
+
+    def test_caution_lower_bound(self):
+        from app.services.reconciliation import _classify_band
+        assert _classify_band(4) == "caution"
+
+    def test_caution_upper_bound(self):
+        from app.services.reconciliation import _classify_band, MATCH_DATE_BAND_CAUTION
+        assert _classify_band(MATCH_DATE_BAND_CAUTION) == "caution"
+
+
+class TestDateTolerance:
+    """日付トレランス拡張（±7日）と date_band / date_diff_days の挙動"""
+
+    def test_constants_are_consistent(self):
+        from app.services.reconciliation import (
+            MATCH_DATE_TOLERANCE, MATCH_DATE_BAND_EXACT,
+            MATCH_DATE_BAND_WARN, MATCH_DATE_BAND_CAUTION,
+        )
+        assert MATCH_DATE_TOLERANCE == MATCH_DATE_BAND_CAUTION == 7
+        assert MATCH_DATE_BAND_EXACT == 0
+        assert MATCH_DATE_BAND_WARN == 3
+
+    def test_within_1day_returns_warn_band(self, db, user, accounts, cc_account):
+        # 仕訳 1/10、CSV 1/11 (差 +1)
+        make_journal(db, user.id, "5010", cc_account.code, 1500,
+                     entry_date=date(2026, 1, 10), source="ai_receipt")
+        result = find_matches(user.id, cc_account.code, [_csv_row("2026-01-11", 1500)])
+        match = result["csv_results"][0]["matches"][0]
+        assert result["csv_results"][0]["status"] == "matched"
+        assert match["date_diff_days"] == 1
+        assert match["date_band"] == "warn"
+
+    def test_within_minus_3days_returns_warn_band(self, db, user, accounts, cc_account):
+        # 仕訳 1/13、CSV 1/10 (差 -3)
+        make_journal(db, user.id, "5010", cc_account.code, 1500,
+                     entry_date=date(2026, 1, 13), source="ai_receipt")
+        result = find_matches(user.id, cc_account.code, [_csv_row("2026-01-10", 1500)])
+        match = result["csv_results"][0]["matches"][0]
+        assert match["date_diff_days"] == -3
+        assert match["date_band"] == "warn"
+
+    def test_within_5days_returns_caution_band(self, db, user, accounts, cc_account):
+        # 仕訳 1/10、CSV 1/15 (差 +5)
+        make_journal(db, user.id, "5010", cc_account.code, 2000,
+                     entry_date=date(2026, 1, 10), source="ai_receipt")
+        result = find_matches(user.id, cc_account.code, [_csv_row("2026-01-15", 2000)])
+        match = result["csv_results"][0]["matches"][0]
+        assert match["date_diff_days"] == 5
+        assert match["date_band"] == "caution"
+
+    def test_exactly_7days_is_caution(self, db, user, accounts, cc_account):
+        make_journal(db, user.id, "5010", cc_account.code, 1000,
+                     entry_date=date(2026, 1, 10), source="ai_receipt")
+        result = find_matches(user.id, cc_account.code, [_csv_row("2026-01-17", 1000)])
+        match = result["csv_results"][0]["matches"][0]
+        assert match["date_diff_days"] == 7
+        assert match["date_band"] == "caution"
+
+    def test_beyond_7days_unmatched(self, db, user, accounts, cc_account):
+        """8 日差は照合対象外（仕訳取得クエリの範囲外なので journal_only にも出ない）。"""
+        make_journal(db, user.id, "5010", cc_account.code, 1000,
+                     entry_date=date(2026, 1, 10), source="ai_receipt")
+        result = find_matches(user.id, cc_account.code, [_csv_row("2026-01-18", 1000)])
+        assert result["csv_results"][0]["status"] == "unmatched"
+
+    def test_exact_match_returns_zero_diff(self, db, user, accounts, cc_account):
+        make_journal(db, user.id, "5010", cc_account.code, 1500,
+                     entry_date=date(2026, 1, 10), source="ai_receipt")
+        result = find_matches(user.id, cc_account.code, [_csv_row("2026-01-10", 1500)])
+        match = result["csv_results"][0]["matches"][0]
+        assert match["date_diff_days"] == 0
+        assert match["date_band"] == "exact"
+
+
+class TestGreedyAssignment:
+    """貪欲法による重複マッチ防止"""
+
+    def test_prefers_exact_over_warn(self, db, user, accounts, cc_account):
+        """CSV 2 行 (1/10, 1/12) と仕訳 1 件 (1/12, ¥1000) のとき、
+        距離 0 (exact) の CSV 1/12 が優先で確定し、CSV 1/10 は unmatched になる。"""
+        make_journal(db, user.id, "5010", cc_account.code, 1000,
+                     entry_date=date(2026, 1, 12), source="ai_receipt")
+        rows = [
+            _csv_row("2026-01-10", 1000, description="CSV-10"),
+            _csv_row("2026-01-12", 1000, description="CSV-12"),
+        ]
+        result = find_matches(user.id, cc_account.code, rows)
+        statuses = [r["status"] for r in result["csv_results"]]
+        assert statuses == ["unmatched", "matched"]
+        assert result["csv_results"][1]["matches"][0]["date_band"] == "exact"
+
+    def test_uses_closest_when_both_warn(self, db, user, accounts, cc_account):
+        """CSV 1/10 に対し仕訳 1/11 (差 -1) と仕訳 1/13 (差 -3) が候補のとき、
+        近い 1/11 を先頭に並べる (multiple 状態)。"""
+        make_journal(db, user.id, "5010", cc_account.code, 2500,
+                     entry_date=date(2026, 1, 11), source="ai_receipt",
+                     description="近い仕訳")
+        make_journal(db, user.id, "5010", cc_account.code, 2500,
+                     entry_date=date(2026, 1, 13), source="ai_receipt",
+                     description="遠い仕訳")
+        result = find_matches(user.id, cc_account.code, [_csv_row("2026-01-10", 2500)])
+        r = result["csv_results"][0]
+        assert r["status"] == "multiple"
+        assert r["matches"][0]["date"] == "2026-01-11"
+        assert abs(r["matches"][0]["date_diff_days"]) == 1
+
+
+class TestDailySummaryCrossDay:
+    """日跨ぎマッチの日計サマリー集計"""
+
+    def test_keeps_each_side_on_own_date(self, db, user, accounts, cc_account):
+        """日跨ぎマッチでも CSV/仕訳の集計はそれぞれの本来日付に立つ。"""
+        make_journal(db, user.id, "5010", cc_account.code, 1500,
+                     entry_date=date(2026, 1, 12), source="ai_receipt")
+        result = find_matches(user.id, cc_account.code, [_csv_row("2026-01-10", 1500)])
+        summary = {d["date"]: d for d in result["daily_summary"]}
+        assert summary["2026-01-10"]["csv_count"] == 1
+        assert summary["2026-01-10"]["journal_count"] == 0
+        assert summary["2026-01-12"]["csv_count"] == 0
+        assert summary["2026-01-12"]["journal_count"] == 1
+
+    def test_cross_day_matched_counted_on_csv_date(self, db, user, accounts, cc_account):
+        """cross_day_matched は CSV 日付側に集計される。"""
+        make_journal(db, user.id, "5010", cc_account.code, 1500,
+                     entry_date=date(2026, 1, 12), source="ai_receipt")
+        result = find_matches(user.id, cc_account.code, [_csv_row("2026-01-10", 1500)])
+        summary = {d["date"]: d for d in result["daily_summary"]}
+        assert summary["2026-01-10"]["cross_day_matched"] == 1
+        assert summary["2026-01-12"]["cross_day_matched"] == 0
+
+    def test_exact_match_no_cross_day_count(self, db, user, accounts, cc_account):
+        make_journal(db, user.id, "5010", cc_account.code, 1500,
+                     entry_date=date(2026, 1, 10), source="ai_receipt")
+        result = find_matches(user.id, cc_account.code, [_csv_row("2026-01-10", 1500)])
+        summary = {d["date"]: d for d in result["daily_summary"]}
+        assert summary["2026-01-10"]["cross_day_matched"] == 0
+
+
+class TestPendingCardUnreceived:
+    """「カード会社未達」(journal_only の経過日数情報・日計内訳) のテスト"""
+
+    def test_journal_only_has_days_since_field(self, db, user, accounts, cc_account):
+        """journal_only 各要素に days_since_journal が付く"""
+        # 仕訳: 1/10 → CSV 1/10 別金額 → 仕訳は journal_only に入る
+        make_journal(db, user.id, "5010", cc_account.code, 1500,
+                     entry_date=date(2026, 1, 10), source="ai_receipt")
+        result = find_matches(user.id, cc_account.code, [_csv_row("2026-01-10", 9999)])
+        assert len(result["journal_only"]) == 1
+        j = result["journal_only"][0]
+        assert "days_since_journal" in j
+        assert isinstance(j["days_since_journal"], int)
+        # is_stale フィールドも入る
+        assert "is_stale" in j
+        assert isinstance(j["is_stale"], bool)
+
+    def test_journal_only_is_stale_when_over_30days(self, db, user, accounts,
+                                                    cc_account, monkeypatch):
+        """30 日超なら is_stale=True"""
+        # 仕訳は 31 日前
+        old_date = date(2026, 1, 10)
+        today = date(2026, 2, 11)  # 32 日後
+        import app.services.reconciliation as recon_mod
+
+        class _FakeDate(date):
+            @classmethod
+            def today(cls):
+                return today
+        monkeypatch.setattr(recon_mod, "date", _FakeDate)
+
+        make_journal(db, user.id, "5010", cc_account.code, 1500,
+                     entry_date=old_date, source="ai_receipt")
+        result = find_matches(user.id, cc_account.code, [_csv_row(old_date, 9999)])
+        j = result["journal_only"][0]
+        assert j["days_since_journal"] == 32
+        assert j["is_stale"] is True
+
+    def test_journal_only_not_stale_within_30days(self, db, user, accounts,
+                                                  cc_account, monkeypatch):
+        """30 日以内なら is_stale=False"""
+        old_date = date(2026, 1, 10)
+        today = date(2026, 1, 25)  # 15 日後
+        import app.services.reconciliation as recon_mod
+
+        class _FakeDate(date):
+            @classmethod
+            def today(cls):
+                return today
+        monkeypatch.setattr(recon_mod, "date", _FakeDate)
+
+        make_journal(db, user.id, "5010", cc_account.code, 1500,
+                     entry_date=old_date, source="ai_receipt")
+        result = find_matches(user.id, cc_account.code, [_csv_row(old_date, 9999)])
+        j = result["journal_only"][0]
+        assert j["days_since_journal"] == 15
+        assert j["is_stale"] is False
+
+    def test_journal_only_sorted_by_days_desc(self, db, user, accounts, cc_account):
+        """journal_only は経過日数の降順（古いものが先頭）"""
+        # 別日 3 件のレシート仕訳を作って全部 journal_only に
+        make_journal(db, user.id, "5010", cc_account.code, 100,
+                     entry_date=date(2026, 1, 5), source="ai_receipt",
+                     description="古い")
+        make_journal(db, user.id, "5010", cc_account.code, 200,
+                     entry_date=date(2026, 1, 10), source="ai_receipt",
+                     description="新しい")
+        make_journal(db, user.id, "5010", cc_account.code, 300,
+                     entry_date=date(2026, 1, 8), source="ai_receipt",
+                     description="中間")
+        # CSV は別金額 1 行（マッチさせず全てを journal_only に）
+        result = find_matches(user.id, cc_account.code,
+                              [_csv_row("2026-01-10", 9999)])
+        assert len(result["journal_only"]) == 3
+        descs = [j["description"] for j in result["journal_only"]]
+        assert descs == ["古い", "中間", "新しい"]
+
+    def test_daily_summary_has_pending_card_amount(self, db, user, accounts, cc_account):
+        """日計サマリーに pending_card_amount が含まれ、その日の未達合計が立つ"""
+        make_journal(db, user.id, "5010", cc_account.code, 1500,
+                     entry_date=date(2026, 1, 10), source="ai_receipt")
+        # 別金額の CSV → 仕訳は journal_only に
+        result = find_matches(user.id, cc_account.code,
+                              [_csv_row("2026-01-10", 9999)])
+        summary = {d["date"]: d for d in result["daily_summary"]}
+        assert summary["2026-01-10"]["pending_card_amount"] == 1500
+
+    def test_pending_card_amount_zero_when_all_matched(self, db, user, accounts,
+                                                       cc_account):
+        """全てマッチしていれば pending_card_amount は 0"""
+        make_journal(db, user.id, "5010", cc_account.code, 1500,
+                     entry_date=date(2026, 1, 10), source="ai_receipt")
+        result = find_matches(user.id, cc_account.code,
+                              [_csv_row("2026-01-10", 1500)])
+        summary = {d["date"]: d for d in result["daily_summary"]}
+        assert summary["2026-01-10"]["pending_card_amount"] == 0

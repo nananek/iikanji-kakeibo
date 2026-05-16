@@ -1,8 +1,6 @@
 import json
 from datetime import date
 
-from urllib.parse import urlparse
-
 from flask import Blueprint, render_template, redirect, url_for, flash, request, jsonify, make_response
 from flask_login import login_required, current_user
 from sqlalchemy import func
@@ -22,7 +20,7 @@ from app.services.audit import (
     is_acting_as_auditor, get_permission_level,
     get_proprietor_account_code, mask_account_name,
 )
-from app.views.helpers import get_grouped_accounts
+from app.views.helpers import get_grouped_accounts, is_safe_internal_path, safe_user_error
 
 bp = Blueprint("journal", __name__, url_prefix="/journal")
 
@@ -733,7 +731,9 @@ def create_api():
         db.session.commit()
         return jsonify({"ok": True, "entry_number": entry.entry_number})
     except ValueError as e:
-        return jsonify({"error": str(e)}), 400
+        from flask import current_app
+        current_app.logger.exception("create_journal_entry failed (journal)")
+        return jsonify({"error": safe_user_error(e)}), 400
 
 
 def log_voucher_orphan(entry, user_id):
@@ -809,10 +809,9 @@ def delete(entry_id):
 def bulk_delete():
     """仕訳の一括削除"""
     entry_ids = request.form.getlist("entry_ids", type=int)
-    redirect_url = request.form.get("redirect_url") or url_for("journal.index")
-    parsed = urlparse(redirect_url)
-    if parsed.netloc or parsed.scheme:
-        redirect_url = url_for("journal.index")
+    raw_redirect = request.form.get("redirect_url", "")
+    fallback_url = url_for("journal.index")
+    redirect_url = raw_redirect if is_safe_internal_path(raw_redirect) else fallback_url
 
     if not entry_ids:
         flash("削除する仕訳が選択されていません。", "warning")
@@ -1031,6 +1030,10 @@ def ai_suggest_categories():
         result = suggest_categories_by_ai(user_id, payment_account_code, rows)
         return jsonify(result)
     except ValueError as e:
-        return jsonify({"error": str(e)}), 400
+        from flask import current_app
+        current_app.logger.exception("suggest_categories_by_ai validation failed")
+        return jsonify({"error": safe_user_error(e)}), 400
     except RuntimeError as e:
-        return jsonify({"error": str(e)}), 500
+        from flask import current_app
+        current_app.logger.exception("suggest_categories_by_ai runtime error")
+        return jsonify({"error": safe_user_error(e)}), 500

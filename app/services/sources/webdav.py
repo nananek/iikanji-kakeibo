@@ -6,7 +6,7 @@ from xml.etree import ElementTree as ET
 
 import httpx
 
-from app.services.sources import SourceFile
+from app.services.sources import SourceFile, validate_external_url
 
 logger = logging.getLogger(__name__)
 
@@ -23,10 +23,17 @@ _PROPFIND_BODY = """\
 </d:propfind>"""
 
 
+def _safe_url(url: str) -> str:
+    """SSRF 対策: validate_external_url で URL の安全性を再検証する。
+    httpx に渡す直前で必ず呼ぶ（DNS リバインディング部分対策＋静的解析の sanitizer）。"""
+    ok, err = validate_external_url(url)
+    if not ok:
+        raise ValueError(err or "URL が安全ではありません")
+    return url
+
+
 class WebDAVProvider:
     """WebDAV (Nextcloud 等) からファイルを取得するプロバイダー"""
-
-    _ALLOWED_SCHEMES = {"http", "https"}
 
     def __init__(
         self,
@@ -35,12 +42,7 @@ class WebDAVProvider:
         password: str,
         file_extensions: list[str] | None = None,
     ):
-        from urllib.parse import urlparse
-        parsed = urlparse(url)
-        if parsed.scheme not in self._ALLOWED_SCHEMES:
-            raise ValueError(
-                f"許可されていないURLスキームです: {parsed.scheme}"
-            )
+        _safe_url(url)
         self.url = url.rstrip("/") + "/"
         self.auth = (username, password)
         self.extensions = {
@@ -49,9 +51,10 @@ class WebDAVProvider:
 
     def test_connection(self) -> tuple[bool, str | None]:
         try:
+            safe_url = _safe_url(self.url)
             resp = httpx.request(
                 "PROPFIND",
-                self.url,
+                safe_url,
                 auth=self.auth,
                 headers={"Depth": "0"},
                 timeout=10.0,
@@ -66,9 +69,10 @@ class WebDAVProvider:
 
     def list_files(self) -> list[SourceFile]:
         try:
+            safe_url = _safe_url(self.url)
             resp = httpx.request(
                 "PROPFIND",
-                self.url,
+                safe_url,
                 auth=self.auth,
                 headers={"Depth": "1", "Content-Type": "application/xml"},
                 content=_PROPFIND_BODY.encode(),
@@ -129,6 +133,7 @@ class WebDAVProvider:
         else:
             url = self.url + path.lstrip("/")
 
-        resp = httpx.get(url, auth=self.auth, timeout=30.0)
+        safe_url = _safe_url(url)
+        resp = httpx.get(safe_url, auth=self.auth, timeout=30.0)
         resp.raise_for_status()
         return resp.content

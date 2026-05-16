@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { execSync } from "child_process";
+import { spawnSync } from "child_process";
 
 const BASE_URL = "http://127.0.0.1:5000";
 const USERNAME = "e2e_test";
@@ -108,11 +108,16 @@ with app.app_context():
         db.session.commit()
     print('OK')
 `;
-  const cmd = process.env.CI
-    ? `python -c "${script.replace(/"/g, '\\"')}"`
-    : `docker compose exec -T web python -c "${script.replace(/"/g, '\\"')}"`;
+  // stdin 経由で渡し、shell 補間を回避する
+  const [cmd, ...args] = process.env.CI
+    ? ["python", "-"]
+    : ["docker", "compose", "exec", "-T", "web", "python", "-"];
   try {
-    execSync(cmd, { encoding: "utf-8", timeout: 10000 });
+    spawnSync(cmd, args, {
+      input: script,
+      encoding: "utf-8",
+      timeout: 10000,
+    });
   } catch {
     // ignore cleanup failures
   }
