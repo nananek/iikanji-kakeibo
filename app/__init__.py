@@ -33,6 +33,32 @@ def create_app(config_class=Config):
     csrf.exempt(device_authorization)
     csrf.exempt(oauth_token_view)
 
+    # リカバリコードでログイン後の強制復旧フロー
+    # 「新パスキー登録 + リカバリコード再生成」両達成までは限定ページのみ許可
+    @app.before_request
+    def pending_recovery_gate():
+        from flask import request, redirect, url_for, session
+        from flask_login import current_user as cu
+        if not cu.is_authenticated:
+            return
+        if not session.get("pending_recovery_action"):
+            return
+        endpoint = request.endpoint or ""
+        # 強制復旧の遂行に必要なエンドポイントだけ許可
+        allowed_endpoints = {
+            "settings.passkeys",
+            "settings.delete_passkey",
+            "settings.recovery_generate",
+            "settings.passkey_only_enable",
+            "settings.passkey_only_disable",
+            "webauthn.register_options",
+            "webauthn.register_verify",
+            "auth.logout",
+        }
+        if endpoint in allowed_endpoints or endpoint.startswith("static"):
+            return
+        return redirect(url_for("settings.passkeys"))
+
     # Before-request hook for audit permission control
     @app.before_request
     def audit_permission_check():

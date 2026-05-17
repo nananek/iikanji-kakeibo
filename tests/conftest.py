@@ -196,6 +196,24 @@ def logged_in_client(app, client, user):
 
 
 @pytest.fixture
+def passkey_only_user(db, user):
+    """パスキー専用モード ON + パスキー 1 本 + 有効リカバリコード"""
+    from app.models.webauthn import WebAuthnCredential
+    user.passkey_only_login = True
+    user.set_recovery_code()
+    cred = WebAuthnCredential(
+        user_id=user.id,
+        credential_id=b"test-credential-id-bytes",
+        credential_public_key=b"test-public-key-bytes",
+        current_sign_count=0,
+        name="テスト用パスキー",
+    )
+    db.session.add(cred)
+    db.session.commit()
+    return user
+
+
+@pytest.fixture
 def second_user(db):
     """IDOR テスト用の別ユーザー"""
     u = User(

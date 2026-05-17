@@ -1,0 +1,29 @@
+{# リカバリコードログイン後の強制復旧フロー進捗バナー #}
+{% if session.get("pending_recovery_action") %}
+  {% set has_passkey = credentials | length > 0 if credentials is defined else current_user.webauthn_credentials.count() > 0 %}
+  {% set has_recovery = current_user.has_active_recovery_code %}
+  <div class="alert alert-danger">
+    <h5 class="alert-heading"><i class="bi bi-shield-exclamation"></i> 強制復旧フロー中</h5>
+    <p class="mb-2">
+      リカバリコードでログインしました。アカウントを安全に保つため、以下 <strong>両方</strong> を完了するまで他のページにアクセスできません。
+    </p>
+    <ul class="mb-0 list-unstyled">
+      <li>
+        {% if has_passkey %}
+          <i class="bi bi-check-circle text-success"></i>
+        {% else %}
+          <i class="bi bi-circle text-muted"></i>
+        {% endif %}
+        新しいパスキーを少なくとも 1 つ登録する
+      </li>
+      <li>
+        {% if has_recovery %}
+          <i class="bi bi-check-circle text-success"></i>
+        {% else %}
+          <i class="bi bi-circle text-muted"></i>
+        {% endif %}
+        新しいリカバリコードを生成する
+      </li>
+    </ul>
+  </div>
+{% endif %}

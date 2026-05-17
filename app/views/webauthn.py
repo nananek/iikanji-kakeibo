@@ -103,6 +103,12 @@ def register_verify():
     db.session.add(credential)
     db.session.commit()
 
+    # リカバリログイン後の強制復旧フロー: パスキーが新規登録され
+    # かつ新リカバリコードも生成済みなら、pending 状態を解除する
+    from flask import session as flask_session
+    from app.views.helpers import maybe_clear_pending_recovery
+    maybe_clear_pending_recovery(current_user, flask_session)
+
     return jsonify(ok=True, id=credential.id, name=credential.name)
 
 

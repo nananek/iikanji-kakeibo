@@ -1,4 +1,4 @@
-from flask import Blueprint, render_template, redirect, url_for, flash, request
+from flask import Blueprint, render_template, redirect, url_for, flash, request, session
 from flask_login import login_user, logout_user, login_required, current_user
 
 from app.extensions import db, limiter
@@ -43,6 +43,12 @@ def login():
             return render_template("auth/login.html", form=form)
         user = User.query.filter_by(username=form.username.data).first()
         if user and user.user_type == "personal" and user.check_password(form.password.data):
+            if user.passkey_only_login:
+                flash(
+                    "このアカウントはパスキー専用モードです。パスキー、またはリカバリコードでログインしてください。",
+                    "warning",
+                )
+                return render_template("auth/login.html", form=form)
             login_user(user, remember=True)
             return redirect(_safe_next_url(url_for("dashboard.index")))
         flash("ユーザー名またはパスワードが正しくありません。", "danger")
@@ -62,11 +68,49 @@ def login_auditor():
             return render_template("auth/login_auditor.html", form=form)
         user = User.query.filter_by(username=form.username.data).first()
         if user and user.user_type == "auditor" and user.check_password(form.password.data):
+            if user.passkey_only_login:
+                flash(
+                    "このアカウントはパスキー専用モードです。パスキー、またはリカバリコードでログインしてください。",
+                    "warning",
+                )
+                return render_template("auth/login_auditor.html", form=form)
             login_user(user, remember=True)
             return redirect(_safe_next_url(url_for("auditor.dashboard")))
         flash("ユーザー名またはパスワードが正しくありません。", "danger")
 
     return render_template("auth/login_auditor.html", form=form)
+
+
+@bp.route("/recovery", methods=["GET", "POST"])
+@limiter.limit("5/minute", methods=["POST"])
+def recovery_login():
+    """リカバリコードでログイン。1 回限り使用 + ログイン後は強制復旧フローへ。"""
+    if current_user.is_authenticated:
+        return redirect(url_for("dashboard.index"))
+
+    if request.method == "POST":
+        if not _check_captcha():
+            return render_template("auth/recovery.html")
+        username = request.form.get("username", "").strip()
+        code = request.form.get("recovery_code", "").strip()
+
+        user = User.query.filter_by(username=username).first()
+        if user and user.verify_recovery_code(code):
+            user.consume_recovery_code()
+            db.session.commit()
+            login_user(user, remember=False)
+            # 強制復旧フロー: パスキー再登録 + リカバリ再生成まで他操作をブロック
+            session["pending_recovery_action"] = True
+            session["pending_recovery_user_id"] = user.id
+            flash(
+                "リカバリコードでログインしました。続けてパスキー登録とリカバリコードの再生成を行ってください。",
+                "warning",
+            )
+            return redirect(url_for("settings.passkeys"))
+        # 列挙対策: ユーザー存在/コード誤りを区別しない一律メッセージ
+        flash("ユーザー名またはリカバリコードが正しくありません。", "danger")
+
+    return render_template("auth/recovery.html")
 
 
 @bp.route("/register", methods=["GET", "POST"])
