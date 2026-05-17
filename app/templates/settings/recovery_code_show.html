@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% block title %}リカバリコード - いいかんじ™家計簿{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-lg-8">
+    <h2><i class="bi bi-shield-lock text-warning"></i> 非常用リカバリコード</h2>
+
+    <div class="alert alert-danger">
+      <h5 class="alert-heading"><i class="bi bi-exclamation-triangle"></i> 重要：必ず今すぐ保管してください</h5>
+      <ul class="mb-0">
+        <li><strong>このコードは今だけ表示されます。</strong> ページを離れたら二度と見られません。</li>
+        <li>パスキー専用モードでパスキーを紛失したとき、ログインできる唯一の手段です。</li>
+        <li>クラウド (メモアプリ、写真等) ではなく、<strong>紙に印刷し金庫等オフラインで保管</strong>することを推奨します。</li>
+        <li>このコードを知る者はあなたのアカウントへ 1 回ログインできます。他人と共有しないでください。</li>
+      </ul>
+    </div>
+
+    <div class="card mb-4">
+      <div class="card-header">
+        <i class="bi bi-key"></i> あなたのリカバリコード
+      </div>
+      <div class="card-body">
+        <pre class="bg-light p-3 rounded user-select-all" style="font-size: 1.05rem; word-break: break-all; white-space: pre-wrap;"><code id="raw-code" class="user-select-all">{{ raw_code }}</code></pre>
+        <p class="text-muted small mb-3">識別子（DB に保存される表示用プレフィックス）: <code>{{ prefix }}</code></p>
+
+        <div class="d-flex gap-2 flex-wrap">
+          <button type="button" class="btn btn-outline-primary" id="btn-copy">
+            <i class="bi bi-clipboard"></i> クリップボードにコピー
+          </button>
+          <button type="button" class="btn btn-outline-secondary" onclick="window.print()">
+            <i class="bi bi-printer"></i> 印刷
+          </button>
+          <a href="{{ url_for('settings.passkeys') }}" class="btn btn-success ms-auto"
+             onclick="return confirm('リカバリコードを保管しましたか？ このページを離れると二度と表示されません。');">
+            <i class="bi bi-check2"></i> 保管しました
+          </a>
+        </div>
+      </div>
+    </div>
+
+    <div class="alert alert-warning small">
+      <i class="bi bi-info-circle"></i>
+      使い方: ログイン画面の「リカバリコードでログイン」リンクから、ユーザー名とこのコードを入力します。
+      使用後は自動的に無効化され、新しいリカバリコードを再発行する必要があります。
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.getElementById("btn-copy").addEventListener("click", async () => {
+  const code = document.getElementById("raw-code").textContent;
+  const btn = document.getElementById("btn-copy");
+  try {
+    await navigator.clipboard.writeText(code);
+    const original = btn.innerHTML;
+    btn.innerHTML = '<i class="bi bi-check-lg"></i> コピーしました';
+    btn.classList.remove("btn-outline-primary");
+    btn.classList.add("btn-success");
+    setTimeout(() => {
+      btn.innerHTML = original;
+      btn.classList.remove("btn-success");
+      btn.classList.add("btn-outline-primary");
+    }, 2000);
+  } catch (e) {
+    alert("コピーに失敗しました。手動で選択してコピーしてください。");
+  }
+});
+</script>
+{% endblock %}

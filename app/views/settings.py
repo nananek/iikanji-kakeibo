@@ -2,7 +2,7 @@ import json
 import re
 from datetime import date, datetime, timezone
 
-from flask import Blueprint, render_template, redirect, url_for, flash, request, jsonify, make_response
+from flask import Blueprint, render_template, redirect, url_for, flash, request, jsonify, make_response, current_app
 from flask_login import login_required, current_user
 
 from app.extensions import db
@@ -113,6 +113,32 @@ def delete_passkey(credential_id):
 
     flash(f"Passkey「{name}」を削除しました。", "success")
     return redirect(url_for("settings.passkeys"))
+
+
+@bp.route("/passkeys/recovery/generate", methods=["POST"])
+@login_required
+def recovery_generate():
+    """非常用リカバリコードを生成（パスワード再認証必須）。
+
+    既存コードがあれば即時無効化（上書き）。生コードを 1 回だけ表示画面に
+    レンダリングし、cookie/flash には載せない（漏洩防止）。
+    """
+    password = request.form.get("password", "")
+    if not password or not current_user.check_password(password):
+        flash("パスワードが正しくありません。", "danger")
+        return redirect(url_for("settings.passkeys"))
+
+    raw = current_user.set_recovery_code()
+    db.session.commit()
+    current_app.logger.info(
+        "recovery_code_generated: user_id=%s prefix=%s",
+        current_user.id, current_user.recovery_code_prefix,
+    )
+    return render_template(
+        "settings/recovery_code_show.html",
+        raw_code=raw,
+        prefix=current_user.recovery_code_prefix,
+    )
 
 
 # --- AI API 設定 ---
