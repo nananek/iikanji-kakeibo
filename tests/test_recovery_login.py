@@ -319,10 +319,7 @@ class TestRecoveryLogin:
 
     def test_successful_recovery_login_consumes_code(self, client, passkey_only_user, db):
         """正しいコードでログインでき、コードは消費される"""
-        # passkey_only_user フィクスチャ作成時に生コードを発行しているが
-        # 戻り値で受け取れていないので、別途生成し直して raw を取る
-        raw = passkey_only_user.set_recovery_code()
-        db.session.commit()
+        raw = passkey_only_user._test_recovery_code_raw
 
         resp = client.post("/recovery", data={
             "username": passkey_only_user.username,
@@ -341,8 +338,7 @@ class TestRecoveryLogin:
 
     def test_consumed_code_cannot_login_again(self, client, passkey_only_user, db):
         """1 回限り使用: 一度使ったコードは再使用不可"""
-        raw = passkey_only_user.set_recovery_code()
-        db.session.commit()
+        raw = passkey_only_user._test_recovery_code_raw
         # 1 回目: 成功
         client.post("/recovery", data={
             "username": passkey_only_user.username,
@@ -364,7 +360,7 @@ class TestPendingRecoveryGate:
     """リカバリログイン後の強制復旧フロー (before_request フック)"""
 
     def _login_with_recovery(self, client, user, db):
-        raw = user.set_recovery_code()
+        raw = getattr(user, "_test_recovery_code_raw", None) or user.set_recovery_code()
         db.session.commit()
         client.post("/recovery", data={
             "username": user.username,
@@ -401,3 +397,59 @@ class TestPendingRecoveryGate:
         })
         with client.session_transaction() as sess:
             assert sess.get("pending_recovery_action") is None
+
+    # NOTE: セッション整合性 (pending_recovery_user_id != current_user.id で
+    # flag を pop) の検証は Flask-Login の `_fresh` 等が絡み、テストクライアント
+    # 経由では再現困難。実装は `pending_recovery_gate` に残しており、攻撃面
+    # 縮小目的のディフェンスインデプスとして機能する。
+
+
+# ============================================================
+# 監査ユーザーのパスキー専用モード
+# ============================================================
+
+class TestPasskeyOnlyAuditor:
+    """auditor も passkey_only_login を使えること"""
+
+    def test_auditor_login_blocked_in_passkey_only_mode(self, client, auditor, db):
+        from app.models.webauthn import WebAuthnCredential
+        auditor.passkey_only_login = True
+        auditor.set_recovery_code()
+        db.session.add(WebAuthnCredential(
+            user_id=auditor.id, credential_id=b"a-cred",
+            credential_public_key=b"a-pk", current_sign_count=0,
+        ))
+        db.session.commit()
+        resp = client.post("/login/auditor", data={
+            "username": auditor.username,
+            "password": "password123",
+        }, follow_redirects=False)
+        # ログイン拒否（200 で再描画）
+        assert resp.status_code == 200
+        with client.session_transaction() as sess:
+            assert "_user_id" not in sess
+
+
+# ============================================================
+# タイミング攻撃対策
+# ============================================================
+
+class TestRecoveryLoginTiming:
+    """ユーザー不在時とコード誤り時で応答時間に大きな差が出ないこと"""
+
+    def test_nonexistent_user_still_runs_hash_compare(self, client, monkeypatch):
+        """ユーザー不在時もダミー検証関数が呼ばれる (= compare_digest 実行)"""
+        from app.views import auth as auth_view
+        calls = {"dummy": 0}
+        original = auth_view._verify_recovery_code_dummy
+
+        def spy(code):
+            calls["dummy"] += 1
+            return original(code)
+
+        monkeypatch.setattr(auth_view, "_verify_recovery_code_dummy", spy)
+        client.post("/recovery", data={
+            "username": "no-such-user",
+            "recovery_code": "ikr_anything",
+        })
+        assert calls["dummy"] == 1

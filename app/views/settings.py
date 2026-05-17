@@ -2,7 +2,7 @@ import json
 import re
 from datetime import date, datetime, timezone
 
-from flask import Blueprint, render_template, redirect, url_for, flash, request, jsonify, make_response, current_app
+from flask import Blueprint, render_template, redirect, url_for, flash, request, jsonify, make_response, current_app, session as flask_session
 from flask_login import login_required, current_user
 
 from app.extensions import db
@@ -23,7 +23,7 @@ from app.models.fiscal import FiscalClose
 from app.services.fiscal import (
     PERIOD_LABELS, get_closed_period, close_period, reopen_period, is_year_open,
 )
-from app.views.helpers import safe_user_error
+from app.views.helpers import safe_user_error, maybe_clear_pending_recovery
 
 bp = Blueprint("settings", __name__, url_prefix="/settings")
 
@@ -214,8 +214,6 @@ def recovery_generate():
     )
 
     # リカバリログイン後の強制復旧フロー解除判定
-    from flask import session as flask_session
-    from app.views.helpers import maybe_clear_pending_recovery
     maybe_clear_pending_recovery(current_user, flask_session)
 
     return render_template(

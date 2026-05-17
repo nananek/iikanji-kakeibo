@@ -43,6 +43,13 @@ def create_app(config_class=Config):
             return
         if not session.get("pending_recovery_action"):
             return
+        # セッション整合性チェック: pending_recovery_user_id が現在のログイン
+        # ユーザーと一致しない場合は flag を破棄（別ユーザーで再ログイン等）
+        pending_uid = session.get("pending_recovery_user_id")
+        if pending_uid is not None and pending_uid != cu.id:
+            session.pop("pending_recovery_action", None)
+            session.pop("pending_recovery_user_id", None)
+            return
         endpoint = request.endpoint or ""
         # 強制復旧の遂行に必要なエンドポイントだけ許可
         allowed_endpoints = {

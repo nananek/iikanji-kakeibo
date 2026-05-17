@@ -95,7 +95,14 @@ def recovery_login():
         code = request.form.get("recovery_code", "").strip()
 
         user = User.query.filter_by(username=username).first()
-        if user and user.verify_recovery_code(code):
+        # タイミング攻撃対策: ユーザー不在時もダミーの SHA-256 + compare_digest を
+        # 実行し、ユーザー存在/不在による応答時間差を抑制する
+        if user is None:
+            _verify_recovery_code_dummy(code)
+            ok = False
+        else:
+            ok = user.verify_recovery_code(code)
+        if ok:
             user.consume_recovery_code()
             db.session.commit()
             login_user(user, remember=False)
@@ -111,6 +118,19 @@ def recovery_login():
         flash("ユーザー名またはリカバリコードが正しくありません。", "danger")
 
     return render_template("auth/recovery.html")
+
+
+def _verify_recovery_code_dummy(code):
+    """タイミング攻撃対策のダミー検証（ユーザー不在時に呼ぶ）。
+
+    実際の verify_recovery_code() と同じく SHA-256 + compare_digest を実行する
+    ことで、ユーザー存在/不在の時間差を抑制する。
+    """
+    import hashlib
+    import secrets as _secrets
+    candidate = hashlib.sha256((code or "x").encode()).hexdigest()
+    _secrets.compare_digest(candidate, "0" * 64)
+    return False
 
 
 @bp.route("/register", methods=["GET", "POST"])
