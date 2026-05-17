@@ -2,7 +2,7 @@ import json
 import re
 from datetime import date, datetime, timezone
 
-from flask import Blueprint, render_template, redirect, url_for, flash, request, jsonify, make_response, current_app
+from flask import Blueprint, render_template, redirect, url_for, flash, request, jsonify, make_response, current_app, session as flask_session
 from flask_login import login_required, current_user
 
 from app.extensions import db
@@ -23,7 +23,7 @@ from app.models.fiscal import FiscalClose
 from app.services.fiscal import (
     PERIOD_LABELS, get_closed_period, close_period, reopen_period, is_year_open,
 )
-from app.views.helpers import safe_user_error
+from app.views.helpers import safe_user_error, maybe_clear_pending_recovery
 
 bp = Blueprint("settings", __name__, url_prefix="/settings")
 
@@ -96,10 +96,31 @@ def passkeys():
 @bp.route("/passkeys/<int:credential_id>/delete", methods=["POST"])
 @login_required
 def delete_passkey(credential_id):
-    """Passkey 削除"""
+    """Passkey 削除。パスキー専用モードでは最後の 1 本を削除させない。"""
     credential = WebAuthnCredential.query.filter_by(
         id=credential_id, user_id=current_user.id
     ).first_or_404()
+
+    # パスキー専用モード中は、最後の 1 本を削除するとログイン不能になる。
+    # 削除を拒否し、リカバリコード再生成 + モード解除を促す。
+    if current_user.passkey_only_login:
+        remaining = WebAuthnCredential.query.filter_by(
+            user_id=current_user.id
+        ).count()
+        if remaining <= 1:
+            block_msg = (
+                "パスキー専用モードでは最後のパスキーを削除できません。"
+                "先にリカバリコードを再生成し、パスキー専用モードを解除してください。"
+            )
+            if request.headers.get("HX-Request"):
+                resp = make_response("", 422)
+                resp.headers["HX-Trigger"] = json.dumps(
+                    {"showToast": {"message": block_msg, "type": "danger"}}
+                )
+                return resp
+            flash(block_msg, "danger")
+            return redirect(url_for("settings.passkeys"))
+
     name = credential.name or f"Passkey #{credential.id}"
     db.session.delete(credential)
     db.session.commit()
@@ -112,6 +133,63 @@ def delete_passkey(credential_id):
         return resp
 
     flash(f"Passkey「{name}」を削除しました。", "success")
+    return redirect(url_for("settings.passkeys"))
+
+
+@bp.route("/passkeys/passkey-only/enable", methods=["POST"])
+@login_required
+def passkey_only_enable():
+    """パスキー専用モードを有効化。
+
+    前提: パスキー >=1 本 + 有効リカバリコード。
+    両方揃っていない場合は flash で誘導し、フラグは変更しない。
+    """
+    passkey_count = WebAuthnCredential.query.filter_by(
+        user_id=current_user.id
+    ).count()
+    if passkey_count < 1:
+        flash(
+            "パスキー専用モードに切り替える前に、パスキーを 1 つ以上登録してください。",
+            "warning",
+        )
+        return redirect(url_for("settings.passkeys"))
+    if not current_user.has_active_recovery_code:
+        flash(
+            "パスキー専用モードに切り替える前に、有効なリカバリコードを生成してください。",
+            "warning",
+        )
+        return redirect(url_for("settings.passkeys"))
+
+    current_user.passkey_only_login = True
+    db.session.commit()
+    current_app.logger.info(
+        "passkey_only_enabled: user_id=%s", current_user.id
+    )
+    flash(
+        "パスキー専用モードを有効にしました。今後はパスキーまたはリカバリコードでのみログインできます。",
+        "success",
+    )
+    return redirect(url_for("settings.passkeys"))
+
+
+@bp.route("/passkeys/passkey-only/disable", methods=["POST"])
+@login_required
+def passkey_only_disable():
+    """パスキー専用モードを解除（パスワード再認証必須）。"""
+    password = request.form.get("password", "")
+    if not password or not current_user.check_password(password):
+        flash("パスワードが正しくありません。", "danger")
+        return redirect(url_for("settings.passkeys"))
+
+    current_user.passkey_only_login = False
+    db.session.commit()
+    current_app.logger.info(
+        "passkey_only_disabled: user_id=%s", current_user.id
+    )
+    flash(
+        "パスキー専用モードを解除しました。パスワードでのログインも可能になりました。",
+        "info",
+    )
     return redirect(url_for("settings.passkeys"))
 
 
@@ -134,6 +212,10 @@ def recovery_generate():
         "recovery_code_generated: user_id=%s prefix=%s",
         current_user.id, current_user.recovery_code_prefix,
     )
+
+    # リカバリログイン後の強制復旧フロー解除判定
+    maybe_clear_pending_recovery(current_user, flask_session)
+
     return render_template(
         "settings/recovery_code_show.html",
         raw_code=raw,
