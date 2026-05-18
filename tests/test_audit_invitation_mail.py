@@ -14,6 +14,8 @@ class TestAuditInvitationMail:
     def test_invitation_email_is_sent_on_grant(
         self, db, logged_in_client, user, accounts, auditor, capsys
     ):
+        from app.views.settings import PERMISSION_LABELS
+
         resp = logged_in_client.post(
             "/settings/audit/add",
             data={"username": auditor.username, "permission_level": "3"},
@@ -24,12 +26,15 @@ class TestAuditInvitationMail:
         out = capsys.readouterr().out
         # 監査者のメールアドレス宛に送信される
         assert f"To:   {auditor.email}" in out
-        # 件名に owner のユーザー名が含まれる
+        # 件名に owner のユーザー名 + MAIL_FROM_NAME (= "いいかんじ™家計簿")
+        # が含まれる
         assert f"{user.username}" in out
         assert "監査アクセスの招待" in out
-        # 本文の権限レベル
-        assert "全権" in out or "Lv3" in out or "提出" in out  # PERMISSION_LABELS のいずれか
-        # フッターは MAIL_FROM_NAME 経由
+        # 件名のブランド名プレフィックスが config 由来
+        assert "[いいかんじ™家計簿]" in out
+        # 本文の権限レベル (PERMISSION_LABELS の値を直接参照)
+        assert PERMISSION_LABELS[3] in out
+        # フッターも MAIL_FROM_NAME 経由
         assert "いいかんじ™家計簿" in out
 
     def test_invitation_omitted_when_auditor_has_no_email(
