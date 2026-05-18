@@ -268,4 +268,30 @@ GitHub Pages でドキュメントサイトを公開しています: [https://na
 
 ## ライセンス
 
-[いいかんじ™ライセンス (IKL) v1.0](./LICENSE) — MIT License 互換
+本サーバー本体は [**Sustainable Use License v1.0**](./LICENSE) のもとで
+配布されています (n8n プロジェクトと同等の条文を採用)。Copyright (c) 2026-
+nananek。
+
+### 運用形態別の取り扱い
+
+- **自家用・内部利用** (個人または組織内、不特定多数の登録を受け付けない形態):
+  Sustainable Use License の "internal business purposes" または
+  "non-commercial or personal use" に該当し、自由に利用・改変・配布
+  できます (再配布時はライセンス継承が必要)。新規登録は
+  `REGISTRATION_ENABLED=false` で閉じることができます。
+- **公開ホステッド提供** (不特定多数の登録を受け付ける有料/無料 SaaS):
+  本ライセンスの制限事項に該当するため、別途ライセンス取得が必要です。
+  ご相談は GitHub Issues 等でお問い合わせください。
+
+### クライアントツール
+
+`client-py` / `client-mcp` / `client-tui` の各クライアントは別リポジトリ
+で **MIT License** で配布されています (本サーバー向け以外の用途にも自由に
+利用可能)。
+
+### 旧ライセンスについて
+
+v3.x 系列までは「いいかんじ™ライセンス (IKL) v1.0」(MIT 互換) で配布されて
+いました。v4.0 系列より上記の Sustainable Use License に移行しています。
+旧版ソースコードは過去のタグからアクセス可能で、当時のライセンス条文が
+適用されます。
