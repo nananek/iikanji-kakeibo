@@ -23,6 +23,7 @@ import logging
 import sys
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from email.utils import formataddr
 from typing import Optional
 
 from flask import current_app, render_template
@@ -39,7 +40,7 @@ class RenderedEmail:
     subject: str
     text_body: str
     html_body: Optional[str] = None
-    headers: dict = field(default_factory=dict)
+    headers: dict[str, str] = field(default_factory=dict)
 
 
 class MailBackend(ABC):
@@ -114,6 +115,14 @@ def send_email(to: str, template_name: str, context: Optional[dict] = None) -> N
 
     送信先 (`to`) はメールアドレス文字列。複数宛先や CC/BCC は本骨格では
     サポートしない (必要になった時点で API を拡張する)。
+
+    例外スコープ:
+    - `render_email` の失敗 (テンプレート未存在・context 不足等の
+      プログラマーエラー) は **吸収せず呼び出し側に伝播** させる。
+      早期発見が望ましいクラスのバグなので。
+    - `backend.send` の失敗 (SMTP 接続エラー・送信プロバイダ側の障害等)
+      は **吸収してログだけ残す**。配信失敗を本体フローに波及させない
+      ため。再送キュー・suppression は後続 PR で対応。
     """
     if context is None:
         context = {}
@@ -126,10 +135,6 @@ def send_email(to: str, template_name: str, context: Optional[dict] = None) -> N
     try:
         backend.send(to, from_addr, rendered)
     except Exception:
-        # 配信失敗は本体ロジックに波及させずログだけ残す。例えば監査招待
-        # の送信に失敗しても AuditGrant 作成自体は成功扱いにすべきなので、
-        # ここで例外を吸収する。再送キューや suppression リストは後続 PR
-        # で導入予定。
         logger.exception("Failed to send email '%s' to %s", template_name, to)
 
 
@@ -144,7 +149,6 @@ def _format_from_address(addr: str, name: str) -> str:
     Subject 等のヘッダも将来 `SmtpMailBackend` を実装する際は同様に
     `email.header.Header` でエンコードすること。
     """
-    from email.utils import formataddr
     if not addr and not name:
         return ""
     if not addr:
