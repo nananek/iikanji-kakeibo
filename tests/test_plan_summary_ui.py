@@ -30,6 +30,20 @@ class TestPlanSummarySection:
         resp = client.get("/settings/")
         assert resp.status_code in (302, 303)
 
+    def test_http_backend_not_implemented_falls_back(
+        self, logged_in_client, app, monkeypatch
+    ):
+        """Phase 3 未実装の `http` バックエンド設定で 500 にならず、
+        セクションが非表示になる (`plan_summary = None`)。
+        """
+        monkeypatch.setitem(app.config, "BILLING_BACKEND", "http")
+        resp = logged_in_client.get("/settings/")
+        assert resp.status_code == 200
+        body = resp.get_data(as_text=True)
+        # セクション全体が描画されない
+        assert "現在のプラン" not in body
+        assert "セルフホストモード" not in body
+
     def test_summary_uses_billing_client(self, logged_in_client, monkeypatch):
         """`get_entitlement_summary` のソースが BillingClient であることを確認。
 

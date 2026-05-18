@@ -47,7 +47,13 @@ def _safe_connection_error(err: str | None) -> str:
 def index():
     """設定トップページ"""
     from app.services.entitlement import get_entitlement_summary
-    plan_summary = get_entitlement_summary(current_user)
+    # Phase 3 の `HttpBillingClient` 実装前は `BILLING_BACKEND=http` 設定で
+    # NotImplementedError が伝播する。設定画面が 500 になるのを避けるため
+    # ガードしてセクション非表示に倒す。Phase 3 完了後はこの try は除去可。
+    try:
+        plan_summary = get_entitlement_summary(current_user)
+    except NotImplementedError:
+        plan_summary = None
     return render_template("settings/index.html", plan_summary=plan_summary)
 
 

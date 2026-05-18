@@ -12,6 +12,9 @@
       <h6 class="card-title text-success mb-2">
         <i class="bi bi-infinity"></i> セルフホストモード — 全機能解放
       </h6>
+      {# Phase 3 で BillingClient.get_entitlement_summary が active_features
+         フィールドを返すようになったら、ハードコードされた機能名リストを
+         `plan_summary.active_features` のループ表示に置換する。 #}
       <p class="card-text text-muted small mb-0">
         billing コンテナを介さずに稼働しており、すべての有償機能 (自家ホスト
         LLM・証憑保管・タイムスタンプ・監査枠) を制限なく利用できます。
