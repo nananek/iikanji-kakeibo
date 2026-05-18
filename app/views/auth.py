@@ -1,4 +1,4 @@
-from flask import Blueprint, render_template, redirect, url_for, flash, request, session
+from flask import Blueprint, render_template, redirect, url_for, flash, request, session, abort, current_app
 from flask_login import login_user, logout_user, login_required, current_user
 
 from app.extensions import db, limiter
@@ -136,6 +136,8 @@ def _verify_recovery_code_dummy(code):
 @bp.route("/register", methods=["GET", "POST"])
 @limiter.limit("5/minute", methods=["POST"])
 def register():
+    if not current_app.config.get("REGISTRATION_ENABLED", True):
+        abort(404)
     if current_user.is_authenticated:
         return redirect(url_for("dashboard.index"))
 
@@ -163,6 +165,8 @@ def register():
 @bp.route("/register/auditor", methods=["GET", "POST"])
 @limiter.limit("5/minute", methods=["POST"])
 def register_auditor():
+    if not current_app.config.get("REGISTRATION_ENABLED", True):
+        abort(404)
     if current_user.is_authenticated:
         return redirect(url_for("dashboard.index"))
 

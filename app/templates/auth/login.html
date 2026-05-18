@@ -37,9 +37,11 @@
           <div id="passkey-login-status" class="mt-2 text-center"></div>
         </div>
 
+        {% if config.REGISTRATION_ENABLED %}
         <div class="text-center mt-3">
           <a href="{{ url_for('auth.register') }}">アカウント登録</a>
         </div>
+        {% endif %}
         <div class="text-center mt-2">
           <small><a href="{{ url_for('auth.recovery_login') }}" class="text-muted">
             <i class="bi bi-shield-lock"></i> リカバリコードでログイン

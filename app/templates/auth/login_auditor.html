@@ -27,9 +27,11 @@
           {% include "auth/_captcha_widget.html" %}
           {{ form.submit(class="btn btn-primary w-100") }}
         </form>
+        {% if config.REGISTRATION_ENABLED %}
         <div class="text-center mt-3">
           <a href="{{ url_for('auth.register_auditor') }}">監査用アカウント登録</a>
         </div>
+        {% endif %}
         <div class="text-center mt-2">
           <small><a href="{{ url_for('auth.recovery_login') }}" class="text-muted">
             <i class="bi bi-shield-lock"></i> リカバリコードでログイン
