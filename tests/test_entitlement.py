@@ -52,7 +52,7 @@ class TestUnlimitedBillingClient:
 
     def test_summary_shape(self):
         client = UnlimitedBillingClient()
-        summary = client.get_summary(user=None)
+        summary = client.get_entitlement_summary(user=None)
         assert summary == {
             "mode": "unlimited",
             "all_features_enabled": True,

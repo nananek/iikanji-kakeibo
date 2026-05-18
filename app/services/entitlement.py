@@ -52,7 +52,7 @@ class BillingClient(ABC):
         """
 
     @abstractmethod
-    def get_summary(self, user) -> dict:
+    def get_entitlement_summary(self, user) -> dict:
         """設定画面の「現在のプラン」表示用サマリ。"""
 
 
@@ -65,7 +65,7 @@ class UnlimitedBillingClient(BillingClient):
     def get_auditor_capacity(self, user) -> Optional[int]:
         return None
 
-    def get_summary(self, user) -> dict:
+    def get_entitlement_summary(self, user) -> dict:
         return {
             "mode": "unlimited",
             "all_features_enabled": True,
@@ -74,12 +74,21 @@ class UnlimitedBillingClient(BillingClient):
 
 
 def get_billing_client() -> BillingClient:
-    """環境変数 `BILLING_BACKEND` に応じて適切な実装を返す。"""
+    """環境変数 `BILLING_BACKEND` に応じて適切な実装を返す。
+
+    現状は呼出しごとに新規インスタンスを生成する。`UnlimitedBillingClient`
+    はステートレスかつ軽量なので問題ないが、Phase 3 で `HttpBillingClient`
+    (HTTP コネクションプール保持) を実装する際は `lru_cache(maxsize=1)`
+    または Flask の `g` / `current_app` 拡張オブジェクト経由で再利用する
+    形に変更すること。
+    """
     backend = current_app.config.get("BILLING_BACKEND", "unlimited")
     if backend == "unlimited":
         return UnlimitedBillingClient()
     if backend == "http":
         # Phase 3 で `HttpBillingClient` を実装次第、ここから import する。
+        # その際 `feature_key` を外部 API に渡す前に
+        # `typing.get_args(FeatureKey)` でランタイム検証を入れること。
         raise NotImplementedError(
             "BILLING_BACKEND='http' はまだ未実装です (Phase 3 #68 で対応)。"
         )
@@ -98,7 +107,7 @@ def get_auditor_capacity(user) -> Optional[int]:
 
 def get_entitlement_summary(user) -> dict:
     """設定画面表示用のプラン概要。"""
-    return get_billing_client().get_summary(user)
+    return get_billing_client().get_entitlement_summary(user)
 
 
 def require_entitlement(feature_key: FeatureKey) -> Callable:
