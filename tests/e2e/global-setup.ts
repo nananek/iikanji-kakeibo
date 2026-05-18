@@ -29,21 +29,19 @@ with app.app_context():
     # 標準科目シード
     seed_accounts_for_user(u.id)
 
-    # AI 設定（Ollama → mock サーバー localhost:11435）
+    # AI 設定（llama.cpp → mock サーバー。URL は環境変数 LLAMA_CPP_URL 経由）
     config = UserAIConfig.query.filter_by(user_id=u.id).first()
     if not config:
         config = UserAIConfig(
             user_id=u.id,
-            provider='ollama',
+            provider='llama_cpp',
             model_name='mock',
-            base_url='http://localhost:11435',
             api_key_encrypted=encrypt_api_key('_'),
         )
         db.session.add(config)
     else:
-        config.provider = 'ollama'
+        config.provider = 'llama_cpp'
         config.model_name = 'mock'
-        config.base_url = 'http://localhost:11435'
         config.api_key_encrypted = encrypt_api_key('_')
     db.session.commit()
 
