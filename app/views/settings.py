@@ -46,7 +46,9 @@ def _safe_connection_error(err: str | None) -> str:
 @login_required
 def index():
     """設定トップページ"""
-    return render_template("settings/index.html")
+    from app.services.entitlement import get_entitlement_summary
+    plan_summary = get_entitlement_summary(current_user)
+    return render_template("settings/index.html", plan_summary=plan_summary)
 
 
 @bp.route("/display")
