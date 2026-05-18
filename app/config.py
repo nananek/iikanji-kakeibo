@@ -44,6 +44,15 @@ class Config:
     BILLING_SERVICE_URL = os.environ.get("BILLING_SERVICE_URL", "")
     BILLING_API_KEY = os.environ.get("BILLING_API_KEY", "")
 
+    # メール配信基盤の動作モード。
+    # - "console" (default): 標準出力にダンプ。開発・テスト・セルフホストの
+    #   既定値。実メール送信は発生しない。
+    # - "smtp" / "ses" / "resend" 等: Phase 6 後続 PR で実装予定。
+    # MAIL_FROM / MAIL_FROM_NAME は配信時の From ヘッダー組み立てに使う。
+    MAIL_BACKEND = os.environ.get("MAIL_BACKEND", "console")
+    MAIL_FROM = os.environ.get("MAIL_FROM", "noreply@example.com")
+    MAIL_FROM_NAME = os.environ.get("MAIL_FROM_NAME", "いいかんじ™家計簿")
+
     # ローカル LLM (llama.cpp / llama-server) のエンドポイント。
     # サーバー管理者が用意する任意機能。未設定の場合、ユーザー UI で llama.cpp
     # プロバイダーは選択肢に出ず、既存 `llama_cpp` 設定を持つユーザーには

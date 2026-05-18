@@ -1,0 +1,141 @@
+"""メール配信基盤 (Phase 6 #71)。
+
+`BillingClient` と同じく抽象インターフェース + 複数実装の構造。
+本ファイルは Phase 6 最初の PR の骨格部分で、`ConsoleMailBackend` のみ
+を提供する。SMTP / SES / Resend 等の実プロバイダ実装と、個別の通知
+(監査招待 / セキュリティアラート / クオータ警告 / 規約改訂等) の
+呼び出し箇所組み込みは後続 PR で対応する。
+
+設計方針:
+- 呼び出し側はテンプレート名と context を渡すだけで配信プロバイダの
+  詳細を意識しない (`send_email(to, template_name, context)`)
+- 開発・テスト・セルフホスト運用 (`MAIL_BACKEND=console`) では
+  標準出力にダンプするだけで実送信なし
+- 公開 SaaS 運用では `MAIL_BACKEND=smtp` (or `ses` / `resend`) を指定し
+  プロバイダ別設定を環境変数で渡す
+- テンプレートは `templates/email/<name>.txt` (プレーン必須) と
+  `templates/email/<name>.html` (任意) で組み立てる
+"""
+
+from __future__ import annotations
+
+import logging
+import sys
+from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
+from typing import Optional
+
+from flask import current_app, render_template
+from jinja2 import TemplateNotFound
+
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class RenderedEmail:
+    """テンプレートをレンダリングした結果。"""
+
+    subject: str
+    text_body: str
+    html_body: Optional[str] = None
+    headers: dict = field(default_factory=dict)
+
+
+class MailBackend(ABC):
+    """メール配信の抽象インターフェース。"""
+
+    @abstractmethod
+    def send(self, to: str, from_addr: str, rendered: RenderedEmail) -> None:
+        """送信する。失敗時は例外を送出する。"""
+
+
+class ConsoleMailBackend(MailBackend):
+    """標準出力にダンプするだけのバックエンド。
+
+    開発・テスト・セルフホスト運用 (`MAIL_BACKEND=console`) の既定値。
+    実送信は発生しない。
+    """
+
+    def send(self, to: str, from_addr: str, rendered: RenderedEmail) -> None:
+        sep = "=" * 60
+        print(sep, file=sys.stdout)
+        print(f"[Mail] From: {from_addr}", file=sys.stdout)
+        print(f"[Mail] To:   {to}", file=sys.stdout)
+        print(f"[Mail] Subject: {rendered.subject}", file=sys.stdout)
+        for key, value in rendered.headers.items():
+            print(f"[Mail] {key}: {value}", file=sys.stdout)
+        print("-" * 60, file=sys.stdout)
+        print(rendered.text_body, file=sys.stdout)
+        if rendered.html_body:
+            print("-" * 60 + " (HTML)", file=sys.stdout)
+            print(rendered.html_body, file=sys.stdout)
+        print(sep, file=sys.stdout, flush=True)
+
+
+def get_mail_backend() -> MailBackend:
+    """環境変数 `MAIL_BACKEND` に応じて実装を返す。
+
+    Phase 6 後続 PR で `SmtpMailBackend` 等を追加する際は、ここに分岐を
+    増やす。billing と同様、後で接続プール保持型を実装する場合は
+    `lru_cache` / Flask `g` でリクエスト単位キャッシュを検討すること。
+    """
+    backend = current_app.config.get("MAIL_BACKEND", "console")
+    if backend == "console":
+        return ConsoleMailBackend()
+    # 他のバックエンド (smtp / ses / resend 等) は後続 PR で実装する。
+    raise NotImplementedError(
+        f"MAIL_BACKEND={backend!r} はまだ未実装です (Phase 6 後続 PR で対応)。"
+    )
+
+
+def render_email(template_name: str, context: dict) -> RenderedEmail:
+    """テンプレートをレンダリングする。
+
+    - `templates/email/<template_name>/subject.txt` から件名 (1 行)
+    - `templates/email/<template_name>/body.txt` からプレーン本文 (必須)
+    - `templates/email/<template_name>/body.html` から HTML 本文 (任意)
+    """
+    subject = render_template(
+        f"email/{template_name}/subject.txt", **context
+    ).strip()
+    text_body = render_template(f"email/{template_name}/body.txt", **context)
+    html_body: Optional[str] = None
+    try:
+        html_body = render_template(f"email/{template_name}/body.html", **context)
+    except TemplateNotFound:
+        # HTML 版が無いテンプレートはプレーンのみで送信する。
+        pass
+    return RenderedEmail(subject=subject, text_body=text_body, html_body=html_body)
+
+
+def send_email(to: str, template_name: str, context: Optional[dict] = None) -> None:
+    """テンプレート名と context を指定してメール送信する。
+
+    送信先 (`to`) はメールアドレス文字列。複数宛先や CC/BCC は本骨格では
+    サポートしない (必要になった時点で API を拡張する)。
+    """
+    if context is None:
+        context = {}
+    rendered = render_email(template_name, context)
+    from_addr = _format_from_address(
+        current_app.config.get("MAIL_FROM", ""),
+        current_app.config.get("MAIL_FROM_NAME", ""),
+    )
+    backend = get_mail_backend()
+    try:
+        backend.send(to, from_addr, rendered)
+    except Exception:
+        # 配信失敗は本体ロジックに波及させず、ログだけ残す。再送・キュー
+        # 投入の仕組みは後続 PR で導入する。
+        logger.exception("Failed to send email '%s' to %s", template_name, to)
+        raise
+
+
+def _format_from_address(addr: str, name: str) -> str:
+    """`Name <addr>` 形式 (RFC 5322) に整形する。"""
+    if not addr:
+        return name or ""
+    if name:
+        return f"{name} <{addr}>"
+    return addr
