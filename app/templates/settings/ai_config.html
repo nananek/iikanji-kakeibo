@@ -31,13 +31,11 @@
             </select>
           </div>
 
-          <div class="mb-3" id="baseUrlGroup" style="display:none;">
-            <label class="form-label" for="baseUrlInput">ベースURL</label>
-            <input type="url" class="form-control" name="base_url" id="baseUrlInput"
-                   value="{{ config.base_url if config else '' }}"
-                   placeholder="http://localhost:11434">
-            <div class="form-text">
-              Ollamaサーバーのアドレスを入力してください。省略時は http://localhost:11434 が使われます。
+          <div class="mb-3" id="llamaCppNote" style="display:none;">
+            <div class="alert alert-info small mb-0">
+              <i class="bi bi-info-circle"></i>
+              llama.cpp はサーバー管理者が提供しています。API キーは不要です。
+              サーバー管理者が提供を停止した場合は別のプロバイダーを選択してください。
             </div>
           </div>
 
@@ -132,11 +130,11 @@
             console.anthropic.com
           </a> でAPIキーを作成
         </p>
-        <h6>Ollama (ローカル)</h6>
+        <h6>llama.cpp (ローカル)</h6>
         <p class="small">
-          <a href="https://ollama.com/" target="_blank" rel="noopener">
-            ollama.com
-          </a> からインストール。APIキー不要で、ローカルまたはネットワーク上のOllamaサーバーを利用できます。
+          <a href="https://github.com/ggml-org/llama.cpp" target="_blank" rel="noopener">
+            ggml-org/llama.cpp
+          </a> からビルド。<code>llama-server -m model.gguf --port 8080</code> でサーバー起動後、ベースURLを設定。APIキー不要で、ローカルまたはネットワーク上のサーバーを利用できます。
         </p>
       </div>
     </div>
@@ -149,18 +147,18 @@
 const defaults = {{ provider_defaults | tojson }};
 const select = document.getElementById('providerSelect');
 const hint = document.getElementById('defaultModelHint');
-const baseUrlGroup = document.getElementById('baseUrlGroup');
+const llamaCppNote = document.getElementById('llamaCppNote');
 const apiKeyInput = document.getElementById('apiKeyInput');
 const apiKeyOptional = document.getElementById('apiKeyOptional');
 
 function updateProvider() {
-  const isOllama = select.value === 'ollama';
+  const isLocal = select.value === 'llama_cpp';
   hint.textContent = 'デフォルト: ' + (defaults[select.value] || '');
-  baseUrlGroup.style.display = isOllama ? '' : 'none';
-  apiKeyOptional.style.display = isOllama ? '' : 'none';
+  llamaCppNote.style.display = isLocal ? '' : 'none';
+  apiKeyOptional.style.display = isLocal ? '' : 'none';
   // 新規登録時のみ required 制御（既存設定時は常に optional）
   {% if not config %}
-  apiKeyInput.required = !isOllama;
+  apiKeyInput.required = !isLocal;
   {% endif %}
 }
 select.addEventListener('change', updateProvider);

@@ -26,8 +26,8 @@ from app.services.ai_receipt import (
     _call_anthropic_text,
     _call_google,
     _call_google_text,
-    _call_ollama,
-    _call_ollama_text,
+    _call_llama_cpp,
+    _call_llama_cpp_text,
     _call_openai,
     _call_openai_text,
     _extract_json,
@@ -57,12 +57,11 @@ def _ai_config(db, user_id, provider="openai"):
     return cfg
 
 
-def _ollama_config(db, user_id):
+def _llama_cpp_config(db, user_id):
     cfg = UserAIConfig(
-        user_id=user_id, provider="ollama",
-        api_key_encrypted=encrypt_api_key("_"),  # Ollama はダミーキー
-        model_name="llama3.2-vision",
-        base_url="http://localhost:11434",
+        user_id=user_id, provider="llama_cpp",
+        api_key_encrypted=encrypt_api_key("_"),  # llama.cpp はダミーキー
+        model_name="default",
     )
     db.session.add(cfg)
     db.session.commit()
@@ -141,25 +140,25 @@ class TestProviderHandlers:
             result = _call_anthropic("k", "claude", b"img", "image/jpeg")
             assert result["amount"] == 200
 
-    def test_ollama(self):
+    def test_llama_cpp(self):
         with patch("httpx.post") as mock_post:
             mock_post.return_value = _mock_post({
                 "choices": [{"message": {"content": '{"amount": 30}'}}],
             })
-            result = _call_ollama("", "llama", b"img", "image/png",
-                                    base_url="http://x:11434")
+            result = _call_llama_cpp("", "default", b"img", "image/png",
+                                     base_url="http://x:8080")
             assert result["amount"] == 30
             url = mock_post.call_args.args[0]
-            assert "x:11434" in url
+            assert "x:8080" in url
 
-    def test_ollama_default_url(self):
+    def test_llama_cpp_default_url(self):
         with patch("httpx.post") as mock_post:
             mock_post.return_value = _mock_post({
                 "choices": [{"message": {"content": '{"amount": 0}'}}],
             })
-            _call_ollama("", "llama", b"img", "image/png")
+            _call_llama_cpp("", "default", b"img", "image/png")
             url = mock_post.call_args.args[0]
-            assert "localhost:11434" in url
+            assert "localhost:8080" in url
 
 
 class TestTextHandlers:
@@ -185,12 +184,12 @@ class TestTextHandlers:
             })
             assert _call_anthropic_text("k", "c", "p") == {"x": 2}
 
-    def test_ollama_text(self):
+    def test_llama_cpp_text(self):
         with patch("httpx.post") as mock_post:
             mock_post.return_value = _mock_post({
                 "choices": [{"message": {"content": '{"x": 3}'}}],
             })
-            assert _call_ollama_text("", "l", "p", base_url="http://x:11434") == {"x": 3}
+            assert _call_llama_cpp_text("", "default", "p", base_url="http://x:8080") == {"x": 3}
 
 
 class TestGetAiConfig:
@@ -205,12 +204,37 @@ class TestGetAiConfig:
         assert handler is _call_openai
         assert extra == {}
 
-    def test_ollama_config_strips_dummy_key(self, db, user, accounts):
-        _ollama_config(db, user.id)
+    def test_llama_cpp_config_uses_server_url(self, db, user, accounts):
+        """サーバー設定 LLAMA_CPP_URL が base_url として注入される。"""
+        _llama_cpp_config(db, user.id)
         api_key, provider, _, _, _, extra, _ = _get_ai_config(user.id)
         assert api_key == ""  # ダミー "_" が空文字に
-        assert provider == "ollama"
-        assert extra == {"base_url": "http://localhost:11434"}
+        assert provider == "llama_cpp"
+        # TestConfig で http://test-llama-cpp:8080 が設定されている
+        assert extra == {"base_url": "http://test-llama-cpp:8080"}
+
+    def test_llama_cpp_without_server_url_raises(self, db, user, accounts, app):
+        """サーバー管理者が提供を停止した場合 (LLAMA_CPP_URL 未設定) は
+        「設定を変更してください」と案内するエラーになる。"""
+        _llama_cpp_config(db, user.id)
+        app.config["LLAMA_CPP_URL"] = ""
+        try:
+            with pytest.raises(ValueError, match="サーバー管理者"):
+                _get_ai_config(user.id)
+        finally:
+            app.config["LLAMA_CPP_URL"] = "http://test-llama-cpp:8080"
+
+    def test_legacy_ollama_provider_unsupported(self, db, user, accounts):
+        """v3.12.0 で ollama サポート削除。既存設定は未対応エラーになる。"""
+        cfg = UserAIConfig(
+            user_id=user.id, provider="ollama",
+            api_key_encrypted=encrypt_api_key("_"),
+            model_name="llama3",
+        )
+        db.session.add(cfg)
+        db.session.commit()
+        with pytest.raises(ValueError, match="未対応"):
+            _get_ai_config(user.id)
 
     def test_unknown_provider(self, db, user, accounts):
         # 強制的に未対応プロバイダにする

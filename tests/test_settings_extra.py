@@ -109,17 +109,17 @@ class TestAiConfig:
         })
         assert resp.status_code in (302, 303)
 
-    def test_save_ollama_no_key(self, db, logged_in_client, user, accounts):
+    def test_save_llama_cpp_no_key(self, db, logged_in_client, user, accounts):
+        """llama.cpp は API キー不要で保存できる (サーバー側 URL 提供前提)"""
         resp = logged_in_client.post("/settings/ai/save", data={
-            "provider": "ollama",
+            "provider": "llama_cpp",
             "api_key": "",
-            "model_name": "llama",
-            "base_url": "http://localhost:11434",
+            "model_name": "default",
         })
         assert resp.status_code in (302, 303)
         cfg = UserAIConfig.query.filter_by(user_id=user.id).first()
         assert cfg is not None
-        assert cfg.provider == "ollama"
+        assert cfg.provider == "llama_cpp"
 
     def test_save_no_key_for_openai_blocked(self, db, logged_in_client, user, accounts):
         resp = logged_in_client.post("/settings/ai/save", data={

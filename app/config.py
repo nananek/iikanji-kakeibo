@@ -29,6 +29,12 @@ class Config:
     # レート制限
     RATELIMIT_ENABLED = os.environ.get("RATELIMIT_ENABLED", "true").lower() != "false"
 
+    # ローカル LLM (llama.cpp / llama-server) のエンドポイント。
+    # サーバー管理者が用意する任意機能。未設定の場合、ユーザー UI で llama.cpp
+    # プロバイダーは選択肢に出ず、既存 `llama_cpp` 設定を持つユーザーには
+    # 「サーバー管理者が提供を停止しました」と案内される。
+    LLAMA_CPP_URL = os.environ.get("LLAMA_CPP_URL", "")
+
     # 証憑画像ストレージ
     STORAGE_BACKEND = os.environ.get("STORAGE_BACKEND", "local")  # "local" or "s3"
     STORAGE_LOCAL_DIR = os.environ.get("STORAGE_LOCAL_DIR", "/app/data/vouchers")
