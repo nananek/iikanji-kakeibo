@@ -1,0 +1,1 @@
+[{{ config.MAIL_FROM_NAME }}] {{ owner_username }} さんから監査アクセスの招待があります
