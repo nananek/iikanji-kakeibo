@@ -745,9 +745,10 @@ def _get_ai_config(user_id: int):
         # (openai / anthropic / google) は引き続き無償で利用可能。
         from app.services.entitlement import has_entitlement
         from app.models.user import User
-        from app.extensions import db as _db
-        user = _db.session.get(User, user_id)
-        if user is None or not has_entitlement(user, "paid_llm"):
+        user = db.session.get(User, user_id)
+        if user is None:
+            raise ValueError("ユーザーが見つかりません。")
+        if not has_entitlement(user, "paid_llm"):
             raise ValueError(
                 "サーバー提供 LLM (llama.cpp) の利用には有償プランが必要です。"
                 "ご自身の API キーで外部プロバイダー (OpenAI / Anthropic / Google) を"
