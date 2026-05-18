@@ -163,13 +163,24 @@ class TestSendEmail:
         out = capsys.readouterr().out
         assert "u@example.com" in out
 
-    def test_from_address_uses_config(self, app, capsys, monkeypatch):
+    def test_from_address_uses_config_ascii(self, app, capsys, monkeypatch):
         monkeypatch.setitem(app.config, "MAIL_FROM", "alerts@example.com")
-        monkeypatch.setitem(app.config, "MAIL_FROM_NAME", "テスト送信")
+        monkeypatch.setitem(app.config, "MAIL_FROM_NAME", "Iikanji Alerts")
         with app.test_request_context():
             send_email("u@example.com", "_skeleton", {"body": "x"})
         out = capsys.readouterr().out
-        assert "From: テスト送信 <alerts@example.com>" in out
+        assert "From: Iikanji Alerts <alerts@example.com>" in out
+
+    def test_from_address_japanese_name_is_encoded(self, app, capsys, monkeypatch):
+        """日本語の MAIL_FROM_NAME は encoded-word 経由で出力される"""
+        monkeypatch.setitem(app.config, "MAIL_FROM", "alerts@example.com")
+        monkeypatch.setitem(app.config, "MAIL_FROM_NAME", "いいかんじ™家計簿")
+        with app.test_request_context():
+            send_email("u@example.com", "_skeleton", {"body": "x"})
+        out = capsys.readouterr().out
+        # 生の日本語ではなく encoded-word 形式で出力される
+        assert "From: =?utf-8?" in out
+        assert "<alerts@example.com>" in out
 
 
 # --- _format_from_address ---------------------------------------------------
@@ -185,8 +196,28 @@ class TestFormatFromAddress:
             ("", "", ""),
         ],
     )
-    def test_formats(self, addr, name, expected):
+    def test_ascii_formats(self, addr, name, expected):
         assert _format_from_address(addr, name) == expected
+
+    def test_japanese_name_is_rfc2047_encoded(self):
+        """日本語の Display Name は RFC 2047 encoded-word に変換される"""
+        result = _format_from_address("noreply@example.com", "いいかんじ™家計簿")
+        # encoded-word 形式 (=?charset?encoding?...?=) に展開される
+        assert "=?utf-8?" in result
+        assert "<noreply@example.com>" in result
+        # 生の日本語が SMTP ヘッダに直接埋め込まれていないこと
+        assert "いいかんじ" not in result
+
+    def test_japanese_name_decodes_back(self):
+        """encoded-word をデコードすると元の Display Name に戻る"""
+        from email.utils import getaddresses
+        from email.header import decode_header, make_header
+
+        formatted = _format_from_address("noreply@example.com", "いいかんじ™家計簿")
+        name, addr = getaddresses([formatted])[0]
+        decoded_name = str(make_header(decode_header(name)))
+        assert decoded_name == "いいかんじ™家計簿"
+        assert addr == "noreply@example.com"
 
 
 # --- インターフェース整合 ---------------------------------------------------

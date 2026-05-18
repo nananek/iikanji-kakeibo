@@ -134,9 +134,21 @@ def send_email(to: str, template_name: str, context: Optional[dict] = None) -> N
 
 
 def _format_from_address(addr: str, name: str) -> str:
-    """`Name <addr>` 形式 (RFC 5322) に整形する。"""
+    """`Name <addr>` 形式 (RFC 5322) に整形する。
+
+    非 ASCII の Display Name は `email.utils.formataddr` が自動的に
+    RFC 2047 encoded-word (Base64, charset=utf-8) に変換するため、
+    日本語の運営者名 (例: "いいかんじ™家計簿") もそのまま渡せる。
+    SMTP ヘッダ互換性を確保。
+
+    Subject 等のヘッダも将来 `SmtpMailBackend` を実装する際は同様に
+    `email.header.Header` でエンコードすること。
+    """
+    from email.utils import formataddr
+    if not addr and not name:
+        return ""
     if not addr:
-        return name or ""
-    if name:
-        return f"{name} <{addr}>"
-    return addr
+        # Display Name 単独の利用は SMTP 仕様的には変則的だが、
+        # 既存の挙動を維持してテストとの整合を保つ。
+        return name
+    return formataddr((name or "", addr), charset="utf-8")
