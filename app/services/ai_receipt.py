@@ -282,6 +282,31 @@ def _build_suggestion_prompt(account_list_text, ledger_text="",
 - 異なる解釈（例: 費目の分類の違い、内訳の粒度の違い）を反映した複数案を提案してください"""
 
 
+def _usage_openai_style(data: dict) -> dict:
+    """OpenAI 互換 (OpenAI / llama.cpp) のレスポンスから usage を正規化。"""
+    usage = data.get("usage") or {}
+    return {
+        "input_tokens": usage.get("prompt_tokens"),
+        "output_tokens": usage.get("completion_tokens"),
+    }
+
+
+def _usage_anthropic_style(data: dict) -> dict:
+    usage = data.get("usage") or {}
+    return {
+        "input_tokens": usage.get("input_tokens"),
+        "output_tokens": usage.get("output_tokens"),
+    }
+
+
+def _usage_google_style(data: dict) -> dict:
+    usage = data.get("usageMetadata") or {}
+    return {
+        "input_tokens": usage.get("promptTokenCount"),
+        "output_tokens": usage.get("candidatesTokenCount"),
+    }
+
+
 def _extract_json(text: str) -> dict:
     """テキストからJSON部分を抽出してパース"""
     text = text.strip()
@@ -303,7 +328,8 @@ def _extract_json(text: str) -> dict:
 
 def _call_openai(api_key: str, model: str, image_bytes: bytes,
                  mime_type: str, prompt: str = RECEIPT_PROMPT,
-                 max_tokens: int = 500) -> dict:
+                 max_tokens: int = 500):
+    """戻り値: (parsed_json, usage_dict)"""
     b64_image = base64.b64encode(image_bytes).decode()
     response = httpx.post(
         "https://api.openai.com/v1/chat/completions",
@@ -332,13 +358,15 @@ def _call_openai(api_key: str, model: str, image_bytes: bytes,
         timeout=60.0,
     )
     response.raise_for_status()
-    content = response.json()["choices"][0]["message"]["content"]
-    return _extract_json(content)
+    data = response.json()
+    content = data["choices"][0]["message"]["content"]
+    return _extract_json(content), _usage_openai_style(data)
 
 
 def _call_google(api_key: str, model: str, image_bytes: bytes,
                  mime_type: str, prompt: str = RECEIPT_PROMPT,
-                 max_tokens: int = 500) -> dict:
+                 max_tokens: int = 500):
+    """戻り値: (parsed_json, usage_dict)"""
     b64_image = base64.b64encode(image_bytes).decode()
     response = httpx.post(
         f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
@@ -366,13 +394,15 @@ def _call_google(api_key: str, model: str, image_bytes: bytes,
         timeout=60.0,
     )
     response.raise_for_status()
-    text = response.json()["candidates"][0]["content"]["parts"][0]["text"]
-    return _extract_json(text)
+    data = response.json()
+    text = data["candidates"][0]["content"]["parts"][0]["text"]
+    return _extract_json(text), _usage_google_style(data)
 
 
 def _call_anthropic(api_key: str, model: str, image_bytes: bytes,
                     mime_type: str, prompt: str = RECEIPT_PROMPT,
-                    max_tokens: int = 500) -> dict:
+                    max_tokens: int = 500):
+    """戻り値: (parsed_json, usage_dict)"""
     b64_image = base64.b64encode(image_bytes).decode()
     response = httpx.post(
         "https://api.anthropic.com/v1/messages",
@@ -404,16 +434,18 @@ def _call_anthropic(api_key: str, model: str, image_bytes: bytes,
         timeout=60.0,
     )
     response.raise_for_status()
-    content = response.json()["content"][0]["text"]
-    return _extract_json(content)
+    data = response.json()
+    content = data["content"][0]["text"]
+    return _extract_json(content), _usage_anthropic_style(data)
 
 
 def _call_llama_cpp(api_key: str, model: str, image_bytes: bytes,
                     mime_type: str, prompt: str = RECEIPT_PROMPT,
-                    max_tokens: int = 500, *, base_url: str = "") -> dict:
+                    max_tokens: int = 500, *, base_url: str = ""):
     """llama.cpp (llama-server) の OpenAI 互換エンドポイントを呼ぶ。
 
     デフォルトポートは 8080。マルチモーダル対応モデル (LLaVA など) が必要。
+    戻り値: (parsed_json, usage_dict)
     """
     url = (base_url.rstrip("/") if base_url else "http://localhost:8080")
     b64_image = base64.b64encode(image_bytes).decode()
@@ -444,8 +476,9 @@ def _call_llama_cpp(api_key: str, model: str, image_bytes: bytes,
         timeout=120.0,
     )
     response.raise_for_status()
-    content = response.json()["choices"][0]["message"]["content"]
-    return _extract_json(content)
+    data = response.json()
+    content = data["choices"][0]["message"]["content"]
+    return _extract_json(content), _usage_openai_style(data)
 
 
 _PROVIDER_HANDLERS = {
@@ -460,7 +493,8 @@ _PROVIDER_HANDLERS = {
 
 
 def _call_openai_text(api_key: str, model: str, prompt: str,
-                      max_tokens: int = 2000) -> dict:
+                      max_tokens: int = 2000):
+    """戻り値: (parsed_json, usage_dict)"""
     response = httpx.post(
         "https://api.openai.com/v1/chat/completions",
         headers={
@@ -475,12 +509,14 @@ def _call_openai_text(api_key: str, model: str, prompt: str,
         timeout=120.0,
     )
     response.raise_for_status()
-    content = response.json()["choices"][0]["message"]["content"]
-    return _extract_json(content)
+    data = response.json()
+    content = data["choices"][0]["message"]["content"]
+    return _extract_json(content), _usage_openai_style(data)
 
 
 def _call_google_text(api_key: str, model: str, prompt: str,
-                      max_tokens: int = 2000) -> dict:
+                      max_tokens: int = 2000):
+    """戻り値: (parsed_json, usage_dict)"""
     response = httpx.post(
         f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
         params={"key": api_key},
@@ -495,12 +531,14 @@ def _call_google_text(api_key: str, model: str, prompt: str,
         timeout=120.0,
     )
     response.raise_for_status()
-    text = response.json()["candidates"][0]["content"]["parts"][0]["text"]
-    return _extract_json(text)
+    data = response.json()
+    text = data["candidates"][0]["content"]["parts"][0]["text"]
+    return _extract_json(text), _usage_google_style(data)
 
 
 def _call_anthropic_text(api_key: str, model: str, prompt: str,
-                         max_tokens: int = 2000) -> dict:
+                         max_tokens: int = 2000):
+    """戻り値: (parsed_json, usage_dict)"""
     response = httpx.post(
         "https://api.anthropic.com/v1/messages",
         headers={
@@ -516,13 +554,17 @@ def _call_anthropic_text(api_key: str, model: str, prompt: str,
         timeout=120.0,
     )
     response.raise_for_status()
-    content = response.json()["content"][0]["text"]
-    return _extract_json(content)
+    data = response.json()
+    content = data["content"][0]["text"]
+    return _extract_json(content), _usage_anthropic_style(data)
 
 
 def _call_llama_cpp_text(api_key: str, model: str, prompt: str,
-                         max_tokens: int = 2000, *, base_url: str = "") -> dict:
-    """llama.cpp (llama-server) のテキスト専用 OpenAI 互換呼び出し。"""
+                         max_tokens: int = 2000, *, base_url: str = ""):
+    """llama.cpp (llama-server) のテキスト専用 OpenAI 互換呼び出し。
+
+    戻り値: (parsed_json, usage_dict)
+    """
     url = (base_url.rstrip("/") if base_url else "http://localhost:8080")
     headers = {"Content-Type": "application/json"}
     if api_key:
@@ -538,8 +580,9 @@ def _call_llama_cpp_text(api_key: str, model: str, prompt: str,
         timeout=120.0,
     )
     response.raise_for_status()
-    content = response.json()["choices"][0]["message"]["content"]
-    return _extract_json(content)
+    data = response.json()
+    content = data["choices"][0]["message"]["content"]
+    return _extract_json(content), _usage_openai_style(data)
 
 
 _TEXT_PROVIDER_HANDLERS = {
@@ -703,22 +746,110 @@ def _get_ai_config(user_id: int):
     return api_key, provider, model, handler, custom_prompt, extra_kwargs, compliance_check
 
 
+def _log_ai_usage(user_id, provider, model, feature, usage, latency_ms,
+                  *, status="ok", http_status=None):
+    """AI API 呼び出し記録を ai_usage_logs テーブルに INSERT する。
+
+    DB 書き込み失敗は AI 呼び出し本体に波及させない（try/except + rollback）。
+    プライバシー: プロンプト本文・レスポンス本文・API キーは保存しない。
+    """
+    try:
+        from app.models.ai_usage_log import AIUsageLog
+        from app.extensions import db
+        in_t = (usage or {}).get("input_tokens")
+        out_t = (usage or {}).get("output_tokens")
+        total = None
+        if in_t is not None or out_t is not None:
+            total = (in_t or 0) + (out_t or 0)
+        db.session.add(AIUsageLog(
+            user_id=user_id, provider=provider, model=model, feature=feature,
+            input_tokens=in_t, output_tokens=out_t, total_tokens=total,
+            latency_ms=latency_ms, status=status, http_status=http_status,
+        ))
+        db.session.commit()
+    except Exception:
+        logger.exception("Failed to record AI usage log for user %s", user_id)
+        try:
+            from app.extensions import db
+            db.session.rollback()
+        except Exception:
+            pass
+
+
+def _classify_exception(exc) -> tuple[str, int | None]:
+    """例外を usage log の status / http_status に分類する。"""
+    if isinstance(exc, httpx.HTTPStatusError):
+        return "http_error", exc.response.status_code
+    if isinstance(exc, httpx.TimeoutException):
+        return "timeout", None
+    if isinstance(exc, (json.JSONDecodeError, KeyError, ValueError, TypeError)):
+        return "parse_error", None
+    return "other_error", None
+
+
 def _call_ai(handler, api_key, model, image_bytes, mime_type,
-             prompt, max_tokens, user_id, extra_kwargs=None):
-    """AI APIを呼び出す共通ラッパー"""
+             prompt, max_tokens, user_id, extra_kwargs=None,
+             *, provider="", feature=""):
+    """AI 画像 API 呼び出しの共通ラッパー。
+
+    呼び出し前後で latency 計測 + 呼び出し記録を保存する。
+    """
+    import time as _time
+    t0 = _time.perf_counter()
     try:
         kwargs = {"prompt": prompt, "max_tokens": max_tokens}
         if extra_kwargs:
             kwargs.update(extra_kwargs)
-        return handler(api_key, model, image_bytes, mime_type, **kwargs)
+        parsed, usage = handler(api_key, model, image_bytes, mime_type, **kwargs)
+        latency = int((_time.perf_counter() - t0) * 1000)
+        _log_ai_usage(user_id, provider, model, feature, usage, latency)
+        return parsed
     except httpx.HTTPStatusError as e:
+        latency = int((_time.perf_counter() - t0) * 1000)
+        _log_ai_usage(user_id, provider, model, feature, {}, latency,
+                      status="http_error", http_status=e.response.status_code)
         logger.error("AI API HTTP error for user %s: %s", user_id, e)
         raise RuntimeError(
             f"AI APIエラー（HTTP {e.response.status_code}）: "
             "APIキーやモデル名を確認してください。"
         )
     except Exception as e:
+        latency = int((_time.perf_counter() - t0) * 1000)
+        status, http_status = _classify_exception(e)
+        _log_ai_usage(user_id, provider, model, feature, {}, latency,
+                      status=status, http_status=http_status)
         logger.error("AI API call failed for user %s: %s", user_id, e)
+        raise RuntimeError(f"AI APIの呼び出しに失敗しました: {e}")
+
+
+def _call_ai_text(handler, api_key, model, prompt, max_tokens, user_id,
+                  extra_kwargs=None, *, provider="", feature=""):
+    """AI テキスト API 呼び出しの共通ラッパー (画像版と対称)。"""
+    import time as _time
+    t0 = _time.perf_counter()
+    try:
+        kwargs = {"max_tokens": max_tokens}
+        if extra_kwargs:
+            kwargs.update(extra_kwargs)
+        parsed, usage = handler(api_key, model, prompt, **kwargs)
+        latency = int((_time.perf_counter() - t0) * 1000)
+        _log_ai_usage(user_id, provider, model, feature, usage, latency)
+        return parsed
+    except httpx.HTTPStatusError as e:
+        latency = int((_time.perf_counter() - t0) * 1000)
+        _log_ai_usage(user_id, provider, model, feature, {}, latency,
+                      status="http_error", http_status=e.response.status_code)
+        logger.error("AI text API HTTP error for user %s: %s", user_id, e)
+        raise RuntimeError(
+            f"AI APIエラー（HTTP {e.response.status_code}）: "
+            "APIキーやモデル名を確認してください。"
+        )
+    except Exception as e:
+        latency = int((_time.perf_counter() - t0) * 1000)
+        status, http_status = _classify_exception(e)
+        _log_ai_usage(user_id, provider, model, feature, {}, latency,
+                      status=status, http_status=http_status)
+        logger.error("AI text API call failed for user %s: %s", user_id, e)
         raise RuntimeError(f"AI APIの呼び出しに失敗しました: {e}")
 
 
@@ -727,7 +858,8 @@ def analyze_receipt(user_id: int, image_bytes: bytes,
     """領収書画像をAIで解析する（後方互換）"""
     api_key, provider, model, handler, _, extra_kw, _ = _get_ai_config(user_id)
     result = _call_ai(handler, api_key, model, image_bytes, mime_type,
-                      RECEIPT_PROMPT, 500, user_id, extra_kw)
+                      RECEIPT_PROMPT, 500, user_id, extra_kw,
+                      provider=provider, feature="receipt_analyze")
 
     return ReceiptData(
         date=result.get("date"),
@@ -766,7 +898,8 @@ def analyze_and_suggest(user_id: int, image_bytes: bytes,
         prompt += f"\n\nユーザーからのコメント: {comment}"
     max_tokens_r1 = 1500 if compliance_check else 1000
     round1 = _call_ai(handler, api_key, model, image_bytes, mime_type,
-                      prompt, max_tokens_r1, user_id, extra_kw)
+                      prompt, max_tokens_r1, user_id, extra_kw,
+                      provider=provider, feature="receipt_round1")
 
     analysis = DocumentAnalysis(
         date=round1.get("date"),
@@ -810,7 +943,8 @@ def analyze_and_suggest(user_id: int, image_bytes: bytes,
     )
 
     round2 = _call_ai(handler, api_key, model, image_bytes, mime_type,
-                      suggestion_prompt, 2000, user_id, extra_kw)
+                      suggestion_prompt, 2000, user_id, extra_kw,
+                      provider=provider, feature="receipt_round2")
 
     suggestions_raw = round2.get("suggestions", [])
 
@@ -897,18 +1031,10 @@ def parse_web_text(user_id: int, raw_text: str,
         raw_text=raw_text[:50000],  # トークン上限を考慮して切り詰め
     )
 
-    try:
-        text_kw = {"max_tokens": 16000, **extra_kw}
-        result = text_handler(api_key, model, prompt, **text_kw)
-    except httpx.HTTPStatusError as e:
-        logger.error("AI API HTTP error for user %s: %s", user_id, e)
-        raise RuntimeError(
-            f"AI APIエラー（HTTP {e.response.status_code}）: "
-            "APIキーやモデル名を確認してください。"
-        )
-    except Exception as e:
-        logger.error("AI API call failed for user %s: %s", user_id, e)
-        raise RuntimeError(f"AI APIの呼び出しに失敗しました: {e}")
+    result = _call_ai_text(
+        text_handler, api_key, model, prompt, 16000, user_id, extra_kw,
+        provider=provider, feature="web_extract",
+    )
 
     transactions = result.get("transactions", [])
 
@@ -1044,18 +1170,10 @@ def suggest_categories_by_ai(user_id: int, payment_account_code: str,
         rows_text=rows_text,
     )
 
-    try:
-        text_kw = {"max_tokens": 4000, **extra_kw}
-        result = text_handler(api_key, model, prompt, **text_kw)
-    except httpx.HTTPStatusError as e:
-        logger.error("AI API HTTP error for user %s: %s", user_id, e)
-        raise RuntimeError(
-            f"AI APIエラー（HTTP {e.response.status_code}）: "
-            "APIキーやモデル名を確認してください。"
-        )
-    except Exception as e:
-        logger.error("AI API call failed for user %s: %s", user_id, e)
-        raise RuntimeError(f"AI APIの呼び出しに失敗しました: {e}")
+    result = _call_ai_text(
+        text_handler, api_key, model, prompt, 4000, user_id, extra_kw,
+        provider=provider, feature="category_suggest",
+    )
 
     # レスポンスを既存の suggest_categories と同じ形式に変換
     ai_results = result.get("results", [])
@@ -1145,6 +1263,7 @@ def analyze_voucher_for_attachment(
     result = _call_ai(
         handler, api_key, model, image_bytes, mime_type,
         prompt, 1500, user_id, extra_kw,
+        provider=provider, feature="voucher_attach",
     )
 
     # コンプライアンスチェック結果

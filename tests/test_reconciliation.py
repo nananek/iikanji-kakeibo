@@ -403,7 +403,7 @@ class TestFindAiMatches:
         journal = [{"entry_id": 99, "date": "2026-01-10", "description": "Amazon", "amount": 1480, "category_name": "日用品"}]
 
         with patch("app.services.ai_receipt._get_ai_config") as mock_config, \
-             patch("app.services.ai_receipt._TEXT_PROVIDER_HANDLERS", {"openai": lambda *a, **kw: mock_response}):
+             patch("app.services.ai_receipt._TEXT_PROVIDER_HANDLERS", {"openai": lambda *a, **kw: (mock_response, {})}):
             mock_config.return_value = ("key", "openai", "gpt-4", None, "", {}, False)
             results = find_ai_matches(user.id, unmatched, journal)
 
@@ -419,7 +419,7 @@ class TestFindAiMatches:
         journal = [{"entry_id": 1, "date": "2026-01-10", "description": "別", "amount": 999, "category_name": "雑費"}]
 
         with patch("app.services.ai_receipt._get_ai_config") as mock_config, \
-             patch("app.services.ai_receipt._TEXT_PROVIDER_HANDLERS", {"openai": lambda *a, **kw: mock_response}):
+             patch("app.services.ai_receipt._TEXT_PROVIDER_HANDLERS", {"openai": lambda *a, **kw: (mock_response, {})}):
             mock_config.return_value = ("key", "openai", "gpt-4", None, "", {}, False)
             results = find_ai_matches(user.id, unmatched, journal)
 
@@ -478,7 +478,7 @@ class TestEdgeCases:
         journal = [{"entry_id": 1, "date": "2026-01-10", "description": "x", "amount": 499, "category_name": "雑"}]
 
         with patch("app.services.ai_receipt._get_ai_config") as mock_config, \
-             patch("app.services.ai_receipt._TEXT_PROVIDER_HANDLERS", {"openai": lambda *a, **kw: mock_response}):
+             patch("app.services.ai_receipt._TEXT_PROVIDER_HANDLERS", {"openai": lambda *a, **kw: (mock_response, {})}):
             mock_config.return_value = ("key", "openai", "gpt-4", None, "", {}, False)
             results = find_ai_matches(user.id, unmatched, journal)
         assert results == []
@@ -571,7 +571,7 @@ class TestAiMatchesAdditional:
         unmatched = [{"csv_index": 0, "date": "2026-01-10", "description": "x", "amount": 500}]
         journal = [{"entry_id": 1, "date": "2026-01-10", "description": "y", "amount": 500, "category_name": "雑"}]
         with patch("app.services.ai_receipt._get_ai_config") as mock_config, \
-             patch("app.services.ai_receipt._TEXT_PROVIDER_HANDLERS", {"openai": lambda *a, **kw: mock_response}):
+             patch("app.services.ai_receipt._TEXT_PROVIDER_HANDLERS", {"openai": lambda *a, **kw: (mock_response, {})}):
             mock_config.return_value = ("key", "openai", "gpt-4", None, "", {}, False)
             results = find_ai_matches(user.id, unmatched, journal)
         assert results == []
