@@ -99,7 +99,7 @@ class TestAuditAddGate:
 class TestActingAsAuditorGate:
     """`acting_as_user_id` セッション中の有償ゲート"""
 
-    def test_unlimited_allows_acting(self, db, client, user, accounts, auditor):
+    def test_unlimited_allows_acting(self, db, client, app, user, accounts, auditor):
         """デフォルト (unlimited) では代理閲覧は通常通り動く"""
         grant = AuditGrant(
             owner_user_id=user.id, auditor_user_id=auditor.id,
@@ -108,6 +108,10 @@ class TestActingAsAuditorGate:
         db.session.add(grant)
         db.session.commit()
 
+        with app.test_request_context():
+            from flask import url_for
+            entitlement_lost_redirect = url_for("auditor.dashboard")
+
         with client.session_transaction() as sess:
             sess["_user_id"] = str(auditor.id)
             sess["acting_as_user_id"] = user.id
@@ -115,10 +119,10 @@ class TestActingAsAuditorGate:
 
         resp = client.get("/")
         # 200 (代理閲覧成功) または 302 (別画面リダイレクト) を許容、
-        # entitlement 失効時のリダイレクト先 (/auditor) ではないこと
+        # entitlement 失効時のリダイレクト先と一致しないこと
         assert resp.status_code in (200, 302, 303)
         if resp.status_code in (302, 303):
-            assert "/auditor" not in resp.headers.get("Location", "")
+            assert resp.headers.get("Location", "") != entitlement_lost_redirect
 
     def test_acting_blocked_when_entitlement_lost(
         self, db, client, user, accounts, auditor, monkeypatch
@@ -140,6 +144,7 @@ class TestActingAsAuditorGate:
 
         resp = client.get("/", follow_redirects=False)
         assert resp.status_code in (302, 303)
-        # acting_as_user_id がクリアされている (= 代理閲覧が終了)
+        # acting_as_user_id / acting_as_permission_level の両方がクリアされる
         with client.session_transaction() as sess:
             assert sess.get("acting_as_user_id") is None
+            assert sess.get("acting_as_permission_level") is None

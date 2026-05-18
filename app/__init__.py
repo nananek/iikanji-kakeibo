@@ -99,7 +99,10 @@ def create_app(config_class=Config):
                 has_entitlement(cu, "audit_seat")
                 or has_entitlement(owner, "audit_seat")
             ):
+                # 既存パターン (services/audit.py / views/auditor.py:exit_acting)
+                # と揃えて両セッションキーをクリアする。
                 session.pop("acting_as_user_id", None)
+                session.pop("acting_as_permission_level", None)
                 from flask import flash
                 flash(
                     "監査枠の有効期限が切れています。被監査者または監査者の"
