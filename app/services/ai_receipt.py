@@ -741,6 +741,18 @@ def _get_ai_config(user_id: int):
                 "サーバー管理者が llama.cpp の提供を停止しました。"
                 "AI 設定画面で別のプロバイダーに変更してください。"
             )
+        # サーバー提供 LLM (llama.cpp) は有償機能。BYOK 経由の外部プロバイダ
+        # (openai / anthropic / google) は引き続き無償で利用可能。
+        from app.services.entitlement import has_entitlement
+        from app.models.user import User
+        from app.extensions import db as _db
+        user = _db.session.get(User, user_id)
+        if user is None or not has_entitlement(user, "paid_llm"):
+            raise ValueError(
+                "サーバー提供 LLM (llama.cpp) の利用には有償プランが必要です。"
+                "ご自身の API キーで外部プロバイダー (OpenAI / Anthropic / Google) を"
+                "利用する場合は無償で継続できます。"
+            )
         extra_kwargs["base_url"] = url
 
     return api_key, provider, model, handler, custom_prompt, extra_kwargs, compliance_check
