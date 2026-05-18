@@ -17,7 +17,10 @@
 2. `develop` ブランチから feature ブランチを切る (`feat/*`, `fix/*`, `chore/*` 等)
 3. テストを追加・更新する (新規 service / view を書いたら同 PR でテスト網羅、
    既存カバレッジ 94% を下回らないことを目安)
-4. CI (GitHub Actions: pytest + Playwright E2E + CodeQL) を緑にする
+4. CI を緑にする — `.github/workflows/` 配下の pytest + Playwright E2E
+   (`test.yml`) と dependency-review、加えて GitHub の Code scanning
+   default setup として動作する CodeQL (Analyze actions / python /
+   javascript-typescript) と Claude PR review が PR チェックに含まれる
 5. Pull Request を作成し、`develop` をベースに提出する
 6. レビューに対応し、squash merge で取り込まれる
 
