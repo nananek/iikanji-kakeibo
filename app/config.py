@@ -29,6 +29,11 @@ class Config:
     # レート制限
     RATELIMIT_ENABLED = os.environ.get("RATELIMIT_ENABLED", "true").lower() != "false"
 
+    # 新規登録の有効/無効。セルフホストで自家用に限定したい場合は "false" に設定。
+    # false の場合、/register と /register/auditor は 404 を返し、
+    # ログイン画面の「新規登録」リンクも非表示になる。既存ユーザーのログインは影響なし。
+    REGISTRATION_ENABLED = os.environ.get("REGISTRATION_ENABLED", "true").lower() != "false"
+
     # ローカル LLM (llama.cpp / llama-server) のエンドポイント。
     # サーバー管理者が用意する任意機能。未設定の場合、ユーザー UI で llama.cpp
     # プロバイダーは選択肢に出ず、既存 `llama_cpp` 設定を持つユーザーには
