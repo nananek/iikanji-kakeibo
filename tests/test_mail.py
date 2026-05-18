@@ -127,6 +127,24 @@ class TestRenderEmail:
 
 
 class TestSendEmail:
+    def test_backend_failure_is_swallowed(self, app, monkeypatch):
+        """`backend.send` が例外を出しても `send_email` は呼び出し側に
+        伝播させず、ログだけ残す (Phase 6 設計方針: 失敗は本体フローに
+        影響させない)。
+        """
+        class FailingBackend(ConsoleMailBackend):
+            def send(self, to, from_addr, rendered):
+                raise RuntimeError("simulated SMTP failure")
+
+        from app.services import mail as mail_mod
+        monkeypatch.setattr(
+            mail_mod, "get_mail_backend", lambda: FailingBackend()
+        )
+
+        with app.test_request_context():
+            # 例外を投げずに完了する
+            send_email("u@example.com", "_skeleton", {"body": "x"})
+
     def test_send_with_console_backend(self, app, capsys):
         with app.test_request_context():
             send_email(

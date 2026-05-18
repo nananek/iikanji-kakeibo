@@ -126,10 +126,11 @@ def send_email(to: str, template_name: str, context: Optional[dict] = None) -> N
     try:
         backend.send(to, from_addr, rendered)
     except Exception:
-        # 配信失敗は本体ロジックに波及させず、ログだけ残す。再送・キュー
-        # 投入の仕組みは後続 PR で導入する。
+        # 配信失敗は本体ロジックに波及させずログだけ残す。例えば監査招待
+        # の送信に失敗しても AuditGrant 作成自体は成功扱いにすべきなので、
+        # ここで例外を吸収する。再送キューや suppression リストは後続 PR
+        # で導入予定。
         logger.exception("Failed to send email '%s' to %s", template_name, to)
-        raise
 
 
 def _format_from_address(addr: str, name: str) -> str:

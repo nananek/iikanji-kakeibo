@@ -1,3 +1,6 @@
+{# `body` は呼び出し側で必ず渡す必須パラメータ。
+   未指定だと Jinja2 の StrictUndefined / Undefined の挙動次第で
+   空行になるか実行時例外になる。 #}
 {{ greeting | default('こんにちは') }}
 
 {{ body }}
