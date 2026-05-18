@@ -166,12 +166,14 @@
             console.anthropic.com
           </a> でAPIキーを作成
         </p>
-        <h6>llama.cpp (ローカル)</h6>
+        {% if "llama_cpp" in provider_labels %}
+        <h6>llama.cpp (サーバー提供)</h6>
         <p class="small">
-          <a href="https://github.com/ggml-org/llama.cpp" target="_blank" rel="noopener">
-            ggml-org/llama.cpp
-          </a> からビルド。<code>llama-server -m model.gguf --port 8080</code> でサーバー起動後、ベースURLを設定。APIキー不要で、ローカルまたはネットワーク上のサーバーを利用できます。
+          このサーバーには管理者が用意したローカル LLM (llama.cpp) が組み込まれています。
+          APIキーや外部アカウントの登録は不要で、そのまま利用できます。
+          外部プロバイダーにデータを送らずに済むのが利点です。
         </p>
+        {% endif %}
       </div>
     </div>
   </div>
