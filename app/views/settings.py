@@ -808,6 +808,22 @@ def audit_add():
                 ))
 
     db.session.commit()
+
+    # 監査者宛に招待メールを送る。失敗はログのみ (`send_email` 内で吸収)
+    # で本体フローに影響しない。
+    if auditor.email:
+        from app.services.mail import send_email
+        send_email(
+            auditor.email,
+            "audit_invitation",
+            {
+                "auditor_username": auditor.username,
+                "owner_username": current_user.username,
+                "permission_label": PERMISSION_LABELS[level],
+                "login_url": url_for("auth.login_auditor", _external=True),
+            },
+        )
+
     flash(f"「{username}」に{PERMISSION_LABELS[level]}のアクセスを付与しました。", "success")
     return redirect(url_for("settings.audit"))
 
