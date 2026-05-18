@@ -34,6 +34,16 @@ class Config:
     # ログイン画面の「新規登録」リンクも非表示になる。既存ユーザーのログインは影響なし。
     REGISTRATION_ENABLED = os.environ.get("REGISTRATION_ENABLED", "true").lower() != "false"
 
+    # エンタイトルメント基盤の動作モード。
+    # - "unlimited" (default): セルフホスト前提で全有償機能を解放。
+    #   billing コンテナへの HTTP リクエストは発生しない。
+    # - "http": billing コンテナに HTTP 照会 (Phase 3 で実装予定)。
+    #   公開 SaaS モードではこちらを設定し BILLING_SERVICE_URL と
+    #   BILLING_API_KEY を併せて指定する。
+    BILLING_BACKEND = os.environ.get("BILLING_BACKEND", "unlimited")
+    BILLING_SERVICE_URL = os.environ.get("BILLING_SERVICE_URL", "")
+    BILLING_API_KEY = os.environ.get("BILLING_API_KEY", "")
+
     # ローカル LLM (llama.cpp / llama-server) のエンドポイント。
     # サーバー管理者が用意する任意機能。未設定の場合、ユーザー UI で llama.cpp
     # プロバイダーは選択肢に出ず、既存 `llama_cpp` 設定を持つユーザーには
