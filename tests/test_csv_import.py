@@ -480,11 +480,11 @@ class TestDetectColumnsByAi:
         mock_config.return_value = (
             "key", "openai", "gpt-4o", None, "", {}, False
         )
-        mock_handler = MagicMock(return_value={
+        mock_handler = MagicMock(return_value=({
             "date_col": 0, "desc_col": 1,
             "deposit_col": 2, "withdrawal_col": 3,
             "date_format": "%Y/%m/%d",
-        })
+        }, {"input_tokens": None, "output_tokens": None}))
         mock_handlers.get.return_value = mock_handler
 
         result = detect_columns_by_ai(user.id, self._HEADERS, self._ROWS)
@@ -506,11 +506,11 @@ class TestDetectColumnsByAi:
         mock_config.return_value = (
             "key", "openai", "gpt-4o", None, "", {}, False
         )
-        mock_handler = MagicMock(return_value={
+        mock_handler = MagicMock(return_value=({
             "date_col": 0, "desc_col": 1,
             "deposit_col": None, "withdrawal_col": 2,
             "date_format": "%Y/%m/%d",
-        })
+        }, {"input_tokens": None, "output_tokens": None}))
         mock_handlers.get.return_value = mock_handler
 
         result = detect_columns_by_ai(

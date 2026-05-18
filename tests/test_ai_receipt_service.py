@@ -46,6 +46,14 @@ from app.services.ai_receipt import (
 )
 
 
+def _h(parsed):
+    """v3.13.0 以降のハンドラ戻り値 (parsed, usage) をテスト用に組み立てる。
+
+    既存テストは parsed のみ気にしているので usage は空辞書で十分。
+    """
+    return (parsed, {"input_tokens": None, "output_tokens": None})
+
+
 def _ai_config(db, user_id, provider="openai"):
     cfg = UserAIConfig(
         user_id=user_id, provider=provider,
@@ -112,14 +120,17 @@ class TestExtractJson:
 
 
 class TestProviderHandlers:
+    """v3.13.0 以降、ハンドラは (parsed_json, usage_dict) のタプルを返す。"""
+
     def test_openai(self):
         with patch("httpx.post") as mock_post:
             mock_post.return_value = _mock_post({
                 "choices": [{"message": {"content": '{"date": "2026-02-15", "amount": 100}'}}],
+                "usage": {"prompt_tokens": 12, "completion_tokens": 34},
             })
-            result = _call_openai("k", "gpt-4o", b"img", "image/jpeg")
+            result, usage = _call_openai("k", "gpt-4o", b"img", "image/jpeg")
             assert result["amount"] == 100
-            # base64 でエンコードされた image が渡る
+            assert usage == {"input_tokens": 12, "output_tokens": 34}
             sent = mock_post.call_args.kwargs["json"]
             assert "messages" in sent
             assert "data:image/jpeg;base64," in sent["messages"][0]["content"][1]["image_url"]["url"]
@@ -128,26 +139,32 @@ class TestProviderHandlers:
         with patch("httpx.post") as mock_post:
             mock_post.return_value = _mock_post({
                 "candidates": [{"content": {"parts": [{"text": '{"date": null, "amount": 50}'}]}}],
+                "usageMetadata": {"promptTokenCount": 11, "candidatesTokenCount": 22},
             })
-            result = _call_google("k", "gemini", b"img", "image/png")
+            result, usage = _call_google("k", "gemini", b"img", "image/png")
             assert result["amount"] == 50
+            assert usage == {"input_tokens": 11, "output_tokens": 22}
 
     def test_anthropic(self):
         with patch("httpx.post") as mock_post:
             mock_post.return_value = _mock_post({
                 "content": [{"text": '{"date": "2026-01-01", "amount": 200}'}],
+                "usage": {"input_tokens": 13, "output_tokens": 26},
             })
-            result = _call_anthropic("k", "claude", b"img", "image/jpeg")
+            result, usage = _call_anthropic("k", "claude", b"img", "image/jpeg")
             assert result["amount"] == 200
+            assert usage == {"input_tokens": 13, "output_tokens": 26}
 
     def test_llama_cpp(self):
         with patch("httpx.post") as mock_post:
             mock_post.return_value = _mock_post({
                 "choices": [{"message": {"content": '{"amount": 30}'}}],
             })
-            result = _call_llama_cpp("", "default", b"img", "image/png",
-                                     base_url="http://x:8080")
+            result, usage = _call_llama_cpp("", "default", b"img", "image/png",
+                                            base_url="http://x:8080")
             assert result["amount"] == 30
+            # usage 欠落時は None
+            assert usage == {"input_tokens": None, "output_tokens": None}
             url = mock_post.call_args.args[0]
             assert "x:8080" in url
 
@@ -166,30 +183,40 @@ class TestTextHandlers:
         with patch("httpx.post") as mock_post:
             mock_post.return_value = _mock_post({
                 "choices": [{"message": {"content": '{"results": []}'}}],
+                "usage": {"prompt_tokens": 5, "completion_tokens": 7},
             })
-            result = _call_openai_text("k", "gpt-4", "prompt")
+            result, usage = _call_openai_text("k", "gpt-4", "prompt")
             assert result == {"results": []}
+            assert usage == {"input_tokens": 5, "output_tokens": 7}
 
     def test_google_text(self):
         with patch("httpx.post") as mock_post:
             mock_post.return_value = _mock_post({
                 "candidates": [{"content": {"parts": [{"text": '{"x": 1}'}]}}],
+                "usageMetadata": {"promptTokenCount": 3, "candidatesTokenCount": 4},
             })
-            assert _call_google_text("k", "g", "p") == {"x": 1}
+            result, usage = _call_google_text("k", "g", "p")
+            assert result == {"x": 1}
+            assert usage == {"input_tokens": 3, "output_tokens": 4}
 
     def test_anthropic_text(self):
         with patch("httpx.post") as mock_post:
             mock_post.return_value = _mock_post({
                 "content": [{"text": '{"x": 2}'}],
+                "usage": {"input_tokens": 8, "output_tokens": 9},
             })
-            assert _call_anthropic_text("k", "c", "p") == {"x": 2}
+            result, usage = _call_anthropic_text("k", "c", "p")
+            assert result == {"x": 2}
+            assert usage == {"input_tokens": 8, "output_tokens": 9}
 
     def test_llama_cpp_text(self):
         with patch("httpx.post") as mock_post:
             mock_post.return_value = _mock_post({
                 "choices": [{"message": {"content": '{"x": 3}'}}],
             })
-            assert _call_llama_cpp_text("", "default", "p", base_url="http://x:8080") == {"x": 3}
+            result, usage = _call_llama_cpp_text("", "default", "p", base_url="http://x:8080")
+            assert result == {"x": 3}
+            assert usage == {"input_tokens": None, "output_tokens": None}
 
 
 class TestGetAiConfig:
@@ -284,12 +311,12 @@ class TestAnalyzeReceipt:
         _ai_config(db, user.id)
         mock_call = MagicMock(); _patches_openai = patch.dict("app.services.ai_receipt._PROVIDER_HANDLERS", {"openai": mock_call})
         with _patches_openai:
-            mock_call.return_value = {
+            mock_call.return_value = _h({
                 "date": "2026-02-15",
                 "description": "セブン",
                 "amount": 500,
                 "category": "食費",
-            }
+            })
             r = analyze_receipt(user.id, b"img", "image/jpeg")
             assert isinstance(r, ReceiptData)
             assert r.amount == 500
@@ -303,12 +330,12 @@ class TestAnalyzeAndSuggest:
         with _patches_openai:
             # 第1ラウンドと第2ラウンドの結果
             mock_call.side_effect = [
-                {  # round 1
+                _h({  # round 1
                     "date": "2026-02-15", "description": "セブン",
                     "amount": 500, "document_type": "receipt",
                     "items": [], "needs_ledger": False, "requested_accounts": [],
-                },
-                {  # round 2
+                }),
+                _h({  # round 2
                     "suggestions": [
                         {
                             "title": "食費として計上",
@@ -323,7 +350,7 @@ class TestAnalyzeAndSuggest:
                             ],
                         },
                     ],
-                },
+                }),
             ]
             results = analyze_and_suggest(user.id, b"img", "image/jpeg")
             assert len(results) == 1
@@ -334,10 +361,10 @@ class TestAnalyzeAndSuggest:
         mock_call = MagicMock(); _patches_openai = patch.dict("app.services.ai_receipt._PROVIDER_HANDLERS", {"openai": mock_call})
         with _patches_openai:
             mock_call.side_effect = [
-                {"document_type": "receipt", "items": [],
+                _h({"document_type": "receipt", "items": [],
                  "needs_ledger": False, "requested_accounts": [],
-                 "amount": 100, "description": "x", "date": "2026-02-15"},
-                {"suggestions": [{
+                 "amount": 100, "description": "x", "date": "2026-02-15"}),
+                _h({"suggestions": [{
                     "title": "x", "description": "y",
                     "date": "2026-02-15", "entry_description": "x",
                     "lines": [
@@ -346,7 +373,7 @@ class TestAnalyzeAndSuggest:
                         {"account_code": "8888", "debit_amount": 0,
                          "credit_amount": 100},  # 存在しない
                     ],
-                }]},
+                }]}),
             ]
             with pytest.raises(RuntimeError):
                 analyze_and_suggest(user.id, b"img", "image/jpeg")
@@ -358,10 +385,10 @@ class TestAnalyzeAndSuggest:
              patch("app.services.ai_receipt._get_ledger_context") as mock_ledger:
             mock_ledger.return_value = "(元帳サンプル)"
             mock_call.side_effect = [
-                {"document_type": "payslip", "items": [],
+                _h({"document_type": "payslip", "items": [],
                  "needs_ledger": True, "requested_accounts": ["給料手当"],
-                 "amount": 250000, "description": "給与", "date": "2026-02-25"},
-                {"suggestions": [{
+                 "amount": 250000, "description": "給与", "date": "2026-02-25"}),
+                _h({"suggestions": [{
                     "title": "x", "description": "y",
                     "date": "2026-02-25", "entry_description": "給与",
                     "lines": [
@@ -370,7 +397,7 @@ class TestAnalyzeAndSuggest:
                         {"account_code": "1010", "debit_amount": 0,
                          "credit_amount": 250000},
                     ],
-                }]},
+                }]}),
             ]
             analyze_and_suggest(user.id, b"img", "image/jpeg")
             mock_ledger.assert_called_once()
@@ -388,15 +415,15 @@ class TestAnalyzeAndSuggest:
         mock_call = MagicMock(); _patches_openai = patch.dict("app.services.ai_receipt._PROVIDER_HANDLERS", {"openai": mock_call})
         with _patches_openai:
             mock_call.side_effect = [
-                {"document_type": "receipt", "items": [],
+                _h({"document_type": "receipt", "items": [],
                  "needs_ledger": False, "requested_accounts": [],
                  "amount": 100, "description": "x", "date": "2026-02-15",
                  "compliance": {
                      "status": "warn",
                      "warnings": ["切れ"],
                      "details": ["影あり"],
-                 }},
-                {"suggestions": [{
+                 }}),
+                _h({"suggestions": [{
                     "title": "x", "description": "y",
                     "date": "2026-02-15", "entry_description": "x",
                     "lines": [
@@ -405,7 +432,7 @@ class TestAnalyzeAndSuggest:
                         {"account_code": "1010", "debit_amount": 0,
                          "credit_amount": 100},
                     ],
-                }]},
+                }]}),
             ]
             results = analyze_and_suggest(user.id, b"img", "image/jpeg")
             assert results[0].compliance is not None
@@ -428,14 +455,14 @@ class TestParseWebText:
         _ai_config(db, user.id)
         mock_call = MagicMock(); _patches_text = patch.dict("app.services.ai_receipt._TEXT_PROVIDER_HANDLERS", {"openai": mock_call})
         with _patches_text:
-            mock_call.return_value = {
+            mock_call.return_value = _h({
                 "transactions": [
                     {"date": "2026-02-15", "description": "ATM",
                      "deposit": 0, "withdrawal": 5000},
                     {"date": "2026-02-16", "description": "給与",
                      "deposit": 250000, "withdrawal": 0},
                 ],
-            }
+            })
             result = parse_web_text(user.id, "明細テキスト", "三井住友")
             assert len(result) == 2
             assert result[0]["row_num"] == 1
@@ -479,9 +506,9 @@ class TestSuggestCategoriesByAi:
         rows = [{"description": "セブン", "deposit": 0, "withdrawal": 500}]
         mock_call = MagicMock(); _patches_text = patch.dict("app.services.ai_receipt._TEXT_PROVIDER_HANDLERS", {"openai": mock_call})
         with _patches_text:
-            mock_call.return_value = {
+            mock_call.return_value = _h({
                 "results": [{"index": 0, "account_code": "5010"}],
-            }
+            })
             result = suggest_categories_by_ai(user.id, "1010", rows)
             assert "セブン" in result
             assert result["セブン"]["account_code"] == "5010"
@@ -491,13 +518,13 @@ class TestSuggestCategoriesByAi:
         rows = [{"description": "x", "deposit": 0, "withdrawal": 100}]
         mock_call = MagicMock(); _patches_text = patch.dict("app.services.ai_receipt._TEXT_PROVIDER_HANDLERS", {"openai": mock_call})
         with _patches_text:
-            mock_call.return_value = {
+            mock_call.return_value = _h({
                 "results": [
                     {"index": 99, "account_code": "5010"},  # 範囲外
                     {"index": None, "account_code": "5010"},
                     {"index": 0, "account_code": None},
                 ],
-            }
+            })
             result = suggest_categories_by_ai(user.id, "1010", rows)
             assert result == {}
 
@@ -506,9 +533,9 @@ class TestSuggestCategoriesByAi:
         rows = [{"description": "x", "deposit": 0, "withdrawal": 100}]
         mock_call = MagicMock(); _patches_text = patch.dict("app.services.ai_receipt._TEXT_PROVIDER_HANDLERS", {"openai": mock_call})
         with _patches_text:
-            mock_call.return_value = {
+            mock_call.return_value = _h({
                 "results": [{"index": 0, "account_code": "9999"}],  # 存在しない
-            }
+            })
             result = suggest_categories_by_ai(user.id, "1010", rows)
             assert result == {}
 
@@ -609,7 +636,7 @@ class TestAnalyzeVoucherForAttachment:
         _ai_config(db, user.id)
         mock_call = MagicMock(); _patches_openai = patch.dict("app.services.ai_receipt._PROVIDER_HANDLERS", {"openai": mock_call})
         with _patches_openai:
-            mock_call.return_value = {
+            mock_call.return_value = _h({
                 "date": "2026-02-15", "description": "x",
                 "amount": 100, "document_type": "receipt",
                 "consistency": {
@@ -619,7 +646,7 @@ class TestAnalyzeVoucherForAttachment:
                     "description_match": True,
                     "warnings": [],
                 },
-            }
+            })
             result = analyze_voucher_for_attachment(
                 user.id, b"img", "image/jpeg",
                 journal_date="2026-02-15", journal_amount=100,
@@ -631,11 +658,11 @@ class TestAnalyzeVoucherForAttachment:
         _ai_config(db, user.id)
         mock_call = MagicMock(); _patches_openai = patch.dict("app.services.ai_receipt._PROVIDER_HANDLERS", {"openai": mock_call})
         with _patches_openai:
-            mock_call.return_value = {
+            mock_call.return_value = _h({
                 "date": "2026-02-15", "description": "x",
                 "amount": 100, "document_type": "receipt",
                 # consistency missing
-            }
+            })
             result = analyze_voucher_for_attachment(
                 user.id, b"img", "image/jpeg",
                 journal_date="2026-02-15", journal_amount=100,
@@ -654,7 +681,7 @@ class TestAnalyzeVoucherForAttachment:
         db.session.commit()
         mock_call = MagicMock(); _patches_openai = patch.dict("app.services.ai_receipt._PROVIDER_HANDLERS", {"openai": mock_call})
         with _patches_openai:
-            mock_call.return_value = {
+            mock_call.return_value = _h({
                 "date": "2026-02-15", "description": "x",
                 "amount": 100, "document_type": "receipt",
                 "compliance": {
@@ -665,7 +692,7 @@ class TestAnalyzeVoucherForAttachment:
                     "date_match": True, "amount_match": True,
                     "description_match": True, "warnings": [],
                 },
-            }
+            })
             result = analyze_voucher_for_attachment(
                 user.id, b"img", "image/jpeg",
                 journal_date="2026-02-15", journal_amount=100,

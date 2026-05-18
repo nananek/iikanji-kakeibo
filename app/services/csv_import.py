@@ -282,7 +282,7 @@ def detect_columns_by_ai(user_id, headers, sample_rows):
     """
     from app.models.ai_config import UserAIConfig
     from app.services.ai_receipt import (
-        _get_ai_config, _TEXT_PROVIDER_HANDLERS, _extract_json,
+        _get_ai_config, _TEXT_PROVIDER_HANDLERS, _extract_json, _call_ai_text,
     )
 
     config = UserAIConfig.query.filter_by(user_id=user_id).first()
@@ -313,8 +313,10 @@ def detect_columns_by_ai(user_id, headers, sample_rows):
     )
 
     try:
-        text_kw = {"max_tokens": 500, **extra_kw}
-        result = text_handler(api_key, model, prompt, **text_kw)
+        result = _call_ai_text(
+            text_handler, api_key, model, prompt, 500, user_id, extra_kw,
+            provider=provider, feature="csv_columns_detect",
+        )
     except Exception:
         logger.warning(
             "AI column detection failed for user %s", user_id, exc_info=True,

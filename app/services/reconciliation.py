@@ -475,12 +475,14 @@ def find_ai_matches(user_id, unmatched_csv, journal_candidates):
     Returns:
         list of dict — {csv_index, entry_id, confidence, reason}
     """
-    from app.services.ai_receipt import _get_ai_config, _TEXT_PROVIDER_HANDLERS
+    from app.services.ai_receipt import (
+        _get_ai_config, _TEXT_PROVIDER_HANDLERS, _call_ai_text,
+    )
 
     api_key, provider, model, _, __, extra_kw, ___ = _get_ai_config(user_id)
     text_handler = _TEXT_PROVIDER_HANDLERS.get(provider)
     if not text_handler:
-        raise ValueError(f"未対応のAIプロバイ���ーです: {provider}")
+        raise ValueError(f"未対応のAIプロバイダーです: {provider}")
 
     if not unmatched_csv or not journal_candidates:
         return []
@@ -496,8 +498,10 @@ def find_ai_matches(user_id, unmatched_csv, journal_candidates):
             csv_rows_text=csv_text,
             journal_rows_text=journal_text,
         )
-        # text_handler は内部で _extract_json() 済みの dict を返す
-        parsed = text_handler(api_key, model, prompt, **extra_kw)
+        parsed = _call_ai_text(
+            text_handler, api_key, model, prompt, 2000, user_id, extra_kw,
+            provider=provider, feature="csv_reconcile_ai",
+        )
         if isinstance(parsed, dict) and "matches" in parsed:
             for m in parsed["matches"]:
                 if m.get("entry_id") and m.get("confidence", 0) >= 0.3:
