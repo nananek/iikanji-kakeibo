@@ -5,12 +5,11 @@
 ## ライセンス
 
 本サーバー本体は [Sustainable Use License v1.0](./LICENSE) のもとで配布
-されています。リポジトリへ Pull Request を提出することで、あなたは自身
-の貢献を同ライセンスのもとで本プロジェクトに提供することに同意した
-ものとみなされます。
-
-別途の Contributor License Agreement (CLA) の締結は現時点では要求して
-いません。必要に応じて将来追加される可能性があります。
+されています。別途の Contributor License Agreement (CLA) 文書の締結は
+現時点では要求していませんが、リポジトリへ Pull Request を提出すること
+で、あなたの貢献を同ライセンスのもとで本プロジェクトに提供することに
+同意したものとみなされます (Developer Certificate of Origin 相当の運用)。
+必要に応じて将来明示的な CLA が追加される可能性があります。
 
 ## 貢献の流れ
 

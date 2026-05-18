@@ -112,11 +112,12 @@ these terms.
   形態で利用する場合。Sustainable Use License の "internal business
   purposes" または "non-commercial or personal use" に該当し、自由に
   利用・改変・配布できます (再配布時はライセンス継承が必要)。
-- **公開ホステッド提供**: 不特定多数の登録を受け付ける SaaS として
-  第三者にサービス提供する場合。Sustainable Use License の制限事項
-  ("free of charge for non-commercial purposes" のみ許諾) に該当する
-  ため、有料 SaaS 提供は本ライセンスの範囲外です。商用 SaaS 提供を
-  希望する場合は別途ライセンス取得についてお問い合わせください。
+- **公開ホステッド提供**: 不特定多数の登録を受け付ける形で SaaS として
+  第三者にサービス提供する場合。Sustainable Use License は再配布・提供
+  時の条件として "free of charge for non-commercial purposes" のみを
+  許諾しており、**商用目的での提供** (有償・無償を問わず) は許可されま
+  せん。商用 SaaS 提供を希望する場合は別途ライセンス取得についてお問い
+  合わせください。
 
 ## クライアントツール
 
