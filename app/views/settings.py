@@ -17,6 +17,7 @@ from app.models.audit import AuditGrant, AuditGrantAccount
 from app.models.auto_import import AutoImportSource, WebhookConfig
 from app.services.ai_receipt import (
     encrypt_api_key, PROVIDER_DEFAULTS, PROVIDER_LABELS,
+    get_available_provider_labels, is_llama_cpp_available,
 )
 from app.views.accounts import TAX_CATEGORIES
 from app.models.fiscal import FiscalClose
@@ -231,11 +232,19 @@ def recovery_generate():
 def ai_config():
     """AI API設定ページ"""
     config = UserAIConfig.query.filter_by(user_id=current_user.id).first()
+    available_labels = get_available_provider_labels()
+    # 既存設定の provider が現在利用不可なら警告
+    if config and config.provider not in available_labels:
+        flash(
+            f"現在「{PROVIDER_LABELS.get(config.provider, config.provider)}」は"
+            "サーバー側で提供されていません。別のプロバイダーに変更してください。",
+            "warning",
+        )
     return render_template(
         "settings/ai_config.html",
         config=config,
         provider_defaults=PROVIDER_DEFAULTS,
-        provider_labels=PROVIDER_LABELS,
+        provider_labels=available_labels,
     )
 
 
@@ -247,16 +256,16 @@ def ai_config_save():
     api_key = request.form.get("api_key", "").strip()
     model_name = request.form.get("model_name", "").strip()
     custom_prompt = request.form.get("custom_prompt", "").strip()
-    base_url = request.form.get("base_url", "").strip()
     compliance_check = request.form.get("compliance_check") == "on"
 
-    if provider not in PROVIDER_DEFAULTS:
+    available_labels = get_available_provider_labels()
+    if provider not in available_labels:
         flash("無効なプロバイダーです。", "danger")
         return redirect(url_for("settings.ai_config"))
 
-    # Ollama は API キー不要、それ以外は新規時に必須
-    is_ollama = provider == "ollama"
-    effective_key = api_key or ("_" if is_ollama else "")
+    # llama.cpp は API キー不要、それ以外は新規時に必須
+    is_local = provider == "llama_cpp"
+    effective_key = api_key or ("_" if is_local else "")
 
     config = UserAIConfig.query.filter_by(user_id=current_user.id).first()
 
@@ -264,12 +273,11 @@ def ai_config_save():
         config.provider = provider
         config.model_name = model_name
         config.custom_prompt = custom_prompt
-        config.base_url = base_url
         config.compliance_check = compliance_check
         if api_key:
             config.api_key_encrypted = encrypt_api_key(api_key)
-        elif is_ollama and not api_key:
-            # Ollama でキー未入力なら既存キーがなければダミーを保存
+        elif is_local and not api_key:
+            # llama.cpp でキー未入力なら既存キーがなければダミーを保存
             config.api_key_encrypted = encrypt_api_key("_")
     else:
         if not effective_key:
@@ -281,7 +289,6 @@ def ai_config_save():
             api_key_encrypted=encrypt_api_key(effective_key),
             model_name=model_name,
             custom_prompt=custom_prompt,
-            base_url=base_url,
             compliance_check=compliance_check,
         )
         db.session.add(config)

@@ -89,15 +89,34 @@ PROVIDER_DEFAULTS = {
     "openai": "gpt-4o",
     "google": "gemini-2.0-flash",
     "anthropic": "claude-sonnet-4-20250514",
-    "ollama": "llama3.2-vision",
+    "llama_cpp": "default",
 }
 
 PROVIDER_LABELS = {
     "openai": "OpenAI (GPT-4o)",
     "google": "Google Gemini",
     "anthropic": "Anthropic Claude",
-    "ollama": "Ollama (ローカル)",
+    "llama_cpp": "llama.cpp (サーバー提供)",
 }
+
+
+def is_llama_cpp_available(app_config=None) -> bool:
+    """サーバー管理者が llama.cpp エンドポイントを設定しているか。"""
+    if app_config is None:
+        from flask import current_app
+        app_config = current_app.config
+    return bool((app_config.get("LLAMA_CPP_URL") or "").strip())
+
+
+def get_available_provider_labels(app_config=None) -> dict:
+    """UI で表示すべきプロバイダー候補を返す。
+
+    llama.cpp はサーバー設定 (LLAMA_CPP_URL) があるときのみ含める。
+    """
+    labels = {k: v for k, v in PROVIDER_LABELS.items() if k != "llama_cpp"}
+    if is_llama_cpp_available(app_config):
+        labels["llama_cpp"] = PROVIDER_LABELS["llama_cpp"]
+    return labels
 
 RECEIPT_PROMPT = """あなたは日本の家計簿アプリのアシスタントです。
 領収書・レシートの画像を解析して、以下のJSON形式で情報を抽出してください。
@@ -389,10 +408,14 @@ def _call_anthropic(api_key: str, model: str, image_bytes: bytes,
     return _extract_json(content)
 
 
-def _call_ollama(api_key: str, model: str, image_bytes: bytes,
-                 mime_type: str, prompt: str = RECEIPT_PROMPT,
-                 max_tokens: int = 500, *, base_url: str = "") -> dict:
-    url = (base_url.rstrip("/") if base_url else "http://localhost:11434")
+def _call_llama_cpp(api_key: str, model: str, image_bytes: bytes,
+                    mime_type: str, prompt: str = RECEIPT_PROMPT,
+                    max_tokens: int = 500, *, base_url: str = "") -> dict:
+    """llama.cpp (llama-server) の OpenAI 互換エンドポイントを呼ぶ。
+
+    デフォルトポートは 8080。マルチモーダル対応モデル (LLaVA など) が必要。
+    """
+    url = (base_url.rstrip("/") if base_url else "http://localhost:8080")
     b64_image = base64.b64encode(image_bytes).decode()
     headers = {"Content-Type": "application/json"}
     if api_key:
@@ -429,7 +452,7 @@ _PROVIDER_HANDLERS = {
     "openai": _call_openai,
     "google": _call_google,
     "anthropic": _call_anthropic,
-    "ollama": _call_ollama,
+    "llama_cpp": _call_llama_cpp,
 }
 
 
@@ -497,9 +520,10 @@ def _call_anthropic_text(api_key: str, model: str, prompt: str,
     return _extract_json(content)
 
 
-def _call_ollama_text(api_key: str, model: str, prompt: str,
-                      max_tokens: int = 2000, *, base_url: str = "") -> dict:
-    url = (base_url.rstrip("/") if base_url else "http://localhost:11434")
+def _call_llama_cpp_text(api_key: str, model: str, prompt: str,
+                         max_tokens: int = 2000, *, base_url: str = "") -> dict:
+    """llama.cpp (llama-server) のテキスト専用 OpenAI 互換呼び出し。"""
+    url = (base_url.rstrip("/") if base_url else "http://localhost:8080")
     headers = {"Content-Type": "application/json"}
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
@@ -522,7 +546,7 @@ _TEXT_PROVIDER_HANDLERS = {
     "openai": _call_openai_text,
     "google": _call_google_text,
     "anthropic": _call_anthropic_text,
-    "ollama": _call_ollama_text,
+    "llama_cpp": _call_llama_cpp_text,
 }
 
 
@@ -644,28 +668,37 @@ def _get_ai_config(user_id: int):
 
     Returns:
         (api_key, provider, model, handler, custom_prompt, extra_kwargs, compliance_check)
+
+    llama.cpp はサーバー管理者が用意する任意機能。エンドポイント URL は
+    アプリ config の `LLAMA_CPP_URL` から取得する。未設定なら llama.cpp 設定
+    の既存ユーザーには「サーバー管理者が提供を停止した」と明確にエラーを返す。
     """
     config = UserAIConfig.query.filter_by(user_id=user_id).first()
     if not config:
         raise ValueError("AI API設定が登録されていません。設定画面で登録してください。")
 
     raw_key = decrypt_api_key(config.api_key_encrypted)
-    # Ollama はダミーキー "_" で保存されるので空文字に戻す
+    # llama.cpp はダミーキー "_" で保存されるので空文字に戻す
     api_key = "" if raw_key == "_" else raw_key
     provider = config.provider
     model = config.model_name or PROVIDER_DEFAULTS.get(provider, "")
     custom_prompt = getattr(config, "custom_prompt", "") or ""
-    base_url = getattr(config, "base_url", "") or ""
     compliance_check = getattr(config, "compliance_check", False)
 
     handler = _PROVIDER_HANDLERS.get(provider)
     if not handler:
         raise ValueError(f"未対応のAIプロバイダーです: {provider}")
 
-    # base_url は Ollama のみで使用
     extra_kwargs = {}
-    if base_url and provider == "ollama":
-        extra_kwargs["base_url"] = base_url
+    if provider == "llama_cpp":
+        from flask import current_app
+        url = (current_app.config.get("LLAMA_CPP_URL") or "").strip()
+        if not url:
+            raise ValueError(
+                "サーバー管理者が llama.cpp の提供を停止しました。"
+                "AI 設定画面で別のプロバイダーに変更してください。"
+            )
+        extra_kwargs["base_url"] = url
 
     return api_key, provider, model, handler, custom_prompt, extra_kwargs, compliance_check
 

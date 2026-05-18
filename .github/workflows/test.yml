@@ -58,6 +58,8 @@ jobs:
       STORAGE_BACKEND: local
       STORAGE_LOCAL_DIR: /tmp/iikanji-test-vouchers
       RATELIMIT_ENABLED: "false"
+      # E2E は llama.cpp 互換 mock サーバーを localhost:11435 で立てる
+      LLAMA_CPP_URL: http://localhost:11435
 
     steps:
       - name: Checkout

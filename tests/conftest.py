@@ -19,6 +19,8 @@ class TestConfig(Config):
     RATELIMIT_ENABLED = False
     STORAGE_BACKEND = "local"
     STORAGE_LOCAL_DIR = "/tmp/iikanji-test-vouchers"
+    # llama.cpp はテスト時に常時有効状態にして、設定保存系テストを通す
+    LLAMA_CPP_URL = "http://test-llama-cpp:8080"
 
 
 class CsrfTestConfig(Config):
