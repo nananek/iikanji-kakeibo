@@ -756,6 +756,21 @@ def audit_add():
         flash("自分自身にはアクセスを付与できません。", "danger")
         return redirect(url_for("settings.audit"))
 
+    # 有償ゲート: 監査者課金 (auditor 自身) または被監査者課金 (owner が
+    # 監査枠を購入) のいずれかを満たす場合に限り AuditGrant を作成可。
+    # セルフホストモードでは UnlimitedBillingClient が常に True を返す。
+    from app.services.entitlement import has_entitlement
+    if not (
+        has_entitlement(auditor, "audit_seat")
+        or has_entitlement(current_user, "audit_seat")
+    ):
+        flash(
+            "監査枠を付与するには、監査者本人の有償プラン契約、"
+            "または被監査者 (あなた) 側での監査枠購入が必要です。",
+            "warning",
+        )
+        return redirect(url_for("settings.audit"))
+
     existing = AuditGrant.query.filter_by(
         owner_user_id=current_user.id, auditor_user_id=auditor.id
     ).first()

@@ -69,7 +69,7 @@ def create_app(config_class=Config):
     # Before-request hook for audit permission control
     @app.before_request
     def audit_permission_check():
-        from flask import request, redirect, url_for
+        from flask import request, redirect, url_for, session
         from flask_login import current_user as cu
         if not cu.is_authenticated:
             return
@@ -86,6 +86,27 @@ def create_app(config_class=Config):
         # Auditor exit: always allow
         if endpoint == "auditor.exit_acting":
             return
+        # 有償ゲート: 代理閲覧中、auditor 側または被監査 owner 側のいずれかで
+        # 監査枠エンタイトルメントが必要。両者とも未契約 (= billing 側で枠が
+        # 失効した) なら代理閲覧を即時終了させて auditor 自身のダッシュボードへ。
+        # セルフホストモードでは UnlimitedBillingClient が常に True を返す。
+        from app.services.entitlement import has_entitlement
+        owner_id = session.get("acting_as_user_id")
+        if owner_id:
+            from app.models.user import User
+            owner = db.session.get(User, owner_id)
+            if owner is None or not (
+                has_entitlement(cu, "audit_seat")
+                or has_entitlement(owner, "audit_seat")
+            ):
+                session.pop("acting_as_user_id", None)
+                from flask import flash
+                flash(
+                    "監査枠の有効期限が切れています。被監査者または監査者の"
+                    "プラン状況をご確認ください。",
+                    "warning",
+                )
+                return redirect(url_for("auditor.dashboard"))
         # Lv1: only tax report
         if perm == 1:
             if endpoint not in ("reports.tax", "reports.medical_csv"):
