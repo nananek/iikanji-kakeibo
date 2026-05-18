@@ -1,0 +1,1 @@
+{{ subject | default('いいかんじ™家計簿') }}
