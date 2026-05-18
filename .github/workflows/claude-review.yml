@@ -1,0 +1,158 @@
+name: Claude PR review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  pull_request_review_comment:
+    types: [created]
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+  id-token: write
+
+jobs:
+  claude-review:
+    # Trigger conditions:
+    #   - any PR open/sync/reopen
+    #   - PR review comment mentioning @claude (= 人による mention のみ、
+    #     bot 投稿は除外して self-trigger spam を防ぐ)
+    #   - issue/PR comment mentioning @claude (同上)
+    if: >-
+      github.event_name == 'pull_request' ||
+      (github.event_name == 'pull_request_review_comment' &&
+       github.event.comment.user.type != 'Bot' &&
+       contains(github.event.comment.body, '@claude')) ||
+      (github.event_name == 'issue_comment' &&
+       github.event.issue.pull_request != null &&
+       github.event.comment.user.type != 'Bot' &&
+       contains(github.event.comment.body, '@claude'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # `gh pr comment` を allow して Claude が直接 PR conversation に
+          # 投稿できるようにする。default では Bash tool が制限されてて、
+          # action 内蔵の buffered inline comment 経路を Claude が選ばない
+          # ため silent で終わる事案があった。
+          claude_args: '--allowed-tools Bash(gh pr comment:*),Bash(gh pr review:*),Bash(gh api:*)'
+          prompt: |
+            この repo (`iikanji-kakeibo`) は Flask + PostgreSQL + Bootstrap 5
+            の個人向け複式簿記家計簿アプリ。`server/` がサーバー本体、
+            `client-py/`, `client-mcp/`, `client-tui/` が各種クライアント。
+            複式簿記 + AI 証憑仕訳 + 電帳法 (スキャナ保存) 対応 + Passkey
+            認証 + 監査アカウント (税理士向け代理閲覧) を持つ。
+
+            **公開準備中** — Epic #64 の v4.0 公開ロードマップが進行中で、
+            将来的に Stripe Billing + 別コンテナ billing service を導入予定。
+            現状コードは MIT 互換ライセンス (将来 Phase 8 #73 で変更予定)。
+
+            この PR を以下の観点でレビューしてほしい。
+
+            ### 複式簿記の整合性
+            - 仕訳 (`JournalEntry` / `JournalEntryLine`) を作る/変更する箇所で
+              `debit_amount` 合計と `credit_amount` 合計が一致するか
+            - `fiscal_period` の取り扱い (0=期首, 1-12=月, 13-15=決算整理,
+              16=損益振替は自動生成専用で手動入力不可)
+            - 月次確定 (`FiscalClose.closed_period`) 済み期間の仕訳が
+              追加・変更・削除できないように保護されているか
+            - 年度オープン判定 (`is_year_open()`) を経由しているか
+
+            ### ユーザー分離 / IDOR
+            - 任意のクエリで `user_id == current_user.id` (または代理閲覧時の
+              `acting_as_user_id`) のフィルタが入っているか
+            - `Account` は複合 PK `(user_id, code)` なので、関連テーブルの
+              FK は `ForeignKeyConstraint` + `UniqueConstraint` で参照すること
+            - パス変数経由のアクセス (`/journals/<id>` 等) で他ユーザーの
+              データに到達できる経路がないか
+
+            ### 監査アカウント
+            - 代理閲覧時 (`acting_as_user_id` セッション) に、`AuditGrant`
+              の `permission_level` (1/2/3) と一致した操作のみ許可されるか
+            - Lv2 で `AuditGrantAccount` に含まれない科目は `mask_account`
+              フィルタで「事業主」に隠蔽されているか
+            - Lv3 以外は仕訳の追加・変更・削除が制限されているか
+
+            ### 認証 / セキュリティ
+            - パスキー専用ユーザー (`passkey_only_login=True`) が
+              パスワードログインで侵入できないか
+            - リカバリコード (`recovery_login`) はタイミング攻撃対策の
+              ダミー検証 + 1 回限り使用が維持されているか
+            - WebAuthn / `/api/v1` は CSRF 免除されているか、それ以外に
+              漏れていないか
+            - レート制限 (`@limiter.limit`) が新規エンドポイントにも
+              付与されているか
+            - 認証必須ビューに `@login_required` が付いているか
+            - CAPTCHA 検証 (`_check_captcha`) を経由しているか (登録系の
+              場合)
+
+            ### AI / 暗号化
+            - `UserAIConfig.api_key_encrypted` (Fernet 暗号化) を平文で
+              扱っていないか、ログに残っていないか
+            - `_TEXT_PROVIDER_HANDLERS` (openai / google / anthropic /
+              llama_cpp) のプロバイダ追加・修正時、すべての分岐が一貫
+              しているか
+            - `llama_cpp` プロバイダはサーバー管理者 (`LLAMA_CPP_URL`)
+              提供前提で、ユーザー UI には条件付き表示されるか
+
+            ### 電帳法対応
+            - 証憑 (`Voucher`) の `file_hash` (SHA-256) が保存時に
+              記録されているか
+            - 仕訳削除時も証憑は保持 (SET NULL or 論理削除)
+            - 操作ログ (`VoucherAuditLog`) が変更系操作で記録されるか
+            - スマホ撮影画像の品質チェック (`UserAIConfig.compliance_check`)
+              の挙動が壊れていないか
+
+            ### マイグレーション
+            - 形式: `NNN_snake_case` (現状最新は `036_ai_usage_log`)
+            - `down_revision` が直前の revision と完全一致
+            - データ移行スクリプトが冪等か、ロールバック可能か
+
+            ### テスト
+            - 新規 service / view を書いたら同 PR でテストを網羅
+              (94% カバレッジを下げない方針)
+            - `tests/conftest.py` の SQLite in-memory フィクスチャを使う
+            - lazy import (関数内 import) はオリジナルモジュールパスで
+              パッチ (例: `app.models.ai_config.UserAIConfig`)
+
+            ### 公開ロードマップとの整合 (将来用)
+            - 本体側コードに `import stripe` / Stripe API 呼び出しが
+              現れたら設計違反 (billing コンテナでの実装が前提、Phase 3
+              #68 参照)
+            - 法的文書 (`templates/legal/*.html` 等) に運営者依存情報
+              (氏名・住所・電話・メール) がハードコードされていないか
+              (環境変数 / `instance/legal.yaml` 経由が原則)
+
+            ### コード品質一般
+            - secrets (秘密鍵 / トークン / API キー / `.env` 等) が
+              差分に紛れていないか
+            - 不要なコメント・dead code / TODO の追加がないか
+            - 既存パターン (`config.py` の環境変数読み出し書式、テンプレの
+              `{% include "_partials/..." %}` パターン等) に整合しているか
+            - 依存ライブラリ追加時、GPL/AGPL/SSPL 系が混入していないか
+
+            **Output (必須)**:
+            review summary を **必ず top-level PR comment として post** すること。
+            silent で終わらない。手順:
+
+            1. Review 内容を markdown でまとめる (= verdict 行 + 検証項目別
+               の OK/NG 表 + 補足説明)
+            2. 投稿:
+               `gh pr comment <PR_NUMBER> --body "<review markdown>"`
+               (PR_NUMBER は `gh pr list --head <branch> --json number` で取得)
+            3. 1 行目に **verdict: approve / request-changes / block** の
+               いずれかを必ず入れる
+            4. 行依存の finding があれば追加で
+               `gh pr review <N> --comment --body "..."` で個別 line comment
+               (= 任意、無くてもよい)
+
+            日本語で書くこと。
