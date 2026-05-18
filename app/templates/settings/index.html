@@ -4,6 +4,31 @@
 {% block content %}
 <h2><i class="bi bi-gear"></i> 設定</h2>
 
+{% if plan_summary %}
+<h5 class="mt-4 mb-3 text-muted"><i class="bi bi-receipt"></i> 現在のプラン</h5>
+<div class="card mb-4 shadow-sm">
+  <div class="card-body">
+    {% if plan_summary.mode == 'unlimited' %}
+      <h6 class="card-title text-success mb-2">
+        <i class="bi bi-infinity"></i> セルフホストモード — 全機能解放
+      </h6>
+      {# Phase 3 で BillingClient.get_entitlement_summary が active_features
+         フィールドを返すようになったら、ハードコードされた機能名リストを
+         `plan_summary.active_features` のループ表示に置換する。 #}
+      <p class="card-text text-muted small mb-0">
+        billing コンテナを介さずに稼働しており、すべての有償機能 (自家ホスト
+        LLM・証憑保管・タイムスタンプ・監査枠) を制限なく利用できます。
+      </p>
+    {% else %}
+      <h6 class="card-title mb-2">プラン情報</h6>
+      <p class="card-text text-muted small mb-0">
+        プラン詳細の表示は準備中です。
+      </p>
+    {% endif %}
+  </div>
+</div>
+{% endif %}
+
 <h5 class="mt-4 mb-3 text-muted"><i class="bi bi-journal-text"></i> 帳簿</h5>
 <div class="row row-cols-1 row-cols-md-2 row-cols-lg-3 g-3 mb-4">
   <div class="col">
