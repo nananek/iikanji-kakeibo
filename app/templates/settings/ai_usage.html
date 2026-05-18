@@ -1,0 +1,246 @@
+{% extends "base.html" %}
+{% block title %}AI API 利用履歴 - いいかんじ™家計簿{% endblock %}
+
+{% block content %}
+<div class="row">
+  <div class="col-lg-10">
+    <h2><i class="bi bi-bar-chart"></i> AI API 利用履歴</h2>
+    <p class="text-muted">
+      各プロバイダーのコンソール (OpenAI/Anthropic/Google) で確認できる利用量と突合できる、サーバー側の呼び出し記録です。
+      プロンプト本文・レスポンス本文は保存していません。
+    </p>
+
+    {# フィルタ #}
+    <div class="card mb-4">
+      <div class="card-header"><i class="bi bi-funnel"></i> 絞り込み</div>
+      <div class="card-body">
+        <form method="GET" class="row g-2 align-items-end">
+          <div class="col-md-3">
+            <label class="form-label small">開始日</label>
+            <input type="date" name="start" class="form-control form-control-sm" value="{{ filter_start }}">
+          </div>
+          <div class="col-md-3">
+            <label class="form-label small">終了日</label>
+            <input type="date" name="end" class="form-control form-control-sm" value="{{ filter_end }}">
+          </div>
+          <div class="col-md-3">
+            <label class="form-label small">プロバイダー</label>
+            <select name="provider" class="form-select form-select-sm">
+              <option value="">(すべて)</option>
+              {% for key, label in provider_labels.items() %}
+              <option value="{{ key }}" {% if filter_provider == key %}selected{% endif %}>{{ label }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="col-md-3">
+            <label class="form-label small">機能</label>
+            <select name="feature" class="form-select form-select-sm">
+              <option value="">(すべて)</option>
+              {% for key, label in feature_labels.items() %}
+              <option value="{{ key }}" {% if filter_feature == key %}selected{% endif %}>{{ label }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="col-12 mt-2 d-flex gap-2">
+            <button type="submit" class="btn btn-primary btn-sm">
+              <i class="bi bi-search"></i> 絞り込む
+            </button>
+            <a href="{{ url_for('settings.ai_usage') }}" class="btn btn-outline-secondary btn-sm">
+              <i class="bi bi-arrow-counterclockwise"></i> リセット
+            </a>
+            <a href="{{ url_for('settings.ai_usage_export_csv',
+                                start=filter_start, end=filter_end,
+                                provider=filter_provider, feature=filter_feature) }}"
+               class="btn btn-outline-success btn-sm ms-auto">
+              <i class="bi bi-file-earmark-spreadsheet"></i> CSV エクスポート
+            </a>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    {# 月次サマリ + 推移グラフ #}
+    {% if summary %}
+    <div class="card mb-4">
+      <div class="card-header"><i class="bi bi-graph-up"></i> 月次サマリ</div>
+      <div class="card-body">
+        <canvas id="usageChart" height="120"></canvas>
+        <div class="table-responsive mt-3">
+          <table class="table table-sm table-hover mb-0">
+            <thead class="table-light">
+              <tr>
+                <th>月</th>
+                <th>プロバイダー</th>
+                <th class="text-end">件数</th>
+                <th class="text-end">入力トークン</th>
+                <th class="text-end">出力トークン</th>
+                <th class="text-end">合計トークン</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in summary %}
+              <tr>
+                <td>{{ row.month }}</td>
+                <td>{{ provider_labels.get(row.provider, row.provider) }}</td>
+                <td class="text-end">{{ row.count }}</td>
+                <td class="text-end">{{ "{:,}".format(row.input_tokens) }}</td>
+                <td class="text-end">{{ "{:,}".format(row.output_tokens) }}</td>
+                <td class="text-end fw-bold">{{ "{:,}".format(row.total_tokens) }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+    {% endif %}
+
+    {# 詳細テーブル #}
+    <div class="card">
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <span><i class="bi bi-list-ul"></i> 詳細履歴 ({{ total }}件)</span>
+      </div>
+      {% if items %}
+      <div class="table-responsive">
+        <table class="table table-sm table-hover mb-0">
+          <thead class="table-light">
+            <tr>
+              <th>日時 (UTC)</th>
+              <th>プロバイダー</th>
+              <th>モデル</th>
+              <th>機能</th>
+              <th class="text-end">入力</th>
+              <th class="text-end">出力</th>
+              <th class="text-end">合計</th>
+              <th class="text-end">遅延</th>
+              <th>ステータス</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for log in items %}
+            <tr {% if log.status != 'ok' %}class="table-warning"{% endif %}>
+              <td class="text-nowrap small">{{ log.created_at.strftime('%Y-%m-%d %H:%M:%S') }}</td>
+              <td>{{ provider_labels.get(log.provider, log.provider) }}</td>
+              <td><code class="small">{{ log.model }}</code></td>
+              <td><span class="badge bg-info text-dark">{{ feature_labels.get(log.feature, log.feature) }}</span></td>
+              <td class="text-end small">{{ "{:,}".format(log.input_tokens) if log.input_tokens is not none else "—" }}</td>
+              <td class="text-end small">{{ "{:,}".format(log.output_tokens) if log.output_tokens is not none else "—" }}</td>
+              <td class="text-end fw-bold">{{ "{:,}".format(log.total_tokens) if log.total_tokens is not none else "—" }}</td>
+              <td class="text-end small text-muted">{{ "{:,}".format(log.latency_ms) if log.latency_ms is not none else "—" }} ms</td>
+              <td>
+                {% if log.status == 'ok' %}
+                  <span class="badge bg-success">{{ status_labels.get(log.status, log.status) }}</span>
+                {% else %}
+                  <span class="badge bg-danger">{{ status_labels.get(log.status, log.status) }}</span>
+                  {% if log.http_status %}<small class="text-muted ms-1">{{ log.http_status }}</small>{% endif %}
+                {% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+
+      {# ページネーション #}
+      {% if pages > 1 %}
+      <div class="card-footer">
+        <nav>
+          <ul class="pagination pagination-sm mb-0 justify-content-center">
+            {% set pre = page - 1 %}
+            {% set nxt = page + 1 %}
+            <li class="page-item {% if page <= 1 %}disabled{% endif %}">
+              <a class="page-link" href="{{ url_for('settings.ai_usage',
+                  start=filter_start, end=filter_end,
+                  provider=filter_provider, feature=filter_feature,
+                  page=pre) }}">前へ</a>
+            </li>
+            <li class="page-item active"><span class="page-link">{{ page }} / {{ pages }}</span></li>
+            <li class="page-item {% if page >= pages %}disabled{% endif %}">
+              <a class="page-link" href="{{ url_for('settings.ai_usage',
+                  start=filter_start, end=filter_end,
+                  provider=filter_provider, feature=filter_feature,
+                  page=nxt) }}">次へ</a>
+            </li>
+          </ul>
+        </nav>
+      </div>
+      {% endif %}
+      {% else %}
+      <div class="card-body text-muted text-center py-5">
+        <i class="bi bi-inbox" style="font-size: 2rem;"></i>
+        <p class="mb-0 mt-2">該当する利用履歴がありません。</p>
+      </div>
+      {% endif %}
+    </div>
+
+    {# 一括削除 #}
+    <div class="card mt-4 border-danger">
+      <div class="card-header bg-danger bg-opacity-10 text-danger">
+        <i class="bi bi-trash"></i> 履歴を全削除
+      </div>
+      <div class="card-body">
+        <p class="small mb-2">
+          すべての AI API 利用履歴を削除します。元には戻せません。
+          コンソール側の利用量と突合できなくなるためご注意ください。
+        </p>
+        <form method="POST" action="{{ url_for('settings.ai_usage_clear') }}"
+              onsubmit="return confirm('本当に全履歴を削除しますか？元には戻せません。');">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <div class="input-group input-group-sm" style="max-width:500px">
+            <span class="input-group-text">確認のため「DELETE」と入力</span>
+            <input type="text" name="confirm" class="form-control" placeholder="DELETE" required>
+            <button type="submit" class="btn btn-outline-danger">
+              <i class="bi bi-trash"></i> 全削除
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+{% if summary %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<script>
+(function() {
+  var rows = {{ summary | tojson }};
+  // 月降順で受け取っているので、グラフは時系列昇順に並べ替え
+  var months = [];
+  var providers = {};
+  rows.forEach(function(r) {
+    if (months.indexOf(r.month) === -1) months.push(r.month);
+    if (!providers[r.provider]) providers[r.provider] = {};
+    providers[r.provider][r.month] = r.total_tokens;
+  });
+  months.sort();
+  var providerLabels = {{ provider_labels | tojson }};
+  var palette = ['#0d6efd', '#198754', '#dc3545', '#fd7e14', '#6f42c1'];
+  var datasets = [];
+  var i = 0;
+  Object.keys(providers).forEach(function(p) {
+    datasets.push({
+      label: providerLabels[p] || p,
+      data: months.map(function(m) { return providers[p][m] || 0; }),
+      borderColor: palette[i % palette.length],
+      backgroundColor: palette[i % palette.length] + '33',
+      tension: 0.2,
+      fill: false,
+    });
+    i++;
+  });
+  var ctx = document.getElementById('usageChart').getContext('2d');
+  new Chart(ctx, {
+    type: 'line',
+    data: { labels: months, datasets: datasets },
+    options: {
+      responsive: true,
+      plugins: { legend: { position: 'bottom' } },
+      scales: { y: { beginAtZero: true, ticks: { callback: function(v) { return v.toLocaleString(); } } } },
+    },
+  });
+})();
+</script>
+{% endif %}
+{% endblock %}

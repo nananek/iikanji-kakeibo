@@ -5,6 +5,28 @@ title: リリースノート
 
 # リリースノート
 
+## v3.13.0
+
+**外部 AI API 利用履歴の可視化 — APIキー監査用途**
+
+OpenAI / Anthropic / Google / llama.cpp 各社のコンソール上の課金・利用データと突合できる「サーバー側の呼び出し履歴」を可視化。APIキーが想定外に使われていないか、本人自身で監査できる。
+
+### 新機能
+- **AI 利用履歴ページ** (`/settings/ai-usage`) — 期間 / プロバイダー / 機能で絞り込み可能な詳細テーブル + ページネーション
+- **月次推移グラフ** — Chart.js による provider 別 token 推移
+- **CSV エクスポート** — BOM 付き UTF-8、Excel 互換
+- **AI 設定画面の「今月の使用量」サマリ併記** — provider 別件数・トークン合計を表示し詳細ページへ誘導
+- **履歴一括削除** — ユーザー本人が自分のログを「DELETE」入力で全削除可能
+
+### 技術詳細
+- マイグレーション 036: `ai_usage_logs` テーブル新設 (user_id, provider, model, feature, input/output/total_tokens, latency_ms, status, http_status, created_at) + user_id × created_at の複合インデックス
+- 8 個の AI プロバイダーハンドラの戻り値を `(parsed_json, usage_dict)` のタプルに変更
+- `_call_ai` / `_call_ai_text` 共通ラッパーで latency 計測 + 自動ログ記録、HTTP/timeout/parse_error/other_error を分類
+- DB 書き込み失敗は `try/except + rollback` で完全に握りつぶし、AI 呼び出し本体に波及しない
+- プロンプト本文・レスポンス本文・API キー・画像本体は**保存しない** (トークン数とメタデータのみ)
+- 監査ユーザーからは参照不可 (本人セッションのみ、`current_user.id` で絞込)
+- pytest 1608 件 (test_ai_usage_log に 26 ケース追加)
+
 ## v3.12.0
 
 **Ollama サポートを終了し llama.cpp に置き換え (サーバー管理者提供型)**

@@ -231,6 +231,7 @@ def recovery_generate():
 @login_required
 def ai_config():
     """AI API設定ページ"""
+    from app.services.ai_usage import current_month_summary
     config = UserAIConfig.query.filter_by(user_id=current_user.id).first()
     available_labels = get_available_provider_labels()
     # 既存設定の provider が現在利用不可なら警告
@@ -240,11 +241,14 @@ def ai_config():
             "サーバー側で提供されていません。別のプロバイダーに変更してください。",
             "warning",
         )
+    monthly_summary = current_month_summary(current_user.id)
     return render_template(
         "settings/ai_config.html",
         config=config,
         provider_defaults=PROVIDER_DEFAULTS,
         provider_labels=available_labels,
+        monthly_summary=monthly_summary,
+        provider_display_labels=PROVIDER_LABELS,
     )
 
 
@@ -308,6 +312,128 @@ def ai_config_delete():
         db.session.commit()
         flash("AI API設定を削除しました。", "success")
     return redirect(url_for("settings.ai_config"))
+
+
+# --- AI API 利用履歴 ---
+
+
+def _parse_usage_filters():
+    """`/settings/ai-usage` 系のクエリパラメータをパースする。"""
+    from datetime import date as _date
+    args = request.args
+    start_str = (args.get("start") or "").strip()
+    end_str = (args.get("end") or "").strip()
+    start = end = None
+    try:
+        if start_str:
+            start = _date.fromisoformat(start_str)
+    except ValueError:
+        start = None
+    try:
+        if end_str:
+            end = _date.fromisoformat(end_str)
+    except ValueError:
+        end = None
+    provider = (args.get("provider") or "").strip() or None
+    feature = (args.get("feature") or "").strip() or None
+    try:
+        page = max(1, int(args.get("page", "1")))
+    except ValueError:
+        page = 1
+    return start, end, provider, feature, page
+
+
+@bp.route("/ai-usage")
+@login_required
+def ai_usage():
+    """AI API 利用履歴ページ"""
+    from app.services.ai_usage import (
+        query_logs, monthly_summary, FEATURE_LABELS, STATUS_LABELS,
+    )
+    start, end, provider, feature, page = _parse_usage_filters()
+    items, total, pages, page = query_logs(
+        current_user.id, start=start, end=end,
+        provider=provider, feature=feature, page=page,
+    )
+    summary = monthly_summary(
+        current_user.id, start=start, end=end,
+        provider=provider, feature=feature,
+    )
+    return render_template(
+        "settings/ai_usage.html",
+        items=items, total=total, pages=pages, page=page,
+        summary=summary,
+        filter_start=start.isoformat() if start else "",
+        filter_end=end.isoformat() if end else "",
+        filter_provider=provider or "",
+        filter_feature=feature or "",
+        provider_labels=PROVIDER_LABELS,
+        feature_labels=FEATURE_LABELS,
+        status_labels=STATUS_LABELS,
+    )
+
+
+@bp.route("/ai-usage/export.csv")
+@login_required
+def ai_usage_export_csv():
+    """AI API 利用履歴を CSV (BOM + UTF-8) でエクスポート"""
+    import csv
+    import io
+    from flask import Response
+    from app.services.ai_usage import (
+        iter_logs_for_export, FEATURE_LABELS, STATUS_LABELS,
+    )
+    start, end, provider, feature, _page = _parse_usage_filters()
+    items = iter_logs_for_export(
+        current_user.id, start=start, end=end,
+        provider=provider, feature=feature,
+    )
+    output = io.StringIO()
+    output.write("﻿")  # BOM (Excel 文字化け防止)
+    writer = csv.writer(output, lineterminator="\n")
+    writer.writerow([
+        "日時 (UTC)", "プロバイダー", "モデル", "機能",
+        "入力トークン", "出力トークン", "合計トークン",
+        "レイテンシ (ms)", "ステータス", "HTTPステータス",
+    ])
+    for log in items:
+        writer.writerow([
+            log.created_at.isoformat(),
+            log.provider,
+            log.model,
+            FEATURE_LABELS.get(log.feature, log.feature),
+            log.input_tokens if log.input_tokens is not None else "",
+            log.output_tokens if log.output_tokens is not None else "",
+            log.total_tokens if log.total_tokens is not None else "",
+            log.latency_ms if log.latency_ms is not None else "",
+            STATUS_LABELS.get(log.status, log.status),
+            log.http_status if log.http_status is not None else "",
+        ])
+    return Response(
+        output.getvalue(),
+        mimetype="text/csv; charset=utf-8",
+        headers={
+            "Content-Disposition":
+                'attachment; filename="ai-usage.csv"',
+        },
+    )
+
+
+@bp.route("/ai-usage/clear", methods=["POST"])
+@login_required
+def ai_usage_clear():
+    """AI API 利用履歴を全削除 (本人のみ)"""
+    from app.services.ai_usage import delete_all_for_user
+    if request.form.get("confirm") != "DELETE":
+        flash("削除確認の入力が一致しません。", "danger")
+        return redirect(url_for("settings.ai_usage"))
+    deleted = delete_all_for_user(current_user.id)
+    current_app.logger.info(
+        "ai_usage_logs cleared: user_id=%s deleted=%s",
+        current_user.id, deleted,
+    )
+    flash(f"AI API 利用履歴 {deleted} 件を削除しました。", "success")
+    return redirect(url_for("settings.ai_usage"))
 
 
 # --- API キー ---

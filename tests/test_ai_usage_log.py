@@ -190,3 +190,181 @@ class TestIdor:
         assert len(other_logs) == 1
         assert user_logs[0].user_id == user.id
         assert other_logs[0].user_id == second_user.id
+
+
+# ============================================================
+# サービス層集計 (monthly_summary / query_logs)
+# ============================================================
+
+def _make_log(db, user_id, *, provider="openai", model="gpt-4o",
+              feature="receipt_round1", input_tokens=10, output_tokens=5,
+              status="ok", created_at=None):
+    from datetime import datetime, timezone
+    log = AIUsageLog(
+        user_id=user_id, provider=provider, model=model, feature=feature,
+        input_tokens=input_tokens, output_tokens=output_tokens,
+        total_tokens=(input_tokens or 0) + (output_tokens or 0),
+        latency_ms=100, status=status,
+        created_at=created_at or datetime.now(timezone.utc),
+    )
+    db.session.add(log)
+    db.session.commit()
+    return log
+
+
+class TestServiceAggregation:
+    def test_monthly_summary_groups_by_month_and_provider(self, app, db, user):
+        from datetime import datetime, timezone
+        from app.services.ai_usage import monthly_summary
+        _make_log(db, user.id, provider="openai", input_tokens=100, output_tokens=50,
+                  created_at=datetime(2026, 4, 15, tzinfo=timezone.utc))
+        _make_log(db, user.id, provider="openai", input_tokens=200, output_tokens=80,
+                  created_at=datetime(2026, 4, 20, tzinfo=timezone.utc))
+        _make_log(db, user.id, provider="anthropic", input_tokens=300, output_tokens=120,
+                  created_at=datetime(2026, 5, 1, tzinfo=timezone.utc))
+
+        rows = monthly_summary(user.id)
+        # 月降順 → provider 昇順
+        assert rows[0]["month"] == "2026-05"
+        assert rows[0]["provider"] == "anthropic"
+        assert rows[0]["total_tokens"] == 420
+        assert rows[1]["month"] == "2026-04"
+        assert rows[1]["provider"] == "openai"
+        assert rows[1]["count"] == 2
+        assert rows[1]["total_tokens"] == 100 + 50 + 200 + 80
+
+    def test_query_logs_filters(self, app, db, user):
+        from datetime import datetime, timezone, date as _date
+        from app.services.ai_usage import query_logs
+        _make_log(db, user.id, provider="openai", feature="receipt_round1",
+                  created_at=datetime(2026, 4, 15, tzinfo=timezone.utc))
+        _make_log(db, user.id, provider="anthropic", feature="web_extract",
+                  created_at=datetime(2026, 5, 1, tzinfo=timezone.utc))
+        items, total, *_ = query_logs(user.id, provider="anthropic")
+        assert total == 1
+        assert items[0].provider == "anthropic"
+
+        items, total, *_ = query_logs(user.id, feature="receipt_round1")
+        assert total == 1
+        assert items[0].feature == "receipt_round1"
+
+        items, total, *_ = query_logs(user.id,
+                                      start=_date(2026, 5, 1),
+                                      end=_date(2026, 5, 31))
+        assert total == 1
+        assert items[0].provider == "anthropic"
+
+
+# ============================================================
+# ビュー層 (/settings/ai-usage)
+# ============================================================
+
+class TestAiUsageView:
+    def test_unauthenticated_redirects(self, client):
+        resp = client.get("/settings/ai-usage")
+        assert resp.status_code in (302, 401)
+
+    def test_get_renders_empty_state(self, logged_in_client, user):
+        resp = logged_in_client.get("/settings/ai-usage")
+        assert resp.status_code == 200
+        html = resp.data.decode()
+        assert "AI API 利用履歴" in html
+
+    def test_get_with_logs(self, logged_in_client, db, user):
+        _make_log(db, user.id, provider="openai", feature="receipt_round1")
+        _make_log(db, user.id, provider="anthropic", feature="web_extract")
+        resp = logged_in_client.get("/settings/ai-usage")
+        assert resp.status_code == 200
+        html = resp.data.decode()
+        # 機能ラベルが日本語で表示される
+        assert "AI証憑 R1" in html
+        assert "Web明細抽出" in html
+
+    def test_filter_by_provider(self, logged_in_client, db, user):
+        _make_log(db, user.id, provider="openai")
+        _make_log(db, user.id, provider="anthropic")
+        resp = logged_in_client.get("/settings/ai-usage?provider=openai")
+        assert resp.status_code == 200
+        html = resp.data.decode()
+        # 詳細件数表示で 1 件のみ
+        assert "詳細履歴 (1件)" in html
+
+    def test_other_users_logs_not_visible(self, logged_in_client, db, user, second_user):
+        """IDOR: 他ユーザーのログは見えない"""
+        _make_log(db, second_user.id, provider="openai")
+        resp = logged_in_client.get("/settings/ai-usage")
+        assert resp.status_code == 200
+        html = resp.data.decode()
+        assert "詳細履歴 (0件)" in html
+
+
+class TestAiUsageExportCsv:
+    def test_csv_has_bom_and_header(self, logged_in_client, db, user):
+        _make_log(db, user.id, provider="openai", feature="receipt_round1",
+                  input_tokens=10, output_tokens=5)
+        resp = logged_in_client.get("/settings/ai-usage/export.csv")
+        assert resp.status_code == 200
+        # BOM 確認
+        assert resp.data[:3] == b"\xef\xbb\xbf"
+        text = resp.data.decode("utf-8-sig")
+        lines = text.strip().split("\n")
+        # ヘッダ + データ 1 行
+        assert "日時" in lines[0]
+        assert "プロバイダー" in lines[0]
+        assert "openai" in lines[1]
+
+    def test_csv_filtered_by_provider(self, logged_in_client, db, user):
+        _make_log(db, user.id, provider="openai")
+        _make_log(db, user.id, provider="anthropic")
+        resp = logged_in_client.get(
+            "/settings/ai-usage/export.csv?provider=anthropic"
+        )
+        text = resp.data.decode("utf-8-sig")
+        assert "anthropic" in text
+        assert "openai" not in text
+
+
+class TestAiUsageClear:
+    def test_requires_confirm(self, logged_in_client, db, user):
+        _make_log(db, user.id)
+        resp = logged_in_client.post(
+            "/settings/ai-usage/clear",
+            data={"confirm": "delete"},  # 小文字は不可
+            follow_redirects=False,
+        )
+        assert resp.status_code == 302
+        # ログは残る
+        assert AIUsageLog.query.filter_by(user_id=user.id).count() == 1
+
+    def test_clears_own_logs(self, logged_in_client, db, user):
+        _make_log(db, user.id, provider="openai")
+        _make_log(db, user.id, provider="anthropic")
+        assert AIUsageLog.query.filter_by(user_id=user.id).count() == 2
+        resp = logged_in_client.post(
+            "/settings/ai-usage/clear",
+            data={"confirm": "DELETE"},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 302
+        assert AIUsageLog.query.filter_by(user_id=user.id).count() == 0
+
+    def test_does_not_clear_other_users(self, logged_in_client, db, user, second_user):
+        _make_log(db, user.id)
+        _make_log(db, second_user.id)
+        logged_in_client.post(
+            "/settings/ai-usage/clear", data={"confirm": "DELETE"},
+        )
+        # 自分のだけ消える
+        assert AIUsageLog.query.filter_by(user_id=user.id).count() == 0
+        assert AIUsageLog.query.filter_by(user_id=second_user.id).count() == 1
+
+
+class TestAiConfigSummary:
+    def test_ai_config_page_shows_monthly_summary(self, logged_in_client, db, user):
+        _make_log(db, user.id, provider="openai", input_tokens=100, output_tokens=50)
+        resp = logged_in_client.get("/settings/ai")
+        assert resp.status_code == 200
+        html = resp.data.decode()
+        assert "今月の使用量" in html
+        # provider 名と件数が表示される
+        assert "OpenAI" in html

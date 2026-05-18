@@ -10,6 +10,42 @@
       APIキーは暗号化して保存されます。
     </p>
 
+    {# 今月の使用量サマリ #}
+    {% if monthly_summary %}
+    <div class="card mb-4">
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <span><i class="bi bi-bar-chart"></i> 今月の使用量</span>
+        <a href="{{ url_for('settings.ai_usage') }}" class="btn btn-sm btn-outline-primary">
+          <i class="bi bi-list-ul"></i> 詳細を見る
+        </a>
+      </div>
+      <div class="card-body">
+        <div class="row g-2">
+          {% for row in monthly_summary %}
+          <div class="col-md-6">
+            <div class="border rounded p-2 small">
+              <div class="fw-bold">{{ provider_display_labels.get(row.provider, row.provider) }}</div>
+              <div class="text-muted">{{ row.count }} 件 / {{ "{:,}".format(row.total_tokens) }} トークン</div>
+            </div>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+    {% else %}
+    <div class="card mb-4">
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <span><i class="bi bi-bar-chart"></i> AI API 利用履歴</span>
+        <a href="{{ url_for('settings.ai_usage') }}" class="btn btn-sm btn-outline-primary">
+          <i class="bi bi-list-ul"></i> 履歴を見る
+        </a>
+      </div>
+      <div class="card-body text-muted small">
+        今月の利用はまだありません。プロバイダーコンソールと突合できる呼び出し履歴を残しています。
+      </div>
+    </div>
+    {% endif %}
+
     <div class="card mb-4">
       <div class="card-header">
         <i class="bi bi-gear"></i>
