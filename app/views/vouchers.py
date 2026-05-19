@@ -2,19 +2,23 @@
 
 import hashlib
 
-from flask import Blueprint, render_template, request, flash, redirect, url_for, jsonify
-from flask_login import login_required
+from flask import (
+    Blueprint, render_template, request, flash, redirect, url_for,
+    jsonify, session,
+)
+from flask_login import login_required, current_user
 from sqlalchemy import func
 from sqlalchemy.orm import joinedload
 
 from app.extensions import db, limiter
+from app.models.user import User
 from app.models.voucher import Voucher
 from app.models.voucher_audit_log import VoucherAuditLog
 from app.models.ai_config import UserAIConfig
 from app.models.journal import JournalEntry, JournalEntryLine
 from app.services.audit import get_effective_user_id
-from app.services.storage import get_storage_backend
-from app.services.storage_quota import QuotaExceededError
+from app.services.storage import get_storage_backend, make_thumbnail_key
+from app.services.storage_quota import QuotaExceededError, record_delete
 from app.services.voucher import create_voucher_from_upload
 
 MAX_IMAGE_SIZE = 10 * 1024 * 1024  # 10MB
@@ -94,6 +98,9 @@ def index():
 
     vouchers = query.paginate(page=page, per_page=20, error_out=False)
 
+    # 削除ボタンは本人モード時のみ表示 (代理閲覧中の auditor は破壊操作禁止)
+    can_delete = session.get("acting_as_user_id") is None
+
     return render_template(
         "vouchers/index.html",
         vouchers=vouchers,
@@ -102,6 +109,7 @@ def index():
         amount_from=amount_from,
         amount_to=amount_to,
         search=search,
+        can_delete=can_delete,
     )
 
 
@@ -211,3 +219,63 @@ def attach(entry_id):
 
     db.session.commit()
     return jsonify(response_data)
+
+
+@bp.route("/<int:voucher_id>/delete", methods=["POST"])
+@login_required
+@limiter.limit("10/minute", methods=["POST"])
+def delete(voucher_id):
+    """証憑削除 (Phase 5 #70)。
+
+    電帳法的には削除自体は禁止ではないが、訂正削除の事実とその内容を
+    確認できる状態が必要。`VoucherAuditLog` に `action="deleted"` を
+    残すことで履歴を保全する。
+
+    代理閲覧中 (`acting_as_user_id` セッション設定) は破壊操作を禁止
+    (auditor は閲覧者であり、本人の意思によらない削除は監査独立性を
+    損なう)。本人ログイン時のみ操作可能。
+    """
+    if session.get("acting_as_user_id") is not None:
+        flash("代理閲覧中は証憑を削除できません。", "danger")
+        return redirect(url_for("vouchers.index"))
+
+    user_id = current_user.id
+    voucher = Voucher.query.filter_by(
+        id=voucher_id, user_id=user_id,
+    ).first_or_404()
+
+    image_key = voucher.image_key
+    size_to_release = voucher.file_size or 0
+    file_hash = voucher.file_hash or ""
+
+    # 電帳法の訂正削除履歴: 現状 voucher_audit_logs.voucher_id は FK RESTRICT
+    # のため Voucher 削除と同時に履歴も失う。最低限の追跡性をアプリケー
+    # ションログに残し、永続化された削除ログテーブルの分離は後続 PR
+    # (voucher_audit_logs.voucher_id を nullable 化、Voucher 論理削除化)。
+    from flask import current_app
+    current_app.logger.info(
+        "voucher deleted: id=%d user_id=%d image_key=%s file_hash=%s",
+        voucher.id, user_id, image_key, file_hash,
+    )
+    VoucherAuditLog.query.filter_by(voucher_id=voucher.id).delete()
+    db.session.delete(voucher)
+    db.session.commit()
+
+    # ストレージ削除 (best-effort)
+    storage = get_storage_backend()
+    for k in (image_key, make_thumbnail_key(image_key)):
+        try:
+            storage.delete(k)
+        except Exception as e:
+            current_app.logger.warning(
+                "voucher delete: storage delete failed %s: %s", k, e,
+            )
+
+    # 容量解放
+    if size_to_release > 0:
+        owner = db.session.get(User, user_id)
+        if owner is not None:
+            record_delete(owner, size_to_release)
+
+    flash("証憑を削除しました。", "info")
+    return redirect(url_for("vouchers.index"))

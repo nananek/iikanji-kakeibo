@@ -30,10 +30,12 @@ def create_voucher_from_draft(draft: AIDraft, journal_entry_id: int) -> Voucher:
     画像ファイルはストレージに残し、Voucher が参照を引き継ぐ。
     呼び出し元で db.session.commit() すること。
 
-    NOTE: 本関数はまだ容量計上 (`check_quota`/`record_upload`) を統合
-    していない。Phase 5 続編 PR で AIDraft 経由のフローも quota 管理下
-    に置く予定 (AIDraft 段階で一時保管されているサイズを Voucher 化
-    時に永続化として計上する設計)。
+    容量計上 (Phase 5 #70): AIDraft 生成時に `record_upload` 済のため、
+    本関数では **計上量を変更しない** (`record_delete` も `record_upload`
+    も呼ばない)。AIDraft → Voucher への所有権移転として `file_size` を
+    そのまま引き継ぐ。AIDraft.file_size が NULL の場合 (Phase 5 計上
+    開始前のレガシー) は Voucher.file_size も NULL のまま — 整合性
+    監査バッチでストレージから実測して埋める。
     """
     voucher = Voucher(
         user_id=draft.user_id,
@@ -41,6 +43,7 @@ def create_voucher_from_draft(draft: AIDraft, journal_entry_id: int) -> Voucher:
         image_key=draft.image_key,
         image_mime=draft.image_mime,
         file_hash=draft.file_hash,
+        file_size=draft.file_size,
         uploaded_at=draft.created_at,
     )
     db.session.add(voucher)
