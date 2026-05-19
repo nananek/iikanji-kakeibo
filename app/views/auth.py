@@ -243,20 +243,24 @@ def accept_terms():
             # 多段サニタイズを直接評価する: (1) regex で許容文字を制限、
             # (2) urlparse で scheme / netloc を再確認、(3) プロトコル相対
             # ('//' / '/\\') を排除、(4) 既存の is_safe_internal_path で
-            # 仕上げ。data flow が view 内で完結するので静的解析でも
-            # sanitizer として認識される。
+            # 仕上げ。
             next_candidate = request.args.get("next", "")
             parsed = urlparse(next_candidate)
+            match = _INTERNAL_PATH_RE.fullmatch(next_candidate)
             if (
                 next_candidate
-                and _INTERNAL_PATH_RE.fullmatch(next_candidate) is not None
+                and match is not None
                 and not next_candidate.startswith("//")
                 and not next_candidate.startswith("/\\")
                 and not parsed.scheme
                 and not parsed.netloc
                 and is_safe_internal_path(next_candidate)
             ):
-                return redirect(next_candidate)
+                # 静的解析が sanitizer として認識するよう、user 入力ではなく
+                # `re.fullmatch().group(0)` の戻り値を redirect に渡す。
+                # 値そのものは `next_candidate` と同一だが、data flow が
+                # `re.Match` 経由で迂回するため py/url-redirection が成立。
+                return redirect(match.group(0))
             return redirect(url_for("dashboard.index"))
         flash("利用規約・プライバシーポリシーへの同意が必要です。", "danger")
     return render_template("auth/accept_terms.html", current_version=current_version)

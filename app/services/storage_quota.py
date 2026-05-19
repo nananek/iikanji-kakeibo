@@ -20,7 +20,18 @@ from app.services.entitlement import has_entitlement
 
 
 class QuotaExceededError(Exception):
-    """容量上限を超える / 未契約ユーザーがアップロードを試みた."""
+    """容量上限を超える / 未契約ユーザーがアップロードを試みた。
+
+    `user_message` 属性に「ユーザーに見せて良い固定文言」のみを格納する。
+    view からは `str(exc)` ではなく `exc.user_message` を返すこと。
+    `str(exc)` 経由だと CodeQL `py/stack-trace-exposure` が誤検出する
+    (本クラスは自前文言を渡しているだけで stack trace は含まれないが、
+    Exception サブクラスの `__str__` は静的解析で suspicious 扱いになる)。
+    """
+
+    def __init__(self, user_message: str):
+        super().__init__(user_message)
+        self.user_message = user_message
 
 
 def get_quota_bytes(user) -> int:

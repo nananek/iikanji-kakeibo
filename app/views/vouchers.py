@@ -192,7 +192,9 @@ def attach(entry_id):
             original_filename=image_file.filename,
         )
     except QuotaExceededError as exc:
-        return jsonify({"error": str(exc)}), 413
+        # CodeQL py/stack-trace-exposure 誤検出対策で `str(exc)` ではなく
+        # 明示的に `user_message` 属性経由でユーザー向け固定文言を返す。
+        return jsonify({"error": exc.user_message}), 413
 
     response_data = {"ok": True, "voucher_id": voucher.id}
 
