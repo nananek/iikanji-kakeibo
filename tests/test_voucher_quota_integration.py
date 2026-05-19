@@ -93,6 +93,53 @@ class TestCreateVoucherQuotaCheck:
         assert usage.used_bytes == 900
 
 
+class TestTOCTOURollback:
+    """`record_upload` 後の楽観的再検証で巻き戻しが正しく動作する"""
+
+    def test_rollback_when_concurrent_upload_pushes_over_quota(
+        self, app, db, user, accounts, tmp_path, monkeypatch
+    ):
+        monkeypatch.setitem(app.config, "STORAGE_LOCAL_DIR", str(tmp_path))
+        monkeypatch.setitem(app.config, "STORAGE_QUOTA_BYTES_DEFAULT", 10000)
+        entry = _make_entry(db, user, accounts)
+
+        # `record_upload` の中身を「加算後にさらに別リクエストが容量を埋めた」
+        # 状況に差し替える。`real_record_upload` で加算 → 直後に上限直上まで
+        # 書き換えることで TOCTOU 競合をシミュレートする。
+        from app.models.storage import StorageUsage
+        from app.services import voucher as voucher_mod
+        from app.services.storage_quota import (
+            record_upload as real_record_upload,
+        )
+
+        def fake_record_upload(u, sz):
+            real_record_upload(u, sz)
+            row = db.session.get(StorageUsage, u.id)
+            row.used_bytes = 10000 + 1  # 必ず上限を 1 byte 超過
+            db.session.commit()
+
+        monkeypatch.setattr(voucher_mod, "record_upload", fake_record_upload)
+
+        with app.app_context():
+            with pytest.raises(QuotaExceededError, match="並行アップロード"):
+                create_voucher_from_upload(
+                    user_id=user.id,
+                    journal_entry_id=entry.id,
+                    image_bytes=b"x" * 5000,
+                    mime_type="image/png",
+                )
+
+        # Voucher は巻き戻されて存在しない
+        assert Voucher.query.count() == 0
+        # 巻き戻し後に AuditLog も残らない (FK CASCADE 経路の検証)
+        from app.models.voucher_audit_log import VoucherAuditLog
+        assert VoucherAuditLog.query.count() == 0
+        # 容量も巻き戻し済み (fake_record_upload で 10001 にセット後、
+        # record_delete で 5000 引かれて 5001 残る = 自分の分が消えた状態)
+        usage = db.session.get(StorageUsage, user.id)
+        assert usage.used_bytes == 5001  # 10001 - 5000
+
+
 class TestAttachEndpointQuota:
     def test_attach_returns_413_when_quota_exceeded(
         self, db, logged_in_client, user, accounts, monkeypatch

@@ -8,7 +8,12 @@ from app.models.user import User
 from app.models.voucher import Voucher
 from app.models.voucher_audit_log import VoucherAuditLog
 from app.models.ai_draft import AIDraft
-from app.services.storage import make_storage_key, store_image_with_thumbnail
+from app.services.storage import (
+    get_storage_backend,
+    make_storage_key,
+    make_thumbnail_key,
+    store_image_with_thumbnail,
+)
 from app.services.storage_quota import (
     QuotaExceededError,
     check_quota,
@@ -102,19 +107,23 @@ def create_voucher_from_upload(
     # 3. 容量加算 (アトミック UPDATE)
     record_upload(user, size)
 
-    # 4. 楽観的再検証: 並行アップロードで合算が上限超過なら巻き戻し
+    # 4. 楽観的再検証: 並行アップロードで合算が上限超過なら巻き戻し。
+    #    `record_upload` 内で commit 済のため、Voucher / VoucherAuditLog
+    #    も永続化されている。これらを明示的に削除して commit し直す。
     if get_used_bytes(user) > get_quota_bytes(user):
         record_delete(user, size)
-        # ストレージファイルと Voucher 行を撤去
-        from app.services.storage import get_storage_backend, make_thumbnail_key
         backend = get_storage_backend()
         for k in (key, make_thumbnail_key(key)):
             try:
                 backend.delete(k)
             except Exception:
                 pass
+        # VoucherAuditLog は voucher_id FK (ondelete 未指定 = RESTRICT) を
+        # 持つため、Voucher 削除前に AuditLog を先に削除する必要がある
+        # (PostgreSQL では IntegrityError 防止、SQLite でも安全)。
+        VoucherAuditLog.query.filter_by(voucher_id=voucher.id).delete()
         db.session.delete(voucher)
-        db.session.flush()
+        db.session.commit()
         raise QuotaExceededError(
             "並行アップロードにより容量上限を超えました。再試行してください。"
         )

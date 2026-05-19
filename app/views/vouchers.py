@@ -14,6 +14,7 @@ from app.models.ai_config import UserAIConfig
 from app.models.journal import JournalEntry, JournalEntryLine
 from app.services.audit import get_effective_user_id
 from app.services.storage import get_storage_backend
+from app.services.storage_quota import QuotaExceededError
 from app.services.voucher import create_voucher_from_upload
 
 MAX_IMAGE_SIZE = 10 * 1024 * 1024  # 10MB
@@ -163,7 +164,6 @@ def attach(entry_id):
             "error": "対応していないファイル形式です。JPEG/PNG/WebP/GIF を使用してください。",
         }), 400
 
-    from app.services.storage_quota import QuotaExceededError
     try:
         voucher = create_voucher_from_upload(
             user_id=user_id,
