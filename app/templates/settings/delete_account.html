@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+{% block title %}アカウント削除 - いいかんじ™家計簿{% endblock %}
+
+{% block content %}
+<div class="container py-4" style="max-width: 700px;">
+  <h2 class="text-danger">
+    <i class="bi bi-exclamation-triangle"></i> アカウント削除
+  </h2>
+
+  <div class="alert alert-danger mt-4">
+    <h5 class="alert-heading"><i class="bi bi-trash"></i> 削除される内容</h5>
+    <ul class="mb-0 small">
+      <li>仕訳・出納帳・確定情報・科目・取込履歴</li>
+      <li>証憑画像本体 (ストレージから即削除)</li>
+      <li>AI 設定・API キー・OAuth トークン・パスキー認証情報</li>
+      <li>監査者からの代理閲覧権限 (発行済みアクセスは無効化)</li>
+    </ul>
+  </div>
+
+  <div class="alert alert-warning">
+    <h5 class="alert-heading"><i class="bi bi-shield-check"></i> 法令保管のため残るデータ</h5>
+    <p class="mb-2 small">
+      電子帳簿保存法 (スキャナ保存) の 7 年保管義務に従い、以下は
+      <strong>個人を特定できない形に匿名化</strong>して保持されます:
+    </p>
+    <ul class="mb-0 small">
+      <li>証憑の操作ログ (削除済を含む VoucherAuditLog の <code>action</code> と <code>detail</code>)</li>
+    </ul>
+    <p class="mt-2 mb-0 small text-muted">
+      個人情報を含まないため、運営者からあなたを特定することはできません。
+    </p>
+  </div>
+
+  <div class="alert alert-info">
+    <h5 class="alert-heading"><i class="bi bi-info-circle"></i> 削除前の確認</h5>
+    <p class="mb-1 small">
+      仕訳データや証憑画像が必要な場合は、削除前にバックアップを取って
+      ください (現状一括ダウンロード機能はありません。必要な場合は
+      <a href="{{ url_for('legal.contact') }}">お問い合わせ</a>
+      から開示請求してください)。
+    </p>
+    <p class="mb-0 small">
+      削除後にデータは復元できません。
+    </p>
+  </div>
+
+  <form method="POST" class="mt-4">
+    {{ form.hidden_tag() }}
+
+    <div class="mb-3">
+      {{ form.password.label(class="form-label") }}
+      {{ form.password(class="form-control", required=true, autocomplete="current-password") }}
+      <div class="form-text">本人確認のため、現在のパスワードを入力してください。</div>
+      {% for err in form.password.errors %}
+        <div class="text-danger small">{{ err }}</div>
+      {% endfor %}
+    </div>
+
+    <div class="form-check mb-4">
+      {{ form.confirm(class="form-check-input", required=true) }}
+      {{ form.confirm.label(class="form-check-label") }}
+      {% for err in form.confirm.errors %}
+        <div class="text-danger small">{{ err }}</div>
+      {% endfor %}
+    </div>
+
+    <div class="d-flex justify-content-between">
+      <a href="{{ url_for('settings.index') }}" class="btn btn-secondary">
+        キャンセル
+      </a>
+      <button type="submit" class="btn btn-danger"
+              onclick="return confirm('本当にアカウントを削除しますか？この操作は取り消せません。');">
+        {{ form.submit.label.text }}
+      </button>
+    </div>
+  </form>
+
+  <p class="text-muted small mt-4">
+    本フォームへの送信は IP アドレス単位で 1 時間あたり 3 回まで受付可能です。
+  </p>
+</div>
+{% endblock %}
