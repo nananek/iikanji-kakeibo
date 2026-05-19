@@ -1,3 +1,6 @@
+import re
+from urllib.parse import urlparse
+
 from flask import Blueprint, render_template, redirect, url_for, flash, request, session, abort, current_app
 from flask_login import login_user, logout_user, login_required, current_user
 
@@ -7,6 +10,13 @@ from app.forms.auth import LoginForm, RegisterForm
 from app.services.seed import seed_accounts_for_user
 from app.services.captcha import is_captcha_enabled, get_captcha_response_field, verify_captcha_token
 from app.views.helpers import is_safe_internal_path
+
+
+# 内部相対パス用の厳密な regex sanitizer (CodeQL py/url-redirection を
+# 満足させるため、関数越しではなく view 内で直接マッチを評価する)。
+# 許容: '/' 始まり、ASCII 英数字 + `_ - . / ~` + query/fragment 用記号。
+# プロトコル相対 ('//') / バックスラッシュ ('\\') / scheme / netloc を排除。
+_INTERNAL_PATH_RE = re.compile(r"\A/[A-Za-z0-9_\-./~?=&%#]*\Z")
 
 
 def _check_captcha() -> bool:
@@ -229,11 +239,23 @@ def accept_terms():
             flash("規約への同意を更新しました。", "success")
             # `?next=` で内部相対パスが渡っている場合のみ尊重。それ以外
             # (外部 URL / プロトコル相対 / 不正値) はダッシュボードへ。
-            # `is_safe_internal_path` を view 内で直接評価することで
-            # CodeQL の URL redirection 警告を回避する (関数越しの
-            # sanitizer は静的解析で追跡されない)。
+            # CodeQL py/url-redirection 対策として、関数越しではなく view 内で
+            # 多段サニタイズを直接評価する: (1) regex で許容文字を制限、
+            # (2) urlparse で scheme / netloc を再確認、(3) プロトコル相対
+            # ('//' / '/\\') を排除、(4) 既存の is_safe_internal_path で
+            # 仕上げ。data flow が view 内で完結するので静的解析でも
+            # sanitizer として認識される。
             next_candidate = request.args.get("next", "")
-            if is_safe_internal_path(next_candidate):
+            parsed = urlparse(next_candidate)
+            if (
+                next_candidate
+                and _INTERNAL_PATH_RE.fullmatch(next_candidate) is not None
+                and not next_candidate.startswith("//")
+                and not next_candidate.startswith("/\\")
+                and not parsed.scheme
+                and not parsed.netloc
+                and is_safe_internal_path(next_candidate)
+            ):
                 return redirect(next_candidate)
             return redirect(url_for("dashboard.index"))
         flash("利用規約・プライバシーポリシーへの同意が必要です。", "danger")
