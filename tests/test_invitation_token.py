@@ -98,6 +98,29 @@ class TestRegisterWithInvitationRequired:
         # hidden token フィールドが埋め込まれている
         assert f'value="{raw}"' in body
 
+    def test_auditor_get_without_token_returns_404(
+        self, client, app, monkeypatch, reset_limiter,
+    ):
+        """register_auditor も招待モード時に token なし GET は 404."""
+        monkeypatch.setitem(app.config, "REGISTRATION_INVITE_ONLY", True)
+        monkeypatch.setitem(app.config, "CURRENT_TERMS_VERSION", "")
+        resp = client.get("/register/auditor")
+        assert resp.status_code == 404
+
+    def test_auditor_get_with_token_renders_form(
+        self, client, app, db, monkeypatch, reset_limiter,
+    ):
+        monkeypatch.setitem(app.config, "REGISTRATION_INVITE_ONLY", True)
+        monkeypatch.setitem(app.config, "CURRENT_TERMS_VERSION", "")
+        raw, record = InvitationToken.generate(
+            "auditor-get@example.com", user_type="auditor",
+        )
+        db.session.add(record)
+        db.session.commit()
+        resp = client.get(f"/register/auditor?token={raw}")
+        assert resp.status_code == 200
+        assert f'value="{raw}"' in resp.get_data(as_text=True)
+
     def test_post_without_token_fails(
         self, client, app, db, monkeypatch, reset_limiter,
     ):

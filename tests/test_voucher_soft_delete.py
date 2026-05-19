@@ -200,7 +200,8 @@ class TestSoftDeletedHiddenFromQueries:
 
 
 class TestEntryActiveVouchers:
-    """`JournalEntry.active_vouchers` プロパティが削除済 Voucher を除外する."""
+    """`JournalEntry.active_vouchers` リレーションシップが削除済 Voucher
+    を除外する (PR #94 review Finding 1: SQL レベルフィルタ化)."""
 
     def test_active_vouchers_excludes_deleted(self, db, user):
         from app.models.journal import JournalEntry
@@ -220,3 +221,54 @@ class TestEntryActiveVouchers:
         # entry2: backref には残るが active_vouchers では空
         assert len(entry2.vouchers) == 1
         assert len(entry2.active_vouchers) == 0
+
+
+class TestApiVoucherLogsAfterSoftDelete:
+    """`api_voucher_logs` は論理削除後も AuditLog を引き続き参照可能
+    (PR #94 review Finding 3: 電帳法証跡の連環性確認)."""
+
+    def test_logs_accessible_after_soft_delete(
+        self, db, user, mock_storage, reset_limiter,
+    ):
+        """削除済 Voucher の AuditLog も `Voucher.query` 経由で参照可能."""
+        from app.extensions import db as app_db
+        from app.models.api_key import APIKey
+        from flask import url_for
+
+        # API キー発行
+        raw, key_hash, key_prefix = APIKey.generate()
+        app_db.session.add(APIKey(
+            user_id=user.id, name="test", key_hash=key_hash,
+            key_prefix=key_prefix,
+            scopes="journals:read,journals:create,journals:delete,ai:analyze",
+        ))
+        app_db.session.commit()
+
+        # 通常の Voucher 作成 + AuditLog 1 件
+        v = _make_voucher(db, user)
+        app_db.session.add(VoucherAuditLog(
+            voucher_id=v.id, user_id=user.id, action="hash_verified",
+        ))
+        app_db.session.commit()
+
+        # 論理削除
+        v.deleted_at = datetime.now(timezone.utc)
+        # 電帳法証跡として action="deleted" の AuditLog も追加
+        app_db.session.add(VoucherAuditLog(
+            voucher_id=v.id, user_id=user.id, action="deleted",
+            detail='{"image_key": "test"}',
+        ))
+        app_db.session.commit()
+
+        from flask import current_app
+        with current_app.test_client() as c:
+            resp = c.get(
+                f"/api/v1/vouchers/{v.id}/logs",
+                headers={"Authorization": f"Bearer {raw}"},
+            )
+        # 削除済でも logs エンドポイントは 200 で全 AuditLog を返す
+        assert resp.status_code == 200
+        data = resp.get_json()
+        actions = {log["action"] for log in data["logs"]}
+        assert "hash_verified" in actions
+        assert "deleted" in actions

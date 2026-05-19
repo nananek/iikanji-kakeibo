@@ -14,7 +14,9 @@
 対応方法:
 1. 不要な証憑を削除する (設定 > 証憑一覧 から削除可能。電帳法の
    訂正削除証跡は監査ログに残ります)
+{% if config.BILLING_BACKEND and config.BILLING_BACKEND != 'unlimited' %}
 2. 上位プランへ変更する (ストレージ追加オプション)
+{% endif %}
 
 設定画面: {{ settings_url }}
 

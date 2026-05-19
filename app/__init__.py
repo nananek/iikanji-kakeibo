@@ -482,12 +482,14 @@ def register_cli(app):
         # register_url の組立て: REGISTRATION_INVITE_ONLY モードでは
         # user_type に応じて register / register_auditor を出し分け
         endpoint = "auth.register_auditor" if user_type == "auditor" else "auth.register"
+        from werkzeug.routing import BuildError
         try:
             register_url = url_for(endpoint, token=raw, _external=True)
-        except Exception:
-            # SERVER_NAME 未設定で url_for(_external=True) が失敗するときの
-            # フォールバック。config の SERVER_NAME / PREFERRED_URL_SCHEME を
-            # 使って絶対 URL を組み立てる (相対パスだとメール本文として無効)。
+        except (RuntimeError, BuildError):
+            # SERVER_NAME 未設定 (RuntimeError) や endpoint 未登録
+            # (BuildError) のときのフォールバック。config の SERVER_NAME /
+            # PREFERRED_URL_SCHEME を使って絶対 URL を組み立てる
+            # (相対パスだとメール本文として無効)。
             from flask import current_app
             base = current_app.config.get("SERVER_NAME") or "localhost"
             scheme = current_app.config.get("PREFERRED_URL_SCHEME", "https")

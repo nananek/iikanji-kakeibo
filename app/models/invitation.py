@@ -93,6 +93,30 @@ class InvitationToken(db.Model):
         return True
 
     def mark_used(self, user_id: int) -> None:
-        """登録成功時に「使用済」マークする。呼出側で commit すること。"""
-        self.used_at = datetime.now(timezone.utc)
+        """登録成功時に「使用済」マークする。呼出側で commit すること。
+
+        TOCTOU 防御 (PR #99 review Medium): 並行 POST で 2 件目が来た場合
+        にも二重消費を防ぐため、`UPDATE ... WHERE used_at IS NULL` の条件
+        付き更新を行い、影響行数が 0 なら既に他リクエストで消費済みと判定
+        する。User.email の UNIQUE 制約と組み合わせて二重登録を防ぐ。
+        """
+        from app.extensions import db as _db
+        from sqlalchemy import update
+
+        now = datetime.now(timezone.utc)
+        result = _db.session.execute(
+            update(type(self))
+            .where(
+                type(self).id == self.id,
+                type(self).used_at.is_(None),
+            )
+            .values(used_at=now, used_by=user_id)
+        )
+        if result.rowcount == 0:
+            # 並行リクエストが先に消費した — 呼出側で User INSERT が走ると
+            # User.email UNIQUE 制約違反になるため、明示的に IntegrityError
+            # を擬似発火させる。ここでは ValueError で呼出側に判定を任せる。
+            raise ValueError("invitation already used")
+        # メモリ上のインスタンスにも反映 (呼出側がアクセスしてくる可能性)
+        self.used_at = now
         self.used_by = user_id
