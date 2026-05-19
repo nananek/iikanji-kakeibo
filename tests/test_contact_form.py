@@ -128,3 +128,67 @@ class TestContactPost:
     # rate limit (5/hour) は TestConfig.RATELIMIT_ENABLED=False のため
     # 本テストファイルでは検証しない。専用 fixture (RateLimitTestConfig)
     # を導入する場合は test_security_ratelimit.py 側に追加すること。
+
+
+class TestHeaderInjectionDefense:
+    """メールヘッダインジェクション対策 (form バリデーション + render_email サニタイズ)."""
+
+    def test_name_with_crlf_rejected_by_form(self, client, reset_limiter):
+        """name に \\r\\n を含むと form バリデーションで拒否される (入口防御)."""
+        from unittest.mock import patch
+
+        sent = []
+        with patch(
+            "app.views.legal.send_email",
+            side_effect=lambda *a, **kw: sent.append(a),
+        ):
+            resp = client.post("/legal/contact", data={
+                "name": "山田\r\nBcc: attacker@evil.example",
+                "email": "y@example.com",
+                "subject_line": "",
+                "message": "問い合わせ本文 10 文字以上書く",
+            })
+
+        # form バリデーションエラーで再描画 (200) + send_email 呼ばれない
+        assert resp.status_code == 200
+        assert sent == []
+        body = resp.get_data(as_text=True)
+        assert "改行は使用できません" in body
+
+    def test_subject_line_with_crlf_rejected(self, client, reset_limiter):
+        from unittest.mock import patch
+
+        sent = []
+        with patch(
+            "app.views.legal.send_email",
+            side_effect=lambda *a, **kw: sent.append(a),
+        ):
+            resp = client.post("/legal/contact", data={
+                "name": "山田",
+                "email": "y@example.com",
+                "subject_line": "通常件名\nBcc: bad@evil",
+                "message": "問い合わせ本文 10 文字以上書く",
+            })
+
+        assert resp.status_code == 200
+        assert sent == []
+
+    def test_render_email_sanitizes_subject(self, app):
+        """render_email 側が subject の \\r\\n をスペース化する (出口防御)."""
+        from app.services.mail import render_email
+
+        with app.test_request_context():
+            # contact_received_admin テンプレに改行を含む name を渡す
+            # (フォーム validation を回避した直接呼び出しを想定)
+            rendered = render_email("contact_received_admin", {
+                "name": "山田\r\nBcc: attacker",
+                "email": "y@example.com",
+                "subject_line": "請求書\nの件",
+                "message": "本文",
+            })
+
+        # subject から \r / \n が消えている (= ヘッダインジェクション不可)
+        # "Bcc:" 文字列自体は subject 内に残っても、改行で区切られない限り
+        # SMTP ヘッダとしては別ヘッダにならないため安全。
+        assert "\r" not in rendered.subject
+        assert "\n" not in rendered.subject

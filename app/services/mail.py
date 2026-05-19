@@ -168,10 +168,17 @@ def render_email(template_name: str, context: dict) -> RenderedEmail:
     - `templates/email/<template_name>/subject.txt` から件名 (1 行)
     - `templates/email/<template_name>/body.txt` からプレーン本文 (必須)
     - `templates/email/<template_name>/body.html` から HTML 本文 (任意)
+
+    件名はメールヘッダ (Subject) に直接渡るため、CR / LF を含むユーザー
+    入力がテンプレ展開された場合に **ヘッダインジェクションを許してしまう**
+    リスクがある。`render_email` 全ての出口でサニタイズし、入口側 (フォーム
+    バリデーション) と多重防御する。
     """
-    subject = render_template(
+    subject_raw = render_template(
         f"email/{template_name}/subject.txt", **context
-    ).strip()
+    )
+    # \r / \n をスペースに置換 + 連続スペースを 1 つに圧縮 + strip
+    subject = " ".join(subject_raw.replace("\r", " ").replace("\n", " ").split())
     text_body = render_template(f"email/{template_name}/body.txt", **context)
     html_body: Optional[str] = None
     try:
