@@ -3,9 +3,9 @@ import re
 from datetime import date, datetime, timezone
 
 from flask import Blueprint, render_template, redirect, url_for, flash, request, jsonify, make_response, current_app, session as flask_session
-from flask_login import login_required, current_user
+from flask_login import login_required, logout_user, current_user
 
-from app.extensions import db
+from app.extensions import db, limiter
 from app.models.user import User
 from app.services.audit import get_effective_user_id
 from app.models.account import Account, AccountType
@@ -21,6 +21,7 @@ from app.services.ai_receipt import (
 )
 from app.views.accounts import TAX_CATEGORIES
 from app.models.fiscal import FiscalClose
+from app.services.mail import send_email
 from app.services.fiscal import (
     PERIOD_LABELS, get_closed_period, close_period, reopen_period, is_year_open,
 )
@@ -1280,3 +1281,77 @@ def auto_import_webhook_delete(webhook_id):
     db.session.commit()
     flash(f"通知設定「{name}」を削除しました。", "success")
     return redirect(url_for("settings.auto_import"))
+
+
+@bp.route("/delete-account", methods=["GET", "POST"])
+@login_required
+@limiter.limit("3/hour", methods=["POST"])
+def delete_account():
+    """退会フロー (Phase 4 公開運用整備)。
+
+    パスワード再認証 + 同意チェックを経て、ユーザーの全データを削除する。
+    電帳法保管対象の `VoucherAuditLog` は user_id NULL 化で匿名化保持、
+    他は物理削除 (詳細は `app.services.account_deletion` 参照)。
+
+    代理閲覧中 (`acting_as_user_id` セッション設定) は破壊操作を禁止。
+    """
+    from app.forms.settings import DeleteAccountForm
+    from app.services.account_deletion import delete_user_account
+
+    if flask_session.get("acting_as_user_id") is not None:
+        flash("代理閲覧中はアカウントを削除できません。", "danger")
+        return redirect(url_for("settings.index"))
+
+    form = DeleteAccountForm()
+    if form.validate_on_submit():
+        # Passkey 専用ユーザーはパスワードを持たないためセッション認証済を
+        # 信頼し、パスワード検証はスキップ (GDPR データ消去権の保証)。
+        # 通常ユーザーはパスワード再認証を要求する。
+        if not current_user.passkey_only_login:
+            if not current_user.check_password(form.password.data or ""):
+                flash("パスワードが正しくありません。", "danger")
+                return render_template(
+                    "settings/delete_account.html", form=form,
+                )
+
+        # 削除前にメール送信に必要な情報を取得
+        username = current_user.username
+        email = current_user.email
+        user_id = current_user.id
+        deleted_at = datetime.now(timezone.utc)
+
+        try:
+            delete_user_account(user_id)
+        except Exception:
+            current_app.logger.exception(
+                "delete_account failed for user_id=%d", user_id,
+            )
+            flash(
+                "アカウント削除に失敗しました。お問い合わせフォームから"
+                "ご連絡ください。",
+                "danger",
+            )
+            return redirect(url_for("settings.index"))
+
+        # ログアウト (セッション破棄)
+        logout_user()
+        flask_session.clear()
+
+        # 退会完了メール (送信失敗は握って redirect は続行)
+        try:
+            send_email(email, "account_deleted", {
+                "username": username,
+                "deleted_at": deleted_at.strftime("%Y-%m-%d %H:%M UTC"),
+            })
+        except Exception:
+            current_app.logger.exception(
+                "delete_account: send_email failed (to=%s)", email,
+            )
+
+        flash(
+            "アカウントを削除しました。ご利用ありがとうございました。",
+            "info",
+        )
+        return redirect(url_for("auth.login"))
+
+    return render_template("settings/delete_account.html", form=form)
