@@ -230,8 +230,11 @@ def delete(voucher_id):
     """証憑削除 (Phase 5 #70)。
 
     電帳法的には削除自体は禁止ではないが、訂正削除の事実とその内容を
-    確認できる状態が必要。`VoucherAuditLog` に `action="deleted"` を
-    残すことで履歴を保全する。
+    確認できる状態が必要。現状 `voucher_audit_logs.voucher_id` は FK
+    RESTRICT のため Voucher 削除と同時に履歴も失う制約があり、削除の
+    事実はアプリケーションログ (`logger.warning`) に記録するに留める。
+    DB への永続化は後続 PR で `voucher_audit_logs.voucher_id` を
+    nullable 化・Voucher 論理削除化により対応予定。
 
     代理閲覧中 (`acting_as_user_id` セッション設定) は破壊操作を禁止
     (auditor は閲覧者であり、本人の意思によらない削除は監査独立性を
@@ -255,7 +258,8 @@ def delete(voucher_id):
     # ションログに残し、永続化された削除ログテーブルの分離は後続 PR
     # (voucher_audit_logs.voucher_id を nullable 化、Voucher 論理削除化)。
     from flask import current_app
-    current_app.logger.info(
+    # 電帳法の訂正削除証跡として運用フィルタに引っかけやすくするため warning。
+    current_app.logger.warning(
         "voucher deleted: id=%d user_id=%d image_key=%s file_hash=%s",
         voucher.id, user_id, image_key, file_hash,
     )

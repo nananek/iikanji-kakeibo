@@ -115,11 +115,14 @@ class TestTOCTOURollback:
             record_upload as real_record_upload,
         )
 
-        def fake_record_upload(u, sz):
-            real_record_upload(u, sz)
+        def fake_record_upload(u, sz, **kwargs):
+            # 単一トランザクション (suppress_commit=True) で動くため
+            # 実際の upsert は実行し、その上で row を上限直上まで書き換える。
+            real_record_upload(u, sz, **kwargs)
             row = db.session.get(StorageUsage, u.id)
-            row.used_bytes = 10000 + 1  # 必ず上限を 1 byte 超過
-            db.session.commit()
+            if row is not None:
+                row.used_bytes = 10000 + 1  # 必ず上限を 1 byte 超過
+                db.session.flush()  # commit せず同一 tx 内で読めるようにする
 
         monkeypatch.setattr(voucher_mod, "record_upload", fake_record_upload)
 
@@ -134,45 +137,28 @@ class TestTOCTOURollback:
 
         # Voucher は巻き戻されて存在しない
         assert Voucher.query.count() == 0
-        # 巻き戻し後に AuditLog も残らない (FK CASCADE 経路の検証)
         from app.models.voucher_audit_log import VoucherAuditLog
         assert VoucherAuditLog.query.count() == 0
-        # 容量も巻き戻し済み (fake_record_upload で 10001 にセット後、
-        # record_delete で 5000 引かれて 5001 残る = 自分の分が消えた状態)
+        # 単一 tx 内 rollback により StorageUsage も加算前 (初回 = row なし) に戻る
         usage = db.session.get(StorageUsage, user.id)
-        assert usage.used_bytes == 5001  # 10001 - 5000
+        assert usage is None
 
 
-class TestSavepointIsolationOnRaceCondition:
-    """record_upload の IntegrityError ハンドリングが SAVEPOINT で隔離され、
-    呼出側 (create_voucher_from_upload 内の Voucher INSERT) を巻き戻さない。
+class TestOnConflictUpsert:
+    """`record_upload` の ON CONFLICT 化により、初回並行 INSERT の競合や
+    既存 row の加算が常にアトミックに行われる (SAVEPOINT 退役の代替テスト)。
     """
 
-    def test_voucher_survives_when_record_upload_falls_back_to_update(
+    def test_existing_row_is_atomically_incremented(
         self, app, db, user, accounts, tmp_path, monkeypatch
     ):
+        """既存 row への record_upload は UPDATE で加算される (UNIQUE 違反なし)."""
         monkeypatch.setitem(app.config, "STORAGE_LOCAL_DIR", str(tmp_path))
         entry = _make_entry(db, user)
 
         # 先に別リクエストが INSERT 済の状態を再現
         db.session.add(StorageUsage(user_id=user.id, used_bytes=100))
         db.session.commit()
-
-        # record_upload 内の最初の UPDATE のみ rowcount=0 に偽装し、
-        # SAVEPOINT 内の INSERT で実際に UNIQUE 違反が発火する経路を通す
-        real_execute = db.session.execute
-        call_count = {"n": 0}
-
-        def fake_execute(stmt, *args, **kwargs):
-            call_count["n"] += 1
-            # 最初の record_upload 内 UPDATE のみ rowcount=0
-            if call_count["n"] == 1:
-                class FakeResult:
-                    rowcount = 0
-                return FakeResult()
-            return real_execute(stmt, *args, **kwargs)
-
-        monkeypatch.setattr(db.session, "execute", fake_execute)
 
         with app.app_context():
             voucher = create_voucher_from_upload(
@@ -181,15 +167,27 @@ class TestSavepointIsolationOnRaceCondition:
                 image_bytes=b"x" * 5000,
                 mime_type="image/png",
             )
-            db.session.commit()
 
-            # Voucher が SAVEPOINT 隔離により残っている (rollback で消えてない)
+            # Voucher は単一トランザクション内で永続化されている
             assert Voucher.query.count() == 1
             assert Voucher.query.first().id == voucher.id
 
-            # StorageUsage はフォールバック UPDATE で加算 (100 + 5000)
+            # ON CONFLICT DO UPDATE で 100 + 5000 = 5100
             usage = db.session.get(StorageUsage, user.id)
             assert usage.used_bytes == 5100
+
+    def test_repeated_record_upload_for_same_user_does_not_raise(
+        self, app, db, user, monkeypatch
+    ):
+        """同じ user_id への複数回 record_upload が UNIQUE 違反にならない."""
+        from app.services.storage_quota import record_upload
+
+        with app.app_context():
+            record_upload(user, 100)
+            record_upload(user, 200)
+            record_upload(user, 300)
+            usage = db.session.get(StorageUsage, user.id)
+            assert usage.used_bytes == 600
 
 
 class TestLv2AuditorBlockedFromAttach:

@@ -435,3 +435,44 @@ def register_cli(app):
 
         prefix = "[DRY RUN] " if dry_run else ""
         print(f"{prefix}サムネイル生成: {generated}件, スキップ: {skipped}件, エラー: {errors}件")
+
+    @app.cli.command("storage-audit")
+    @click.option(
+        "--fix", is_flag=True,
+        help="StorageUsage の drift を実測値で上書き修正する",
+    )
+    def storage_audit_command(fix):
+        """ストレージ整合性監査 (Phase 5 #70)。
+
+        ``file_size`` NULL の Voucher / AIDraft をストレージから実測して
+        埋め、``StorageUsage`` の集計値と実測合計の drift を検出する。
+        ``--fix`` で drift を実測値に同期する。
+        """
+        from app.services.storage_audit import (
+            audit_storage_usage, backfill_file_sizes,
+        )
+
+        print("=== file_size backfill ===")
+        bf = backfill_file_sizes()
+        print(
+            f"Voucher backfilled: {bf['voucher_backfilled']}, "
+            f"AIDraft backfilled: {bf['draft_backfilled']}, "
+            f"Errors: {len(bf['errors'])}"
+        )
+        for e in bf["errors"][:10]:
+            print(f"  ERROR: {e}")
+
+        print()
+        print("=== StorageUsage drift audit ===")
+        au = audit_storage_usage(fix=fix)
+        prefix = "[FIX] " if fix else "[DRY] "
+        print(
+            f"{prefix}Users checked: {au['users_checked']}, "
+            f"Drift detected: {au['drift_detected']}, "
+            f"Drift fixed: {au['drift_fixed']}"
+        )
+        for d in au["drifts"][:10]:
+            print(
+                f"  user={d['user_id']}: measured={d['measured']} "
+                f"recorded={d['recorded']} delta={d['delta']:+d}"
+            )

@@ -55,7 +55,7 @@ def upload():
     # のため、削除と同時に record_delete で StorageUsage を減算する。
     # file_size NULL のレガシードラフトは減算対象外。
     sizes_to_release = sum(
-        d.file_size or 0 for d in temp_drafts if d.file_size
+        d.file_size for d in temp_drafts if d.file_size
     )
     for d in temp_drafts:
         db.session.delete(d)
@@ -144,10 +144,20 @@ def analyze():
     draft.image_key = key
     db.session.commit()
 
-    # 容量加算 (アトミック UPDATE) + TOCTOU 楽観的再検証。
+    # 容量加算 (ON CONFLICT upsert) + TOCTOU 楽観的再検証。
     # create_voucher_from_upload と同じパターン: 並行アップロードで合算が
     # 上限超過なら巻き戻し (ストレージ削除 + draft 削除 + record_delete)。
-    record_upload(owner, size)
+    # Draft は既に commit 済のため、record_upload の例外で 500 を返すと
+    # 「Draft は永続化されたのに容量計上されない」quota リークが発生する。
+    # 明示的に握ってログに残し、整合性監査バッチで補完する設計とする。
+    try:
+        record_upload(owner, size)
+    except Exception as e:
+        from flask import current_app
+        current_app.logger.exception(
+            "ai_journal: record_upload failed (user=%d size=%d): %s",
+            owner.id, size, e,
+        )
     if get_used_bytes(owner) > get_quota_bytes(owner):
         from flask import current_app
         storage = get_storage_backend()
