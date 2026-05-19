@@ -138,7 +138,17 @@ def create_voucher_from_upload(
         VoucherAuditLog.query.filter_by(voucher_id=voucher.id).delete()
         db.session.delete(voucher)
         db.session.commit()
-        record_delete(user, size)
+        # record_delete が例外を投げても呼出側 (attach view) が
+        # QuotaExceededError を catch できるよう保護する。
+        # StorageUsage の過剰計上分は整合性監査バッチで検出・修正される
+        # 前提 (次 PR で suppress_commit 単一トランザクション化で根治)。
+        try:
+            record_delete(user, size)
+        except Exception as e:
+            current_app.logger.exception(
+                "rollback: record_delete failed for user_id=%d size=%d: %s",
+                user.id, size, e,
+            )
         raise QuotaExceededError(
             "並行アップロードにより容量上限を超えました。再試行してください。"
         )
