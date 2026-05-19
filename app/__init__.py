@@ -269,6 +269,71 @@ def register_cli(app):
 
     import click
 
+    @app.cli.command("notify-terms-update")
+    @click.option("--dry-run", is_flag=True, help="送信せず対象一覧のみ表示")
+    @click.option("--limit", type=int, default=None, help="送信件数の上限")
+    def notify_terms_update_command(dry_run, limit):
+        """規約改訂通知メールを一括送信 (Phase 6 #71)。
+
+        `accepted_terms_version` が `CURRENT_TERMS_VERSION` と一致しない
+        メール登録済ユーザー全員にお知らせを送る。運用者が規約改訂
+        後にトリガーする想定。
+        """
+        from flask import url_for
+        from sqlalchemy import or_
+        from app.models.user import User
+        current_version = app.config.get("CURRENT_TERMS_VERSION", "")
+        if not current_version:
+            print("CURRENT_TERMS_VERSION が未設定のため通知をスキップしました。")
+            return
+
+        query = User.query.filter(
+            User.email.is_not(None),
+            User.email != "",
+            or_(
+                User.accepted_terms_version != current_version,
+                User.accepted_terms_version.is_(None),
+            ),
+        ).order_by(User.id)
+        if limit:
+            query = query.limit(limit)
+        targets = query.all()
+
+        print(f"対象ユーザー: {len(targets)} 件 (現バージョン: {current_version})")
+        if dry_run:
+            for u in targets:
+                cur = u.accepted_terms_version or "NULL"
+                print(f"  [dry-run] {u.id}: {u.username} <{u.email}> (現: {cur})")
+            return
+
+        from app.services.mail import send_email
+        sent = 0
+        failed = 0
+        if not app.config.get("SERVER_NAME"):
+            print("[warn] SERVER_NAME 未設定: メール本文の URL が "
+                  "http://localhost/... になります。")
+        with app.test_request_context():
+            terms_url = url_for("legal.show", slug="terms", _external=True)
+            privacy_url = url_for("legal.show", slug="privacy", _external=True)
+            for u in targets:
+                try:
+                    send_email(
+                        u.email,
+                        "terms_update",
+                        {
+                            "username": u.username,
+                            "new_version": current_version,
+                            "terms_url": terms_url,
+                            "privacy_url": privacy_url,
+                        },
+                        raise_on_send_error=True,
+                    )
+                    sent += 1
+                except Exception as e:
+                    print(f"  [warn] {u.id} <{u.email}>: {e}")
+                    failed += 1
+        print(f"送信完了: 成功 {sent} 件 / 失敗 {failed} 件")
+
     @app.cli.command("auto-import")
     @click.option("--user-id", type=int, default=None, help="指定ユーザーのみ実行")
     @click.option("--dry-run", is_flag=True, help="DB変更なしで動作確認")
