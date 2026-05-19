@@ -11,6 +11,7 @@
 """
 
 from flask import current_app
+from sqlalchemy import case, update
 
 from app.extensions import db
 from app.models.storage import StorageUsage
@@ -22,7 +23,12 @@ class QuotaExceededError(Exception):
 
 
 def get_quota_bytes(user) -> int:
-    """ユーザーの容量上限 (bytes)."""
+    """ユーザーの容量上限 (bytes)。
+
+    現状は全ユーザー共通の `STORAGE_QUOTA_BYTES_DEFAULT` 値を返す。
+    将来 `storage_extra` 等の追加プランで per-user 上限を実装する場合の
+    拡張点として `user` 引数を保持している。
+    """
     return int(
         current_app.config.get(
             "STORAGE_QUOTA_BYTES_DEFAULT", 500 * 1024 * 1024
@@ -38,7 +44,12 @@ def get_used_bytes(user) -> int:
 
 def check_quota(user, incoming_size: int) -> None:
     """容量チェック。`voucher_storage` 未契約か上限超過で
-    `QuotaExceededError` を送出する。"""
+    `QuotaExceededError` を送出する。
+
+    本関数は事前判定のみで並行リクエスト下では TOCTOU レースが残る。
+    最終的な整合性は `record_upload` 側のアトミック UPDATE と
+    呼出側で記録後に上限を再検証する楽観的パターンで担保すること。
+    """
     if not has_entitlement(user, "voucher_storage"):
         raise QuotaExceededError(
             "証憑画像の永続保管には有償プラン (voucher_storage) が必要です。"
@@ -54,20 +65,45 @@ def check_quota(user, incoming_size: int) -> None:
 
 
 def record_upload(user, size: int) -> None:
-    """アップロード成功後の使用量加算 (commit する)."""
-    row = db.session.get(StorageUsage, user.id)
-    if row is None:
-        row = StorageUsage(user_id=user.id, used_bytes=size)
-        db.session.add(row)
-    else:
-        row.used_bytes += size
+    """アップロード成功後の使用量加算。
+
+    `UPDATE ... SET used_bytes = used_bytes + :size` のアトミック更新で、
+    並行リクエスト下でも加算が消失しない。レコードが存在しない場合は
+    新規 INSERT (`rowcount == 0` で判定)。
+    """
+    if size <= 0:
+        raise ValueError(f"size must be positive, got {size}")
+    result = db.session.execute(
+        update(StorageUsage)
+        .where(StorageUsage.user_id == user.id)
+        .values(used_bytes=StorageUsage.used_bytes + size)
+    )
+    if result.rowcount == 0:
+        db.session.add(StorageUsage(user_id=user.id, used_bytes=size))
     db.session.commit()
 
 
 def record_delete(user, size: int) -> None:
-    """削除後の使用量減算 (0 未満にはしない)."""
-    row = db.session.get(StorageUsage, user.id)
-    if row is None:
-        return
-    row.used_bytes = max(0, row.used_bytes - size)
+    """削除後の使用量減算 (0 未満にはしない)。
+
+    `CASE WHEN used_bytes >= :size THEN used_bytes - :size ELSE 0 END`
+    で SQLite/PostgreSQL の両方で動くアトミック更新。レコードがない
+    ケースは整合性異常の可能性があるため warning ログを残す。
+    """
+    if size <= 0:
+        raise ValueError(f"size must be positive, got {size}")
+    result = db.session.execute(
+        update(StorageUsage)
+        .where(StorageUsage.user_id == user.id)
+        .values(used_bytes=case(
+            (StorageUsage.used_bytes >= size,
+             StorageUsage.used_bytes - size),
+            else_=0,
+        ))
+    )
+    if result.rowcount == 0:
+        current_app.logger.warning(
+            "record_delete called for user_id=%s but StorageUsage row "
+            "does not exist (size=%d)", user.id, size,
+        )
     db.session.commit()

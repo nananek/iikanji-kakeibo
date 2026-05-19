@@ -132,7 +132,54 @@ class TestRecordDelete:
         row = db.session.get(StorageUsage, user.id)
         assert row.used_bytes == 0
 
-    def test_no_op_when_no_record(self, app, db, user):
+    def test_no_op_when_no_record(self, app, db, user, caplog):
+        import logging
         with app.app_context():
-            record_delete(user, size=100)
+            with caplog.at_level(logging.WARNING):
+                record_delete(user, size=100)
         assert db.session.get(StorageUsage, user.id) is None
+        # 整合性異常検知のための warning ログ
+        assert any("does not exist" in r.message for r in caplog.records)
+
+
+class TestPositiveSizeValidation:
+    """size <= 0 は ValueError"""
+
+    @pytest.mark.parametrize("size", [0, -1, -100])
+    def test_record_upload_rejects_non_positive(self, app, user, size):
+        with app.app_context():
+            with pytest.raises(ValueError, match="size must be positive"):
+                record_upload(user, size=size)
+
+    @pytest.mark.parametrize("size", [0, -1, -100])
+    def test_record_delete_rejects_non_positive(self, app, user, size):
+        with app.app_context():
+            with pytest.raises(ValueError, match="size must be positive"):
+                record_delete(user, size=size)
+
+
+class TestAtomicUpdate:
+    """アトミック UPDATE (read-modify-write の消失を防ぐ)"""
+
+    def test_upload_increments_via_sql_update(self, app, db, user):
+        """`db.session.get(...).used_bytes = X; commit()` ではなく
+        SQL UPDATE で加算されるため、別セッションの値変更があっても
+        消失しないことを示す簡易検証。"""
+        # 事前にレコードあり
+        db.session.add(StorageUsage(user_id=user.id, used_bytes=100))
+        db.session.commit()
+
+        with app.app_context():
+            record_upload(user, size=50)
+
+        # 加算後の値
+        row = db.session.get(StorageUsage, user.id)
+        assert row.used_bytes == 150
+
+    def test_delete_decrements_via_sql_update(self, app, db, user):
+        db.session.add(StorageUsage(user_id=user.id, used_bytes=500))
+        db.session.commit()
+        with app.app_context():
+            record_delete(user, size=200)
+        row = db.session.get(StorageUsage, user.id)
+        assert row.used_bytes == 300
