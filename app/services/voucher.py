@@ -112,7 +112,15 @@ def create_voucher_from_upload(
     #    も永続化されている。これらを明示的に削除して commit し直す。
     if get_used_bytes(user) > get_quota_bytes(user):
         from flask import current_app
-        record_delete(user, size)
+        # 巻き戻し順序 (失敗時の状態を「過剰計上 < ゾンビ Voucher」に
+        # 倒す):
+        # ① ストレージ削除 (best-effort)
+        # ② VoucherAuditLog + Voucher を 1 トランザクションで delete
+        # ③ record_delete で StorageUsage 減算 (内部で commit)
+        # ②が失敗した場合は record_delete は走らず StorageUsage が過剰
+        # 計上で残るが、ゾンビ Voucher は発生しない。Phase 5 続編で
+        # record_upload/record_delete の commit 制御 (suppress_commit)
+        # を入れて単一トランザクション化する予定。
         backend = get_storage_backend()
         for k in (key, make_thumbnail_key(key)):
             try:
@@ -128,6 +136,7 @@ def create_voucher_from_upload(
         VoucherAuditLog.query.filter_by(voucher_id=voucher.id).delete()
         db.session.delete(voucher)
         db.session.commit()
+        record_delete(user, size)
         raise QuotaExceededError(
             "並行アップロードにより容量上限を超えました。再試行してください。"
         )

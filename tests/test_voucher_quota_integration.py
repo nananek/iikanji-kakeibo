@@ -140,6 +140,42 @@ class TestTOCTOURollback:
         assert usage.used_bytes == 5001  # 10001 - 5000
 
 
+class TestLv2AuditorBlockedFromAttach:
+    """Lv2 監査者は vouchers.attach を呼べない (権限バイパス防止)"""
+
+    def test_lv2_acting_auditor_redirected(
+        self, db, client, user, accounts, auditor
+    ):
+        from app.models.audit import AuditGrant
+        grant = AuditGrant(
+            owner_user_id=user.id, auditor_user_id=auditor.id,
+            permission_level=2,
+        )
+        db.session.add(grant)
+        db.session.commit()
+
+        entry = _make_entry(db, user, accounts)
+
+        with client.session_transaction() as sess:
+            sess["_user_id"] = str(auditor.id)
+            sess["acting_as_user_id"] = user.id
+            sess["acting_as_permission_level"] = 2
+
+        import io
+        resp = client.post(
+            f"/vouchers/attach/{entry.id}",
+            data={
+                "image": (io.BytesIO(b"x" * 100), "test.png", "image/png"),
+            },
+            content_type="multipart/form-data",
+            follow_redirects=False,
+        )
+        # Lv2 は attach 禁止 → ダッシュボードにリダイレクト
+        assert resp.status_code in (302, 303)
+        # Voucher は作成されていない
+        assert Voucher.query.count() == 0
+
+
 class TestAttachEndpointQuota:
     def test_attach_returns_413_when_quota_exceeded(
         self, db, logged_in_client, user, accounts, monkeypatch
