@@ -163,13 +163,17 @@ def attach(entry_id):
             "error": "対応していないファイル形式です。JPEG/PNG/WebP/GIF を使用してください。",
         }), 400
 
-    voucher = create_voucher_from_upload(
-        user_id=user_id,
-        journal_entry_id=entry.id,
-        image_bytes=image_bytes,
-        mime_type=mime_type,
-        original_filename=image_file.filename,
-    )
+    from app.services.storage_quota import QuotaExceededError
+    try:
+        voucher = create_voucher_from_upload(
+            user_id=user_id,
+            journal_entry_id=entry.id,
+            image_bytes=image_bytes,
+            mime_type=mime_type,
+            original_filename=image_file.filename,
+        )
+    except QuotaExceededError as exc:
+        return jsonify({"error": str(exc)}), 413
 
     response_data = {"ok": True, "voucher_id": voucher.id}
 
