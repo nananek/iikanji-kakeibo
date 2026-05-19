@@ -11,7 +11,7 @@
 """
 
 from flask import current_app
-from sqlalchemy import case, update
+from sqlalchemy import case, func, update
 
 from app.extensions import db
 from app.models.storage import StorageUsage
@@ -76,7 +76,12 @@ def record_upload(user, size: int) -> None:
     result = db.session.execute(
         update(StorageUsage)
         .where(StorageUsage.user_id == user.id)
-        .values(used_bytes=StorageUsage.used_bytes + size)
+        .values(
+            used_bytes=StorageUsage.used_bytes + size,
+            # Core UPDATE は ORM の `onupdate` フックをバイパスするため
+            # ここで明示的に更新する。SQLite/PostgreSQL 共通動作。
+            updated_at=func.now(),
+        )
     )
     if result.rowcount == 0:
         db.session.add(StorageUsage(user_id=user.id, used_bytes=size))
@@ -95,11 +100,14 @@ def record_delete(user, size: int) -> None:
     result = db.session.execute(
         update(StorageUsage)
         .where(StorageUsage.user_id == user.id)
-        .values(used_bytes=case(
-            (StorageUsage.used_bytes >= size,
-             StorageUsage.used_bytes - size),
-            else_=0,
-        ))
+        .values(
+            used_bytes=case(
+                (StorageUsage.used_bytes >= size,
+                 StorageUsage.used_bytes - size),
+                else_=0,
+            ),
+            updated_at=func.now(),
+        )
     )
     if result.rowcount == 0:
         current_app.logger.warning(

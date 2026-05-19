@@ -158,6 +158,51 @@ class TestPositiveSizeValidation:
                 record_delete(user, size=size)
 
 
+class TestUpdatedAtTracking:
+    """Core UPDATE 経由でも `updated_at` が確実に更新される"""
+
+    def test_record_upload_bumps_updated_at(self, app, db, user):
+        import time
+        from datetime import datetime
+        # 古い updated_at で 1 行作る
+        old_ts = datetime(2025, 1, 1)
+        db.session.add(StorageUsage(
+            user_id=user.id, used_bytes=100, updated_at=old_ts,
+        ))
+        db.session.commit()
+
+        time.sleep(0.01)  # 確実に時刻が進むよう微小スリープ
+        with app.app_context():
+            record_upload(user, size=50)
+
+        row = db.session.get(StorageUsage, user.id)
+        assert row.used_bytes == 150
+        # SQLite は DateTime(timezone=True) でも tz-naive で読み出すので、
+        # 比較前に naive に揃える。
+        actual = row.updated_at.replace(tzinfo=None) if row.updated_at.tzinfo else row.updated_at
+        assert actual > old_ts
+
+    def test_record_delete_bumps_updated_at(self, app, db, user):
+        import time
+        from datetime import datetime
+        old_ts = datetime(2025, 1, 1)
+        db.session.add(StorageUsage(
+            user_id=user.id, used_bytes=500, updated_at=old_ts,
+        ))
+        db.session.commit()
+
+        time.sleep(0.01)
+        with app.app_context():
+            record_delete(user, size=200)
+
+        row = db.session.get(StorageUsage, user.id)
+        assert row.used_bytes == 300
+        # SQLite は DateTime(timezone=True) でも tz-naive で読み出すので、
+        # 比較前に naive に揃える。
+        actual = row.updated_at.replace(tzinfo=None) if row.updated_at.tzinfo else row.updated_at
+        assert actual > old_ts
+
+
 class TestAtomicUpdate:
     """アトミック UPDATE (read-modify-write の消失を防ぐ)"""
 
