@@ -24,7 +24,10 @@ def _patch_entitlement(monkeypatch, *, has_voucher_storage: bool):
     monkeypatch.setattr(ent, "get_billing_client", lambda: Client())
 
 
-def _make_entry(db, user, accounts):
+def _make_entry(db, user):
+    """テスト用の単純な仕訳を作成 (1010/5010 = 1000 円)。
+
+    `accounts` fixture でユーザーの科目が投入済の前提で呼ぶ。"""
     from tests.conftest import make_journal
     return make_journal(
         db, user.id, "1010", "5010", 1000,
@@ -36,7 +39,7 @@ class TestCreateVoucherQuotaCheck:
         self, app, db, user, accounts, monkeypatch
     ):
         _patch_entitlement(monkeypatch, has_voucher_storage=False)
-        entry = _make_entry(db, user, accounts)
+        entry = _make_entry(db, user)
         with app.app_context():
             with pytest.raises(QuotaExceededError, match="有償プラン"):
                 create_voucher_from_upload(
@@ -55,7 +58,7 @@ class TestCreateVoucherQuotaCheck:
         self, app, db, user, accounts, tmp_path, monkeypatch
     ):
         monkeypatch.setitem(app.config, "STORAGE_LOCAL_DIR", str(tmp_path))
-        entry = _make_entry(db, user, accounts)
+        entry = _make_entry(db, user)
         with app.app_context():
             voucher = create_voucher_from_upload(
                 user_id=user.id,
@@ -76,7 +79,7 @@ class TestCreateVoucherQuotaCheck:
         # 既に 900 bytes 使用済
         db.session.add(StorageUsage(user_id=user.id, used_bytes=900))
         db.session.commit()
-        entry = _make_entry(db, user, accounts)
+        entry = _make_entry(db, user)
 
         with app.app_context():
             with pytest.raises(QuotaExceededError, match="容量上限"):
@@ -101,7 +104,7 @@ class TestTOCTOURollback:
     ):
         monkeypatch.setitem(app.config, "STORAGE_LOCAL_DIR", str(tmp_path))
         monkeypatch.setitem(app.config, "STORAGE_QUOTA_BYTES_DEFAULT", 10000)
-        entry = _make_entry(db, user, accounts)
+        entry = _make_entry(db, user)
 
         # `record_upload` の中身を「加算後にさらに別リクエストが容量を埋めた」
         # 状況に差し替える。`real_record_upload` で加算 → 直後に上限直上まで
@@ -149,7 +152,7 @@ class TestSavepointIsolationOnRaceCondition:
         self, app, db, user, accounts, tmp_path, monkeypatch
     ):
         monkeypatch.setitem(app.config, "STORAGE_LOCAL_DIR", str(tmp_path))
-        entry = _make_entry(db, user, accounts)
+        entry = _make_entry(db, user)
 
         # 先に別リクエストが INSERT 済の状態を再現
         db.session.add(StorageUsage(user_id=user.id, used_bytes=100))
@@ -203,7 +206,7 @@ class TestLv2AuditorBlockedFromAttach:
         db.session.add(grant)
         db.session.commit()
 
-        entry = _make_entry(db, user, accounts)
+        entry = _make_entry(db, user)
 
         with client.session_transaction() as sess:
             sess["_user_id"] = str(auditor.id)
@@ -230,7 +233,7 @@ class TestAttachEndpointQuota:
         self, db, logged_in_client, user, accounts, monkeypatch
     ):
         _patch_entitlement(monkeypatch, has_voucher_storage=False)
-        entry = _make_entry(db, user, accounts)
+        entry = _make_entry(db, user)
 
         import io
         resp = logged_in_client.post(

@@ -57,9 +57,9 @@ def create_voucher_from_upload(
 ) -> Voucher:
     """画像バイト列から直接 Voucher を作成して仕訳に紐付ける。
 
-    呼び出し元で `db.session.commit()` すること。`QuotaExceededError`
-    送出時は本関数内でストレージ/DB の副作用を全て巻き戻してから
-    raise するため、呼び出し側は HTTP エラー (413) を返すだけでよい。
+    `QuotaExceededError` 送出時は本関数内でストレージ/DB の副作用を
+    全て巻き戻してから raise するため、呼び出し側は HTTP エラー (413)
+    を返すだけでよい。
 
     フロー (Phase 5 #70 / TOCTOU 楽観的再検証パターン):
 
@@ -67,6 +67,13 @@ def create_voucher_from_upload(
     2. Voucher を DB に追加 + ストレージへ画像書き込み
     3. `record_upload(user, size)` で容量加算 (アトミック UPDATE)
     4. 並行アップロードと合算して上限超過なら巻き戻し + 例外
+
+    NOTE: `record_upload` の内部 `db.session.commit()` により、戻り値を
+    受け取った時点で Voucher は既に永続化されている。呼び出し元の
+    `db.session.commit()` は冪等な操作になる
+    (`create_voucher_from_draft` は内部 commit を行わないため非対称)。
+    Phase 5 続編で `record_upload`/`record_delete` の `suppress_commit`
+    対応時に解消予定。
     """
     size = len(image_bytes)
     user = db.session.get(User, user_id)
