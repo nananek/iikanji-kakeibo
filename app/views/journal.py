@@ -738,6 +738,8 @@ def create_api():
 
 def log_voucher_orphan(entry, user_id):
     """仕訳削除前に紐づく証憑の孤立化ログを記録する。"""
+    # 論理削除済も含めて orphan ログを残す (削除済 Voucher の AuditLog も
+    # 「仕訳が消えた」事実を追記すべき。電帳法の連環的な証跡保全)
     vouchers = Voucher.query.filter_by(journal_entry_id=entry.id).all()
     for v in vouchers:
         db.session.add(VoucherAuditLog(

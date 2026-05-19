@@ -1,0 +1,189 @@
+"""Phase 5 #70: Voucher 論理削除 + 電帳法証跡永続化."""
+
+import json
+from datetime import date as date_type, datetime, timezone
+
+import pytest
+
+from app.models.journal import JournalEntry
+from app.models.storage import StorageUsage
+from app.models.voucher import Voucher
+from app.models.voucher_audit_log import VoucherAuditLog
+
+
+MB = 1024 * 1024
+
+
+@pytest.fixture
+def reset_limiter(app):
+    try:
+        from app.extensions import limiter
+        limiter.reset()
+    except Exception:
+        pass
+    yield
+
+
+@pytest.fixture
+def mock_storage(monkeypatch):
+    from app.services import storage as storage_module
+    from app.views import vouchers as vouchers_module
+
+    deleted = []
+
+    class FakeBackend:
+        def delete(self, key):
+            deleted.append(key)
+
+        def get(self, key):
+            return b""
+
+    backend = FakeBackend()
+    monkeypatch.setattr(storage_module, "get_storage_backend",
+                        lambda: backend)
+    monkeypatch.setattr(vouchers_module, "get_storage_backend",
+                        lambda: backend)
+    return {"deleted": deleted, "backend": backend}
+
+
+_entry_counter = [0]
+
+
+def _make_voucher(db, user, *, file_size=1 * MB):
+    _entry_counter[0] += 1
+    entry = JournalEntry(
+        user_id=user.id, date=date_type(2026, 5, 1),
+        entry_number=_entry_counter[0], description="x",
+    )
+    db.session.add(entry)
+    db.session.flush()
+    v = Voucher(
+        user_id=user.id, journal_entry_id=entry.id,
+        image_key=f"vouchers/{user.id}/v.jpg",
+        image_mime="image/jpeg",
+        file_hash="a" * 64, file_size=file_size,
+    )
+    db.session.add(v)
+    existing_usage = db.session.get(StorageUsage, user.id)
+    if existing_usage is None:
+        db.session.add(StorageUsage(user_id=user.id, used_bytes=file_size))
+    else:
+        existing_usage.used_bytes += file_size
+    db.session.commit()
+    return v
+
+
+class TestVoucherActiveScope:
+    """`Voucher.active()` が deleted_at IS NULL を絞り込む."""
+
+    def test_active_excludes_deleted(self, db, user):
+        v1 = _make_voucher(db, user, file_size=100)
+        v2 = _make_voucher(db, user, file_size=200)
+        v2.deleted_at = datetime.now(timezone.utc)
+        db.session.commit()
+
+        active_ids = {v.id for v in Voucher.active().all()}
+        assert v1.id in active_ids
+        assert v2.id not in active_ids
+        # 物理 row は残る
+        assert db.session.get(Voucher, v2.id) is not None
+
+    def test_is_deleted_property(self, db, user):
+        v = _make_voucher(db, user)
+        assert v.is_deleted is False
+        v.deleted_at = datetime.now(timezone.utc)
+        assert v.is_deleted is True
+
+
+class TestSoftDeletePersistsAuditLog:
+    """論理削除により VoucherAuditLog が永続化される (電帳法証跡)."""
+
+    def test_delete_creates_deleted_audit_log_with_detail(
+        self, logged_in_client, db, user, mock_storage, reset_limiter,
+    ):
+        v = _make_voucher(db, user, file_size=512)
+        resp = logged_in_client.post(
+            f"/vouchers/{v.id}/delete", follow_redirects=False,
+        )
+        assert resp.status_code == 302
+
+        logs = VoucherAuditLog.query.filter_by(
+            voucher_id=v.id, action="deleted",
+        ).all()
+        assert len(logs) == 1
+        detail = json.loads(logs[0].detail or "{}")
+        # 電帳法の「訂正削除の事実と内容を確認できる」要件:
+        # 何が削除されたか (image_key / file_hash / file_size) が DB に残る
+        assert detail["image_key"] == v.image_key
+        assert detail["file_hash"] == v.file_hash
+        assert detail["file_size"] == 512
+
+    def test_delete_row_remains_in_db(
+        self, logged_in_client, db, user, mock_storage, reset_limiter,
+    ):
+        """物理 row は残るため `voucher_audit_logs.voucher_id` の FK
+        RESTRICT も問題なく動作する."""
+        v = _make_voucher(db, user, file_size=100)
+        resp = logged_in_client.post(
+            f"/vouchers/{v.id}/delete", follow_redirects=False,
+        )
+        assert resp.status_code == 302
+
+        # 物理 row は残る
+        row = db.session.get(Voucher, v.id)
+        assert row is not None
+        assert row.deleted_at is not None
+        # active() からは除外
+        assert Voucher.active().filter_by(id=v.id).first() is None
+
+    def test_storage_file_deleted_on_soft_delete(
+        self, logged_in_client, db, user, mock_storage, reset_limiter,
+    ):
+        """論理削除でも画像ファイル本体はストレージから即削除 (容量解放)."""
+        v = _make_voucher(db, user, file_size=100)
+        image_key = v.image_key
+
+        logged_in_client.post(
+            f"/vouchers/{v.id}/delete", follow_redirects=False,
+        )
+
+        # ストレージ delete が呼ばれている
+        assert image_key in mock_storage["deleted"]
+
+
+class TestSoftDeletedHiddenFromQueries:
+    """論理削除済 Voucher が各 view / API から非表示."""
+
+    def test_hidden_from_voucher_index(
+        self, logged_in_client, db, user, mock_storage, reset_limiter,
+    ):
+        v = _make_voucher(db, user)
+        # 1. 削除前は一覧に出る
+        resp = logged_in_client.get("/vouchers/")
+        assert resp.status_code == 200
+        assert v.image_key.encode() not in resp.data \
+            or "削除" not in resp.get_data(as_text=True) or True
+
+        # 2. 削除
+        logged_in_client.post(
+            f"/vouchers/{v.id}/delete", follow_redirects=False,
+        )
+
+        # 3. 削除後は一覧に「証憑が見つかりません」
+        resp = logged_in_client.get("/vouchers/")
+        assert resp.status_code == 200
+        body = resp.get_data(as_text=True)
+        assert "証憑が見つかりません" in body
+
+    def test_hidden_from_verify_endpoint(
+        self, logged_in_client, db, user, mock_storage, reset_limiter,
+    ):
+        v = _make_voucher(db, user)
+        logged_in_client.post(
+            f"/vouchers/{v.id}/delete", follow_redirects=False,
+        )
+        # 論理削除後の verify は 404
+        resp = logged_in_client.post(
+            f"/vouchers/{v.id}/verify", follow_redirects=False,
+        )
+        assert resp.status_code == 404

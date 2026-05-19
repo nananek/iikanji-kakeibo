@@ -399,7 +399,8 @@ def register_cli(app):
         skipped = 0
         errors = 0
 
-        for v in Voucher.query.all():
+        # 論理削除済 (Phase 5 #70) は除外 (画像ファイルがもう存在しない)
+        for v in Voucher.active().all():
             thumb_key = make_thumbnail_key(v.image_key)
             if backend.exists(thumb_key):
                 skipped += 1

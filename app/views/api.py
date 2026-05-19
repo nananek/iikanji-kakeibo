@@ -556,7 +556,7 @@ def list_vouchers():
     per_page = min(request.args.get("per_page", 20, type=int), 100)
 
     query = (
-        Voucher.query
+        Voucher.active()
         .outerjoin(JournalEntry, Voucher.journal_entry_id == JournalEntry.id)
         .filter(Voucher.user_id == user_id)
     )
@@ -660,7 +660,7 @@ def list_vouchers():
 @api_key_required(scope="journals:read")
 def api_voucher_image(voucher_id):
     """証憑画像取得 API"""
-    voucher = Voucher.query.filter_by(
+    voucher = Voucher.active().filter_by(
         id=voucher_id, user_id=g.api_user_id
     ).first()
     if not voucher:
@@ -675,7 +675,7 @@ def api_voucher_image(voucher_id):
 @api_key_required(scope="journals:read")
 def api_voucher_verify(voucher_id):
     """証憑ハッシュ検証 API"""
-    voucher = Voucher.query.filter_by(
+    voucher = Voucher.active().filter_by(
         id=voucher_id, user_id=g.api_user_id
     ).first()
     if not voucher:
@@ -710,7 +710,11 @@ def api_voucher_verify(voucher_id):
 @bp.route("/vouchers/<int:voucher_id>/logs", methods=["GET"])
 @api_key_required(scope="journals:read")
 def api_voucher_logs(voucher_id):
-    """証憑操作ログ API"""
+    """証憑操作ログ API。
+
+    削除済 (`deleted_at` セット済) の Voucher にも引き続きアクセス可能。
+    電帳法の訂正削除証跡として、削除後にログを参照したい運用がある。
+    """
     voucher = Voucher.query.filter_by(
         id=voucher_id, user_id=g.api_user_id
     ).first()
