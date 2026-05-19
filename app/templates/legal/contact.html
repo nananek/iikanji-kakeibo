@@ -1,0 +1,62 @@
+{% extends "legal/_base.html" %}
+
+{% block legal_content %}
+<p class="text-muted small">
+  {{ operator.service_name }} へのお問い合わせは下記のフォームから送信して
+  ください。受信後、運営者よりご返信いたします (おおむね 5 営業日以内が
+  目安です)。
+</p>
+
+<form method="POST" class="mt-4">
+  {{ form.hidden_tag() }}
+
+  <div class="mb-3">
+    {{ form.name.label(class="form-label") }}
+    {{ form.name(class="form-control", required=true, maxlength=100) }}
+    {% for err in form.name.errors %}
+      <div class="text-danger small">{{ err }}</div>
+    {% endfor %}
+  </div>
+
+  <div class="mb-3">
+    {{ form.email.label(class="form-label") }}
+    {{ form.email(class="form-control", type="email", required=true, maxlength=200) }}
+    <div class="form-text">
+      返信用のメールアドレスです。確認用の自動返信メールが送信されます。
+    </div>
+    {% for err in form.email.errors %}
+      <div class="text-danger small">{{ err }}</div>
+    {% endfor %}
+  </div>
+
+  <div class="mb-3">
+    {{ form.subject_line.label(class="form-label") }}
+    {{ form.subject_line(class="form-control", maxlength=200) }}
+    {% for err in form.subject_line.errors %}
+      <div class="text-danger small">{{ err }}</div>
+    {% endfor %}
+  </div>
+
+  <div class="mb-3">
+    {{ form.message.label(class="form-label") }}
+    {{ form.message(class="form-control", rows=8, required=true, minlength=10, maxlength=5000) }}
+    <div class="form-text">10 文字以上 5000 文字以内でご記入ください。</div>
+    {% for err in form.message.errors %}
+      <div class="text-danger small">{{ err }}</div>
+    {% endfor %}
+  </div>
+
+  {% include "auth/_captcha_widget.html" %}
+
+  <button type="submit" class="btn btn-primary">{{ form.submit.label.text }}</button>
+</form>
+
+<hr class="my-4">
+<p class="text-muted small mb-0">
+  運営者: {{ operator.name }}<br>
+  {% if operator.email != '(未設定)' %}
+  メール: {{ operator.email }}<br>
+  {% endif %}
+  本フォームへの送信は IP アドレス単位で 1 時間あたり 5 回まで受付可能です。
+</p>
+{% endblock %}

@@ -65,6 +65,9 @@ def create_app(config_class=Config):
             # 相互リダイレクトで無限ループに陥らないよう許可。同意してから
             # 復旧フロー (パスキー再登録 + リカバリ再生成) に進む順序。
             "auth.accept_terms",
+            # 公開フォーム: 復旧中でも問い合わせ・法的文書閲覧を許可
+            "legal.show",
+            "legal.contact",
         }
         if endpoint in allowed_endpoints or endpoint.startswith("static"):
             return
@@ -129,8 +132,14 @@ def create_app(config_class=Config):
         if perm is None:
             return
         endpoint = request.endpoint or ""
-        # Static files, auth, and external API: always allow
-        if endpoint.startswith("static") or endpoint.startswith("auth.") or endpoint.startswith("api."):
+        # Static files, auth, external API, legal pages (contact 含む) は
+        # 監査権限制御の対象外 (公開ページ・お問い合わせは権限レベル問わず可)
+        if (
+            endpoint.startswith("static")
+            or endpoint.startswith("auth.")
+            or endpoint.startswith("api.")
+            or endpoint.startswith("legal.")
+        ):
             return
         # Auditor exit: always allow
         if endpoint == "auditor.exit_acting":
