@@ -391,8 +391,17 @@ def ai_analyze():
     draft.image_key = key
     db.session.commit()
 
-    # 容量加算 + TOCTOU 楽観的再検証 (create_voucher_from_upload と同じパターン)
-    record_upload(owner, size)
+    # 容量加算 + TOCTOU 楽観的再検証 (create_voucher_from_upload と同じパターン)。
+    # Draft は既に commit 済のため、record_upload の例外で 500 を返すと
+    # quota リークになる。明示的に握ってログに残し、整合性監査バッチで補完。
+    try:
+        record_upload(owner, size)
+    except Exception as e:
+        from flask import current_app
+        current_app.logger.exception(
+            "api ai/drafts: record_upload failed (user=%d size=%d): %s",
+            owner.id, size, e,
+        )
     if get_used_bytes(owner) > get_quota_bytes(owner):
         from flask import current_app
         storage = get_storage_backend()

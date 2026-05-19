@@ -12,7 +12,8 @@
 
 from flask import current_app
 from sqlalchemy import case, func, update
-from sqlalchemy.exc import IntegrityError as SAIntegrityError
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from app.extensions import db
 from app.models.storage import StorageUsage
@@ -118,64 +119,79 @@ def check_quota(user, incoming_size: int) -> None:
         )
 
 
-def record_upload(user, size: int) -> None:
-    """アップロード成功後の使用量加算。
+def _upsert_storage_usage(user_id: int, delta: int) -> None:
+    """`INSERT ... ON CONFLICT (user_id) DO UPDATE` で原子的に加算する。
 
-    `UPDATE ... SET used_bytes = used_bytes + :size` のアトミック更新で、
-    並行リクエスト下でも加算が消失しない。レコードが存在しない場合は
-    新規 INSERT (`rowcount == 0` で判定)。
+    PostgreSQL / SQLite 両方の native upsert を使うことで、SAVEPOINT +
+    IntegrityError fallback を退役させ、初回並行 INSERT 競合を完全に
+    排除する。`updated_at` は ORM の `onupdate` フックをバイパスする
+    ため、SET 句で明示的に `func.now()` を渡す。
+    """
+    dialect_name = db.session.get_bind().dialect.name
+    if dialect_name == "postgresql":
+        upsert = pg_insert
+    elif dialect_name == "sqlite":
+        upsert = sqlite_insert
+    else:
+        # 他 dialect (MySQL 等) は現状非サポート。フォールバックとして
+        # 純粋な UPDATE → 行が無ければ INSERT (best-effort) を残す。
+        result = db.session.execute(
+            update(StorageUsage)
+            .where(StorageUsage.user_id == user_id)
+            .values(
+                used_bytes=StorageUsage.used_bytes + delta,
+                updated_at=func.now(),
+            )
+        )
+        if result.rowcount == 0:
+            db.session.add(
+                StorageUsage(user_id=user_id, used_bytes=delta)
+            )
+        return
 
-    注意: 同一ユーザーの **初回** アップロードが並行する稀ケースで
-    `UPDATE → rowcount==0 → INSERT` の競合が起こり、後発リクエストが
-    UNIQUE 制約違反 (IntegrityError) になる可能性がある。PR #89 で
-    `attach` エンドポイント統合済のため、本番では `IntegrityError`
-    (HTTP 500) のリスクが残っている。後続 PR で PostgreSQL の
-    `INSERT ... ON CONFLICT (user_id) DO UPDATE` 化、または
-    SAVEPOINT + retry での共通 upsert ヘルパーに置き換える予定。
+    stmt = upsert(StorageUsage).values(
+        user_id=user_id, used_bytes=delta,
+    )
+    stmt = stmt.on_conflict_do_update(
+        index_elements=["user_id"],
+        set_={
+            "used_bytes": StorageUsage.__table__.c.used_bytes + stmt.excluded.used_bytes,
+            "updated_at": func.now(),
+        },
+    )
+    db.session.execute(stmt)
+
+
+def record_upload(user, size: int, *, suppress_commit: bool = False) -> None:
+    """アップロード成功後の使用量加算 (アトミック upsert)。
+
+    `INSERT ... ON CONFLICT (user_id) DO UPDATE SET used_bytes = used_bytes + :size`
+    で並行リクエスト下でも加算が消失せず、初回並行 INSERT 競合も発生
+    しない (PostgreSQL / SQLite 両対応)。SAVEPOINT + IntegrityError
+    fallback は退役。
+
+    Args:
+        suppress_commit: True のとき内部で `db.session.commit()` を呼ばない。
+            呼出側が Voucher INSERT などを同一トランザクションでまとめる
+            ときに使う (`create_voucher_from_upload` 等)。デフォルト False
+            は既存呼出側との後方互換。
     """
     if size <= 0:
         raise ValueError(f"size must be positive, got {size}")
-    result = db.session.execute(
-        update(StorageUsage)
-        .where(StorageUsage.user_id == user.id)
-        .values(
-            used_bytes=StorageUsage.used_bytes + size,
-            # Core UPDATE は ORM の `onupdate` フックをバイパスするため
-            # ここで明示的に更新する。SQLite/PostgreSQL 共通動作。
-            updated_at=func.now(),
-        )
-    )
-    if result.rowcount == 0:
-        # 初回アップロードが並行した場合の暫定対処: INSERT を SAVEPOINT で
-        # 囲み、UNIQUE 制約違反になったら SAVEPOINT までロールバックして
-        # アトミック UPDATE にフォールバック。`db.session.rollback()` を
-        # 使うと呼出側の未 commit な変更 (例: Voucher INSERT) まで巻き戻し
-        # てしまうため、`begin_nested()` でロールバック範囲を限定する。
-        # 根本対策 (`INSERT ... ON CONFLICT (user_id) DO UPDATE`) は後続 PR
-        # で対応予定。
-        try:
-            with db.session.begin_nested():
-                db.session.add(StorageUsage(user_id=user.id, used_bytes=size))
-            # 成功時は SAVEPOINT が自動 release される
-        except SAIntegrityError:
-            # SAVEPOINT までロールバック (外側のトランザクションは生きる)
-            db.session.execute(
-                update(StorageUsage)
-                .where(StorageUsage.user_id == user.id)
-                .values(
-                    used_bytes=StorageUsage.used_bytes + size,
-                    updated_at=func.now(),
-                )
-            )
-    db.session.commit()
+    _upsert_storage_usage(user.id, size)
+    if not suppress_commit:
+        db.session.commit()
 
 
-def record_delete(user, size: int) -> None:
+def record_delete(user, size: int, *, suppress_commit: bool = False) -> None:
     """削除後の使用量減算 (0 未満にはしない)。
 
     `CASE WHEN used_bytes >= :size THEN used_bytes - :size ELSE 0 END`
     で SQLite/PostgreSQL の両方で動くアトミック更新。レコードがない
     ケースは整合性異常の可能性があるため warning ログを残す。
+
+    Args:
+        suppress_commit: True のとき内部で `db.session.commit()` を呼ばない。
     """
     if size <= 0:
         raise ValueError(f"size must be positive, got {size}")
@@ -196,4 +212,5 @@ def record_delete(user, size: int) -> None:
             "record_delete called for user_id=%d but StorageUsage row "
             "does not exist (size=%d)", user.id, size,
         )
-    db.session.commit()
+    if not suppress_commit:
+        db.session.commit()

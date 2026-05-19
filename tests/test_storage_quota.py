@@ -229,46 +229,43 @@ class TestUpdatedAtTracking:
         assert actual > old_ts
 
 
-class TestConcurrentInsertFallback:
-    """初回 INSERT が並行リクエストで競合した場合のフォールバック."""
+class TestOnConflictUpsert:
+    """ON CONFLICT DO UPDATE upsert (SAVEPOINT パターン退役の代替)."""
 
-    def test_integrity_error_falls_back_to_update(
-        self, app, db, user, monkeypatch
+    def test_existing_row_atomically_incremented(
+        self, app, db, user
     ):
-        """`db.session.add` 直後の `flush` で IntegrityError を擬似発火
-        させ、アトミック UPDATE への自動フォールバックを検証する。"""
-        from sqlalchemy.exc import IntegrityError as SAIntegrityError
-
-        # 既に StorageUsage がある状態を作る (= 別リクエストが先に INSERT 済)
+        """既存 row への record_upload は ON CONFLICT で UPDATE される."""
         db.session.add(StorageUsage(user_id=user.id, used_bytes=100))
         db.session.commit()
 
-        # storage_quota.record_upload を直接呼ぶと UPDATE rowcount=1 で
-        # 通常パスに乗ってしまうので、最初の UPDATE を rowcount=0 で
-        # 上書きする状況を再現する: storage_quota.update 関数を patch
-        from app.services import storage_quota as sq
-
-        real_execute = db.session.execute
-        call_count = {"n": 0}
-
-        def fake_execute(stmt, *args, **kwargs):
-            # 最初の UPDATE 呼び出しのみ rowcount=0 のレスポンスを返す
-            class FakeResult:
-                rowcount = 0
-            call_count["n"] += 1
-            if call_count["n"] == 1:
-                return FakeResult()
-            return real_execute(stmt, *args, **kwargs)
-
-        monkeypatch.setattr(db.session, "execute", fake_execute)
-
         with app.app_context():
-            sq.record_upload(user, size=50)
+            record_upload(user, size=50)
 
-        # フォールバック UPDATE で +50 加算され、最終的に 150 になる
-        # (擬似発火のため flow が複雑だが、最終状態が正しいことを確認)
         row = db.session.get(StorageUsage, user.id)
         assert row.used_bytes == 150
+
+    def test_repeated_upload_no_unique_violation(self, app, db, user):
+        """同じ user_id への複数回 record_upload で UNIQUE 違反が起きない."""
+        with app.app_context():
+            record_upload(user, size=100)
+            record_upload(user, size=200)
+            record_upload(user, size=300)
+        row = db.session.get(StorageUsage, user.id)
+        assert row.used_bytes == 600
+
+    def test_suppress_commit_keeps_changes_in_transaction(
+        self, app, db, user
+    ):
+        """`suppress_commit=True` のとき commit せず、呼出側が rollback できる."""
+        with app.app_context():
+            record_upload(user, size=100, suppress_commit=True)
+            # 加算は flush 済だが commit はされていない
+            db.session.flush()
+            assert db.session.get(StorageUsage, user.id).used_bytes == 100
+            # 呼出側で rollback すれば加算も巻き戻る
+            db.session.rollback()
+            assert db.session.get(StorageUsage, user.id) is None
 
 
 class TestAtomicUpdate:
