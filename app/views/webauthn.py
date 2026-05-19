@@ -91,7 +91,7 @@ def register_verify():
         logger.warning("WebAuthn registration verification failed", exc_info=True)
         return jsonify(error="検証に失敗しました。もう一度お試しください。"), 400
 
-    transports = ",".join(body.get("response", {}).get("transports", []))
+    transports = " / ".join(body.get("response", {}).get("transports", []))
 
     credential = WebAuthnCredential(
         user_id=current_user.id,
@@ -104,11 +104,8 @@ def register_verify():
     db.session.add(credential)
     db.session.commit()
 
-    # パスキー追加のセキュリティ通知 (Phase 6 #71)。メールアドレス未登録
-    # ユーザーはスキップ。送信失敗は send_email 内で吸収するため本体
-    # フロー (パスキー登録自体) には波及しない。
+    # Phase 6 #71: 送信失敗は本体フロー (登録成功) に波及させない
     if current_user.email:
-        from datetime import datetime, timezone
         from app.services.mail import send_email
         send_email(
             current_user.email,

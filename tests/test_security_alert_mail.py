@@ -1,8 +1,4 @@
-"""パスキー追加検知時のセキュリティアラートメール (Phase 6 #71)。
-
-`webauthn.register_verify` でパスキー登録成功時に `send_email(
-"security_alert", ...)` が呼ばれることを確認。
-"""
+"""Phase 6 #71: webauthn.register_verify でのセキュリティアラート送信."""
 
 from unittest.mock import MagicMock, patch
 
@@ -31,18 +27,17 @@ def _post_register_verify(client, *, transports=("usb",), passkey_name="TestKey"
 
 class TestPasskeyAddedAlert:
     def test_alert_sent_on_success(self, db, logged_in_client, user, accounts, capsys):
-        resp = _post_register_verify(logged_in_client)
+        resp = _post_register_verify(logged_in_client, transports=("usb", "nfc"))
         assert resp.status_code == 200
 
         out = capsys.readouterr().out
-        # 監査招待と同じ ConsoleMailBackend ダンプの形式
         assert f"To:   {user.email}" in out
         assert "セキュリティ通知" in out
         assert "新しいパスキーが追加されました" in out
-        # context 注入確認
         assert user.username in out
         assert "TestKey" in out
-        assert "usb" in out
+        # transports は " / " 区切り
+        assert "usb / nfc" in out
 
     def test_alert_skipped_when_email_empty(
         self, db, client, accounts, capsys
