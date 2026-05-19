@@ -273,11 +273,20 @@ def delete(voucher_id):
                 "voucher delete: storage delete failed %s: %s", k, e,
             )
 
-    # 容量解放
+    # 容量解放 (best-effort)。Voucher 削除とストレージ削除は既に完了して
+    # いるため、record_delete の例外で HTTP 500 を返してしまうとユーザーは
+    # 「削除できたのか」判断できない。失敗はログに残し、整合性監査バッチ
+    # で StorageUsage のドリフトを補完する。
     if size_to_release > 0:
         owner = db.session.get(User, user_id)
         if owner is not None:
-            record_delete(owner, size_to_release)
+            try:
+                record_delete(owner, size_to_release)
+            except Exception as e:
+                current_app.logger.exception(
+                    "voucher delete: record_delete failed (user=%d size=%d): %s",
+                    user_id, size_to_release, e,
+                )
 
     flash("証憑を削除しました。", "info")
     return redirect(url_for("vouchers.index"))

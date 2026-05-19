@@ -108,7 +108,8 @@ def analyze():
     try:
         check_quota(owner, size)
     except QuotaExceededError as exc:
-        return jsonify({"error": str(exc)}), 413
+        # CodeQL py/stack-trace-exposure 対策で `exc.user_message` 経由 (PR #92)
+        return jsonify({"error": exc.user_message}), 413
 
     file_hash = hashlib.sha256(image_bytes).hexdigest()
     comment = request.form.get("comment", "").strip()

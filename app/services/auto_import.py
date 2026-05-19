@@ -216,7 +216,17 @@ def _process_file(source, provider, file_info, user_id, mime_type, dry_run, stat
         # 容量加算 (アトミック UPDATE)。auto_import では巻き戻し相当の
         # 即時 UX がないため、上限超過は次回サイクルで check_quota が
         # 弾く形で進行的に収束する。
-        record_upload(owner, size)
+        # Draft は既に commit 済のため、record_upload の失敗で外側の
+        # except に飛ぶと「Draft は永続化されたのに容量計上されない」
+        # quota リークが発生する。明示的に握り、ログに残して整合性
+        # 監査バッチで補完する設計とする。
+        try:
+            record_upload(owner, size)
+        except Exception as e:
+            logger.exception(
+                "auto_import: record_upload failed (user=%d size=%d): %s",
+                owner.id, size, e,
+            )
 
         stats["drafts_created"] += 1
         logger.info("Auto-imported: %s", file_info.path)
