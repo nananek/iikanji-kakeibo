@@ -58,7 +58,7 @@
         <tr>
           <td>
             {% if entry._modifiable %}
-            <input type="checkbox" class="form-check-input entry-cb" name="entry_ids" value="{{ entry.id }}" data-has-voucher="{{ 'true' if entry.vouchers else '' }}" @change="updateCount()">
+            <input type="checkbox" class="form-check-input entry-cb" name="entry_ids" value="{{ entry.id }}" data-has-voucher="{{ 'true' if entry.active_vouchers else '' }}" @change="updateCount()">
             {% endif %}
           </td>
           <td>{{ entry.entry_number }}</td>
@@ -82,8 +82,8 @@
             <span class="badge bg-info">出納帳</span>
             {% elif entry.source == 'ai_receipt' %}
             <span class="badge bg-success">AI</span>
-            {% if entry.vouchers %}
-            <a href="#" onclick="openImagePreview('{{ url_for('ai_journal.voucher_image', voucher_id=entry.vouchers[0].id) }}');return false"
+            {% if entry.active_vouchers %}
+            <a href="#" onclick="openImagePreview('{{ url_for('ai_journal.voucher_image', voucher_id=entry.active_vouchers[0].id) }}');return false"
                title="証憑画像" class="text-success"><i class="bi bi-image"></i></a>
             {% endif %}
             {% elif entry.source == 'csv' %}
@@ -110,7 +110,7 @@
               {% endif %}
               <button type="button" class="btn btn-outline-danger"
                       hx-post="{{ url_for('journal.delete', entry_id=entry.id) }}"
-                      hx-confirm="{{ 'この仕訳には証憑画像が紐づいています。削除すると証憑が未紐付けになります。削除しますか？' if entry.vouchers else 'この仕訳を削除しますか？' }}"
+                      hx-confirm="{{ 'この仕訳には証憑画像が紐づいています。削除すると証憑が未紐付けになります。削除しますか？' if entry.active_vouchers else 'この仕訳を削除しますか？' }}"
                       hx-target="closest tr" hx-swap="outerHTML swap:0.3s">
                 <i class="bi bi-trash"></i>
               </button>

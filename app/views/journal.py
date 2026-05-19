@@ -495,11 +495,11 @@ def get_json(entry_id):
         "fiscal_period": entry.fiscal_period,
         "is_readonly": is_readonly,
         "source": entry.source,
-        "has_voucher": len(entry.vouchers) > 0,
+        "has_voucher": len(entry.active_vouchers) > 0,
         "lines": lines,
         "vouchers": [
             {"id": v.id, "uploaded_at": v.uploaded_at.isoformat() if v.uploaded_at else None}
-            for v in entry.vouchers
+            for v in entry.active_vouchers
         ],
     })
 
@@ -738,6 +738,8 @@ def create_api():
 
 def log_voucher_orphan(entry, user_id):
     """仕訳削除前に紐づく証憑の孤立化ログを記録する。"""
+    # 論理削除済も含めて orphan ログを残す (削除済 Voucher の AuditLog も
+    # 「仕訳が消えた」事実を追記すべき。電帳法の連環的な証跡保全)
     vouchers = Voucher.query.filter_by(journal_entry_id=entry.id).all()
     for v in vouchers:
         db.session.add(VoucherAuditLog(

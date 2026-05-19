@@ -30,7 +30,10 @@ def backfill_file_sizes() -> dict:
         "errors": [],
     }
 
-    vouchers = Voucher.query.filter(Voucher.file_size.is_(None)).all()
+    # 論理削除済 (Phase 5 #70) は backfill 対象外。実体ファイルも消えている。
+    vouchers = (
+        Voucher.active().filter(Voucher.file_size.is_(None)).all()
+    )
     for v in vouchers:
         try:
             v.file_size = len(backend.get(v.image_key))
@@ -52,9 +55,13 @@ def backfill_file_sizes() -> dict:
 
 def measure_user_usage(user_id: int) -> int:
     """ユーザーの実測使用量 = Voucher.file_size 合計 + AIDraft.file_size 合計."""
+    # 論理削除済は StorageUsage 計上対象外 (削除時に record_delete で減算済)
     v_sum = db.session.query(
         sa_func.coalesce(sa_func.sum(Voucher.file_size), 0)
-    ).filter(Voucher.user_id == user_id).scalar() or 0
+    ).filter(
+        Voucher.user_id == user_id,
+        Voucher.deleted_at.is_(None),
+    ).scalar() or 0
     d_sum = db.session.query(
         sa_func.coalesce(sa_func.sum(AIDraft.file_size), 0)
     ).filter(AIDraft.user_id == user_id).scalar() or 0
