@@ -43,6 +43,35 @@ def get_used_bytes(user) -> int:
     return row.used_bytes if row else 0
 
 
+def get_storage_summary(user) -> dict:
+    """設定画面・残量表示 UI 向けのサマリを返す。
+
+    返り値:
+        - `used_bytes` / `quota_bytes`: 現在使用量 / 上限 (bytes)
+        - `used_mb` / `quota_mb`: 人間向け表示用 (小数 1 桁)
+        - `percentage`: 0〜100 の数値 (小数 1 桁)
+        - `level`: `"ok"` (<80%) / `"warning"` (80–95%) / `"critical"` (≥95%)
+    """
+    used = get_used_bytes(user)
+    quota = get_quota_bytes(user)
+    pct = round((used / quota) * 100, 1) if quota > 0 else 0
+    if pct >= 95:
+        level = "critical"
+    elif pct >= 80:
+        level = "warning"
+    else:
+        level = "ok"
+    mb = 1024 * 1024
+    return {
+        "used_bytes": used,
+        "quota_bytes": quota,
+        "used_mb": round(used / mb, 1),
+        "quota_mb": round(quota / mb, 1),
+        "percentage": pct,
+        "level": level,
+    }
+
+
 def check_quota(user, incoming_size: int) -> None:
     """容量チェック。`voucher_storage` 未契約か上限超過で
     `QuotaExceededError` を送出する。
