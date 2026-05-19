@@ -1,0 +1,1 @@
+[{{ config.MAIL_FROM_NAME }}] セキュリティ通知: {{ event_label }}

@@ -104,6 +104,28 @@ def register_verify():
     db.session.add(credential)
     db.session.commit()
 
+    # パスキー追加のセキュリティ通知 (Phase 6 #71)。メールアドレス未登録
+    # ユーザーはスキップ。送信失敗は send_email 内で吸収するため本体
+    # フロー (パスキー登録自体) には波及しない。
+    if current_user.email:
+        from datetime import datetime, timezone
+        from app.services.mail import send_email
+        send_email(
+            current_user.email,
+            "security_alert",
+            {
+                "username": current_user.username,
+                "event_type": "passkey_added",
+                "event_label": "新しいパスキーが追加されました",
+                "passkey_name": credential.name or "(無名)",
+                "transports": transports or "不明",
+                "event_at": datetime.now(timezone.utc)
+                    .strftime("%Y-%m-%d %H:%M:%S UTC"),
+                "client_ip": request.remote_addr or "不明",
+                "user_agent": request.headers.get("User-Agent", "") or "不明",
+            },
+        )
+
     # リカバリログイン後の強制復旧フロー: パスキーが新規登録され
     # かつ新リカバリコードも生成済みなら、pending 状態を解除する
     maybe_clear_pending_recovery(current_user, session)
