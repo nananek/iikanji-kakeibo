@@ -215,6 +215,12 @@ def accept_terms():
     リダイレクトされる。POST で同意確認 → 現行バージョンを記録。
     """
     current_version = current_app.config.get("CURRENT_TERMS_VERSION", "")
+    # 既に同意済のユーザーが直接 GET した場合はダッシュボードへ
+    if (
+        current_version
+        and current_user.accepted_terms_version == current_version
+    ):
+        return redirect(_safe_next_url(url_for("dashboard.index")))
     if request.method == "POST":
         if request.form.get("accept_terms"):
             current_user.accepted_terms_version = current_version
