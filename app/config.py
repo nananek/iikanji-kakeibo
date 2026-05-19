@@ -87,3 +87,11 @@ class Config:
     STORAGE_S3_REGION = os.environ.get("STORAGE_S3_REGION")
     STORAGE_S3_ACCESS_KEY = os.environ.get("STORAGE_S3_ACCESS_KEY")
     STORAGE_S3_SECRET_KEY = os.environ.get("STORAGE_S3_SECRET_KEY")
+
+    # 証憑画像のストレージクオータ (バイト)。`voucher_storage` 有償プラン
+    # 契約者の上限値。Phase 5 #70 のデフォルト 500 MB。セルフホスト運用
+    # では `UnlimitedBillingClient` で entitlement が常に True を返すため
+    # この上限のみが効く。
+    STORAGE_QUOTA_BYTES_DEFAULT = int(
+        os.environ.get("STORAGE_QUOTA_BYTES_DEFAULT", str(500 * 1024 * 1024))
+    )
