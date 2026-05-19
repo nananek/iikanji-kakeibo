@@ -17,9 +17,9 @@ from app.models.ai_draft import AIDraft
 from app.models.ai_usage_log import AIUsageLog
 from app.models.api_key import APIKey
 from app.models.audit import AuditGrant, AuditGrantAccount
-from app.models.auto_import import (
-    AutoImportSource, ProcessedFile, WebhookConfig,
-)
+# ProcessedFile は AutoImportSource 削除時に DB 側 ondelete=CASCADE で
+# 自動削除されるため明示削除不要 (未使用 import 整理、PR #97 Nit)。
+from app.models.auto_import import AutoImportSource, WebhookConfig
 from app.models.balance_cache import BalanceCache
 from app.models.csv_column_profile import CsvColumnProfile
 from app.models.fiscal import FiscalClose
@@ -112,14 +112,12 @@ def delete_user_account(user_id: int) -> None:
         )
     )
     db.session.flush()
-    # JournalEntryLine.account_user_id は ForeignKey 制約なしの独立カラム。
-    # 自分の account を参照する line を全削除 (相互参照のクリーンアップ)。
-    db.session.execute(
-        JournalEntryLine.__table__.delete().where(
-            JournalEntryLine.account_user_id == user_id
-        )
-    )
-    db.session.flush()
+    # NOTE: JournalEntryLine.account_user_id == user_id の二段目 DELETE は
+    # 旧実装で「相互参照のクリーンアップ」目的で行っていたが、コードベース
+    # 全体で `account_user_id` は親 `JournalEntry.user_id` と常に同値で
+    # 設定されており (accounting.py / journal.py / api.py すべて)、クロス
+    # ユーザー参照は設計上発生しない。上の subquery DELETE で全削除済の
+    # ため二段目は dead code。PR #97 review Medium 指摘で除去。
     # JournalEntry 本体を削除
     JournalEntry.query.filter_by(user_id=user_id).delete()
     db.session.flush()

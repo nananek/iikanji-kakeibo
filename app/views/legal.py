@@ -112,7 +112,7 @@ def contact():
         }
 
         # 1. 運営者宛通知 (MAIL_CONTACT_TO が空ならスキップ)
-        contact_to = current_app.config.get("MAIL_CONTACT_TO", "") or ""
+        contact_to = current_app.config.get("MAIL_CONTACT_TO", "")
         if contact_to:
             try:
                 send_email(contact_to, "contact_received_admin", context)

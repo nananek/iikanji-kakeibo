@@ -39,19 +39,23 @@ class JournalEntry(db.Model):
         ),
     )
 
-    @property
-    def active_vouchers(self):
-        """論理削除されていない vouchers のみを返す (Phase 5 #70 電帳法証跡)。
-
-        Voucher 削除を物理 → 論理 (`deleted_at` セット) に変更したため、
-        `self.vouchers` backref は削除済も含む全件を返す。UI / API では
-        削除済を含めると「証憑あり」と誤判定されたり、ai_journal.voucher_image
-        が 404 を返す不整合が発生するため、本プロパティ経由でフィルタする。
-
-        全件 (削除済含む) が必要な log_voucher_orphan / api_voucher_logs
-        などは `self.vouchers` を直接使うこと。
-        """
-        return [v for v in self.vouchers if v.deleted_at is None]
+    # 論理削除されていない vouchers のみを SQL レベルでフィルタして返す
+    # (PR #94 review Finding 1 反映 — 旧実装は Python フィルタだったが
+    # 削除済が大量蓄積した場合の負荷を避けるため SQL レベルに移行)。
+    # `vouchers` backref は引き続き全件を返すので、`log_voucher_orphan` /
+    # `api_voucher_logs` 等の証跡参照用途はそちらを使うこと。
+    active_vouchers = db.relationship(
+        "Voucher",
+        primaryjoin=(
+            "and_("
+            "JournalEntry.id == Voucher.journal_entry_id, "
+            "Voucher.deleted_at.is_(None)"
+            ")"
+        ),
+        viewonly=True,
+        order_by="Voucher.id",
+        lazy="select",
+    )
 
     @property
     def total_debit(self):

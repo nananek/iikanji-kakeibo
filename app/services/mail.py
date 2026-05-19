@@ -111,7 +111,7 @@ class SmtpMailBackend(MailBackend):
         message["From"] = from_addr
         message["To"] = to
         message["Subject"] = rendered.subject
-        message["Message-Id"] = make_msgid()
+        message["Message-ID"] = make_msgid()
         for key, value in rendered.headers.items():
             message[key] = value
         message.set_content(rendered.text_body, charset="utf-8")
