@@ -1,0 +1,1 @@
+[{{ config.MAIL_FROM_NAME }}] お問い合わせ受信: {{ subject_line or '(件名なし)' }} - {{ name }}
