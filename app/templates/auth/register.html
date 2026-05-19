@@ -9,6 +9,10 @@
         <h3 class="text-center mb-4">アカウント登録</h3>
         <form method="POST">
           {{ form.hidden_tag() }}
+          {# 招待制モード時: URL query token を form POST に引き継ぐ #}
+          {% if request.args.get('token') %}
+          <input type="hidden" name="token" value="{{ request.args.get('token') }}">
+          {% endif %}
           <div class="mb-3">
             {{ form.username.label(class="form-label") }}
             {{ form.username(class="form-control", autofocus=true) }}

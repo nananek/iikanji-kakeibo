@@ -33,6 +33,12 @@ class Config:
     # false の場合、/register と /register/auditor は 404 を返し、
     # ログイン画面の「新規登録」リンクも非表示になる。既存ユーザーのログインは影響なし。
     REGISTRATION_ENABLED = os.environ.get("REGISTRATION_ENABLED", "true").lower() != "false"
+    # 招待制ベータモード (Phase 8 #72)。"true" のとき register / register_auditor
+    # は招待トークン (`?token=...`) が必須となり、メールアドレスと一致するもの
+    # のみ受理する。`flask invite-create <email>` でトークンを発行できる。
+    REGISTRATION_INVITE_ONLY = os.environ.get(
+        "REGISTRATION_INVITE_ONLY", "false"
+    ).lower() == "true"
 
     # エンタイトルメント基盤の動作モード。
     # - "unlimited" (default): セルフホスト前提で全有償機能を解放。
