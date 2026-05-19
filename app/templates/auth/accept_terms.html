@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block title %}規約の再同意 - いいかんじ™家計簿{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-md-7 col-lg-6">
+    <div class="card shadow-sm mt-5">
+      <div class="card-body p-4">
+        <h3 class="mb-3"><i class="bi bi-file-text"></i> 規約への同意</h3>
+        <p class="text-muted small mb-4">
+          {% if current_user.accepted_terms_version %}
+            利用規約・プライバシーポリシーが改訂されました ({{ current_version }} 版)。
+            内容をご確認のうえ、本サービスの利用を続けるには改訂後の規約への
+            同意が必要です。
+          {% else %}
+            本サービスのご利用には、利用規約とプライバシーポリシーへの同意が
+            必要です。内容をご確認のうえ、同意のチェックを入れてください。
+          {% endif %}
+        </p>
+
+        <ul class="list-unstyled small mb-4">
+          <li class="mb-2">
+            <a href="{{ url_for('legal.show', slug='terms') }}" target="_blank" rel="noopener">
+              <i class="bi bi-box-arrow-up-right"></i> 利用規約を読む (新しいタブで開く)
+            </a>
+          </li>
+          <li>
+            <a href="{{ url_for('legal.show', slug='privacy') }}" target="_blank" rel="noopener">
+              <i class="bi bi-box-arrow-up-right"></i> プライバシーポリシーを読む (新しいタブで開く)
+            </a>
+          </li>
+        </ul>
+
+        <form method="POST">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <div class="mb-3 form-check">
+            <input type="checkbox" id="accept_terms" name="accept_terms" value="1"
+                   class="form-check-input" required>
+            <label class="form-check-label" for="accept_terms">
+              利用規約・プライバシーポリシー ({{ current_version }} 版) に同意します
+            </label>
+          </div>
+          <button type="submit" class="btn btn-primary w-100">同意して続ける</button>
+        </form>
+
+        <div class="text-center mt-3">
+          <a href="{{ url_for('auth.logout') }}" class="text-muted small">
+            同意せずにログアウトする
+          </a>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

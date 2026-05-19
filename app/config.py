@@ -64,6 +64,15 @@ class Config:
     # 法的文書の最終更新日 (YYYY-MM-DD)。改訂時に手動更新する。
     OPERATOR_LEGAL_UPDATED_AT = os.environ.get("OPERATOR_LEGAL_UPDATED_AT", "")
 
+    # 現在有効な利用規約・プライバシーポリシーのバージョン (YYYY-MM-DD 形式)。
+    # 規約改訂時に環境変数で更新する。User.accepted_terms_version が
+    # この値と一致しないユーザーは再同意フローに誘導される (Phase 1 #66)。
+    #
+    # デフォルトは空文字で、セルフホスト運用 (Phase 8) を意識して同意管理は
+    # オフが既定。公開 SaaS としてデプロイする場合は環境変数で
+    # 明示的にバージョンを設定する必要がある。
+    CURRENT_TERMS_VERSION = os.environ.get("CURRENT_TERMS_VERSION", "")
+
     # ローカル LLM (llama.cpp / llama-server) のエンドポイント。
     # サーバー管理者が用意する任意機能。未設定の場合、ユーザー UI で llama.cpp
     # プロバイダーは選択肢に出ず、既存 `llama_cpp` 設定を持つユーザーには

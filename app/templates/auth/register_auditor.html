@@ -38,6 +38,17 @@
             <div class="invalid-feedback d-block">{{ error }}</div>
             {% endfor %}
           </div>
+          <div class="mb-3 form-check">
+            {{ form.accept_terms(class="form-check-input") }}
+            <label class="form-check-label small" for="{{ form.accept_terms.id }}">
+              <a href="{{ url_for('legal.show', slug='terms') }}" target="_blank" rel="noopener">利用規約</a> および
+              <a href="{{ url_for('legal.show', slug='privacy') }}" target="_blank" rel="noopener">プライバシーポリシー</a>
+              に同意します
+            </label>
+            {% for error in form.accept_terms.errors %}
+            <div class="invalid-feedback d-block">{{ error }}</div>
+            {% endfor %}
+          </div>
           {% include "auth/_captcha_widget.html" %}
           {{ form.submit(class="btn btn-primary w-100") }}
         </form>

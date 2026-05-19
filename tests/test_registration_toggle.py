@@ -36,6 +36,7 @@ class TestRegistrationEnabledDefault:
                 "email": "new@example.com",
                 "password": "password123",
                 "password_confirm": "password123",
+                "accept_terms": "y",
             },
         )
         assert resp.status_code in (302, 303)

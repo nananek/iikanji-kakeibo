@@ -61,10 +61,59 @@ def create_app(config_class=Config):
             "webauthn.register_options",
             "webauthn.register_verify",
             "auth.logout",
+            # 規約未同意のリカバリ後ユーザーが terms_acceptance_check と
+            # 相互リダイレクトで無限ループに陥らないよう許可。同意してから
+            # 復旧フロー (パスキー再登録 + リカバリ再生成) に進む順序。
+            "auth.accept_terms",
         }
         if endpoint in allowed_endpoints or endpoint.startswith("static"):
             return
         return redirect(url_for("settings.passkeys"))
+
+    # Before-request hook for terms acceptance check
+    @app.before_request
+    def terms_acceptance_check():
+        """規約改訂時の再同意フロー (Phase 1 #66)。
+
+        `User.accepted_terms_version` が `CURRENT_TERMS_VERSION` と一致しない
+        認証済みユーザーを `/auth/accept-terms` に強制リダイレクトする。
+        `CURRENT_TERMS_VERSION` が空文字なら同意管理は無効化 (テスト・
+        セルフホスト用)。
+        """
+        from flask import request, redirect, url_for
+        from flask_login import current_user as cu
+        if not cu.is_authenticated:
+            return
+        current_version = app.config.get("CURRENT_TERMS_VERSION", "")
+        if not current_version:
+            return
+        if cu.accepted_terms_version == current_version:
+            return
+        endpoint = request.endpoint or ""
+        # 同意画面自体・ログアウト・法的文書閲覧・静的アセット・
+        # WebAuthn API は例外。`auth.recovery_login` は冒頭の
+        # `is_authenticated` チェックで弾かれるためここに含めない。
+        allowed = (
+            "auth.accept_terms",
+            "auth.logout",
+        )
+        if endpoint in allowed:
+            return
+        if (
+            endpoint.startswith("static")
+            or endpoint.startswith("legal.")
+            or endpoint.startswith("webauthn.")
+            or endpoint.startswith("api.")
+            # OAuth デバイス認可フロー (TUI / MCP 等クライアント連携) は
+            # 未同意でもブロックしない。クライアント側で「規約未同意のため
+            # Web で同意が必要」と案内するのは難しいので、サーバー側で
+            # オープンにしておく。Web UI 経由のアクセス時に同意フローへ
+            # 誘導される設計。
+            or endpoint.startswith("oauth.")
+        ):
+            return
+        # 元々アクセスしようとしていたパスに戻れるよう ?next= を引き継ぐ
+        return redirect(url_for("auth.accept_terms", next=request.path))
 
     # Before-request hook for audit permission control
     @app.before_request

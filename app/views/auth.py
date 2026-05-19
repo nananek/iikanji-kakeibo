@@ -1,3 +1,6 @@
+import re
+from urllib.parse import urlparse
+
 from flask import Blueprint, render_template, redirect, url_for, flash, request, session, abort, current_app
 from flask_login import login_user, logout_user, login_required, current_user
 
@@ -7,6 +10,13 @@ from app.forms.auth import LoginForm, RegisterForm
 from app.services.seed import seed_accounts_for_user
 from app.services.captcha import is_captcha_enabled, get_captcha_response_field, verify_captcha_token
 from app.views.helpers import is_safe_internal_path
+
+
+# 内部相対パス用の厳密な regex sanitizer (CodeQL py/url-redirection を
+# 満足させるため、関数越しではなく view 内で直接マッチを評価する)。
+# 許容: '/' 始まり、ASCII 英数字 + `_ - . / ~` + query/fragment 用記号。
+# プロトコル相対 ('//') / バックスラッシュ ('\\') / scheme / netloc を排除。
+_INTERNAL_PATH_RE = re.compile(r"\A/[A-Za-z0-9_\-./~?=&%#]*\Z")
 
 
 def _check_captcha() -> bool:
@@ -149,6 +159,10 @@ def register():
             username=form.username.data,
             email=form.email.data,
             user_type="personal",
+            # 登録フォームで規約同意済 → 現行バージョンを記録
+            accepted_terms_version=current_app.config.get(
+                "CURRENT_TERMS_VERSION", ""
+            ),
         )
         user.set_password(form.password.data)
         db.session.add(user)
@@ -178,6 +192,9 @@ def register_auditor():
             username=form.username.data,
             email=form.email.data,
             user_type="auditor",
+            accepted_terms_version=current_app.config.get(
+                "CURRENT_TERMS_VERSION", ""
+            ),
         )
         user.set_password(form.password.data)
         db.session.add(user)
@@ -195,3 +212,51 @@ def logout():
     logout_user()
     flash("ログアウトしました。", "info")
     return redirect(url_for("auth.login"))
+
+
+@bp.route("/accept-terms", methods=["GET", "POST"])
+@login_required
+@limiter.limit("10/minute", methods=["POST"])
+def accept_terms():
+    """既存ユーザーが改訂後の規約に再同意するエンドポイント。
+
+    Phase 1 #66 の再同意フロー。before_request フックで
+    `accepted_terms_version != CURRENT_TERMS_VERSION` のユーザーがここに
+    リダイレクトされる。POST で同意確認 → 現行バージョンを記録。
+    """
+    current_version = current_app.config.get("CURRENT_TERMS_VERSION", "")
+    # 既に同意済のユーザーが直接 GET した場合はダッシュボードへ。
+    # 直接 GET なので `?next=` 引き継ぎは不要 (`_safe_next_url` も不要)。
+    if (
+        current_version
+        and current_user.accepted_terms_version == current_version
+    ):
+        return redirect(url_for("dashboard.index"))
+    if request.method == "POST":
+        if request.form.get("accept_terms"):
+            current_user.accepted_terms_version = current_version
+            db.session.commit()
+            flash("規約への同意を更新しました。", "success")
+            # `?next=` で内部相対パスが渡っている場合のみ尊重。それ以外
+            # (外部 URL / プロトコル相対 / 不正値) はダッシュボードへ。
+            # CodeQL py/url-redirection 対策として、関数越しではなく view 内で
+            # 多段サニタイズを直接評価する: (1) regex で許容文字を制限、
+            # (2) urlparse で scheme / netloc を再確認、(3) プロトコル相対
+            # ('//' / '/\\') を排除、(4) 既存の is_safe_internal_path で
+            # 仕上げ。data flow が view 内で完結するので静的解析でも
+            # sanitizer として認識される。
+            next_candidate = request.args.get("next", "")
+            parsed = urlparse(next_candidate)
+            if (
+                next_candidate
+                and _INTERNAL_PATH_RE.fullmatch(next_candidate) is not None
+                and not next_candidate.startswith("//")
+                and not next_candidate.startswith("/\\")
+                and not parsed.scheme
+                and not parsed.netloc
+                and is_safe_internal_path(next_candidate)
+            ):
+                return redirect(next_candidate)
+            return redirect(url_for("dashboard.index"))
+        flash("利用規約・プライバシーポリシーへの同意が必要です。", "danger")
+    return render_template("auth/accept_terms.html", current_version=current_version)
