@@ -55,7 +55,7 @@ def get_storage_summary(user):
         - `used_bytes` / `quota_bytes`: 現在使用量 / 上限 (bytes)
         - `used_mb` / `quota_mb`: 人間向け表示用 (小数 1 桁)
         - `percentage`: 0〜100 の数値 (小数 1 桁)
-        - `level`: `"ok"` (<80%) / `"warning"` (80–95%) / `"critical"` (≥95%)
+        - `level`: `"ok"` (<80%) / `"warning"` (80–94.9%) / `"critical"` (≥95%)
     """
     if not has_entitlement(user, "voucher_storage"):
         return None

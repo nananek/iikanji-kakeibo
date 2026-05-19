@@ -25,7 +25,7 @@
     <div class="progress" style="height: 10px;">
       <div class="progress-bar {% if storage_summary.level == 'critical' %}bg-danger{% elif storage_summary.level == 'warning' %}bg-warning{% else %}bg-primary{% endif %}"
            role="progressbar"
-           aria-valuenow="{{ storage_summary.percentage }}"
+           aria-valuenow="{{ [storage_summary.percentage, 100] | min }}"
            aria-valuemin="0" aria-valuemax="100"
            style="width: {{ [storage_summary.percentage, 100] | min }}%;"></div>
     </div>
