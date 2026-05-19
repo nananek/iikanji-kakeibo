@@ -116,6 +116,7 @@ class TestRegister:
             "email": "new@example.com",
             "password": "securepass123",
             "password_confirm": "securepass123",
+            "accept_terms": "y",
         }, follow_redirects=False)
         assert resp.status_code == 302
         assert User.query.filter_by(username="newuser").first() is not None

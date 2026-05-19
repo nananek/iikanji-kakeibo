@@ -66,6 +66,44 @@ def create_app(config_class=Config):
             return
         return redirect(url_for("settings.passkeys"))
 
+    # Before-request hook for terms acceptance check
+    @app.before_request
+    def terms_acceptance_check():
+        """規約改訂時の再同意フロー (Phase 1 #66)。
+
+        `User.accepted_terms_version` が `CURRENT_TERMS_VERSION` と一致しない
+        認証済みユーザーを `/auth/accept-terms` に強制リダイレクトする。
+        `CURRENT_TERMS_VERSION` が空文字なら同意管理は無効化 (テスト・
+        セルフホスト用)。
+        """
+        from flask import request, redirect, url_for
+        from flask_login import current_user as cu
+        if not cu.is_authenticated:
+            return
+        current_version = app.config.get("CURRENT_TERMS_VERSION", "")
+        if not current_version:
+            return
+        if cu.accepted_terms_version == current_version:
+            return
+        endpoint = request.endpoint or ""
+        # 同意画面自体・ログアウト・法的文書閲覧・静的アセット・
+        # WebAuthn API は例外
+        allowed = (
+            "auth.accept_terms",
+            "auth.logout",
+            "auth.recovery_login",
+        )
+        if endpoint in allowed:
+            return
+        if (
+            endpoint.startswith("static")
+            or endpoint.startswith("legal.")
+            or endpoint.startswith("webauthn.")
+            or endpoint.startswith("api.")
+        ):
+            return
+        return redirect(url_for("auth.accept_terms"))
+
     # Before-request hook for audit permission control
     @app.before_request
     def audit_permission_check():

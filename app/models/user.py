@@ -27,6 +27,11 @@ class User(UserMixin, db.Model):
 
     # パスキー専用ログインモード（オプトイン、デフォルト無効）
     passkey_only_login = db.Column(db.Boolean, nullable=False, default=False)
+
+    # 利用規約・プライバシーポリシーへの同意バージョン (YYYY-MM-DD 形式)。
+    # 規約改訂時に CURRENT_TERMS_VERSION が更新され、ユーザーの値と
+    # 一致しない場合は再同意フローへ誘導する (Phase 1 #66)。
+    accepted_terms_version = db.Column(db.String(20), nullable=True)
     # リカバリコード（パスキー紛失時の非常用、1 回限り使用）
     recovery_code_hash = db.Column(db.String(64), nullable=True)
     recovery_code_prefix = db.Column(db.String(20), nullable=True)

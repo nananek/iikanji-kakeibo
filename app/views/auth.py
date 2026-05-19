@@ -149,6 +149,10 @@ def register():
             username=form.username.data,
             email=form.email.data,
             user_type="personal",
+            # 登録フォームで規約同意済 → 現行バージョンを記録
+            accepted_terms_version=current_app.config.get(
+                "CURRENT_TERMS_VERSION", ""
+            ),
         )
         user.set_password(form.password.data)
         db.session.add(user)
@@ -178,6 +182,9 @@ def register_auditor():
             username=form.username.data,
             email=form.email.data,
             user_type="auditor",
+            accepted_terms_version=current_app.config.get(
+                "CURRENT_TERMS_VERSION", ""
+            ),
         )
         user.set_password(form.password.data)
         db.session.add(user)
@@ -195,3 +202,24 @@ def logout():
     logout_user()
     flash("ログアウトしました。", "info")
     return redirect(url_for("auth.login"))
+
+
+@bp.route("/accept-terms", methods=["GET", "POST"])
+@login_required
+def accept_terms():
+    """既存ユーザーが改訂後の規約に再同意するエンドポイント。
+
+    Phase 1 #66 の再同意フロー。before_request フックで
+    `accepted_terms_version != CURRENT_TERMS_VERSION` のユーザーがここに
+    リダイレクトされる。POST で同意確認 → 現行バージョンを記録。
+    """
+    current_version = current_app.config.get("CURRENT_TERMS_VERSION", "")
+    if request.method == "POST":
+        if request.form.get("accept_terms"):
+            current_user.accepted_terms_version = current_version
+            db.session.commit()
+            flash("規約への同意を更新しました。", "success")
+            next_url = _safe_next_url(url_for("dashboard.index"))
+            return redirect(next_url)
+        flash("利用規約・プライバシーポリシーへの同意が必要です。", "danger")
+    return render_template("auth/accept_terms.html", current_version=current_version)

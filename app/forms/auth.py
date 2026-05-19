@@ -1,5 +1,5 @@
 from flask_wtf import FlaskForm
-from wtforms import StringField, PasswordField, SubmitField
+from wtforms import BooleanField, StringField, PasswordField, SubmitField
 from wtforms.validators import DataRequired, Email, EqualTo, Length, ValidationError
 
 from app.models.user import User
@@ -22,6 +22,12 @@ class RegisterForm(FlaskForm):
     password_confirm = PasswordField(
         "パスワード（確認）",
         validators=[DataRequired(), EqualTo("password", message="パスワードが一致しません")],
+    )
+    accept_terms = BooleanField(
+        "利用規約・プライバシーポリシーに同意します",
+        validators=[
+            DataRequired(message="利用規約・プライバシーポリシーへの同意が必要です"),
+        ],
     )
     submit = SubmitField("登録")
 

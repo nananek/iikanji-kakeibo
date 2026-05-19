@@ -21,6 +21,9 @@ class TestConfig(Config):
     STORAGE_LOCAL_DIR = "/tmp/iikanji-test-vouchers"
     # llama.cpp はテスト時に常時有効状態にして、設定保存系テストを通す
     LLAMA_CPP_URL = "http://test-llama-cpp:8080"
+    # 規約同意管理はデフォルトでは無効化 (既存テストへの影響を避ける)。
+    # 同意フローを検証するテストは個別に monkeypatch で値を設定する。
+    CURRENT_TERMS_VERSION = ""
 
 
 class CsrfTestConfig(Config):
