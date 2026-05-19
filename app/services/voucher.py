@@ -19,6 +19,7 @@ from app.services.storage_quota import (
     check_quota,
     get_quota_bytes,
     get_used_bytes,
+    maybe_send_quota_warning,
     record_upload,
 )
 
@@ -136,4 +137,6 @@ def create_voucher_from_upload(
         )
 
     db.session.commit()
+    # 容量警告メール送信 (Phase 6 #71)。閾値超過時のみ送信、失敗は best-effort
+    maybe_send_quota_warning(user)
     return voucher

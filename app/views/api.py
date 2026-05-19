@@ -24,7 +24,7 @@ from app.services.storage import (
 )
 from app.services.storage_quota import (
     QuotaExceededError, check_quota, get_quota_bytes, get_used_bytes,
-    record_delete, record_upload,
+    maybe_send_quota_warning, record_delete, record_upload,
 )
 from app.services.voucher import create_voucher_from_draft
 from app.models.user import User
@@ -429,6 +429,9 @@ def ai_analyze():
     # オプション: Webhook 通知
     if request.form.get("notify") == "1":
         _send_draft_notification(user_id, draft, suggestions_data)
+
+    # 容量警告メール (Phase 6 #71)。閾値超過時のみ送信、失敗は best-effort
+    maybe_send_quota_warning(owner)
 
     return jsonify({
         "ok": True,

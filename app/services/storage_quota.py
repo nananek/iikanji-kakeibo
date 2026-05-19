@@ -18,6 +18,7 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from app.extensions import db
 from app.models.storage import StorageUsage
 from app.services.entitlement import has_entitlement
+from app.services.mail import send_email
 
 
 class QuotaExceededError(Exception):
@@ -181,6 +182,84 @@ def record_upload(user, size: int, *, suppress_commit: bool = False) -> None:
     _upsert_storage_usage(user.id, size)
     if not suppress_commit:
         db.session.commit()
+
+
+# quota_warning メール通知の閾値 (Phase 6 #71)。
+# 80% / 95% 到達時に通知、70% 未満まで回復したらリセット (ヒステリシス)。
+_QUOTA_WARNING_THRESHOLD = 80.0
+_QUOTA_CRITICAL_THRESHOLD = 95.0
+_QUOTA_RESET_THRESHOLD = 70.0
+
+
+def maybe_send_quota_warning(user) -> None:
+    """ストレージ使用率が新しい閾値帯に達したら quota_warning メールを送信。
+
+    閾値到達検出ロジック (`User.last_quota_warning_level` を状態として保持):
+    - <70%: NULL 化 (次回再通知できるよう状態リセット)
+    - 70-80%: 状態維持 (何もしない、ヒステリシス区間)
+    - 80-95%: 直近が NULL or "warning" 以外なら "warning" メール送信
+    - >=95%: 直近が "critical" 以外なら "critical" メール送信
+
+    呼出側は `record_upload` 完了後 (= 容量加算 + commit 後) に呼ぶこと。
+    `send_email` の失敗はログに残して握る (ユーザー操作を妨げない)。
+
+    可逆性に注意: critical → warning への戻り通知は意図的にしない (運用上
+    「容量逼迫した」事実だけ伝えれば十分で、戻り通知はノイズになる)。
+    """
+    from flask import current_app, url_for
+
+    try:
+        used = get_used_bytes(user)
+        quota = get_quota_bytes(user)
+        if quota <= 0:
+            return
+        pct = (used / quota) * 100
+        prev_level = user.last_quota_warning_level
+
+        # リセット判定 (70% 未満まで回復)
+        if pct < _QUOTA_RESET_THRESHOLD:
+            if prev_level is not None:
+                user.last_quota_warning_level = None
+                db.session.commit()
+            return
+
+        # ヒステリシス区間 (70-80%): 状態維持
+        if pct < _QUOTA_WARNING_THRESHOLD:
+            return
+
+        # 新しい閾値レベルを判定
+        new_level = "critical" if pct >= _QUOTA_CRITICAL_THRESHOLD else "warning"
+
+        # 既に同じ or それ以上のレベルで通知済なら再送しない
+        # (critical 中に warning は通知しない、warning 中に warning も再送しない)
+        if prev_level == new_level:
+            return
+        if prev_level == "critical" and new_level == "warning":
+            # critical → warning への戻りは通知しない
+            return
+
+        # メール送信 (失敗時は state を巻き戻して次回再送できるようにする)
+        user.last_quota_warning_level = new_level
+        db.session.commit()
+
+        try:
+            settings_url = url_for("settings.index", _external=True)
+        except Exception:
+            settings_url = "/settings/"
+
+        send_email(user.email, "quota_warning", {
+            "username": user.username,
+            "percentage": round(pct, 1),
+            "used_mb": round(used / (1024 * 1024), 1),
+            "quota_mb": round(quota / (1024 * 1024), 1),
+            "level": new_level,
+            "settings_url": settings_url,
+        })
+    except Exception as e:
+        current_app.logger.exception(
+            "maybe_send_quota_warning failed (user=%d): %s",
+            getattr(user, "id", -1), e,
+        )
 
 
 def record_delete(user, size: int, *, suppress_commit: bool = False) -> None:

@@ -26,7 +26,7 @@ from app.services.storage import (
 )
 from app.services.storage_quota import (
     QuotaExceededError, check_quota, get_quota_bytes, get_used_bytes,
-    record_delete, record_upload,
+    maybe_send_quota_warning, record_delete, record_upload,
 )
 from app.views.helpers import safe_user_error
 from app.services.voucher import create_voucher_from_draft
@@ -182,6 +182,9 @@ def analyze():
         }), 413
 
     session["ai_journal_draft_id"] = draft.id
+
+    # 容量警告メール送信 (Phase 6 #71)。閾値超過時のみ、失敗は best-effort
+    maybe_send_quota_warning(owner)
 
     return jsonify({"suggestions": suggestions_data})
 
