@@ -485,7 +485,10 @@ def register_cli(app):
         try:
             register_url = url_for(endpoint, token=raw, _external=True)
         except Exception:
-            register_url = f"/auth/register?token={raw}"
+            # auth blueprint は url_prefix なしで登録されているため
+            # フォールバックは `/register` / `/register/auditor` を使う
+            path = "/register/auditor" if user_type == "auditor" else "/register"
+            register_url = f"{path}?token={raw}"
 
         if not no_email:
             try:

@@ -220,12 +220,17 @@ def register():
         )
         user.set_password(form.password.data)
         db.session.add(user)
-        db.session.commit()
-
-        seed_accounts_for_user(user.id)
+        # user 作成と invitation.mark_used を単一トランザクションで確定。
+        # 旧実装は 2 段 commit のため、間に挟まる seed_accounts_for_user が
+        # 例外を投げると user は作成済なのに token 未使用のままになる
+        # アトミック性バグがあった (PR #99 review 指摘)。
+        db.session.flush()  # user.id を確定 (commit はまだ)
         if invitation is not None:
             invitation.mark_used(user.id)
-            db.session.commit()
+        db.session.commit()
+
+        # 科目 seed は commit 後の独立処理 (失敗してもユーザー作成は確定)
+        seed_accounts_for_user(user.id)
 
         flash("アカウントを作成しました。ログインしてください。", "success")
         return redirect(url_for("auth.login"))
@@ -269,11 +274,12 @@ def register_auditor():
         )
         user.set_password(form.password.data)
         db.session.add(user)
-        db.session.commit()
-
+        # アトミック性: register() と同じく user + mark_used を単一 tx で
+        # 確定する (PR #99 review 指摘)。
+        db.session.flush()
         if invitation is not None:
             invitation.mark_used(user.id)
-            db.session.commit()
+        db.session.commit()
 
         flash("監査用アカウントを作成しました。ログインしてください。", "success")
         return redirect(url_for("auth.login_auditor"))
