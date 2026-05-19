@@ -446,6 +446,84 @@ def register_cli(app):
         prefix = "[DRY RUN] " if dry_run else ""
         print(f"{prefix}サムネイル生成: {generated}件, スキップ: {skipped}件, エラー: {errors}件")
 
+    @app.cli.command("invite-create")
+    @click.argument("email")
+    @click.option(
+        "--user-type", default="personal",
+        type=click.Choice(["personal", "auditor"]),
+        help="招待先のアカウント種別",
+    )
+    @click.option(
+        "--expires-in-days", default=7, type=int,
+        help="招待トークンの有効期限 (日数)",
+    )
+    @click.option(
+        "--no-email", is_flag=True,
+        help="メール送信せずトークンを標準出力のみに表示",
+    )
+    def invite_create_command(email, user_type, expires_in_days, no_email):
+        """招待トークンを発行してメール送信する (Phase 8 #72)。
+
+        トークンの raw 値は SHA-256 ハッシュで保存されるため、メール送信時
+        または `--no-email` で標準出力に出力したタイミングが raw を取得
+        できる唯一の機会。
+        """
+        from app.models.invitation import InvitationToken
+        from app.services.mail import send_email
+        from flask import url_for
+
+        raw, record = InvitationToken.generate(
+            email, user_type=user_type,
+            expires_in_days=expires_in_days,
+        )
+        db.session.add(record)
+        db.session.commit()
+
+        # register_url の組立て: REGISTRATION_INVITE_ONLY モードでは
+        # user_type に応じて register / register_auditor を出し分け
+        endpoint = "auth.register_auditor" if user_type == "auditor" else "auth.register"
+        try:
+            register_url = url_for(endpoint, token=raw, _external=True)
+        except Exception:
+            # SERVER_NAME 未設定で url_for(_external=True) が失敗するときの
+            # フォールバック。config の SERVER_NAME / PREFERRED_URL_SCHEME を
+            # 使って絶対 URL を組み立てる (相対パスだとメール本文として無効)。
+            from flask import current_app
+            base = current_app.config.get("SERVER_NAME") or "localhost"
+            scheme = current_app.config.get("PREFERRED_URL_SCHEME", "https")
+            path = "/register/auditor" if user_type == "auditor" else "/register"
+            register_url = f"{scheme}://{base}{path}?token={raw}"
+            print(
+                "[warn] SERVER_NAME が未設定のため URL が不完全な可能性があります。"
+                " 環境変数で SERVER_NAME=your.host を設定してください。"
+            )
+
+        if not no_email:
+            try:
+                send_email(email, "invitation", {
+                    "email": email,
+                    "register_url": register_url,
+                    "expires_at": record.expires_at.strftime(
+                        "%Y-%m-%d %H:%M UTC"
+                    ),
+                    "service_label": (
+                        "監査用アカウント" if user_type == "auditor"
+                        else "個人アカウント"
+                    ),
+                })
+                print(f"招待メールを送信しました: {email} ({user_type})")
+            except Exception as e:
+                print(f"メール送信失敗: {e}")
+                print("以下の URL を手動で送信してください:")
+                print(f"  {register_url}")
+        else:
+            print(f"招待トークン発行: {email} ({user_type})")
+            print(f"  Register URL: {register_url}")
+            print(
+                f"  Expires at: "
+                f"{record.expires_at.isoformat()}"
+            )
+
     @app.cli.command("storage-audit")
     @click.option(
         "--fix", is_flag=True,

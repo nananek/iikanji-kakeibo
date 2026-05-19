@@ -143,6 +143,44 @@ def _verify_recovery_code_dummy(code):
     return False
 
 
+def _check_invitation_token(form, *, expected_user_type: str):
+    """招待モード時にトークンを検証する。返り値 (ok, invitation_or_None)。
+
+    `REGISTRATION_INVITE_ONLY=False` のときは常に (True, None)。
+    招待モードで:
+    - トークン未指定 / 期限切れ / 使用済 → (False, None)
+    - フォーム email と招待 email が不一致 → (False, None)
+    - 招待 user_type が期待と異なる (personal/auditor 間違い) → (False, None)
+    - OK → (True, InvitationToken)
+    """
+    if not current_app.config.get("REGISTRATION_INVITE_ONLY", False):
+        return True, None
+    from app.models.invitation import InvitationToken
+    raw = (request.args.get("token") or request.form.get("token") or "").strip()
+    invitation = InvitationToken.find_valid(raw)
+    if invitation is None:
+        flash(
+            "招待トークンが無効または期限切れです。"
+            "招待メールから再度アクセスしてください。",
+            "danger",
+        )
+        return False, None
+    if invitation.user_type != expected_user_type:
+        flash(
+            "この招待トークンはこの種類のアカウント登録には使えません。",
+            "danger",
+        )
+        return False, None
+    submitted_email = (form.email.data or "").strip().lower()
+    if invitation.email.lower() != submitted_email:
+        flash(
+            "招待されたメールアドレスと入力内容が一致しません。",
+            "danger",
+        )
+        return False, None
+    return True, invitation
+
+
 @bp.route("/register", methods=["GET", "POST"])
 @limiter.limit("5/minute", methods=["POST"])
 def register():
@@ -151,10 +189,26 @@ def register():
     if current_user.is_authenticated:
         return redirect(url_for("dashboard.index"))
 
+    # 招待制モードで token クエリパラメータがない GET アクセスは 404
+    # (トップページから無差別アクセスされないように)
+    invite_only = current_app.config.get("REGISTRATION_INVITE_ONLY", False)
+    if (
+        invite_only
+        and request.method == "GET"
+        and not (request.args.get("token") or "").strip()
+    ):
+        abort(404)
+
     form = RegisterForm()
     if form.validate_on_submit():
         if not _check_captcha():
             return render_template("auth/register.html", form=form)
+        ok, invitation = _check_invitation_token(
+            form, expected_user_type="personal",
+        )
+        if not ok:
+            return render_template("auth/register.html", form=form)
+
         user = User(
             username=form.username.data,
             email=form.email.data,
@@ -166,8 +220,16 @@ def register():
         )
         user.set_password(form.password.data)
         db.session.add(user)
+        # user 作成と invitation.mark_used を単一トランザクションで確定。
+        # 旧実装は 2 段 commit のため、間に挟まる seed_accounts_for_user が
+        # 例外を投げると user は作成済なのに token 未使用のままになる
+        # アトミック性バグがあった (PR #99 review 指摘)。
+        db.session.flush()  # user.id を確定 (commit はまだ)
+        if invitation is not None:
+            invitation.mark_used(user.id)
         db.session.commit()
 
+        # 科目 seed は commit 後の独立処理 (失敗してもユーザー作成は確定)
         seed_accounts_for_user(user.id)
 
         flash("アカウントを作成しました。ログインしてください。", "success")
@@ -184,10 +246,24 @@ def register_auditor():
     if current_user.is_authenticated:
         return redirect(url_for("dashboard.index"))
 
+    invite_only = current_app.config.get("REGISTRATION_INVITE_ONLY", False)
+    if (
+        invite_only
+        and request.method == "GET"
+        and not (request.args.get("token") or "").strip()
+    ):
+        abort(404)
+
     form = RegisterForm()
     if form.validate_on_submit():
         if not _check_captcha():
             return render_template("auth/register_auditor.html", form=form)
+        ok, invitation = _check_invitation_token(
+            form, expected_user_type="auditor",
+        )
+        if not ok:
+            return render_template("auth/register_auditor.html", form=form)
+
         user = User(
             username=form.username.data,
             email=form.email.data,
@@ -198,6 +274,11 @@ def register_auditor():
         )
         user.set_password(form.password.data)
         db.session.add(user)
+        # アトミック性: register() と同じく user + mark_used を単一 tx で
+        # 確定する (PR #99 review 指摘)。
+        db.session.flush()
+        if invitation is not None:
+            invitation.mark_used(user.id)
         db.session.commit()
 
         flash("監査用アカウントを作成しました。ログインしてください。", "success")

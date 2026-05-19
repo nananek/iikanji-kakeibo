@@ -15,6 +15,7 @@ from app.models.csv_column_profile import CsvColumnProfile
 from app.models.tax_form import TaxFormField, TaxFormMapping
 from app.models.ai_usage_log import AIUsageLog
 from app.models.storage import StorageUsage
+from app.models.invitation import InvitationToken
 
 __all__ = [
     "User",
@@ -41,4 +42,5 @@ __all__ = [
     "TaxFormMapping",
     "AIUsageLog",
     "StorageUsage",
+    "InvitationToken",
 ]

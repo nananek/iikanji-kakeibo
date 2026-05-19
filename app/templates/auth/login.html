@@ -38,9 +38,17 @@
         </div>
 
         {% if config.REGISTRATION_ENABLED %}
-        <div class="text-center mt-3">
-          <a href="{{ url_for('auth.register') }}">アカウント登録</a>
-        </div>
+          {% if not config.REGISTRATION_INVITE_ONLY %}
+          <div class="text-center mt-3">
+            <a href="{{ url_for('auth.register') }}">アカウント登録</a>
+          </div>
+          {% else %}
+          <div class="text-center mt-3">
+            <small class="text-muted">
+              現在は招待制のため、運営者から届く招待メールから登録してください。
+            </small>
+          </div>
+          {% endif %}
         {% endif %}
         <div class="text-center mt-2">
           <small><a href="{{ url_for('auth.recovery_login') }}" class="text-muted">

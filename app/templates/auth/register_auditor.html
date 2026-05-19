@@ -10,6 +10,12 @@
         <p class="text-center text-muted small mb-3">税理士・公認会計士向け</p>
         <form method="POST">
           {{ form.hidden_tag() }}
+          {# GET 時は args、POST 再描画時は form から token を引き継ぐ。
+             両方見ないと POST 再描画でトークンが消失する (PR #99 review)。 #}
+          {% set _inv_token = request.args.get('token') or request.form.get('token') %}
+          {% if _inv_token %}
+          <input type="hidden" name="token" value="{{ _inv_token }}">
+          {% endif %}
           <div class="mb-3">
             {{ form.username.label(class="form-label") }}
             {{ form.username(class="form-control", autofocus=true) }}
