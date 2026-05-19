@@ -81,8 +81,9 @@ class TestGetMailBackend:
             backend = get_mail_backend()
             assert isinstance(backend, ConsoleMailBackend)
 
-    @pytest.mark.parametrize("backend_name", ["smtp", "ses", "resend"])
+    @pytest.mark.parametrize("backend_name", ["ses", "resend"])
     def test_unimplemented_backends_raise(self, app, monkeypatch, backend_name):
+        # smtp は Phase 6 続編 PR で実装済 (test_smtp_mail_backend.py 参照)
         monkeypatch.setitem(app.config, "MAIL_BACKEND", backend_name)
         with app.test_request_context():
             with pytest.raises(NotImplementedError):

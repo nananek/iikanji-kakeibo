@@ -1,0 +1,21 @@
+{{ username }} さま
+
+{{ config.MAIL_FROM_NAME }} の証憑画像ストレージ使用量が
+{{ percentage }}% に達しました。
+
+現在の使用量: {{ used_mb }} MB / {{ quota_mb }} MB ({{ percentage }}%)
+状態: {% if level == 'critical' %}残量わずか (95% 以上){% elif level == 'warning' %}警告 (80% 以上){% else %}通常{% endif %}
+
+上限に達するとアップロードが拒否され、以下の機能が一時停止します:
+- AI 証憑仕訳の画像アップロード
+- 既存仕訳への証憑添付
+- WebDAV 経由の自動取込
+
+対応方法:
+1. 不要な証憑を削除する (設定 > 証憑一覧 から削除可能。電帳法の
+   訂正削除証跡は監査ログに残ります)
+2. 上位プランへ変更する (ストレージ追加オプション)
+
+設定画面: {{ settings_url }}
+
+{% include "email/_partials/footer.txt" %}

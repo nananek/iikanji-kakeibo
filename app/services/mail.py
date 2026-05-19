@@ -20,10 +20,13 @@
 from __future__ import annotations
 
 import logging
+import smtplib
+import ssl
 import sys
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from email.utils import formataddr
+from email.message import EmailMessage
+from email.utils import formataddr, make_msgid
 from typing import Optional
 
 from flask import current_app, render_template
@@ -74,17 +77,86 @@ class ConsoleMailBackend(MailBackend):
         print(sep, file=sys.stdout, flush=True)
 
 
+class SmtpMailBackend(MailBackend):
+    """SMTP プロトコルで実送信するバックエンド。
+
+    公開 SaaS 運用向け。STARTTLS / SMTPS 両モード、PLAIN 認証を扱う。
+    接続は send() 呼出ごとに確立して即切断するシンプルな実装 (本数
+    が増えたら接続プール化を検討)。
+
+    必要な config:
+    - `MAIL_SMTP_HOST`, `MAIL_SMTP_PORT`
+    - `MAIL_SMTP_USERNAME`, `MAIL_SMTP_PASSWORD` (任意、空なら認証なし)
+    - `MAIL_SMTP_USE_TLS`: ``"starttls"`` (587 推奨) / ``"ssl"`` (465) /
+      ``"none"`` (平文、開発環境のみ)
+    - `MAIL_SMTP_TIMEOUT`: 接続タイムアウト秒 (デフォルト 30)
+    """
+
+    def send(self, to: str, from_addr: str, rendered: RenderedEmail) -> None:
+        cfg = current_app.config
+        host = cfg.get("MAIL_SMTP_HOST")
+        port = int(cfg.get("MAIL_SMTP_PORT") or 587)
+        username = cfg.get("MAIL_SMTP_USERNAME") or ""
+        password = cfg.get("MAIL_SMTP_PASSWORD") or ""
+        use_tls = (cfg.get("MAIL_SMTP_USE_TLS") or "starttls").lower()
+        timeout = int(cfg.get("MAIL_SMTP_TIMEOUT") or 30)
+        if not host:
+            raise RuntimeError(
+                "MAIL_SMTP_HOST が未設定です (MAIL_BACKEND=smtp 時は必須)。"
+            )
+
+        message = EmailMessage()
+        # `formataddr` で整形済の From は raw 文字列として渡す
+        # (EmailMessage は内部で再エンコードしない)。
+        message["From"] = from_addr
+        message["To"] = to
+        message["Subject"] = rendered.subject
+        message["Message-Id"] = make_msgid()
+        for key, value in rendered.headers.items():
+            message[key] = value
+        message.set_content(rendered.text_body, charset="utf-8")
+        if rendered.html_body:
+            message.add_alternative(
+                rendered.html_body, subtype="html", charset="utf-8",
+            )
+
+        context = ssl.create_default_context()
+        if use_tls == "ssl":
+            with smtplib.SMTP_SSL(
+                host, port, timeout=timeout, context=context,
+            ) as smtp:
+                if username:
+                    smtp.login(username, password)
+                smtp.send_message(message)
+        else:
+            with smtplib.SMTP(host, port, timeout=timeout) as smtp:
+                smtp.ehlo()
+                if use_tls == "starttls":
+                    smtp.starttls(context=context)
+                    smtp.ehlo()
+                elif use_tls != "none":
+                    raise RuntimeError(
+                        f"MAIL_SMTP_USE_TLS={use_tls!r} は無効です "
+                        "(starttls / ssl / none のいずれかを指定)。"
+                    )
+                if username:
+                    smtp.login(username, password)
+                smtp.send_message(message)
+
+
 def get_mail_backend() -> MailBackend:
     """環境変数 `MAIL_BACKEND` に応じて実装を返す。
 
-    Phase 6 後続 PR で `SmtpMailBackend` 等を追加する際は、ここに分岐を
-    増やす。billing と同様、後で接続プール保持型を実装する場合は
-    `lru_cache` / Flask `g` でリクエスト単位キャッシュを検討すること。
+    将来 SES / Resend 等を追加する際はここに分岐を増やす。後で接続
+    プール保持型を実装する場合は `lru_cache` / Flask `g` でリクエスト
+    単位キャッシュを検討すること。
     """
     backend = current_app.config.get("MAIL_BACKEND", "console")
     if backend == "console":
         return ConsoleMailBackend()
-    # 他のバックエンド (smtp / ses / resend 等) は後続 PR で実装する。
+    if backend == "smtp":
+        return SmtpMailBackend()
+    # 他のバックエンド (ses / resend 等) は後続 PR で実装する。
     raise NotImplementedError(
         f"MAIL_BACKEND={backend!r} はまだ未実装です (Phase 6 後続 PR で対応)。"
     )
