@@ -9,7 +9,7 @@
 """
 
 from flask import current_app
-from sqlalchemy import update
+from sqlalchemy import select as sa_select, update
 
 from app.extensions import db
 from app.models.ai_config import UserAIConfig
@@ -97,15 +97,31 @@ def delete_user_account(user_id: int) -> None:
         db.session.delete(d)
     db.session.flush()
 
-    # 4. JournalEntry (cascade で JournalEntryLine が消える)
-    JournalEntry.query.filter_by(user_id=user_id).delete()
-    # JournalEntryLine の account_user_id は ForeignKey 制約なし (独立カラム)
-    # のため明示的に削除
+    # 4. JournalEntryLine を JournalEntry より先に削除する。
+    # `JournalEntryLine.journal_entry_id` の FK は `ondelete=CASCADE` 未指定
+    # のため、`.query.delete()` のバルク DELETE は ORM relationship cascade を
+    # 発火させず、PostgreSQL では FK 制約違反になる (SQLite は FK 弱で発覚せず)。
+    # 順序: ① journal_entry_id 経由 → ② account_user_id 経由 (独立カラム、
+    # 他ユーザー仕訳に紐づく自分の account 行も念のため削除) → ③ JournalEntry
+    entry_ids_subq = sa_select(JournalEntry.id).where(
+        JournalEntry.user_id == user_id
+    )
+    db.session.execute(
+        JournalEntryLine.__table__.delete().where(
+            JournalEntryLine.journal_entry_id.in_(entry_ids_subq)
+        )
+    )
+    db.session.flush()
+    # JournalEntryLine.account_user_id は ForeignKey 制約なしの独立カラム。
+    # 自分の account を参照する line を全削除 (相互参照のクリーンアップ)。
     db.session.execute(
         JournalEntryLine.__table__.delete().where(
             JournalEntryLine.account_user_id == user_id
         )
     )
+    db.session.flush()
+    # JournalEntry 本体を削除
+    JournalEntry.query.filter_by(user_id=user_id).delete()
     db.session.flush()
 
     # 5. user_id を持つ各テーブルを削除

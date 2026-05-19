@@ -267,3 +267,100 @@ class TestDeleteAccountView:
         admin = next(s for s in sent if s[1] == "account_deleted")
         assert admin[0] == "test@example.com"
         assert admin[2]["username"] == "testuser"
+
+    def test_passkey_only_user_can_delete_without_password(
+        self, logged_in_client, db, user, mock_storage, reset_limiter,
+    ):
+        """Passkey 専用ユーザーはパスワード入力なしで退会できる (GDPR 消去権)."""
+        user.passkey_only_login = True
+        db.session.commit()
+
+        sent = []
+        with patch(
+            "app.views.settings.send_email",
+            side_effect=lambda to, t, ctx=None, **kw: sent.append((to, t)),
+        ):
+            resp = logged_in_client.post(
+                "/settings/delete-account",
+                data={"confirm": "y"},  # password 未送信
+                follow_redirects=False,
+            )
+
+        # ログイン画面へリダイレクト + User row 削除
+        assert resp.status_code == 302
+        assert db.session.get(User, user.id) is None
+        assert any(s[1] == "account_deleted" for s in sent)
+
+    def test_passkey_user_still_needs_confirm_checkbox(
+        self, logged_in_client, db, user, mock_storage, reset_limiter,
+    ):
+        """Passkey 専用ユーザーでも confirm チェックは必須."""
+        user.passkey_only_login = True
+        db.session.commit()
+
+        resp = logged_in_client.post(
+            "/settings/delete-account",
+            data={},  # confirm も未送信
+            follow_redirects=False,
+        )
+        # フォーム再描画 + User 残存
+        assert resp.status_code == 200
+        assert db.session.get(User, user.id) is not None
+
+    def test_passkey_only_template_hides_password_field(
+        self, logged_in_client, db, user, reset_limiter,
+    ):
+        """Passkey 専用ユーザー向けにパスワードフィールドが非表示."""
+        user.passkey_only_login = True
+        db.session.commit()
+
+        resp = logged_in_client.get("/settings/delete-account")
+        assert resp.status_code == 200
+        body = resp.get_data(as_text=True)
+        # パスワード入力欄が出ない (input type=password がない)
+        assert "type=\"password\"" not in body
+        # 代わりに案内が出る
+        assert "Passkey 専用アカウント" in body
+
+
+class TestJournalEntryDeletionOrder:
+    """JournalEntryLine → JournalEntry の順序削除 (PostgreSQL FK 制約対応)."""
+
+    def test_journal_entry_line_deleted_before_entry(
+        self, db, mock_storage, account_types
+    ):
+        from app.services.account_deletion import delete_user_account
+
+        user, _v, _log, entry = _make_user_with_data(
+            db, username="orderer", email="o@example.com",
+        )
+        # account + JournalEntryLine を追加 (entry に紐づく)
+        from app.models.account import Account
+        from app.models.journal import JournalEntryLine
+
+        db.session.add(Account(
+            user_id=user.id,
+            account_type_id=account_types["asset"].id,
+            code="9999", name="テスト科目", is_active=True,
+        ))
+        db.session.flush()
+        db.session.add(JournalEntryLine(
+            journal_entry_id=entry.id,
+            account_user_id=user.id,
+            account_code="9999",
+            debit_amount=100, credit_amount=0,
+            description="テスト",
+        ))
+        db.session.commit()
+        assert JournalEntryLine.query.filter_by(
+            journal_entry_id=entry.id,
+        ).count() == 1
+
+        delete_user_account(user.id)
+
+        # JournalEntryLine と JournalEntry の両方が削除されている
+        # (順序削除なしだと PostgreSQL の FK 制約で失敗する)
+        assert JournalEntryLine.query.filter_by(
+            journal_entry_id=entry.id,
+        ).count() == 0
+        assert db.session.get(JournalEntry, entry.id) is None

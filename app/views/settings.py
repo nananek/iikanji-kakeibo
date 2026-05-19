@@ -1304,11 +1304,15 @@ def delete_account():
 
     form = DeleteAccountForm()
     if form.validate_on_submit():
-        if not current_user.check_password(form.password.data):
-            flash("パスワードが正しくありません。", "danger")
-            return render_template(
-                "settings/delete_account.html", form=form,
-            )
+        # Passkey 専用ユーザーはパスワードを持たないためセッション認証済を
+        # 信頼し、パスワード検証はスキップ (GDPR データ消去権の保証)。
+        # 通常ユーザーはパスワード再認証を要求する。
+        if not current_user.passkey_only_login:
+            if not current_user.check_password(form.password.data or ""):
+                flash("パスワードが正しくありません。", "danger")
+                return render_template(
+                    "settings/delete_account.html", form=form,
+                )
 
         # 削除前にメール送信に必要な情報を取得
         username = current_user.username

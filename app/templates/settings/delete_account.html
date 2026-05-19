@@ -47,6 +47,13 @@
   <form method="POST" class="mt-4">
     {{ form.hidden_tag() }}
 
+    {% if current_user.passkey_only_login %}
+    <div class="alert alert-info">
+      <i class="bi bi-shield-check"></i>
+      Passkey 専用アカウントのため、パスワード入力は不要です。
+      現在のログインセッションが認証済みとして扱われます。
+    </div>
+    {% else %}
     <div class="mb-3">
       {{ form.password.label(class="form-label") }}
       {{ form.password(class="form-control", required=true, autocomplete="current-password") }}
@@ -55,6 +62,7 @@
         <div class="text-danger small">{{ err }}</div>
       {% endfor %}
     </div>
+    {% endif %}
 
     <div class="form-check mb-4">
       {{ form.confirm(class="form-check-input", required=true) }}
