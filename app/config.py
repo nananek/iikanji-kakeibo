@@ -47,11 +47,24 @@ class Config:
     # メール配信基盤の動作モード。
     # - "console" (default): 標準出力にダンプ。開発・テスト・セルフホストの
     #   既定値。実メール送信は発生しない。
-    # - "smtp" / "ses" / "resend" 等: Phase 6 後続 PR で実装予定。
+    # - "smtp": SMTP プロトコルで実送信 (公開 SaaS 運用向け)。`MAIL_SMTP_*`
+    #   環境変数の設定が必須。
+    # - "ses" / "resend" 等: 後続 PR で実装予定。
     # MAIL_FROM / MAIL_FROM_NAME は配信時の From ヘッダー組み立てに使う。
     MAIL_BACKEND = os.environ.get("MAIL_BACKEND", "console")
     MAIL_FROM = os.environ.get("MAIL_FROM", "noreply@example.com")
     MAIL_FROM_NAME = os.environ.get("MAIL_FROM_NAME", "いいかんじ™家計簿")
+
+    # MAIL_BACKEND=smtp のときに使用する SMTP 設定。
+    # use_tls: "starttls" (587 推奨) / "ssl" (465) / "none" (平文、開発用のみ)
+    MAIL_SMTP_HOST = os.environ.get("MAIL_SMTP_HOST", "")
+    MAIL_SMTP_PORT = int(os.environ.get("MAIL_SMTP_PORT") or 587)
+    MAIL_SMTP_USERNAME = os.environ.get("MAIL_SMTP_USERNAME", "")
+    MAIL_SMTP_PASSWORD = os.environ.get("MAIL_SMTP_PASSWORD", "")
+    MAIL_SMTP_USE_TLS = os.environ.get("MAIL_SMTP_USE_TLS", "starttls")
+    MAIL_SMTP_TIMEOUT = int(os.environ.get("MAIL_SMTP_TIMEOUT") or 30)
+    # お問い合わせ送信先 (運営者宛通知)。空文字なら通知メール送信なし。
+    MAIL_CONTACT_TO = os.environ.get("MAIL_CONTACT_TO", "")
 
     # 法的文書 (利用規約 / プライバシーポリシー / 特商法表記) で表示する
     # 運営者情報。実値はデプロイ時に環境変数で注入する想定で、ソース

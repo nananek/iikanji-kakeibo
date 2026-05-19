@@ -1,0 +1,1 @@
+[{{ config.MAIL_FROM_NAME }}] 証憑ストレージ容量が {{ percentage }}% に達しました
