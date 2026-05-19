@@ -10,6 +10,7 @@ from app.models.journal import JournalEntry, JournalEntryLine
 from app.models.fiscal import FiscalClose
 from app.models.api_key import APIKey
 from app.models.voucher import Voucher
+from app.models.storage import StorageUsage  # noqa: F401 (テーブル作成のため import)
 
 
 class TestConfig(Config):
