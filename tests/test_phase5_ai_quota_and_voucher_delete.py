@@ -235,6 +235,63 @@ class TestAIJournalAnalyzeQuota:
         usage = db.session.get(StorageUsage, user.id)
         assert usage.used_bytes == 499 * MB
 
+    def test_record_upload_failure_does_not_record_delete(
+        self, logged_in_client, db, user, app, mock_storage, reset_limiter,
+        monkeypatch,
+    ):
+        """record_upload が例外を投げた場合、TOCTOU 再検証スキップで
+        record_delete が呼ばれない (PR #93 review Finding 1 — 別ユーザー
+        計上分の誤減算を防ぐ)."""
+        db.session.add(UserAIConfig(
+            user_id=user.id, provider="openai",
+            api_key_encrypted=b"dummy", model_name="gpt-4o",
+        ))
+        # 既に上限近くまで埋まっている状態 (495MB) を作る
+        db.session.add(StorageUsage(user_id=user.id, used_bytes=495 * MB))
+        db.session.commit()
+
+        from app.services.ai_receipt import JournalSuggestion
+        from app.views import ai_journal as ai_journal_module
+
+        fake_sugg = JournalSuggestion(
+            title="テスト", description="", date="2026-05-01",
+            entry_description="テスト", lines=[], compliance=None,
+        )
+
+        # record_upload を必ず失敗させる
+        def fake_record_upload(*args, **kwargs):
+            raise RuntimeError("DB connection lost")
+
+        record_delete_called = []
+
+        def fake_record_delete(*args, **kwargs):
+            record_delete_called.append(args)
+
+        monkeypatch.setattr(ai_journal_module, "record_upload",
+                            fake_record_upload)
+        monkeypatch.setattr(ai_journal_module, "record_delete",
+                            fake_record_delete)
+
+        with patch("app.views.ai_journal.analyze_and_suggest",
+                   return_value=[fake_sugg]):
+            resp = logged_in_client.post(
+                "/ai-journal/analyze",
+                data={
+                    "image_file": (BytesIO(b"x" * 1000), "test.jpg",
+                                   "image/jpeg"),
+                },
+                content_type="multipart/form-data",
+            )
+
+        # 通常レスポンス (200) で TOCTOU の超過判定もスキップ
+        assert resp.status_code == 200
+        # record_delete は呼ばれていない (誤減算なし)
+        assert record_delete_called == []
+        # StorageUsage は別途加算されていない (record_upload 失敗のため) が、
+        # 既存の他ユーザー分相当 495MB はそのまま残る
+        usage = db.session.get(StorageUsage, user.id)
+        assert usage.used_bytes == 495 * MB
+
 
 class TestAIJournalUploadCleanup:
     """ai_journal.upload (GET) の temp drafts クリーンアップで record_delete."""
