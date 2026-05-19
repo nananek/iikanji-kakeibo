@@ -5,10 +5,15 @@ billing サービス (Phase 3 で別コンテナとして実装) に照会する
 
 公開ロードマップ Epic #64 / Phase 2 #67 のアーキテクチャ方針:
 
-- **公開 SaaS モード** (`BILLING_BACKEND=http`): billing コンテナに
+- **公開 SaaS 正式運用** (`BILLING_BACKEND=http`): billing コンテナに
   HTTP 照会。実装は Phase 3 で `HttpBillingClient` として追加予定。
-- **セルフホストモード** (`BILLING_BACKEND=unlimited`): 全有償機能を
-  解放。HTTP リクエストは発生させない。フォーク自家用運用を想定。
+- **セルフホスト全機能解放** (`BILLING_BACKEND=unlimited`): 全有償機能
+  を解放。HTTP リクエストは発生させない。フォーク自家用運用 / 内部
+  利用 / 検証用途を想定 (デフォルト)。
+- **無償機能のみ** (`BILLING_BACKEND=free_only`): 全有償機能を拒否し
+  ベース機能のみ提供する。billing コンテナを立てずに公開ベータを
+  始めたい運用者向け。誰も `paid_llm` / `voucher_storage` /
+  `audit_seat` 等にアクセスできない。
 
 本体側コードに `import stripe` 等の決済プロバイダ SDK が現れたら
 設計違反 (請求管理は billing コンテナに閉じ込める)。
@@ -73,18 +78,50 @@ class UnlimitedBillingClient(BillingClient):
         }
 
 
+class FreeOnlyBillingClient(BillingClient):
+    """無償機能のみモード。billing コンテナがない環境向け実装。
+
+    全 `feature_key` で False を返すため、`paid_llm` (自家ホスト LLM) /
+    `voucher_storage` (証憑画像の永続保管) / `audit_seat` (監査枠) /
+    `timestamp_seal` (TSA) 等の有償機能は誰も使えない。基本の家計簿機能
+    (出納帳・仕訳・取込・レポート・お問い合わせ・退会等) のみ提供する。
+
+    課金開始前の招待制ベータや、有償化方針が固まっていない段階で公開
+    運用を始めるときに使う。billing コンテナの稼働は不要。
+    """
+
+    def has_entitlement(self, user, feature_key: FeatureKey) -> bool:
+        return False
+
+    def get_auditor_capacity(self, user) -> Optional[int]:
+        return 0  # 未契約扱い
+
+    def get_entitlement_summary(self, user) -> dict:
+        return {
+            "mode": "free_only",
+            "all_features_enabled": False,
+            "auditor_capacity": 0,
+        }
+
+
 def get_billing_client() -> BillingClient:
     """環境変数 `BILLING_BACKEND` に応じて適切な実装を返す。
 
+    - `unlimited` (default): 全機能解放 (セルフホスト想定)
+    - `free_only`: 全有償機能を拒否 (公開ベータ運用)
+    - `http`: billing コンテナ参照 (Phase 3 で実装予定)
+
     現状は呼出しごとに新規インスタンスを生成する。`UnlimitedBillingClient`
-    はステートレスかつ軽量なので問題ないが、Phase 3 で `HttpBillingClient`
-    (HTTP コネクションプール保持) を実装する際は `lru_cache(maxsize=1)`
-    または Flask の `g` / `current_app` 拡張オブジェクト経由で再利用する
-    形に変更すること。
+    / `FreeOnlyBillingClient` はステートレスかつ軽量なので問題ないが、
+    Phase 3 で `HttpBillingClient` (HTTP コネクションプール保持) を
+    実装する際は `lru_cache(maxsize=1)` または Flask の `g` /
+    `current_app` 拡張オブジェクト経由で再利用する形に変更すること。
     """
     backend = current_app.config.get("BILLING_BACKEND", "unlimited")
     if backend == "unlimited":
         return UnlimitedBillingClient()
+    if backend == "free_only":
+        return FreeOnlyBillingClient()
     if backend == "http":
         # Phase 3 で `HttpBillingClient` を実装次第、ここから import する。
         # その際 `feature_key` を外部 API に渡す前に

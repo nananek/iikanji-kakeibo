@@ -53,6 +53,16 @@
         billing コンテナを介さずに稼働しており、すべての有償機能 (自家ホスト
         LLM・証憑保管・タイムスタンプ・監査枠) を制限なく利用できます。
       </p>
+    {% elif plan_summary.mode == 'free_only' %}
+      <h6 class="card-title mb-2">
+        <i class="bi bi-gift"></i> 無償機能のみ
+      </h6>
+      <p class="card-text text-muted small mb-0">
+        本サイトでは現状、無償の基本機能 (出納帳・仕訳・取込・レポート・
+        確定申告集計) のみ提供しています。自家ホスト LLM・証憑画像の
+        永続保管・監査者枠・タイムスタンプ等の有償機能は本サイトの
+        運用範囲外です。
+      </p>
     {% else %}
       <h6 class="card-title mb-2">プラン情報</h6>
       <p class="card-text text-muted small mb-0">
