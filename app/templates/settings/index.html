@@ -20,7 +20,7 @@
     </div>
     <div class="d-flex justify-content-between align-items-baseline mb-1">
       <strong>{{ storage_summary.used_mb }} MB</strong>
-      <small class="text-muted">/ {{ storage_summary.quota_mb }} MB ({{ storage_summary.percentage }}%)</small>
+      <small class="text-muted">/ {{ storage_summary.quota_mb }} MB ({{ [storage_summary.percentage, 100] | min }}%)</small>
     </div>
     <div class="progress" style="height: 10px;">
       <div class="progress-bar {% if storage_summary.level == 'critical' %}bg-danger{% elif storage_summary.level == 'warning' %}bg-warning{% else %}bg-primary{% endif %}"

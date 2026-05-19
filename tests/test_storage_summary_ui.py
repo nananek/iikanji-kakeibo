@@ -33,7 +33,8 @@ class TestGetStorageSummary:
             summary = get_storage_summary(user)
         assert summary is None
 
-    def test_returns_zero_when_no_record(self, app, user):
+    def test_returns_zero_when_no_record(self, app, user, monkeypatch):
+        _patch_entitlement(monkeypatch, has_voucher_storage=True)
         with app.app_context():
             summary = get_storage_summary(user)
         assert summary["used_bytes"] == 0
@@ -57,6 +58,7 @@ class TestGetStorageSummary:
         (474, "warning"), # 94.8% → warning
         (475, "critical"),# 95.0% → critical
         (500, "critical"),# 100% → critical
+        (600, "critical"),# 120% → critical (TOCTOU で超過した場合でもクラッシュしない)
     ])
     def test_level_thresholds(self, app, db, user, used_mb, expected_level):
         db.session.add(StorageUsage(user_id=user.id, used_bytes=used_mb * MB))
