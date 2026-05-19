@@ -43,6 +43,44 @@ def get_used_bytes(user) -> int:
     return row.used_bytes if row else 0
 
 
+def get_storage_summary(user):
+    """設定画面・残量表示 UI 向けのサマリを返す。
+
+    `voucher_storage` エンタイトルメントを持たないユーザーは証憑の
+    永続保管自体が許可されていないため、容量メーター表示は意味を
+    持たない。その場合は `None` を返し、テンプレート側で
+    `{% if storage_summary %}` でセクションごと非表示にする。
+
+    返り値 (契約者向け):
+        - `used_bytes` / `quota_bytes`: 現在使用量 / 上限 (bytes)
+        - `used_mb` / `quota_mb`: 人間向け表示用 (小数 1 桁)
+        - `percentage`: 通常 0〜100 の数値 (小数 1 桁)。TOCTOU 等で
+          `used_bytes > quota_bytes` になった場合は 100 を超え得るため、
+          テンプレート側で `[..., 100] | min` でキャップして表示する。
+        - `level`: `"ok"` (<80%) / `"warning"` (80–94.9%) / `"critical"` (≥95%)
+    """
+    if not has_entitlement(user, "voucher_storage"):
+        return None
+    used = get_used_bytes(user)
+    quota = get_quota_bytes(user)
+    pct = round((used / quota) * 100, 1) if quota > 0 else 0
+    if pct >= 95:
+        level = "critical"
+    elif pct >= 80:
+        level = "warning"
+    else:
+        level = "ok"
+    mb = 1024 * 1024
+    return {
+        "used_bytes": used,
+        "quota_bytes": quota,
+        "used_mb": round(used / mb, 1),
+        "quota_mb": round(quota / mb, 1),
+        "percentage": pct,
+        "level": level,
+    }
+
+
 def check_quota(user, incoming_size: int) -> None:
     """容量チェック。`voucher_storage` 未契約か上限超過で
     `QuotaExceededError` を送出する。
