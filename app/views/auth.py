@@ -206,6 +206,7 @@ def logout():
 
 @bp.route("/accept-terms", methods=["GET", "POST"])
 @login_required
+@limiter.limit("10/minute", methods=["POST"])
 def accept_terms():
     """既存ユーザーが改訂後の規約に再同意するエンドポイント。
 

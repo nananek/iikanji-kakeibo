@@ -67,10 +67,11 @@ class Config:
     # 現在有効な利用規約・プライバシーポリシーのバージョン (YYYY-MM-DD 形式)。
     # 規約改訂時に環境変数で更新する。User.accepted_terms_version が
     # この値と一致しないユーザーは再同意フローに誘導される (Phase 1 #66)。
-    # 未設定時は同意管理を実質オフ (= "" と扱う)。
-    CURRENT_TERMS_VERSION = os.environ.get(
-        "CURRENT_TERMS_VERSION", "2026-05-19"
-    )
+    #
+    # デフォルトは空文字で、セルフホスト運用 (Phase 8) を意識して同意管理は
+    # オフが既定。公開 SaaS としてデプロイする場合は環境変数で
+    # 明示的にバージョンを設定する必要がある。
+    CURRENT_TERMS_VERSION = os.environ.get("CURRENT_TERMS_VERSION", "")
 
     # ローカル LLM (llama.cpp / llama-server) のエンドポイント。
     # サーバー管理者が用意する任意機能。未設定の場合、ユーザー UI で llama.cpp

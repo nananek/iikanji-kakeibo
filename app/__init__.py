@@ -100,6 +100,12 @@ def create_app(config_class=Config):
             or endpoint.startswith("legal.")
             or endpoint.startswith("webauthn.")
             or endpoint.startswith("api.")
+            # OAuth デバイス認可フロー (TUI / MCP 等クライアント連携) は
+            # 未同意でもブロックしない。クライアント側で「規約未同意のため
+            # Web で同意が必要」と案内するのは難しいので、サーバー側で
+            # オープンにしておく。Web UI 経由のアクセス時に同意フローへ
+            # 誘導される設計。
+            or endpoint.startswith("oauth.")
         ):
             return
         return redirect(url_for("auth.accept_terms"))
