@@ -92,6 +92,24 @@ class TestCheckQuota:
             with pytest.raises(QuotaExceededError, match="容量上限"):
                 check_quota(user, incoming_size=1)
 
+    def test_error_has_user_message_attribute(
+        self, app, db, user, monkeypatch,
+    ):
+        """`user_message` 属性に固定文言が格納される (CodeQL 誤検出対策)."""
+        _patch_entitlement(monkeypatch, has_voucher_storage=False)
+        with app.app_context():
+            try:
+                check_quota(user, incoming_size=1)
+            except QuotaExceededError as exc:
+                # view 側は `str(exc)` ではなく `exc.user_message` 経由で
+                # ユーザー向け文言を返す。両者の文字列内容は一致するが、
+                # data flow を分離して静的解析の誤検出を避ける。
+                assert hasattr(exc, "user_message")
+                assert "有償プラン" in exc.user_message
+                assert exc.user_message == str(exc)
+            else:
+                pytest.fail("QuotaExceededError should have been raised")
+
     def test_default_unlimited_passes(self, app, db, user):
         """セルフホスト (UnlimitedBillingClient デフォルト) では voucher_storage
         も True で扱われ、上限内なら通過する。"""
