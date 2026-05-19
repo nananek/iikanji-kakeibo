@@ -103,6 +103,18 @@
 - Python クライアント [`iikanji`](https://github.com/nananek/iikanji-kakeibo-client-py) (CLI/SDK) と TUI クライアント [`iikanji-tui`](https://github.com/nananek/iikanji-kakeibo-client-tui) を提供
 - **MCP サーバー** [`iikanji-mcp`](https://github.com/nananek/iikanji-kakeibo-client-mcp) — Claude Desktop 等の MCP クライアントから財務分析を実行
 
+### 公開運用 (SaaS) 向け機能
+
+セルフホスト運用と並行して、不特定多数を対象とした公開運用にも対応:
+
+- **法的文書ページ** — 利用規約 / プライバシーポリシー / 特定商取引法に基づく表記 (`/legal/terms`, `/legal/privacy`, `/legal/tokushoho`)。運営者情報は `OPERATOR_*` 環境変数で注入
+- **利用規約への同意フロー** — 規約改訂時 (`CURRENT_TERMS_VERSION`) に既存ユーザーへ強制再同意を求める
+- **お問い合わせフォーム** — `/legal/contact` で運営者・送信者双方にメール通知 (CAPTCHA + レート制限)
+- **退会フロー** — `/settings/delete-account` で全データ削除 (Passkey 専用ユーザー対応、GDPR 消去権)。電帳法証跡のみ匿名化保持
+- **招待制ベータモード** — `REGISTRATION_INVITE_ONLY=true` で `flask invite-create <email>` で発行した招待トークン経由のみ登録可能
+- **ストレージクオータ** — 証憑画像の容量を `voucher_storage` エンタイトルメントで制御。80%/95% 到達時にメール通知
+- **メール配信** — SMTP バックエンドを内蔵 (`MAIL_BACKEND=smtp`、STARTTLS / SSL 対応)。通知テンプレートは `templates/email/`
+
 ### その他
 
 - **Passkey (WebAuthn)** — 指紋認証・Face ID でログイン
@@ -181,6 +193,49 @@ docker compose up -d
 ブラウザで http://localhost:5000 を開き、ユーザー登録してください。登録時に標準勘定科目が自動で投入されます。
 
 > **Note:** CAPTCHA を有効にする場合は `.env` に `CAPTCHA_PROVIDER` / `CAPTCHA_SITE_KEY` / `CAPTCHA_SECRET_KEY` を設定してください。詳細は `.env.example` のコメントを参照。
+
+### 公開運用に必要な環境変数
+
+不特定多数を対象に SaaS として運用する場合、以下も設定してください:
+
+```bash
+# 法的文書 (運営者情報) — /legal/* で表示される
+OPERATOR_NAME="運営者名"
+OPERATOR_BUSINESS_FORM="個人事業主"   # or "法人"
+OPERATOR_ADDRESS="〒XXX-XXXX ..."
+OPERATOR_PHONE="03-XXXX-XXXX"
+OPERATOR_EMAIL="contact@example.com"
+OPERATOR_LEGAL_UPDATED_AT="2026-05-19"
+
+# 利用規約バージョン (改訂時に変更すると既存ユーザーへ再同意フロー誘導)
+CURRENT_TERMS_VERSION="2026-05-19"
+
+# 招待制ベータモード (推奨: 初期公開時)
+REGISTRATION_INVITE_ONLY=true
+
+# メール送信 (公開時はほぼ必須)
+MAIL_BACKEND=smtp
+MAIL_FROM="noreply@your-domain.com"
+MAIL_FROM_NAME="いいかんじ™家計簿"
+MAIL_SMTP_HOST="smtp.your-provider.com"
+MAIL_SMTP_PORT=587
+MAIL_SMTP_USERNAME="..."
+MAIL_SMTP_PASSWORD="..."
+MAIL_SMTP_USE_TLS=starttls  # starttls / ssl / none
+MAIL_CONTACT_TO="contact@your-domain.com"  # お問い合わせフォーム宛先
+
+# URL 生成 (絶対 URL のため必須)
+SERVER_NAME="your-domain.com"
+PREFERRED_URL_SCHEME=https
+```
+
+招待トークンの発行:
+```bash
+docker exec -w /app server-web-1 flask invite-create user@example.com
+# → メール送信 + raw トークンは DB に保存されない
+```
+
+運用 (バックアップ・監視) の詳細は [docs/operations/](https://nananek.github.io/iikanji-kakeibo/operations/) を参照。
 
 ## プロジェクト構成
 

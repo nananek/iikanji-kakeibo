@@ -86,6 +86,14 @@ with KakeiboClient("https://your-server.example.com", "ik_your_api_key") as clie
 
 - [iPhone ショートカットで AI 証憑仕訳]({{ '/guides/shortcuts.html' | relative_url }}) — レシートを撮影するだけで仕訳候補を自動作成
 
+## 運用ガイド
+
+公開 SaaS / 自家ホスト運用者向け:
+
+- [運用ガイド トップ]({{ '/operations/' | relative_url }}) — CLI コマンド一覧
+- [バックアップと復旧]({{ '/operations/backup/' | relative_url }}) — PostgreSQL ダンプ・証憑画像・整合性監査
+- [監視]({{ '/operations/monitoring/' | relative_url }}) — ログ・容量警告・レート制限
+
 ## 技術スタック
 
 - Python 3.12 / Flask 3.x / Gunicorn
