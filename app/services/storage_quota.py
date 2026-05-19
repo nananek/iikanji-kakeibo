@@ -97,15 +97,19 @@ def record_upload(user, size: int) -> None:
         )
     )
     if result.rowcount == 0:
-        # 初回アップロードが並行した場合の暫定対処: INSERT で UNIQUE 制約
-        # 違反になったら rollback してアトミック UPDATE にフォールバック
-        # する。根本対策 (`INSERT ... ON CONFLICT (user_id) DO UPDATE`) は
-        # 後続 PR で対応予定。
+        # 初回アップロードが並行した場合の暫定対処: INSERT を SAVEPOINT で
+        # 囲み、UNIQUE 制約違反になったら SAVEPOINT までロールバックして
+        # アトミック UPDATE にフォールバック。`db.session.rollback()` を
+        # 使うと呼出側の未 commit な変更 (例: Voucher INSERT) まで巻き戻し
+        # てしまうため、`begin_nested()` でロールバック範囲を限定する。
+        # 根本対策 (`INSERT ... ON CONFLICT (user_id) DO UPDATE`) は後続 PR
+        # で対応予定。
         try:
-            db.session.add(StorageUsage(user_id=user.id, used_bytes=size))
-            db.session.flush()
+            with db.session.begin_nested():
+                db.session.add(StorageUsage(user_id=user.id, used_bytes=size))
+            # 成功時は SAVEPOINT が自動 release される
         except SAIntegrityError:
-            db.session.rollback()
+            # SAVEPOINT までロールバック (外側のトランザクションは生きる)
             db.session.execute(
                 update(StorageUsage)
                 .where(StorageUsage.user_id == user.id)

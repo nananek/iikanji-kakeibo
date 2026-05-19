@@ -140,6 +140,55 @@ class TestTOCTOURollback:
         assert usage.used_bytes == 5001  # 10001 - 5000
 
 
+class TestSavepointIsolationOnRaceCondition:
+    """record_upload の IntegrityError ハンドリングが SAVEPOINT で隔離され、
+    呼出側 (create_voucher_from_upload 内の Voucher INSERT) を巻き戻さない。
+    """
+
+    def test_voucher_survives_when_record_upload_falls_back_to_update(
+        self, app, db, user, accounts, tmp_path, monkeypatch
+    ):
+        monkeypatch.setitem(app.config, "STORAGE_LOCAL_DIR", str(tmp_path))
+        entry = _make_entry(db, user, accounts)
+
+        # 先に別リクエストが INSERT 済の状態を再現
+        db.session.add(StorageUsage(user_id=user.id, used_bytes=100))
+        db.session.commit()
+
+        # record_upload 内の最初の UPDATE のみ rowcount=0 に偽装し、
+        # SAVEPOINT 内の INSERT で実際に UNIQUE 違反が発火する経路を通す
+        real_execute = db.session.execute
+        call_count = {"n": 0}
+
+        def fake_execute(stmt, *args, **kwargs):
+            call_count["n"] += 1
+            # 最初の record_upload 内 UPDATE のみ rowcount=0
+            if call_count["n"] == 1:
+                class FakeResult:
+                    rowcount = 0
+                return FakeResult()
+            return real_execute(stmt, *args, **kwargs)
+
+        monkeypatch.setattr(db.session, "execute", fake_execute)
+
+        with app.app_context():
+            voucher = create_voucher_from_upload(
+                user_id=user.id,
+                journal_entry_id=entry.id,
+                image_bytes=b"x" * 5000,
+                mime_type="image/png",
+            )
+            db.session.commit()
+
+            # Voucher が SAVEPOINT 隔離により残っている (rollback で消えてない)
+            assert Voucher.query.count() == 1
+            assert Voucher.query.first().id == voucher.id
+
+            # StorageUsage はフォールバック UPDATE で加算 (100 + 5000)
+            usage = db.session.get(StorageUsage, user.id)
+            assert usage.used_bytes == 5100
+
+
 class TestLv2AuditorBlockedFromAttach:
     """Lv2 監査者は vouchers.attach を呼べない (権限バイパス防止)"""
 
