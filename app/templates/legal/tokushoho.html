@@ -1,0 +1,95 @@
+{% extends "legal/_base.html" %}
+
+{% block legal_content %}
+<p class="text-muted small">
+  本ページは「{{ operator.service_name }}」 (以下「本サービス」といいます)
+  において提供される有償オプションに関し、特定商取引法第 11 条に
+  基づく表記を行うものです。
+</p>
+
+<table class="table table-bordered">
+  <tbody>
+    <tr>
+      <th class="bg-light" style="width: 30%;">販売業者の名称</th>
+      <td>{{ operator.name }} ({{ operator.business_form }})</td>
+    </tr>
+    <tr>
+      <th class="bg-light">運営責任者</th>
+      <td>{{ operator.name }}</td>
+    </tr>
+    <tr>
+      <th class="bg-light">所在地</th>
+      <td>{{ operator.address }}</td>
+    </tr>
+    <tr>
+      <th class="bg-light">電話番号</th>
+      <td>
+        {{ operator.phone }}
+        <div class="small text-muted mt-1">
+          請求があれば遅滞なく開示します。お問い合わせは原則として下記
+          メールアドレスにてお願いします。
+        </div>
+      </td>
+    </tr>
+    <tr>
+      <th class="bg-light">メールアドレス</th>
+      <td>{{ operator.email }}</td>
+    </tr>
+    <tr>
+      <th class="bg-light">販売価格</th>
+      <td>
+        各有償オプションの価格は、本サービス内の料金ページに表示する
+        金額に基づきます (消費税込)。
+      </td>
+    </tr>
+    <tr>
+      <th class="bg-light">商品代金以外の必要料金</th>
+      <td>
+        本サービスを利用するために必要なインターネット接続料金・通信料金
+        は利用者の負担となります。外部 AI プロバイダを利用者自身の API
+        キーで利用する場合、当該プロバイダへの料金は利用者の負担と
+        なります。
+      </td>
+    </tr>
+    <tr>
+      <th class="bg-light">引渡時期</th>
+      <td>
+        決済完了後、有償オプションは即時に有効化されます。請求情報の
+        反映には数分かかる場合があります。
+      </td>
+    </tr>
+    <tr>
+      <th class="bg-light">お支払方法</th>
+      <td>
+        クレジットカード決済 (Stripe 等の外部決済プロバイダ経由)
+      </td>
+    </tr>
+    <tr>
+      <th class="bg-light">お支払期限</th>
+      <td>
+        各支払期日は、決済プロバイダのサブスクリプション設定に従います。
+        支払いが所定の期日までに行われない場合、所定の猶予期間経過後に
+        当該有償オプションの利用が停止されることがあります。
+      </td>
+    </tr>
+    <tr>
+      <th class="bg-light">返品・キャンセル</th>
+      <td>
+        本サービスはデジタルサービスの性質上、原則として返品・返金には
+        応じられません。サブスクリプションの解約は本サービスの設定画面
+        または決済プロバイダの管理画面からいつでも可能です。解約後は
+        当該課金期間の終了日まで有償機能を利用でき、それ以降の課金は
+        発生しません。
+      </td>
+    </tr>
+    <tr>
+      <th class="bg-light">動作環境</th>
+      <td>
+        本サービスは最新の主要ウェブブラウザ (Chrome / Edge / Firefox /
+        Safari の最新版) でご利用いただけます。一部機能 (パスキー認証
+        など) はブラウザの対応状況により利用できない場合があります。
+      </td>
+    </tr>
+  </tbody>
+</table>
+{% endblock %}

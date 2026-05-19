@@ -155,6 +155,11 @@
   </div>
 
   <footer class="text-center text-muted py-4 mt-5">
+    <small class="d-block mb-1">
+      <a href="{{ url_for('legal.show', slug='terms') }}" class="text-muted">利用規約</a> |
+      <a href="{{ url_for('legal.show', slug='privacy') }}" class="text-muted">プライバシーポリシー</a> |
+      <a href="{{ url_for('legal.show', slug='tokushoho') }}" class="text-muted">特定商取引法に基づく表記</a>
+    </small>
     <small>いいかんじ™家計簿 &copy; {{ now().year if now is defined else 2026 }}</small>
   </footer>
 

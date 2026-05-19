@@ -53,6 +53,17 @@ class Config:
     MAIL_FROM = os.environ.get("MAIL_FROM", "noreply@example.com")
     MAIL_FROM_NAME = os.environ.get("MAIL_FROM_NAME", "いいかんじ™家計簿")
 
+    # 法的文書 (利用規約 / プライバシーポリシー / 特商法表記) で表示する
+    # 運営者情報。実値はデプロイ時に環境変数で注入する想定で、ソース
+    # 管理には含めない (Phase 1 #66 方針)。
+    OPERATOR_NAME = os.environ.get("OPERATOR_NAME", "")
+    OPERATOR_BUSINESS_FORM = os.environ.get("OPERATOR_BUSINESS_FORM", "個人事業主")
+    OPERATOR_ADDRESS = os.environ.get("OPERATOR_ADDRESS", "")
+    OPERATOR_PHONE = os.environ.get("OPERATOR_PHONE", "")
+    OPERATOR_EMAIL = os.environ.get("OPERATOR_EMAIL", "")
+    # 法的文書の最終更新日 (YYYY-MM-DD)。改訂時に手動更新する。
+    OPERATOR_LEGAL_UPDATED_AT = os.environ.get("OPERATOR_LEGAL_UPDATED_AT", "")
+
     # ローカル LLM (llama.cpp / llama-server) のエンドポイント。
     # サーバー管理者が用意する任意機能。未設定の場合、ユーザー UI で llama.cpp
     # プロバイダーは選択肢に出ず、既存 `llama_cpp` 設定を持つユーザーには
