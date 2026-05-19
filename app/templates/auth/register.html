@@ -9,9 +9,12 @@
         <h3 class="text-center mb-4">アカウント登録</h3>
         <form method="POST">
           {{ form.hidden_tag() }}
-          {# 招待制モード時: URL query token を form POST に引き継ぐ #}
-          {% if request.args.get('token') %}
-          <input type="hidden" name="token" value="{{ request.args.get('token') }}">
+          {# 招待制モード時: GET 時は args、POST 再描画時 (WTForms バリデー
+             ション失敗後など) は form から token を引き継ぐ。両方見ないと
+             POST 再描画でトークンが消失する。 #}
+          {% set _inv_token = request.args.get('token') or request.form.get('token') %}
+          {% if _inv_token %}
+          <input type="hidden" name="token" value="{{ _inv_token }}">
           {% endif %}
           <div class="mb-3">
             {{ form.username.label(class="form-label") }}

@@ -27,9 +27,15 @@
           {% include "auth/_captcha_widget.html" %}
           {{ form.submit(class="btn btn-primary w-100") }}
         </form>
-        {% if config.REGISTRATION_ENABLED %}
+        {% if config.REGISTRATION_ENABLED and not config.REGISTRATION_INVITE_ONLY %}
         <div class="text-center mt-3">
           <a href="{{ url_for('auth.register_auditor') }}">監査用アカウント登録</a>
+        </div>
+        {% elif config.REGISTRATION_ENABLED and config.REGISTRATION_INVITE_ONLY %}
+        <div class="text-center mt-3">
+          <small class="text-muted">
+            現在は招待制のため、運営者から届く招待メールから登録してください。
+          </small>
         </div>
         {% endif %}
         <div class="text-center mt-2">

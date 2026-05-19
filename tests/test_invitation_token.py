@@ -130,6 +130,37 @@ class TestRegisterWithInvitationRequired:
         assert resp.status_code == 200
         assert User.query.count() == 0
 
+    def test_token_preserved_after_form_validation_error(
+        self, client, app, db, monkeypatch, reset_limiter,
+    ):
+        """WTForms バリデーション失敗 (パスワード不一致など) で再描画される
+        際にも、hidden field でトークンが引き継がれること。
+
+        修正前は `{% if request.args.get('token') %}` のみ参照しており、
+        POST 再描画時は token が消えていた (PR #99 review 指摘)。
+        """
+        monkeypatch.setitem(app.config, "REGISTRATION_INVITE_ONLY", True)
+        monkeypatch.setitem(app.config, "CURRENT_TERMS_VERSION", "")
+        raw, record = InvitationToken.generate("retry@example.com")
+        db.session.add(record)
+        db.session.commit()
+
+        # 1st POST: パスワード確認ミス → WTForms バリデーション失敗
+        resp = client.post("/register", data={
+            "username": "retry",
+            "email": "retry@example.com",
+            "password": "password123",
+            "password_confirm": "different",  # 不一致
+            "accept_terms": "y",
+            "token": raw,
+        })
+        assert resp.status_code == 200
+        body = resp.get_data(as_text=True)
+        # 再描画フォームに token hidden field が引き継がれている
+        assert f'value="{raw}"' in body
+        # token はまだ使用されていない
+        assert db.session.get(InvitationToken, record.id).used_at is None
+
     def test_post_with_valid_token_succeeds(
         self, client, app, db, account_types, monkeypatch, reset_limiter,
     ):
