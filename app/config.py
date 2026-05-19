@@ -42,9 +42,13 @@ class Config:
 
     # エンタイトルメント基盤の動作モード。
     # - "unlimited" (default): セルフホスト前提で全有償機能を解放。
-    #   billing コンテナへの HTTP リクエストは発生しない。
+    #   billing コンテナへの HTTP リクエストは発生しない。フォーク
+    #   自家用 / 内部利用 / 検証用途。
+    # - "free_only": 全有償機能 (paid_llm / voucher_storage / audit_seat
+    #   / timestamp_seal 等) を拒否し、無償ベース機能のみ提供する。
+    #   billing コンテナを立てずに公開ベータを始めたい運用者向け。
     # - "http": billing コンテナに HTTP 照会 (Phase 3 で実装予定)。
-    #   公開 SaaS モードではこちらを設定し BILLING_SERVICE_URL と
+    #   公開 SaaS 正式運用ではこちらを設定し BILLING_SERVICE_URL と
     #   BILLING_API_KEY を併せて指定する。
     BILLING_BACKEND = os.environ.get("BILLING_BACKEND", "unlimited")
     BILLING_SERVICE_URL = os.environ.get("BILLING_SERVICE_URL", "")

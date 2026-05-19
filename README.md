@@ -213,6 +213,13 @@ CURRENT_TERMS_VERSION="2026-05-19"
 # 招待制ベータモード (推奨: 初期公開時)
 REGISTRATION_INVITE_ONLY=true
 
+# エンタイトルメント (有償機能) のモード:
+#   unlimited (default) — セルフホスト前提で全機能解放
+#   free_only           — 全有償機能を拒否、無償ベース機能のみ提供
+#                         (billing コンテナを立てずに公開ベータを始める運用者向け)
+#   http                — billing コンテナに HTTP 照会 (Phase 3 で実装予定)
+BILLING_BACKEND=free_only
+
 # メール送信 (公開時はほぼ必須)
 MAIL_BACKEND=smtp
 MAIL_FROM="noreply@your-domain.com"
