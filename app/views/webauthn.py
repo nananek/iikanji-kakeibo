@@ -91,7 +91,7 @@ def register_verify():
         logger.warning("WebAuthn registration verification failed", exc_info=True)
         return jsonify(error="検証に失敗しました。もう一度お試しください。"), 400
 
-    transports = ",".join(body.get("response", {}).get("transports", []))
+    transports = " / ".join(body.get("response", {}).get("transports", []))
 
     credential = WebAuthnCredential(
         user_id=current_user.id,
@@ -103,6 +103,25 @@ def register_verify():
     )
     db.session.add(credential)
     db.session.commit()
+
+    # Phase 6 #71: 送信失敗は本体フロー (登録成功) に波及させない
+    if current_user.email:
+        from app.services.mail import send_email
+        send_email(
+            current_user.email,
+            "security_alert",
+            {
+                "username": current_user.username,
+                "event_type": "passkey_added",
+                "event_label": "新しいパスキーが追加されました",
+                "passkey_name": credential.name or "(無名)",
+                "transports": transports or "不明",
+                "event_at": datetime.now(timezone.utc)
+                    .strftime("%Y-%m-%d %H:%M:%S UTC"),
+                "client_ip": request.remote_addr or "不明",
+                "user_agent": request.headers.get("User-Agent", "") or "不明",
+            },
+        )
 
     # リカバリログイン後の強制復旧フロー: パスキーが新規登録され
     # かつ新リカバリコードも生成済みなら、pending 状態を解除する

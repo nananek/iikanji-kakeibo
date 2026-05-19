@@ -1,0 +1,23 @@
+{{ username }} さん
+
+お使いの {{ config.MAIL_FROM_NAME }} アカウントで以下のセキュリティ
+イベントが発生しました。
+
+イベント   : {{ event_label }}
+{% if passkey_name %}パスキー名 : {{ passkey_name }}
+{% endif %}{% if transports %}デバイス種別: {{ transports }}
+{% endif %}日時       : {{ event_at }}
+IP アドレス: {{ client_ip }}
+User-Agent : {{ user_agent }}
+
+ご本人による操作の場合は本メールは無視してください。
+
+ご本人の操作でない場合は、すみやかに次の対応を行ってください:
+
+1. 設定画面のパスキー管理から、身に覚えのないパスキーを削除
+2. 既存のパスキーすべてが安全か確認できない場合は、すべてを削除して
+   信頼できる端末で再登録
+3. リカバリコードを再生成 (古いコードを無効化)
+4. 必要に応じてパスワードを変更
+
+{% include "email/_partials/footer.txt" %}

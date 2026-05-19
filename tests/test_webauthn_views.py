@@ -76,7 +76,7 @@ class TestRegisterVerify:
             cred = WebAuthnCredential.query.filter_by(user_id=user.id).first()
             assert cred is not None
             assert cred.name == "MyKey"
-            assert cred.transports == "usb,nfc"
+            assert cred.transports == "usb / nfc"
 
 
 class TestAuthenticateOptions:
