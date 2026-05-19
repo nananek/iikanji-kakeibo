@@ -215,18 +215,26 @@ def accept_terms():
     リダイレクトされる。POST で同意確認 → 現行バージョンを記録。
     """
     current_version = current_app.config.get("CURRENT_TERMS_VERSION", "")
-    # 既に同意済のユーザーが直接 GET した場合はダッシュボードへ
+    # 既に同意済のユーザーが直接 GET した場合はダッシュボードへ。
+    # 直接 GET なので `?next=` 引き継ぎは不要 (`_safe_next_url` も不要)。
     if (
         current_version
         and current_user.accepted_terms_version == current_version
     ):
-        return redirect(_safe_next_url(url_for("dashboard.index")))
+        return redirect(url_for("dashboard.index"))
     if request.method == "POST":
         if request.form.get("accept_terms"):
             current_user.accepted_terms_version = current_version
             db.session.commit()
             flash("規約への同意を更新しました。", "success")
-            next_url = _safe_next_url(url_for("dashboard.index"))
-            return redirect(next_url)
+            # `?next=` で内部相対パスが渡っている場合のみ尊重。それ以外
+            # (外部 URL / プロトコル相対 / 不正値) はダッシュボードへ。
+            # `is_safe_internal_path` を view 内で直接評価することで
+            # CodeQL の URL redirection 警告を回避する (関数越しの
+            # sanitizer は静的解析で追跡されない)。
+            next_candidate = request.args.get("next", "")
+            if is_safe_internal_path(next_candidate):
+                return redirect(next_candidate)
+            return redirect(url_for("dashboard.index"))
         flash("利用規約・プライバシーポリシーへの同意が必要です。", "danger")
     return render_template("auth/accept_terms.html", current_version=current_version)

@@ -218,6 +218,68 @@ class TestReConsentFlow:
         assert user.accepted_terms_version is None
 
 
+class TestAcceptTermsPostNextRedirect:
+    """POST 後の next= 引き継ぎ (オープンリダイレクト防止含む)"""
+
+    def test_post_with_safe_next_redirects(
+        self, client, db, user, app, monkeypatch
+    ):
+        monkeypatch.setitem(app.config, "CURRENT_TERMS_VERSION", CURRENT_VERSION)
+        user.accepted_terms_version = None
+        db.session.commit()
+
+        with client.session_transaction() as sess:
+            sess["_user_id"] = str(user.id)
+
+        resp = client.post(
+            "/accept-terms?next=/journal/",
+            data={"accept_terms": "1"},
+            follow_redirects=False,
+        )
+        assert resp.status_code in (302, 303)
+        assert resp.headers.get("Location", "").endswith("/journal/")
+
+    def test_post_with_external_next_falls_back(
+        self, client, db, user, app, monkeypatch
+    ):
+        """外部 URL の next= は無視され、ダッシュボードへ"""
+        monkeypatch.setitem(app.config, "CURRENT_TERMS_VERSION", CURRENT_VERSION)
+        user.accepted_terms_version = None
+        db.session.commit()
+
+        with client.session_transaction() as sess:
+            sess["_user_id"] = str(user.id)
+
+        resp = client.post(
+            "/accept-terms?next=https://evil.com/",
+            data={"accept_terms": "1"},
+            follow_redirects=False,
+        )
+        assert resp.status_code in (302, 303)
+        location = resp.headers.get("Location", "")
+        assert "evil.com" not in location
+
+    def test_post_with_protocol_relative_next_falls_back(
+        self, client, db, user, app, monkeypatch
+    ):
+        """`//evil.com` のプロトコル相対も無視"""
+        monkeypatch.setitem(app.config, "CURRENT_TERMS_VERSION", CURRENT_VERSION)
+        user.accepted_terms_version = None
+        db.session.commit()
+
+        with client.session_transaction() as sess:
+            sess["_user_id"] = str(user.id)
+
+        resp = client.post(
+            "/accept-terms?next=//evil.com/",
+            data={"accept_terms": "1"},
+            follow_redirects=False,
+        )
+        assert resp.status_code in (302, 303)
+        location = resp.headers.get("Location", "")
+        assert "evil.com" not in location
+
+
 class TestTermsAndRecoveryGateInteraction:
     """`pending_recovery_action` + 規約未同意 の組合せで無限ループしない"""
 
