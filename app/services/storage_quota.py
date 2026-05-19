@@ -50,6 +50,10 @@ def check_quota(user, incoming_size: int) -> None:
     最終的な整合性は `record_upload` 側のアトミック UPDATE と
     呼出側で記録後に上限を再検証する楽観的パターンで担保すること。
     """
+    if incoming_size <= 0:
+        raise ValueError(
+            f"incoming_size must be positive, got {incoming_size}"
+        )
     if not has_entitlement(user, "voucher_storage"):
         raise QuotaExceededError(
             "証憑画像の永続保管には有償プラン (voucher_storage) が必要です。"
@@ -70,6 +74,14 @@ def record_upload(user, size: int) -> None:
     `UPDATE ... SET used_bytes = used_bytes + :size` のアトミック更新で、
     並行リクエスト下でも加算が消失しない。レコードが存在しない場合は
     新規 INSERT (`rowcount == 0` で判定)。
+
+    注意: 同一ユーザーの **初回** アップロードが並行する稀ケースで
+    `UPDATE → rowcount==0 → INSERT` の競合が起こり、後発リクエストが
+    UNIQUE 制約違反 (IntegrityError) になる可能性がある。アップロード
+    エンドポイント統合 PR (Phase 5 続編) で PostgreSQL の
+    `INSERT ... ON CONFLICT (user_id) DO UPDATE` 化、または
+    SAVEPOINT + retry での共通 upsert ヘルパーに置き換える予定。
+    現状の基盤 PR ではエンドポイント未統合のため実害はない。
     """
     if size <= 0:
         raise ValueError(f"size must be positive, got {size}")
@@ -111,7 +123,7 @@ def record_delete(user, size: int) -> None:
     )
     if result.rowcount == 0:
         current_app.logger.warning(
-            "record_delete called for user_id=%s but StorageUsage row "
+            "record_delete called for user_id=%d but StorageUsage row "
             "does not exist (size=%d)", user.id, size,
         )
     db.session.commit()

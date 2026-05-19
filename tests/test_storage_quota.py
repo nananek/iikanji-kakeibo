@@ -143,7 +143,7 @@ class TestRecordDelete:
 
 
 class TestPositiveSizeValidation:
-    """size <= 0 は ValueError"""
+    """size / incoming_size <= 0 は ValueError"""
 
     @pytest.mark.parametrize("size", [0, -1, -100])
     def test_record_upload_rejects_non_positive(self, app, user, size):
@@ -156,6 +156,14 @@ class TestPositiveSizeValidation:
         with app.app_context():
             with pytest.raises(ValueError, match="size must be positive"):
                 record_delete(user, size=size)
+
+    @pytest.mark.parametrize("size", [0, -1, -100])
+    def test_check_quota_rejects_non_positive(self, app, user, size):
+        with app.app_context():
+            with pytest.raises(
+                ValueError, match="incoming_size must be positive"
+            ):
+                check_quota(user, incoming_size=size)
 
 
 class TestUpdatedAtTracking:
