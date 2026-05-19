@@ -12,6 +12,7 @@
 
 from flask import current_app
 from sqlalchemy import case, func, update
+from sqlalchemy.exc import IntegrityError as SAIntegrityError
 
 from app.extensions import db
 from app.models.storage import StorageUsage
@@ -96,7 +97,23 @@ def record_upload(user, size: int) -> None:
         )
     )
     if result.rowcount == 0:
-        db.session.add(StorageUsage(user_id=user.id, used_bytes=size))
+        # 初回アップロードが並行した場合の暫定対処: INSERT で UNIQUE 制約
+        # 違反になったら rollback してアトミック UPDATE にフォールバック
+        # する。根本対策 (`INSERT ... ON CONFLICT (user_id) DO UPDATE`) は
+        # 後続 PR で対応予定。
+        try:
+            db.session.add(StorageUsage(user_id=user.id, used_bytes=size))
+            db.session.flush()
+        except SAIntegrityError:
+            db.session.rollback()
+            db.session.execute(
+                update(StorageUsage)
+                .where(StorageUsage.user_id == user.id)
+                .values(
+                    used_bytes=StorageUsage.used_bytes + size,
+                    updated_at=func.now(),
+                )
+            )
     db.session.commit()
 
 

@@ -211,6 +211,48 @@ class TestUpdatedAtTracking:
         assert actual > old_ts
 
 
+class TestConcurrentInsertFallback:
+    """初回 INSERT が並行リクエストで競合した場合のフォールバック."""
+
+    def test_integrity_error_falls_back_to_update(
+        self, app, db, user, monkeypatch
+    ):
+        """`db.session.add` 直後の `flush` で IntegrityError を擬似発火
+        させ、アトミック UPDATE への自動フォールバックを検証する。"""
+        from sqlalchemy.exc import IntegrityError as SAIntegrityError
+
+        # 既に StorageUsage がある状態を作る (= 別リクエストが先に INSERT 済)
+        db.session.add(StorageUsage(user_id=user.id, used_bytes=100))
+        db.session.commit()
+
+        # storage_quota.record_upload を直接呼ぶと UPDATE rowcount=1 で
+        # 通常パスに乗ってしまうので、最初の UPDATE を rowcount=0 で
+        # 上書きする状況を再現する: storage_quota.update 関数を patch
+        from app.services import storage_quota as sq
+
+        real_execute = db.session.execute
+        call_count = {"n": 0}
+
+        def fake_execute(stmt, *args, **kwargs):
+            # 最初の UPDATE 呼び出しのみ rowcount=0 のレスポンスを返す
+            class FakeResult:
+                rowcount = 0
+            call_count["n"] += 1
+            if call_count["n"] == 1:
+                return FakeResult()
+            return real_execute(stmt, *args, **kwargs)
+
+        monkeypatch.setattr(db.session, "execute", fake_execute)
+
+        with app.app_context():
+            sq.record_upload(user, size=50)
+
+        # フォールバック UPDATE で +50 加算され、最終的に 150 になる
+        # (擬似発火のため flow が複雑だが、最終状態が正しいことを確認)
+        row = db.session.get(StorageUsage, user.id)
+        assert row.used_bytes == 150
+
+
 class TestAtomicUpdate:
     """アトミック UPDATE (read-modify-write の消失を防ぐ)"""
 
