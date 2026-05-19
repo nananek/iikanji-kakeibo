@@ -12,6 +12,7 @@
 
 from flask import current_app
 from sqlalchemy import case, func, update
+from sqlalchemy.exc import IntegrityError as SAIntegrityError
 
 from app.extensions import db
 from app.models.storage import StorageUsage
@@ -77,11 +78,11 @@ def record_upload(user, size: int) -> None:
 
     注意: 同一ユーザーの **初回** アップロードが並行する稀ケースで
     `UPDATE → rowcount==0 → INSERT` の競合が起こり、後発リクエストが
-    UNIQUE 制約違反 (IntegrityError) になる可能性がある。アップロード
-    エンドポイント統合 PR (Phase 5 続編) で PostgreSQL の
+    UNIQUE 制約違反 (IntegrityError) になる可能性がある。PR #89 で
+    `attach` エンドポイント統合済のため、本番では `IntegrityError`
+    (HTTP 500) のリスクが残っている。後続 PR で PostgreSQL の
     `INSERT ... ON CONFLICT (user_id) DO UPDATE` 化、または
     SAVEPOINT + retry での共通 upsert ヘルパーに置き換える予定。
-    現状の基盤 PR ではエンドポイント未統合のため実害はない。
     """
     if size <= 0:
         raise ValueError(f"size must be positive, got {size}")
@@ -96,7 +97,27 @@ def record_upload(user, size: int) -> None:
         )
     )
     if result.rowcount == 0:
-        db.session.add(StorageUsage(user_id=user.id, used_bytes=size))
+        # 初回アップロードが並行した場合の暫定対処: INSERT を SAVEPOINT で
+        # 囲み、UNIQUE 制約違反になったら SAVEPOINT までロールバックして
+        # アトミック UPDATE にフォールバック。`db.session.rollback()` を
+        # 使うと呼出側の未 commit な変更 (例: Voucher INSERT) まで巻き戻し
+        # てしまうため、`begin_nested()` でロールバック範囲を限定する。
+        # 根本対策 (`INSERT ... ON CONFLICT (user_id) DO UPDATE`) は後続 PR
+        # で対応予定。
+        try:
+            with db.session.begin_nested():
+                db.session.add(StorageUsage(user_id=user.id, used_bytes=size))
+            # 成功時は SAVEPOINT が自動 release される
+        except SAIntegrityError:
+            # SAVEPOINT までロールバック (外側のトランザクションは生きる)
+            db.session.execute(
+                update(StorageUsage)
+                .where(StorageUsage.user_id == user.id)
+                .values(
+                    used_bytes=StorageUsage.used_bytes + size,
+                    updated_at=func.now(),
+                )
+            )
     db.session.commit()
 
 

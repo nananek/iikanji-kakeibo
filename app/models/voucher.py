@@ -22,6 +22,9 @@ class Voucher(db.Model):
     image_mime = db.Column(db.String(50), nullable=False)
     original_filename = db.Column(db.String(255), nullable=True)
     file_hash = db.Column(db.String(64), nullable=True)  # SHA-256
+    # 容量計上 (Phase 5 #70) のためのファイルサイズ (バイト)。新規作成時に
+    # セット。既存 Voucher は NULL のままで、整合性監査バッチで埋める想定。
+    file_size = db.Column(db.BigInteger, nullable=True)
     uploaded_at = db.Column(
         db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc)
     )

@@ -7,13 +7,14 @@ from flask_login import login_required
 from sqlalchemy import func
 from sqlalchemy.orm import joinedload
 
-from app.extensions import db
+from app.extensions import db, limiter
 from app.models.voucher import Voucher
 from app.models.voucher_audit_log import VoucherAuditLog
 from app.models.ai_config import UserAIConfig
 from app.models.journal import JournalEntry, JournalEntryLine
 from app.services.audit import get_effective_user_id
 from app.services.storage import get_storage_backend
+from app.services.storage_quota import QuotaExceededError
 from app.services.voucher import create_voucher_from_upload
 
 MAX_IMAGE_SIZE = 10 * 1024 * 1024  # 10MB
@@ -140,8 +141,19 @@ def verify(voucher_id):
 
 @bp.route("/attach/<int:entry_id>", methods=["POST"])
 @login_required
+@limiter.limit("10/minute", methods=["POST"])
 def attach(entry_id):
-    """AJAX: 既存仕訳に証憑画像を添付する"""
+    """AJAX: 既存仕訳に証憑画像を添付する。
+
+    レート制限 (`10/minute`) は他 upload 系 (csv_import / ofx_import 等)
+    と同水準。quota 統合 (Phase 5 #70) により毎リクエストで DB アクセス
+    が増えるため、DoS 的な連打を抑止する目的でも必要。
+
+    末尾の `db.session.commit()` は `record_upload` 内で commit 済の
+    トランザクションに対する冪等な操作 (補助的に AI 解析結果 etc を
+    保存するため)。`create_voucher_from_upload` の責任で容量計上と
+    Voucher 永続化は完了済。
+    """
     user_id = get_effective_user_id()
     entry = JournalEntry.query.filter_by(
         id=entry_id, user_id=user_id,
@@ -163,13 +175,16 @@ def attach(entry_id):
             "error": "対応していないファイル形式です。JPEG/PNG/WebP/GIF を使用してください。",
         }), 400
 
-    voucher = create_voucher_from_upload(
-        user_id=user_id,
-        journal_entry_id=entry.id,
-        image_bytes=image_bytes,
-        mime_type=mime_type,
-        original_filename=image_file.filename,
-    )
+    try:
+        voucher = create_voucher_from_upload(
+            user_id=user_id,
+            journal_entry_id=entry.id,
+            image_bytes=image_bytes,
+            mime_type=mime_type,
+            original_filename=image_file.filename,
+        )
+    except QuotaExceededError as exc:
+        return jsonify({"error": str(exc)}), 413
 
     response_data = {"ok": True, "voucher_id": voucher.id}
 
