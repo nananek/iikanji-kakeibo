@@ -13,6 +13,11 @@ class AIDraft(db.Model):
     image_key = db.Column(db.String(255), nullable=False)
     image_mime = db.Column(db.String(50), nullable=False)
     file_hash = db.Column(db.String(64), nullable=True)  # SHA-256
+    # 容量計上 (Phase 5 #70): AIDraft 生成時のバイト数。Voucher 化時に
+    # 同値を Voucher.file_size に引き継ぎ、計上は不変 (所有権移転)。
+    # Voucher 化されずに reject/期限切れで削除された場合は file_size を
+    # 元に record_delete する。NULL は Phase 5 計上開始前のレガシー。
+    file_size = db.Column(db.BigInteger, nullable=True)
     comment = db.Column(db.String(500), default="")
     suggestions_json = db.Column(db.Text, nullable=True)
     status = db.Column(

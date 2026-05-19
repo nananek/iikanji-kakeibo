@@ -98,6 +98,16 @@
             <i class="bi bi-journal-text"></i>
           </a>
           {% endif %}
+          {% if can_delete %}
+          <form method="POST" action="{{ url_for('vouchers.delete', voucher_id=v.id) }}"
+                class="d-inline ms-1"
+                onsubmit="return confirm('この証憑を削除します。電帳法の訂正削除履歴はアプリケーションログにのみ残ります。削除しますか？');">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button type="submit" class="btn btn-outline-danger btn-sm py-0 px-1" title="削除">
+              <i class="bi bi-trash"></i>
+            </button>
+          </form>
+          {% endif %}
         </span>
       </div>
     </div>

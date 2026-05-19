@@ -14,6 +14,7 @@ from flask_login import login_required, current_user
 from app.extensions import db
 from app.models.ai_config import UserAIConfig
 from app.models.ai_draft import AIDraft
+from app.models.user import User
 from app.services.audit import get_effective_user_id, get_submitted_account_codes
 from app.services.ai_receipt import analyze_and_suggest
 from app.services.accounting import create_journal_entry
@@ -22,6 +23,10 @@ from app.services.image import serve_image
 from app.services.storage import (
     get_storage_backend, make_storage_key, make_thumbnail_key,
     store_image_with_thumbnail,
+)
+from app.services.storage_quota import (
+    QuotaExceededError, check_quota, get_quota_bytes, get_used_bytes,
+    record_delete, record_upload,
 )
 from app.views.helpers import safe_user_error
 from app.services.voucher import create_voucher_from_draft
@@ -46,6 +51,12 @@ def upload():
     # 前回の一時ドラフトをクリーンアップ
     temp_drafts = AIDraft.query.filter_by(user_id=user_id, status="temp").all()
     keys_to_delete = [d.image_key for d in temp_drafts]
+    # Phase 5 #70: temp ドラフトは Voucher 化されていない = 計上分が宙ぶらりん
+    # のため、削除と同時に record_delete で StorageUsage を減算する。
+    # file_size NULL のレガシードラフトは減算対象外。
+    sizes_to_release = sum(
+        d.file_size or 0 for d in temp_drafts if d.file_size
+    )
     for d in temp_drafts:
         db.session.delete(d)
     db.session.commit()
@@ -53,6 +64,10 @@ def upload():
     for key in keys_to_delete:
         storage.delete(key)
         storage.delete(make_thumbnail_key(key))
+    if sizes_to_release > 0:
+        owner = db.session.get(User, user_id)
+        if owner is not None:
+            record_delete(owner, sizes_to_release)
     session.pop("ai_journal_draft_id", None)
     return render_template(
         "ai_journal/upload.html",
@@ -83,12 +98,25 @@ def analyze():
             "error": "対応していないファイル形式です。JPEG/PNG/WebP/GIF を使用してください。"
         }), 400
 
+    # Phase 5 #70: AIDraft 段階で StorageUsage に計上する。Voucher 化時は
+    # 所有権移転で計上不変、reject/期限切れ削除時に record_delete で減算。
+    size = len(image_bytes)
+    user_id = get_effective_user_id()
+    owner = db.session.get(User, user_id)
+    if owner is None:
+        return jsonify({"error": "ユーザーが見つかりません。"}), 400
+    try:
+        check_quota(owner, size)
+    except QuotaExceededError as exc:
+        # CodeQL py/stack-trace-exposure 対策で `exc.user_message` 経由 (PR #92)
+        return jsonify({"error": exc.user_message}), 413
+
     file_hash = hashlib.sha256(image_bytes).hexdigest()
     comment = request.form.get("comment", "").strip()
 
     try:
         suggestions = analyze_and_suggest(
-            get_effective_user_id(), image_bytes, mime_type, comment=comment
+            user_id, image_bytes, mime_type, comment=comment
         )
     except (ValueError, RuntimeError) as e:
         from flask import current_app
@@ -100,10 +128,11 @@ def analyze():
 
     # 画像・解析結果を保存（セッションには小さなIDのみ）
     draft = AIDraft(
-        user_id=get_effective_user_id(),
+        user_id=user_id,
         image_key="",
         image_mime=mime_type,
         file_hash=file_hash,
+        file_size=size,
         comment=comment,
         suggestions_json=suggestions_json,
         status="temp",
@@ -114,6 +143,34 @@ def analyze():
     store_image_with_thumbnail(key, image_bytes, mime_type)
     draft.image_key = key
     db.session.commit()
+
+    # 容量加算 (アトミック UPDATE) + TOCTOU 楽観的再検証。
+    # create_voucher_from_upload と同じパターン: 並行アップロードで合算が
+    # 上限超過なら巻き戻し (ストレージ削除 + draft 削除 + record_delete)。
+    record_upload(owner, size)
+    if get_used_bytes(owner) > get_quota_bytes(owner):
+        from flask import current_app
+        storage = get_storage_backend()
+        for k in (key, make_thumbnail_key(key)):
+            try:
+                storage.delete(k)
+            except Exception as e:
+                current_app.logger.warning(
+                    "ai_journal rollback: storage delete failed %s: %s", k, e,
+                )
+        db.session.delete(draft)
+        db.session.commit()
+        try:
+            record_delete(owner, size)
+        except Exception as e:
+            current_app.logger.exception(
+                "ai_journal rollback: record_delete failed (user=%d size=%d): %s",
+                owner.id, size, e,
+            )
+        return jsonify({
+            "error": "並行アップロードにより容量上限を超えました。再試行してください。",
+        }), 413
+
     session["ai_journal_draft_id"] = draft.id
 
     return jsonify({"suggestions": suggestions_data})
@@ -241,11 +298,19 @@ def drafts_delete(draft_id):
         return redirect(url_for("ai_journal.drafts"))
 
     image_key = draft.image_key
+    # Phase 5 #70: AIDraft 削除は Voucher 化されないことが確定するため、
+    # StorageUsage から減算する (file_size NULL のレガシーは対象外)。
+    owner_id = draft.user_id
+    size_to_release = draft.file_size or 0
     db.session.delete(draft)
     db.session.commit()
     storage = get_storage_backend()
     storage.delete(image_key)
     storage.delete(make_thumbnail_key(image_key))
+    if size_to_release > 0:
+        owner = db.session.get(User, owner_id)
+        if owner is not None:
+            record_delete(owner, size_to_release)
     flash("下書きを削除しました。", "info")
     return redirect(url_for("ai_journal.drafts"))
 

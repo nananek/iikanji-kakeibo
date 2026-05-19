@@ -22,7 +22,12 @@ from app.services.storage import (
     get_storage_backend, make_storage_key, make_thumbnail_key,
     store_image_with_thumbnail,
 )
+from app.services.storage_quota import (
+    QuotaExceededError, check_quota, get_quota_bytes, get_used_bytes,
+    record_delete, record_upload,
+)
 from app.services.voucher import create_voucher_from_draft
+from app.models.user import User
 from app.models.voucher import Voucher
 from app.models.voucher_audit_log import VoucherAuditLog
 from app.views.helpers import safe_user_error
@@ -343,6 +348,17 @@ def ai_analyze():
             "error": "対応していないファイル形式です。JPEG/PNG/WebP/GIF を使用してください。"
         }), 400
 
+    # Phase 5 #70: AIDraft 段階で StorageUsage に計上 (ai_journal.analyze と同等)
+    size = len(image_bytes)
+    owner = db.session.get(User, user_id)
+    if owner is None:
+        return jsonify({"error": "ユーザーが見つかりません。"}), 400
+    try:
+        check_quota(owner, size)
+    except QuotaExceededError as exc:
+        # CodeQL py/stack-trace-exposure 対策で `exc.user_message` 経由 (PR #92)
+        return jsonify({"error": exc.user_message}), 413
+
     file_hash = hashlib.sha256(image_bytes).hexdigest()
     comment = (request.form.get("comment") or "").strip()[:500]
 
@@ -363,6 +379,7 @@ def ai_analyze():
         image_key="",
         image_mime=mime_type,
         file_hash=file_hash,
+        file_size=size,
         comment=comment or None,
         suggestions_json=suggestions_json,
         status="analyzed",
@@ -373,6 +390,32 @@ def ai_analyze():
     store_image_with_thumbnail(key, image_bytes, mime_type)
     draft.image_key = key
     db.session.commit()
+
+    # 容量加算 + TOCTOU 楽観的再検証 (create_voucher_from_upload と同じパターン)
+    record_upload(owner, size)
+    if get_used_bytes(owner) > get_quota_bytes(owner):
+        from flask import current_app
+        storage = get_storage_backend()
+        for k in (key, make_thumbnail_key(key)):
+            try:
+                storage.delete(k)
+            except Exception as e:
+                current_app.logger.warning(
+                    "api ai/drafts rollback: storage delete failed %s: %s",
+                    k, e,
+                )
+        db.session.delete(draft)
+        db.session.commit()
+        try:
+            record_delete(owner, size)
+        except Exception as e:
+            current_app.logger.exception(
+                "api ai/drafts rollback: record_delete failed "
+                "(user=%d size=%d): %s", owner.id, size, e,
+            )
+        return jsonify({
+            "error": "並行アップロードにより容量上限を超えました。再試行してください。",
+        }), 413
 
     # オプション: Webhook 通知
     if request.form.get("notify") == "1":
@@ -476,11 +519,18 @@ def ai_draft_delete(draft_id):
         return jsonify({"error": "下書きが見つかりません。"}), 404
 
     image_key = draft.image_key
+    # Phase 5 #70: Voucher 化されないことが確定するため StorageUsage 減算。
+    owner_id = draft.user_id
+    size_to_release = draft.file_size or 0
     db.session.delete(draft)
     db.session.commit()
     storage = get_storage_backend()
     storage.delete(image_key)
     storage.delete(make_thumbnail_key(image_key))
+    if size_to_release > 0:
+        owner = db.session.get(User, owner_id)
+        if owner is not None:
+            record_delete(owner, size_to_release)
 
     return jsonify({"ok": True})
 

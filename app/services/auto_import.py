@@ -8,10 +8,14 @@ from app.extensions import db
 from app.models.auto_import import AutoImportSource, ProcessedFile, WebhookConfig
 from app.models.ai_draft import AIDraft
 from app.models.ai_config import UserAIConfig
+from app.models.user import User
 from app.services.ai_receipt import _get_fernet, analyze_and_suggest
 from app.services.sources.webdav import WebDAVProvider
 from app.services.notify import send_webhook
 from app.services.storage import make_storage_key, store_image_with_thumbnail
+from app.services.storage_quota import (
+    QuotaExceededError, check_quota, record_upload,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -142,6 +146,23 @@ def _process_file(source, provider, file_info, user_id, mime_type, dry_run, stat
     """1つのファイルを処理する"""
     try:
         image_bytes = provider.download_file(file_info.path)
+
+        # Phase 5 #70: AIDraft 段階で StorageUsage に計上。自動取込はユーザー
+        # 操作なしで連続実行されるため、容量上限到達時はそのファイルを
+        # skip する (dry_run でも事前判定して error として stats に積む)。
+        # TOCTOU 楽観的再検証は対話的な巻き戻し UX に依存するため自動取込で
+        # は省略し、record_upload 後の上限超過は次回サイクルで判定する。
+        size = len(image_bytes)
+        owner = db.session.get(User, user_id)
+        if owner is None:
+            raise RuntimeError(f"User {user_id} not found")
+        try:
+            check_quota(owner, size)
+        except QuotaExceededError as exc:
+            stats["errors"].append(f"{file_info.path}: {exc}")
+            logger.warning("Quota exceeded for %s: %s", file_info.path, exc)
+            return
+
         suggestions = analyze_and_suggest(
             user_id, image_bytes, mime_type,
             comment=f"自動取込: {source.name}",
@@ -172,6 +193,7 @@ def _process_file(source, provider, file_info, user_id, mime_type, dry_run, stat
             image_key="",
             image_mime=mime_type,
             file_hash=file_hash,
+            file_size=size,
             comment=f"自動取込: {source.name}",
             suggestions_json=suggestions_json,
             status="analyzed",
@@ -191,6 +213,20 @@ def _process_file(source, provider, file_info, user_id, mime_type, dry_run, stat
         )
         db.session.add(pf)
         db.session.commit()
+        # 容量加算 (アトミック UPDATE)。auto_import では巻き戻し相当の
+        # 即時 UX がないため、上限超過は次回サイクルで check_quota が
+        # 弾く形で進行的に収束する。
+        # Draft は既に commit 済のため、record_upload の失敗で外側の
+        # except に飛ぶと「Draft は永続化されたのに容量計上されない」
+        # quota リークが発生する。明示的に握り、ログに残して整合性
+        # 監査バッチで補完する設計とする。
+        try:
+            record_upload(owner, size)
+        except Exception as e:
+            logger.exception(
+                "auto_import: record_upload failed (user=%d size=%d): %s",
+                owner.id, size, e,
+            )
 
         stats["drafts_created"] += 1
         logger.info("Auto-imported: %s", file_info.path)
