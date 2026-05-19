@@ -110,7 +110,13 @@ def render_email(template_name: str, context: dict) -> RenderedEmail:
     return RenderedEmail(subject=subject, text_body=text_body, html_body=html_body)
 
 
-def send_email(to: str, template_name: str, context: Optional[dict] = None) -> None:
+def send_email(
+    to: str,
+    template_name: str,
+    context: Optional[dict] = None,
+    *,
+    raise_on_send_error: bool = False,
+) -> None:
     """テンプレート名と context を指定してメール送信する。
 
     送信先 (`to`) はメールアドレス文字列。複数宛先や CC/BCC は本骨格では
@@ -121,8 +127,10 @@ def send_email(to: str, template_name: str, context: Optional[dict] = None) -> N
       プログラマーエラー) は **吸収せず呼び出し側に伝播** させる。
       早期発見が望ましいクラスのバグなので。
     - `backend.send` の失敗 (SMTP 接続エラー・送信プロバイダ側の障害等)
-      は **吸収してログだけ残す**。配信失敗を本体フローに波及させない
-      ため。再送キュー・suppression は後続 PR で対応。
+      は既定では **吸収してログだけ残す**。Web 経由の同期送信で本体
+      フローに失敗を波及させないため。CLI バッチ (例: `flask
+      notify-terms-update`) など、運用者が失敗件数を集計する用途では
+      `raise_on_send_error=True` を渡すと例外が再 raise される。
     """
     if context is None:
         context = {}
@@ -136,6 +144,8 @@ def send_email(to: str, template_name: str, context: Optional[dict] = None) -> N
         backend.send(to, from_addr, rendered)
     except Exception:
         logger.exception("Failed to send email '%s' to %s", template_name, to)
+        if raise_on_send_error:
+            raise
 
 
 def _format_from_address(addr: str, name: str) -> str:

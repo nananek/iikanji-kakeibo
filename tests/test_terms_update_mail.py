@@ -93,18 +93,16 @@ class TestNotifyTermsUpdateContent:
 
 
 class TestNotifyTermsUpdateFailureResilience:
-    """送信失敗があっても残りの対象に送信は継続"""
+    """送信失敗があっても残りの対象に送信は継続 + 失敗件数が正しく集計される"""
 
-    def test_failures_are_counted(
+    def test_send_continues_on_failure_and_counts(
         self, db, app, monkeypatch
     ):
         monkeypatch.setitem(app.config, "CURRENT_TERMS_VERSION", CURRENT_VERSION)
         _make_user(db, "u1", "u1@example.com", None)
         _make_user(db, "u2", "u2@example.com", None)
 
-        # send_email を 1 つ目で raise させる挙動にモック
         call_count = {"n": 0}
-        original_send = None
 
         from app.services import mail as mail_mod
         from app.services.mail import ConsoleMailBackend
@@ -114,7 +112,6 @@ class TestNotifyTermsUpdateFailureResilience:
                 call_count["n"] += 1
                 if call_count["n"] == 1:
                     raise RuntimeError("simulated SMTP failure")
-                # 2 件目以降は親クラス通り print
                 super().send(to, from_addr, rendered)
 
         monkeypatch.setattr(
@@ -123,8 +120,46 @@ class TestNotifyTermsUpdateFailureResilience:
 
         runner = app.test_cli_runner()
         result = runner.invoke(args=["notify-terms-update"])
-        # send_email 自体は例外を吸収するので CLI は完走
-        # mail.py の挙動により失敗は黙って 0 として数えられる (現実装)。
-        # → 「完走することと、send が 2 回呼ばれること」を最低限の保証として確認
+
+        # 全件試行されること (失敗で打ち切られない)
         assert call_count["n"] == 2
-        assert "送信完了" in result.output
+        # 失敗 1 件 / 成功 1 件 が CLI 出力で集計される
+        assert "成功 1 件" in result.output
+        assert "失敗 1 件" in result.output
+        # 失敗詳細 (ユーザー識別) が出力される
+        assert "u1@example.com" in result.output
+        assert "simulated SMTP failure" in result.output
+
+
+class TestSendEmailRaiseOnError:
+    """`send_email(raise_on_send_error=True)` で backend.send の例外を伝播"""
+
+    def test_default_suppresses(self, app, monkeypatch):
+        from app.services import mail as mail_mod
+        from app.services.mail import ConsoleMailBackend, send_email
+
+        class FailingBackend(ConsoleMailBackend):
+            def send(self, to, from_addr, rendered):
+                raise RuntimeError("boom")
+
+        monkeypatch.setattr(mail_mod, "get_mail_backend", lambda: FailingBackend())
+        with app.test_request_context():
+            # raise しない (デフォルト)
+            send_email("u@example.com", "_skeleton", {"body": "x"})
+
+    def test_raise_when_flag_set(self, app, monkeypatch):
+        import pytest
+        from app.services import mail as mail_mod
+        from app.services.mail import ConsoleMailBackend, send_email
+
+        class FailingBackend(ConsoleMailBackend):
+            def send(self, to, from_addr, rendered):
+                raise RuntimeError("boom")
+
+        monkeypatch.setattr(mail_mod, "get_mail_backend", lambda: FailingBackend())
+        with app.test_request_context():
+            with pytest.raises(RuntimeError, match="boom"):
+                send_email(
+                    "u@example.com", "_skeleton", {"body": "x"},
+                    raise_on_send_error=True,
+                )

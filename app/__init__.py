@@ -309,7 +309,9 @@ def register_cli(app):
         from app.services.mail import send_email
         sent = 0
         failed = 0
-        # _external=True に必要な SERVER_NAME 等は運用者が設定する想定
+        if not app.config.get("SERVER_NAME"):
+            print("[warn] SERVER_NAME 未設定: メール本文の URL が "
+                  "http://localhost/... になります。")
         with app.test_request_context():
             terms_url = url_for("legal.show", slug="terms", _external=True)
             privacy_url = url_for("legal.show", slug="privacy", _external=True)
@@ -324,9 +326,11 @@ def register_cli(app):
                             "terms_url": terms_url,
                             "privacy_url": privacy_url,
                         },
+                        raise_on_send_error=True,
                     )
                     sent += 1
-                except Exception:
+                except Exception as e:
+                    print(f"  [warn] {u.id} <{u.email}>: {e}")
                     failed += 1
         print(f"送信完了: 成功 {sent} 件 / 失敗 {failed} 件")
 
