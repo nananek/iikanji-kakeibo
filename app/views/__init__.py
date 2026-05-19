@@ -15,6 +15,7 @@ from app.views.auditor import bp as auditor_bp
 from app.views.vouchers import bp as vouchers_bp
 from app.views.api import bp as api_bp
 from app.views.oauth import bp as oauth_bp
+from app.views.legal import bp as legal_bp
 
 
 def register_blueprints(app):
@@ -35,3 +36,4 @@ def register_blueprints(app):
     app.register_blueprint(vouchers_bp)
     app.register_blueprint(api_bp)
     app.register_blueprint(oauth_bp)
+    app.register_blueprint(legal_bp)
