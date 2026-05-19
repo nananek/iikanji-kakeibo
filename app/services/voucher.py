@@ -111,13 +111,17 @@ def create_voucher_from_upload(
     #    `record_upload` 内で commit 済のため、Voucher / VoucherAuditLog
     #    も永続化されている。これらを明示的に削除して commit し直す。
     if get_used_bytes(user) > get_quota_bytes(user):
+        from flask import current_app
         record_delete(user, size)
         backend = get_storage_backend()
         for k in (key, make_thumbnail_key(key)):
             try:
                 backend.delete(k)
-            except Exception:
-                pass
+            except Exception as e:
+                current_app.logger.warning(
+                    "voucher rollback: failed to delete storage key %s: %s",
+                    k, e,
+                )
         # VoucherAuditLog は voucher_id FK (ondelete 未指定 = RESTRICT) を
         # 持つため、Voucher 削除前に AuditLog を先に削除する必要がある
         # (PostgreSQL では IntegrityError 防止、SQLite でも安全)。

@@ -77,11 +77,11 @@ def record_upload(user, size: int) -> None:
 
     注意: 同一ユーザーの **初回** アップロードが並行する稀ケースで
     `UPDATE → rowcount==0 → INSERT` の競合が起こり、後発リクエストが
-    UNIQUE 制約違反 (IntegrityError) になる可能性がある。アップロード
-    エンドポイント統合 PR (Phase 5 続編) で PostgreSQL の
+    UNIQUE 制約違反 (IntegrityError) になる可能性がある。PR #89 で
+    `attach` エンドポイント統合済のため、本番では `IntegrityError`
+    (HTTP 500) のリスクが残っている。後続 PR で PostgreSQL の
     `INSERT ... ON CONFLICT (user_id) DO UPDATE` 化、または
     SAVEPOINT + retry での共通 upsert ヘルパーに置き換える予定。
-    現状の基盤 PR ではエンドポイント未統合のため実害はない。
     """
     if size <= 0:
         raise ValueError(f"size must be positive, got {size}")

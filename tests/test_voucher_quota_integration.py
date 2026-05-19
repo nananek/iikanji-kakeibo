@@ -162,7 +162,11 @@ class TestAttachEndpointQuota:
 
 class TestCreateVoucherFromDraftDocstring:
     """create_voucher_from_draft はまだ quota 統合してない旨を docstring で
-    申し送り済 (本 PR ではテストのみで挙動は変えない)"""
+    申し送り済 (本 PR ではテストのみで挙動は変えない).
+
+    TODO (Phase 5 続編): create_voucher_from_draft の quota 統合 PR で
+    本クラスごと削除する (申し送り docstring も同 PR で除去するため)。
+    """
 
     def test_docstring_mentions_phase5_followup(self):
         from app.services.voucher import create_voucher_from_draft

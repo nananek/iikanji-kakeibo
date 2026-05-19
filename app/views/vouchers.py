@@ -142,7 +142,13 @@ def verify(voucher_id):
 @bp.route("/attach/<int:entry_id>", methods=["POST"])
 @login_required
 def attach(entry_id):
-    """AJAX: 既存仕訳に証憑画像を添付する"""
+    """AJAX: 既存仕訳に証憑画像を添付する。
+
+    末尾の `db.session.commit()` は `record_upload` 内で commit 済の
+    トランザクションに対する冪等な操作 (補助的に AI 解析結果 etc を
+    保存するため)。`create_voucher_from_upload` の責任で容量計上と
+    Voucher 永続化は完了済。
+    """
     user_id = get_effective_user_id()
     entry = JournalEntry.query.filter_by(
         id=entry_id, user_id=user_id,
