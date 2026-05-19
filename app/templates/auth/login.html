@@ -37,16 +37,18 @@
           <div id="passkey-login-status" class="mt-2 text-center"></div>
         </div>
 
-        {% if config.REGISTRATION_ENABLED and not config.REGISTRATION_INVITE_ONLY %}
-        <div class="text-center mt-3">
-          <a href="{{ url_for('auth.register') }}">アカウント登録</a>
-        </div>
-        {% elif config.REGISTRATION_ENABLED and config.REGISTRATION_INVITE_ONLY %}
-        <div class="text-center mt-3">
-          <small class="text-muted">
-            現在は招待制のため、運営者から届く招待メールから登録してください。
-          </small>
-        </div>
+        {% if config.REGISTRATION_ENABLED %}
+          {% if not config.REGISTRATION_INVITE_ONLY %}
+          <div class="text-center mt-3">
+            <a href="{{ url_for('auth.register') }}">アカウント登録</a>
+          </div>
+          {% else %}
+          <div class="text-center mt-3">
+            <small class="text-muted">
+              現在は招待制のため、運営者から届く招待メールから登録してください。
+            </small>
+          </div>
+          {% endif %}
         {% endif %}
         <div class="text-center mt-2">
           <small><a href="{{ url_for('auth.recovery_login') }}" class="text-muted">

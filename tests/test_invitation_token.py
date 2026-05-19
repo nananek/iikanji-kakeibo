@@ -229,6 +229,37 @@ class TestRegisterWithInvitationRequired:
         assert resp.status_code == 200
         assert User.query.filter_by(email="mixed@example.com").count() == 0
 
+    def test_post_with_auditor_token_succeeds_on_auditor_register(
+        self, client, app, db, monkeypatch, reset_limiter,
+    ):
+        """auditor トークンで register_auditor に正常登録できる + mark_used."""
+        monkeypatch.setitem(app.config, "REGISTRATION_INVITE_ONLY", True)
+        monkeypatch.setitem(app.config, "CURRENT_TERMS_VERSION", "")
+        raw, record = InvitationToken.generate(
+            "auditor@example.com", user_type="auditor",
+        )
+        db.session.add(record)
+        db.session.commit()
+        token_id = record.id
+
+        resp = client.post("/register/auditor", data={
+            "username": "auditor1",
+            "email": "auditor@example.com",
+            "password": "password123",
+            "password_confirm": "password123",
+            "accept_terms": "y", "token": raw,
+        })
+        # 監査ログインへリダイレクト
+        assert resp.status_code == 302
+        # auditor タイプで作成済
+        user = User.query.filter_by(email="auditor@example.com").first()
+        assert user is not None
+        assert user.user_type == "auditor"
+        # token 消費済
+        updated = db.session.get(InvitationToken, token_id)
+        assert updated.used_at is not None
+        assert updated.used_by == user.id
+
 
 class TestRegisterWithoutInviteMode:
     """REGISTRATION_INVITE_ONLY=False (デフォルト) は従来通り動作."""

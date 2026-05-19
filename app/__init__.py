@@ -485,10 +485,18 @@ def register_cli(app):
         try:
             register_url = url_for(endpoint, token=raw, _external=True)
         except Exception:
-            # auth blueprint は url_prefix なしで登録されているため
-            # フォールバックは `/register` / `/register/auditor` を使う
+            # SERVER_NAME 未設定で url_for(_external=True) が失敗するときの
+            # フォールバック。config の SERVER_NAME / PREFERRED_URL_SCHEME を
+            # 使って絶対 URL を組み立てる (相対パスだとメール本文として無効)。
+            from flask import current_app
+            base = current_app.config.get("SERVER_NAME") or "localhost"
+            scheme = current_app.config.get("PREFERRED_URL_SCHEME", "https")
             path = "/register/auditor" if user_type == "auditor" else "/register"
-            register_url = f"{path}?token={raw}"
+            register_url = f"{scheme}://{base}{path}?token={raw}"
+            print(
+                "[warn] SERVER_NAME が未設定のため URL が不完全な可能性があります。"
+                " 環境変数で SERVER_NAME=your.host を設定してください。"
+            )
 
         if not no_email:
             try:
