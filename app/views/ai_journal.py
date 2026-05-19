@@ -150,15 +150,21 @@ def analyze():
     # Draft は既に commit 済のため、record_upload の例外で 500 を返すと
     # 「Draft は永続化されたのに容量計上されない」quota リークが発生する。
     # 明示的に握ってログに残し、整合性監査バッチで補完する設計とする。
+    record_upload_succeeded = False
     try:
         record_upload(owner, size)
+        record_upload_succeeded = True
     except Exception as e:
         from flask import current_app
         current_app.logger.exception(
             "ai_journal: record_upload failed (user=%d size=%d): %s",
             owner.id, size, e,
         )
-    if get_used_bytes(owner) > get_quota_bytes(owner):
+    # record_upload が失敗した場合、StorageUsage には加算されていないため
+    # TOCTOU 検証をスキップする。これをやらないと、別ユーザーが先に上限近く
+    # まで埋めた状態で当該リクエストが超過判定 → record_delete で他ユーザー
+    # の計上を誤減算する経路ができてしまう。
+    if record_upload_succeeded and get_used_bytes(owner) > get_quota_bytes(owner):
         from flask import current_app
         storage = get_storage_backend()
         for k in (key, make_thumbnail_key(key)):
