@@ -41,11 +41,10 @@ class Voucher(db.Model):
     )
 
     user = db.relationship("User", backref=db.backref("vouchers", lazy="dynamic"))
-    # journal_entry.vouchers backref は削除済も含む全件を返す。テンプレート
-    # や view で「削除済を除外したい」場合は明示的にフィルタするか、
-    # `Voucher.active().filter_by(journal_entry_id=...)` を使うこと。
-    # 既存呼出箇所への副作用を避けるため backref 側に primaryjoin 条件は
-    # 入れない (storage_audit など全件走査側で使うケースもあるため)。
+    # journal_entry.vouchers backref は削除済も含む全件を返す。UI/API では
+    # `entry.active_vouchers` プロパティ (JournalEntry 側で定義) を使い、
+    # 全件 (削除済含む) が必要な log_voucher_orphan / api_voucher_logs
+    # などでは `entry.vouchers` を直接使うこと。
     journal_entry = db.relationship(
         "JournalEntry", backref=db.backref("vouchers", lazy="select")
     )

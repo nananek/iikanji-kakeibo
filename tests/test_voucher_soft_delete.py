@@ -157,23 +157,33 @@ class TestSoftDeletedHiddenFromQueries:
     def test_hidden_from_voucher_index(
         self, logged_in_client, db, user, mock_storage, reset_limiter,
     ):
+        from flask import url_for
+
         v = _make_voucher(db, user)
-        # 1. 削除前は一覧に出る
+        # voucher 一覧に出ているはずの URL (画像表示用)
+        with logged_in_client.application.test_request_context():
+            voucher_img_path = url_for(
+                "ai_journal.voucher_image", voucher_id=v.id,
+            )
+
+        # 1. 削除前は一覧の HTML に voucher_id が含まれている
         resp = logged_in_client.get("/vouchers/")
         assert resp.status_code == 200
-        assert v.image_key.encode() not in resp.data \
-            or "削除" not in resp.get_data(as_text=True) or True
+        body_before = resp.get_data(as_text=True)
+        assert voucher_img_path in body_before
+        assert "証憑が見つかりません" not in body_before
 
         # 2. 削除
         logged_in_client.post(
             f"/vouchers/{v.id}/delete", follow_redirects=False,
         )
 
-        # 3. 削除後は一覧に「証憑が見つかりません」
+        # 3. 削除後は voucher が一覧から消え、empty state が表示される
         resp = logged_in_client.get("/vouchers/")
         assert resp.status_code == 200
-        body = resp.get_data(as_text=True)
-        assert "証憑が見つかりません" in body
+        body_after = resp.get_data(as_text=True)
+        assert "証憑が見つかりません" in body_after
+        assert voucher_img_path not in body_after
 
     def test_hidden_from_verify_endpoint(
         self, logged_in_client, db, user, mock_storage, reset_limiter,
@@ -187,3 +197,26 @@ class TestSoftDeletedHiddenFromQueries:
             f"/vouchers/{v.id}/verify", follow_redirects=False,
         )
         assert resp.status_code == 404
+
+
+class TestEntryActiveVouchers:
+    """`JournalEntry.active_vouchers` プロパティが削除済 Voucher を除外する."""
+
+    def test_active_vouchers_excludes_deleted(self, db, user):
+        from app.models.journal import JournalEntry
+
+        v1 = _make_voucher(db, user, file_size=100)
+        v2 = _make_voucher(db, user, file_size=200)
+        v2.deleted_at = datetime.now(timezone.utc)
+        db.session.commit()
+
+        entry1 = db.session.get(JournalEntry, v1.journal_entry_id)
+        entry2 = db.session.get(JournalEntry, v2.journal_entry_id)
+
+        # entry1: 1 件 active
+        assert len(entry1.active_vouchers) == 1
+        assert entry1.active_vouchers[0].id == v1.id
+
+        # entry2: backref には残るが active_vouchers では空
+        assert len(entry2.vouchers) == 1
+        assert len(entry2.active_vouchers) == 0

@@ -495,11 +495,11 @@ def get_json(entry_id):
         "fiscal_period": entry.fiscal_period,
         "is_readonly": is_readonly,
         "source": entry.source,
-        "has_voucher": len(entry.vouchers) > 0,
+        "has_voucher": len(entry.active_vouchers) > 0,
         "lines": lines,
         "vouchers": [
             {"id": v.id, "uploaded_at": v.uploaded_at.isoformat() if v.uploaded_at else None}
-            for v in entry.vouchers
+            for v in entry.active_vouchers
         ],
     })
 

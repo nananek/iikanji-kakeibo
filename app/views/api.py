@@ -218,7 +218,7 @@ def _entry_to_dict(entry):
                 "id": v.id,
                 "uploaded_at": v.uploaded_at.isoformat() if v.uploaded_at else None,
             }
-            for v in entry.vouchers
+            for v in entry.active_vouchers
         ],
     }
 

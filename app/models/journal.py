@@ -40,6 +40,20 @@ class JournalEntry(db.Model):
     )
 
     @property
+    def active_vouchers(self):
+        """論理削除されていない vouchers のみを返す (Phase 5 #70 電帳法証跡)。
+
+        Voucher 削除を物理 → 論理 (`deleted_at` セット) に変更したため、
+        `self.vouchers` backref は削除済も含む全件を返す。UI / API では
+        削除済を含めると「証憑あり」と誤判定されたり、ai_journal.voucher_image
+        が 404 を返す不整合が発生するため、本プロパティ経由でフィルタする。
+
+        全件 (削除済含む) が必要な log_voucher_orphan / api_voucher_logs
+        などは `self.vouchers` を直接使うこと。
+        """
+        return [v for v in self.vouchers if v.deleted_at is None]
+
+    @property
     def total_debit(self):
         return sum(line.debit_amount for line in self.lines)
 
