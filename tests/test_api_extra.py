@@ -125,6 +125,58 @@ class TestAiAnalyze:
             )
         assert resp.status_code == 400
 
+    def test_record_upload_failure_does_not_record_delete(
+        self, db, client, user, auth_header, accounts, monkeypatch,
+    ):
+        """api.create_draft: record_upload 失敗時に TOCTOU 検証スキップで
+        record_delete が呼ばれない (他ユーザー計上の誤減算経路を遮断)。
+        ai_journal.analyze 側の同等テストと対称に追加。
+        """
+        from app.models.storage import StorageUsage
+        from app.services.ai_receipt import JournalSuggestion
+        from app.views import api as api_module
+
+        _setup_ai_config(db, user.id)
+        # 上限近くまで埋まった他ユーザー相当の計上を作る (495MB)
+        db.session.add(StorageUsage(user_id=user.id, used_bytes=495 * 1024 * 1024))
+        db.session.commit()
+
+        def fake_record_upload(*args, **kwargs):
+            raise RuntimeError("DB connection lost")
+
+        record_delete_called = []
+
+        def fake_record_delete(*args, **kwargs):
+            record_delete_called.append(args)
+
+        monkeypatch.setattr(api_module, "record_upload", fake_record_upload)
+        monkeypatch.setattr(api_module, "record_delete", fake_record_delete)
+
+        with patch("app.services.ai_receipt.analyze_and_suggest") as mock_a, \
+             patch("app.services.storage.store_image_with_thumbnail"):
+            mock_a.return_value = [
+                JournalSuggestion(
+                    title="x", description="", date="2026-02-15",
+                    entry_description="x", lines=[], compliance=None,
+                ),
+            ]
+            resp = client.post(
+                "/api/v1/ai/analyze",
+                headers=auth_header,
+                data={
+                    "image": (io.BytesIO(_png_bytes()), "x.png", "image/png"),
+                },
+                content_type="multipart/form-data",
+            )
+
+        # 201 (Created) — Draft は永続化される
+        assert resp.status_code == 201
+        # record_delete は呼ばれていない (誤減算なし)
+        assert record_delete_called == []
+        # StorageUsage は変動なし (record_upload 失敗のため)
+        usage = db.session.get(StorageUsage, user.id)
+        assert usage.used_bytes == 495 * 1024 * 1024
+
 
 class TestAiDrafts:
     def _make_draft(self, db, user_id, status="analyzed"):

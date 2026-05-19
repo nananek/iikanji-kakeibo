@@ -405,8 +405,9 @@ def ai_analyze():
             owner.id, size, e,
         )
     # record_upload 失敗時は加算が成立していないため TOCTOU 検証を
-    # スキップする (PR #93 review Finding 1: 失敗時に検証走ると別ユーザー
-    # の計上分を record_delete で誤減算する経路ができる)。
+    # スキップする。検証走ると別ユーザーが先に上限近くまで埋めた状況で
+    # 超過判定 → record_delete で他ユーザーの計上を誤減算する経路が
+    # できてしまう。
     if record_upload_succeeded and get_used_bytes(owner) > get_quota_bytes(owner):
         from flask import current_app
         storage = get_storage_backend()

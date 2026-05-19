@@ -163,7 +163,7 @@ def analyze():
     # record_upload が失敗した場合、StorageUsage には加算されていないため
     # TOCTOU 検証をスキップする。これをやらないと、別ユーザーが先に上限近く
     # まで埋めた状態で当該リクエストが超過判定 → record_delete で他ユーザー
-    # の計上を誤減算する経路ができてしまう (PR #93 review Finding 1)。
+    # の計上を誤減算する経路ができてしまう。
     if record_upload_succeeded and get_used_bytes(owner) > get_quota_bytes(owner):
         from flask import current_app
         storage = get_storage_backend()
