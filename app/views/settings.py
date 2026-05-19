@@ -55,7 +55,13 @@ def index():
         plan_summary = get_entitlement_summary(current_user)
     except NotImplementedError:
         plan_summary = None
-    storage_summary = get_storage_summary(current_user)
+    # `get_storage_summary` も内部で `has_entitlement` を呼ぶため、
+    # `HttpBillingClient` 未実装時の `NotImplementedError` 経路で 500 に
+    # ならないようガードする (Phase 3 実装完了後はこの try は除去可)。
+    try:
+        storage_summary = get_storage_summary(current_user)
+    except NotImplementedError:
+        storage_summary = None
     return render_template(
         "settings/index.html",
         plan_summary=plan_summary,

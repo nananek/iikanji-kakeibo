@@ -9,8 +9,29 @@ from app.services.storage_quota import get_storage_summary
 MB = 1024 * 1024
 
 
+def _patch_entitlement(monkeypatch, *, has_voucher_storage: bool):
+    from app.services import entitlement as ent
+    from app.services.entitlement import UnlimitedBillingClient
+
+    class Client(UnlimitedBillingClient):
+        def has_entitlement(self, user, feature_key):
+            if feature_key == "voucher_storage":
+                return has_voucher_storage
+            return True
+
+    monkeypatch.setattr(ent, "get_billing_client", lambda: Client())
+
+
 class TestGetStorageSummary:
     """`get_storage_summary` のロジック検証"""
+
+    def test_returns_none_when_no_voucher_storage(
+        self, app, user, monkeypatch
+    ):
+        _patch_entitlement(monkeypatch, has_voucher_storage=False)
+        with app.app_context():
+            summary = get_storage_summary(user)
+        assert summary is None
 
     def test_returns_zero_when_no_record(self, app, user):
         with app.app_context():
@@ -88,3 +109,23 @@ class TestSettingsPageStorageSection:
         body = resp.get_data(as_text=True)
         assert "残量わずか" not in body
         assert "80% 以上使用中" not in body
+
+    def test_section_hidden_for_non_voucher_storage_user(
+        self, logged_in_client, user, monkeypatch
+    ):
+        """voucher_storage 未契約ユーザーには容量セクションが出ない"""
+        _patch_entitlement(monkeypatch, has_voucher_storage=False)
+        resp = logged_in_client.get("/settings/")
+        body = resp.get_data(as_text=True)
+        assert "ストレージ使用量" not in body
+        assert "MB / " not in body  # 「X.X MB / Y.Y MB」表示が出ない
+
+    def test_section_hidden_when_billing_unimplemented(
+        self, logged_in_client, user, app, monkeypatch
+    ):
+        """BILLING_BACKEND=http 等の NotImplementedError でもセクション非表示で 500 にならない"""
+        monkeypatch.setitem(app.config, "BILLING_BACKEND", "http")
+        resp = logged_in_client.get("/settings/")
+        assert resp.status_code == 200
+        body = resp.get_data(as_text=True)
+        assert "ストレージ使用量" not in body

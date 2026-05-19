@@ -22,10 +22,11 @@
       <strong>{{ storage_summary.used_mb }} MB</strong>
       <small class="text-muted">/ {{ storage_summary.quota_mb }} MB ({{ storage_summary.percentage }}%)</small>
     </div>
-    <div class="progress" style="height: 10px;" role="progressbar"
-         aria-valuenow="{{ storage_summary.percentage }}"
-         aria-valuemin="0" aria-valuemax="100">
+    <div class="progress" style="height: 10px;">
       <div class="progress-bar {% if storage_summary.level == 'critical' %}bg-danger{% elif storage_summary.level == 'warning' %}bg-warning{% else %}bg-primary{% endif %}"
+           role="progressbar"
+           aria-valuenow="{{ storage_summary.percentage }}"
+           aria-valuemin="0" aria-valuemax="100"
            style="width: {{ [storage_summary.percentage, 100] | min }}%;"></div>
     </div>
     {% if storage_summary.level != 'ok' %}
