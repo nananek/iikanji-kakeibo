@@ -32,6 +32,10 @@ class User(UserMixin, db.Model):
     # 規約改訂時に CURRENT_TERMS_VERSION が更新され、ユーザーの値と
     # 一致しない場合は再同意フローへ誘導する (Phase 1 #66)。
     accepted_terms_version = db.Column(db.String(20), nullable=True)
+    # 直近の quota 警告通知レベル (Phase 6 #71)。
+    # NULL: 未送信 or 70% 未満まで回復済 / "warning": 80% 到達済 /
+    # "critical": 95% 到達済。同じ帯にいる間はメール再送しない (重複防止)。
+    last_quota_warning_level = db.Column(db.String(20), nullable=True)
     # リカバリコード（パスキー紛失時の非常用、1 回限り使用）
     recovery_code_hash = db.Column(db.String(64), nullable=True)
     recovery_code_prefix = db.Column(db.String(20), nullable=True)

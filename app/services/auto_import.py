@@ -14,7 +14,7 @@ from app.services.sources.webdav import WebDAVProvider
 from app.services.notify import send_webhook
 from app.services.storage import make_storage_key, store_image_with_thumbnail
 from app.services.storage_quota import (
-    QuotaExceededError, check_quota, record_upload,
+    QuotaExceededError, check_quota, maybe_send_quota_warning, record_upload,
 )
 
 logger = logging.getLogger(__name__)
@@ -227,6 +227,9 @@ def _process_file(source, provider, file_info, user_id, mime_type, dry_run, stat
                 "auto_import: record_upload failed (user=%d size=%d): %s",
                 owner.id, size, e,
             )
+
+        # 容量警告メール (Phase 6 #71)。閾値超過時のみ、失敗は best-effort
+        maybe_send_quota_warning(owner)
 
         stats["drafts_created"] += 1
         logger.info("Auto-imported: %s", file_info.path)
