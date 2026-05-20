@@ -113,7 +113,10 @@ WebAuthn は複数 Passkey 登録をサポートしている (v4.x で既に対�
 
 ### Passkey PRF からの鍵派生
 
-- WebAuthn 認証時に `extensions.prf.eval.first = "iikanji-master-key-v1"` を指定
+- WebAuthn 認証時に `extensions.prf.eval.first` を指定
+  (WebAuthn PRF 拡張の `PRFValues.first` は `BufferSource` を期待する
+  ため、実装時は `new TextEncoder().encode("iikanji-master-key-v1")`
+  で UTF-8 バイト列に変換する)
 - ブラウザ / 認証器が決定論的に 32 バイトの PRF 出力を返す
 - これを HKDF で派生して `derived_key_passkey` とする
 - パスキー紛失時は **別の Passkey** か **パスフレーズ** か **リカバリシード** で MK を復元 → 新しい Passkey に再ラップ
@@ -159,13 +162,20 @@ WebAuthn は複数 Passkey 登録をサポートしている (v4.x で既に対�
 ### Nonce 衝突確率の注釈 (AES-256-GCM 採用時)
 
 AES-256-GCM の Nonce は 96-bit。ランダム生成すると Birthday Paradox
-により **約 2^48 回の暗号化で衝突確率 0.5% 超** となり、GCM の安全性
-が破綻する。
+により以下の確率で衝突が発生する (`P ≈ 1 - exp(-n² / 2^97)`):
 
-家計簿用途では、1 ユーザーの仕訳行 (JournalEntryLine) を全部数えても
-2^32 件 (約 43 億行) 未満が現実的上限。E2 / E3 で大量データの
-ベンチマークを取った上で、**1 MK 当たり 2^32 件 (約 43 億) 超は MK
-ローテーション** を推奨するガイドラインを設ける。
+| n (暗号化回数) | 衝突確率 |
+|--------------|---------|
+| 2^32 (約 43 億) | ~10^-10 (無視できる) |
+| **2^44 (約 17.6 兆)** | **~0.5%** |
+| 2^46 | ~3% |
+| 2^48 | ~39% |
+
+NIST SP 800-38D はランダム IV の invocation 上限として **2^32** を
+推奨している。家計簿用途では、1 ユーザーの仕訳行 (JournalEntryLine)
+を全部数えても 2^32 件未満が現実的上限。E2 / E3 で大量データの
+ベンチマークを取った上で、**1 MK 当たり 2^32 件超は MK ローテーション**
+を推奨するガイドラインを設ける。
 
 ### Argon2id の WASM バンドル
 
@@ -197,6 +207,20 @@ user_ai_configs:    api_key_encrypted は **クライアント側で暗号化** 
 - 各テーブルの `created_at`, `updated_at` (タイムスタンプ)
 - `user_id` 外部キー (テナント分離のため必須)
 - `file_hash` (SHA-256、内容を直接漏らさない一意性キー)
+
+### Webhook 通知 (notify.py) と E2EE の非両立
+
+現行 `notify.py` / `WebhookConfig` は仕訳登録時に摘要・金額を
+Discord 等に **平文で送信** している。E3 で仕訳が暗号化されると
+サーバには平文がないため、以下のいずれかを E3 で確定する:
+
+- (a) **Webhook 自体を v5.0 で廃止** (シンプル、機能後退)
+- (b) **暗号文のままメタ情報のみ通知** (日時 / 何らかの URL リンク。
+  内容はクライアントで取得・復号して確認)
+- (c) **サーバ側での一時復号を許可** (E2EE の保証が部分的に弱まる、
+  非推奨)
+
+暫定: (a) で計画 (b) も併用しうる。
 
 ### 検索可能性
 
@@ -340,6 +364,8 @@ user_ai_configs:    api_key_encrypted は **クライアント側で暗号化** 
 | Q6 | エクスポート機能 (zip ダウンロード) のバックグラウンドジョブ実装 | E6 で実装 |
 | Q7 | クライアント間 (Web / Python / TUI) の暗号スキーム互換性テスト | E6 で結合テスト |
 | Q8 | 移行時のサーバ生成鍵の保持期間と運用 | E7 で精緻化 |
+| Q9 | REST API Bearer トークン (OAuthToken) と鍵階層の整合 — クライアントがどう MK を取得するか | E1 / E2 で確定 |
+| Q10 | ページリロード時の再認証 UX (毎回 Passkey タップ強制になるか、Session-local Worker 維持等) | E0 / E1 プロトタイプで検証 |
 
 ---
 
