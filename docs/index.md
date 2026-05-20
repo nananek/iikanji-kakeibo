@@ -94,6 +94,10 @@ with KakeiboClient("https://your-server.example.com", "ik_your_api_key") as clie
 - [バックアップと復旧]({{ '/operations/backup/' | relative_url }}) — PostgreSQL ダンプ・証憑画像・整合性監査
 - [監視]({{ '/operations/monitoring/' | relative_url }}) — ログ・容量警告・レート制限
 
+## 開発ロードマップ
+
+- [v5.0 E2EE 設計書 (たたき台)]({{ '/v5-e2ee/' | relative_url }}) — Epic #84、サーバが平文を持たない構成への移行計画
+
 ## 技術スタック
 
 - Python 3.12 / Flask 3.x / Gunicorn
