@@ -213,7 +213,11 @@ CURRENT_TERMS_VERSION="2026-05-19"
 # 招待制ベータモード (推奨: 初期公開時)
 REGISTRATION_INVITE_ONLY=true
 
-# エンタイトルメント (有償機能) のモード:
+# エンタイトルメント (有償機能) のモード。**運用形態によって設定を変える**:
+#   - セルフホスト / 個人利用: unlimited (ENV 未設定でも同値、全機能解放)
+#   - 公開ベータ (billing コンテナなし): free_only (全有償機能を拒否)
+#   - 公開 SaaS 正式運用 (Phase 3 で実装): http (billing コンテナに HTTP 照会)
+#
 #   unlimited (default) — セルフホスト前提で全機能解放
 #   free_only           — 全有償機能を拒否、無償ベース機能のみ提供
 #                         (billing コンテナを立てずに公開ベータを始める運用者向け)

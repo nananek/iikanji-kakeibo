@@ -71,6 +71,9 @@ class UnlimitedBillingClient(BillingClient):
         return None
 
     def get_entitlement_summary(self, user) -> dict:
+        # `all_features_enabled` は現状テンプレートで未使用 (mode のみで分岐)。
+        # Phase 3 の HttpBillingClient で「契約済 / 未契約」をブール 1 つで
+        # 受け取りたい呼出側のために予約フィールドとして保持。
         return {
             "mode": "unlimited",
             "all_features_enabled": True,

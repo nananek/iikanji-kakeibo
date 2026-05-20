@@ -13,7 +13,9 @@ from app.services.entitlement import (
 class TestFreeOnlyBillingClient:
     """`FreeOnlyBillingClient` 単体の挙動."""
 
-    def test_has_entitlement_all_false(self, app, user):
+    def test_has_entitlement_all_false(self, user):
+        # FreeOnlyBillingClient はステートレスで current_app を参照しない
+        # ため app fixture 不要
         client = FreeOnlyBillingClient()
         for key in [
             "paid_llm",
@@ -26,11 +28,11 @@ class TestFreeOnlyBillingClient:
         ]:
             assert client.has_entitlement(user, key) is False, key
 
-    def test_get_auditor_capacity_returns_zero(self, app, user):
+    def test_get_auditor_capacity_returns_zero(self, user):
         client = FreeOnlyBillingClient()
         assert client.get_auditor_capacity(user) == 0
 
-    def test_get_entitlement_summary(self, app, user):
+    def test_get_entitlement_summary(self, user):
         client = FreeOnlyBillingClient()
         summary = client.get_entitlement_summary(user)
         assert summary["mode"] == "free_only"

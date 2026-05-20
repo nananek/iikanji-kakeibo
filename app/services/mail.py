@@ -95,11 +95,14 @@ class SmtpMailBackend(MailBackend):
     def send(self, to: str, from_addr: str, rendered: RenderedEmail) -> None:
         cfg = current_app.config
         host = cfg.get("MAIL_SMTP_HOST")
-        port = int(cfg.get("MAIL_SMTP_PORT") or 587)
+        # MAIL_SMTP_PORT / MAIL_SMTP_TIMEOUT は config.py で int 化済のため
+        # ここでの int() 二重変換は不要。`or` フォールバックも config.py が
+        # default 値を持つため到達しない (dead code) が、防御的に残す。
+        port = cfg.get("MAIL_SMTP_PORT") or 587
         username = cfg.get("MAIL_SMTP_USERNAME") or ""
         password = cfg.get("MAIL_SMTP_PASSWORD") or ""
         use_tls = (cfg.get("MAIL_SMTP_USE_TLS") or "starttls").lower()
-        timeout = int(cfg.get("MAIL_SMTP_TIMEOUT") or 30)
+        timeout = cfg.get("MAIL_SMTP_TIMEOUT") or 30
         if not host:
             raise RuntimeError(
                 "MAIL_SMTP_HOST が未設定です (MAIL_BACKEND=smtp 時は必須)。"
