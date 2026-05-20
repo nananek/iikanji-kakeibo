@@ -60,13 +60,7 @@ def verify_captcha_token(token: str) -> bool:
 
 
 def check_captcha_or_flash() -> bool:
-    """リクエストフォームから CAPTCHA トークンを取得して検証し、失敗時は
-    flash メッセージを表示する。
-
-    未設定環境 (`CAPTCHA_PROVIDER` 未指定) では常に True を返す。
-    register / login / contact など、POST フォーム経路で CAPTCHA 検証を
-    挟みたい view から呼び出す共通ヘルパー。
-    """
+    """CAPTCHA 検証に失敗したら flash して False を返す。未設定環境では常に True。"""
     if not is_captcha_enabled():
         return True
     field = get_captcha_response_field()

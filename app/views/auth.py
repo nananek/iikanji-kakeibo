@@ -19,8 +19,6 @@ from app.views.helpers import is_safe_internal_path
 _INTERNAL_PATH_RE = re.compile(r"\A/[A-Za-z0-9_\-./~?=&%#]*\Z")
 
 
-# CAPTCHA 検証は `services.captcha.check_captcha_or_flash` に共通化済
-# (auth.py / legal.py で同一実装を持っていた旧 `_check_captcha` を統合)。
 
 
 def _safe_next_url(fallback: str) -> str:
