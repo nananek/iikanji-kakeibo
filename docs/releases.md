@@ -5,6 +5,72 @@ title: リリースノート
 
 # リリースノート
 
+## v4.0.0-beta
+
+**一般公開ベータリリース** — セルフホスト前提から「公開 SaaS / 招待制ベータ運用」への大規模拡張。
+
+`BILLING_BACKEND` 環境変数で「セルフホスト全機能解放」「無償ベース機能のみ」「公開 SaaS (将来)」の 3 モードを切替可能。`REGISTRATION_INVITE_ONLY` で招待制ベータを開始できる。
+
+### 公開運用基盤 (Phase 1, 4, 8)
+
+- **法的文書ページ** (`/legal/terms`, `/legal/privacy`, `/legal/tokushoho`) を新設。運営者情報は `OPERATOR_*` 環境変数経由で注入
+- **規約再同意フロー** — `CURRENT_TERMS_VERSION` 改訂時に既存ユーザーへ強制再同意を求める
+- **お問い合わせフォーム** (`/legal/contact`) — 運営者宛通知 + 送信者宛自動返信、CAPTCHA + レート制限
+- **退会フロー** (`/settings/delete-account`) — 全データ削除、Passkey 専用ユーザー対応、電帳法証跡のみ匿名化保持
+- **招待トークン制** — `REGISTRATION_INVITE_ONLY=true` で `flask invite-create` で発行したトークン経由のみ登録可能 (email + user_type の二重バインド)
+
+### エンタイトルメント基盤 (Phase 2)
+
+- `BillingClient` 抽象インターフェース + 3 実装 (`UnlimitedBillingClient` / `FreeOnlyBillingClient` / `HttpBillingClient` は Phase 3 で実装)
+- `BILLING_BACKEND=free_only` で billing コンテナを立てずに公開ベータ運用可能 (有償機能はすべて拒否)
+- 有償機能ゲート: `paid_llm` (自家ホスト LLM) / `voucher_storage` / `audit_seat` / `timestamp_seal`
+
+### ストレージクオータ + 電帳法証跡永続化 (Phase 5)
+
+- 証憑画像の容量を `StorageUsage` テーブルで集計 (`voucher_storage` エンタイトルメント、無償枠 500 MB)
+- `INSERT ... ON CONFLICT DO UPDATE` で並行 INSERT を原子化、SAVEPOINT パターン退役
+- `create_voucher_from_upload` を単一トランザクション化 (旧 2 段 commit ゾンビバグ解消)
+- **Voucher 論理削除化** — 削除後も `voucher_audit_logs` を 7 年保管できるよう row を保持 (electronic preservation)
+- `flask storage-audit [--fix]` — file_size NULL backfill + StorageUsage drift 検出 + 修正
+
+### メール配信基盤 (Phase 6)
+
+- `SmtpMailBackend` 実装 (STARTTLS / SSL / none の 3 モード)、依存追加なし (smtplib 標準)
+- 通知テンプレート: `contact_received`, `contact_received_admin`, `account_deleted`, `quota_warning`, `terms_update`, `audit_invitation`, `security_alert`, `invitation`
+- **容量警告メール自動送信** — 80% / 95% 到達時に通知、70% で状態リセット (ヒステリシス)
+
+### セキュリティ強化
+
+- メールヘッダインジェクション対策 (フォームバリデーション + render サニタイズの多重防御)
+- `InvitationToken.mark_used` の TOCTOU を `UPDATE WHERE used_at IS NULL` で原子化
+- `record_upload` 例外時の TOCTOU 空振りで他ユーザー計上を誤減算するバグを修正
+- CodeQL py/url-redirection / py/stack-trace-exposure 誤検出 2 件をコード書き換えで解消
+
+### ライセンス変更
+
+- v3.x までの **いいかんじ™ライセンス (IKL) v1.0** (MIT 互換) → **Sustainable Use License v1.0** (n8n と同等)
+- セルフホスト・自家用は引き続き自由利用可、商用公開ホスティングは別途要相談
+- クライアント (`client-py` / `client-mcp` / `client-tui`) は MIT のまま
+
+### 運用ガイド
+
+- `docs/operations/` 配下にバックアップ手順書・監視ガイドを新設
+- README に「公開運用に必要な環境変数」一覧 + `flask invite-create` 使用例を追記
+
+### 技術詳細
+
+- pytest 1893 件 (新規多数追加)
+- マイグレーション 037-045 を追加 (accepted_terms_version, storage_usage, voucher_file_size, ai_draft_file_size, voucher_deleted_at, voucher_audit_log_nullable, user_quota_warning_level, invitation_tokens, voucher_active_partial_index)
+- PostgreSQL partial index で `Voucher.active()` クエリを最適化
+- `JournalEntry.active_vouchers` を SQL レベル relationship + primaryjoin に
+- GHA: `build-and-push.yml` は v タグ push で自動ビルド + GHCR push (`ghcr.io/nananek/iikanji-kakeibo:4.0.0-beta`)
+
+### 公開ロードマップ進捗
+
+完了: Phase 1 (法的文書), Phase 2 (エンタイトルメント), Phase 4 (公開運用), Phase 5 (ストレージクオータ), Phase 6 (メール基盤), Phase 8 (招待トークン)
+
+未着手: Phase 3 (billing コンテナ — `free_only` モードで回避可), Phase 7 (TSA タイムスタンプ — 事務処理規程方式で代替可)
+
 ## v3.13.1
 
 **ホットフィックス: llama.cpp ヘルプテキストをユーザー向けに修正**
