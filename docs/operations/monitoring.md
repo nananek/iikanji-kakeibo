@@ -34,6 +34,13 @@ curl -fs https://your-domain.com/legal/terms -o /dev/null \
   || echo "health check failed"
 ```
 
+> **Note**: `/legal/terms` は Flask + Jinja2 でテンプレートをレンダー
+> するため、コンテナが起動しているだけでなくアプリケーションが正常
+> 動作していることを確認できる (= DB 接続障害時にもエラーを検出可能)。
+> 一方、テンプレート内で DB 依存描画があると DB 障害時に 500 を返す
+> 可能性があり、これは「アプリのみ起動」を確認したい用途では弱点。
+> 用途に応じて `/static/...` の HEAD など軽量経路と併用するとよい。
+
 ## 容量警告
 
 `quota_warning` メールが SMTP 経由で配信されるかは運用上重要。SMTP

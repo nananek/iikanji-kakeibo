@@ -66,10 +66,20 @@ Snapshot 等) を有効化することを推奨。アプリケーションは
 
 ### ローカルファイルを使用している場合 (`STORAGE_BACKEND=local`)
 
+> **Note**: Docker Compose はデフォルトでプロジェクトディレクトリ名を
+> volume にプレフィックスする (`<project>_<volume-name>`)。実環境の
+> 正確な volume 名は次で確認:
+>
+> ```bash
+> docker volume ls | grep voucher
+> # または
+> docker compose config --volumes
+> ```
+
 ```bash
-# 日次差分バックアップ (rsync)
+# 日次差分バックアップ (rsync) — 環境により <project> を読み替えてください
 rsync -av --delete \
-  /var/lib/docker/volumes/iikanji_voucher_data/_data/ \
+  /var/lib/docker/volumes/<project>_voucher_data/_data/ \
   user@backup-host:/var/backups/iikanji-vouchers/
 ```
 
