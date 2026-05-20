@@ -98,6 +98,19 @@ wrapped_keys テーブル (擬似):
 | 3  | 42      | recovery_seed        | (32 bytes ciphertext) | salt | ... |
 ```
 
+### 複数 Passkey のスケール
+
+WebAuthn は複数 Passkey 登録をサポートしている (v4.x で既に対応)。
+1 デバイス = 1 Passkey と仮定すると、Passkey を 3 台に登録した場合は
+`wrapped_keys` に `passkey_prf_<credid_1>`, `passkey_prf_<credid_2>`,
+`passkey_prf_<credid_3>` の 3 行が並ぶ。
+追加挙動:
+- 新規 Passkey 登録時: 既存セッションで MK を取得 → 新 Passkey の PRF
+  で MK を再ラップ → 新行を INSERT
+- Passkey 削除時: 該当 `wrapped_keys` 行も同時に削除 (ondelete=CASCADE)
+- すべての Passkey 削除済 + パスフレーズなし + リカバリシードなし
+  → アカウント実質ロック (退会フローへ誘導)
+
 ### Passkey PRF からの鍵派生
 
 - WebAuthn 認証時に `extensions.prf.eval.first = "iikanji-master-key-v1"` を指定
@@ -143,6 +156,24 @@ wrapped_keys テーブル (擬似):
 → **暫定: AES-256-GCM** を選択 (WebCrypto 標準でクライアント実装が楽)。
 プロトタイプで XChaCha20 と比較してから最終決定。
 
+### Nonce 衝突確率の注釈 (AES-256-GCM 採用時)
+
+AES-256-GCM の Nonce は 96-bit。ランダム生成すると Birthday Paradox
+により **約 2^48 回の暗号化で衝突確率 0.5% 超** となり、GCM の安全性
+が破綻する。
+
+家計簿用途では、1 ユーザーの仕訳行 (JournalEntryLine) を全部数えても
+2^32 件 (約 43 億行) 未満が現実的上限。E2 / E3 で大量データの
+ベンチマークを取った上で、**1 MK 当たり 2^32 件 (約 43 億) 超は MK
+ローテーション** を推奨するガイドラインを設ける。
+
+### Argon2id の WASM バンドル
+
+Argon2id は WebCrypto に標準実装がない。ブラウザ側でパスフレーズから
+鍵派生するには `argon2-browser` (WASM ビルド、~30 KB gzipped) を別途
+バンドルする必要がある。libsodium.js を使う場合は同梱の Argon2id
+実装を使える (XChaCha20 採用時に同時解決)。
+
 ---
 
 ## 4. データモデル変更
@@ -180,10 +211,13 @@ user_ai_configs:    api_key_encrypted は **クライアント側で暗号化** 
 
 ### Web (WebCrypto API + Alpine.js / Vue)
 
-- 暗号化処理は `static/js/crypto.js` (新規) に集約
-- マスター鍵は **メモリ上のみ保持** (`window.IIKANJI_MK = new Uint8Array(32)`、リロード時に再認証)
-- Service Worker キャッシュには暗号文しか入らない
-- IndexedDB に **暗号文** のみ保存可 (オフライン対応)
+- 暗号化処理は **専用 Web Worker** に閉じ込める (`/static/js/crypto-worker.js`)
+- マスター鍵は Worker クロージャ内のみに保持し、`window.*` には**絶対に露出しない**
+  (`window.IIKANJI_MK` 等のグローバル変数禁止 — XSS が 1 件でも決まれば全データ漏洩のため)
+- メインスレッドは `postMessage` で暗号化/復号の **結果だけ** を受け取る
+- Worker は鍵を保持しつつメッセージごとに encrypt/decrypt のみ応答するシンプルな実装
+- Service Worker キャッシュ・IndexedDB には **暗号文のみ** 保存可 (オフライン対応)
+- リロード時は Passkey / パスフレーズで再認証して Worker を再構築
 
 ### client-py / client-tui
 
@@ -250,7 +284,19 @@ user_ai_configs:    api_key_encrypted は **クライアント側で暗号化** 
 ### Lv1/Lv2/Lv3 の扱い
 
 - Lv1 (集計のみ閲覧) → owner のレポート結果だけ暗号化して提供? or 仕訳全件渡してクライアントで集計
-- Lv2 (科目限定) → 暗号化レベルで分離困難 → クライアント側で全件取得後にフィルタ + サーバ側で不可視科目の id を渡さない
+- Lv2 (科目限定) → **暗号化レベルで分離不可能**:
+  - 監査者クライアントが owner の MK を保持している以上、技術的に全
+    仕訳を復号できる
+  - サーバ側で「不可視科目の id を渡さない」フィルタは効くが、これは
+    **正しく振る舞うクライアントを前提とした制御** であり、悪意ある
+    監査者クライアント (例: 改造版) には強制できない
+  - 現行 v4.x の Lv2 科目隠蔽は「サーバが暗号化済データを科目別に管理」
+    することで強制できたが、E2EE 下では**この保証が成立しない**
+  - **合意形成が必要**: Lv2 を以下のいずれにするか E5 で確定する:
+    - (a) Lv2 廃止 → Lv1 (集計のみ) と Lv3 (全権限) の 2 段階に
+    - (b) Lv2 を「契約上の取り決め」に降格 (技術的強制を諦める)
+    - (c) Lv2 用に「マスター鍵を分けて科目別暗号化」する追加レイヤ
+      (実装複雑度大)
 - Lv3 (全権限) → owner と同等の鍵アクセス
 
 ### 詳細は別途設計
