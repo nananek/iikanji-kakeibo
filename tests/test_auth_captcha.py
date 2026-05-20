@@ -33,7 +33,7 @@ class TestLoginCaptcha:
         assert resp.status_code == 200
 
     def test_login_invalid_captcha(self, client, user, captcha_enabled):
-        with patch("app.views.auth.verify_captcha_token") as mock_v:
+        with patch("app.services.captcha.verify_captcha_token") as mock_v:
             mock_v.return_value = False
             resp = client.post("/login", data={
                 "username": user.username,
@@ -43,7 +43,7 @@ class TestLoginCaptcha:
             assert resp.status_code == 200
 
     def test_login_valid_captcha(self, client, user, captcha_enabled):
-        with patch("app.views.auth.verify_captcha_token") as mock_v:
+        with patch("app.services.captcha.verify_captcha_token") as mock_v:
             mock_v.return_value = True
             resp = client.post("/login", data={
                 "username": user.username,
@@ -55,7 +55,7 @@ class TestLoginCaptcha:
 
 class TestLoginAuditorCaptcha:
     def test_login_auditor_invalid_captcha(self, client, auditor, captcha_enabled):
-        with patch("app.views.auth.verify_captcha_token") as mock_v:
+        with patch("app.services.captcha.verify_captcha_token") as mock_v:
             mock_v.return_value = False
             resp = client.post("/login/auditor", data={
                 "username": auditor.username,
@@ -67,7 +67,7 @@ class TestLoginAuditorCaptcha:
 
 class TestRegisterCaptcha:
     def test_register_invalid_captcha(self, client, account_types, captcha_enabled):
-        with patch("app.views.auth.verify_captcha_token") as mock_v:
+        with patch("app.services.captcha.verify_captcha_token") as mock_v:
             mock_v.return_value = False
             resp = client.post("/register", data={
                 "username": "new",
@@ -83,7 +83,7 @@ class TestRegisterCaptcha:
 
 class TestRegisterAuditorCaptcha:
     def test_register_auditor_invalid_captcha(self, client, captcha_enabled):
-        with patch("app.views.auth.verify_captcha_token") as mock_v:
+        with patch("app.services.captcha.verify_captcha_token") as mock_v:
             mock_v.return_value = False
             resp = client.post("/register/auditor", data={
                 "username": "newaud",

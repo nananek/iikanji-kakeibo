@@ -8,7 +8,7 @@ from app.extensions import db, limiter
 from app.models.user import User
 from app.forms.auth import LoginForm, RegisterForm
 from app.services.seed import seed_accounts_for_user
-from app.services.captcha import is_captcha_enabled, get_captcha_response_field, verify_captcha_token
+from app.services.captcha import check_captcha_or_flash
 from app.views.helpers import is_safe_internal_path
 
 
@@ -19,16 +19,8 @@ from app.views.helpers import is_safe_internal_path
 _INTERNAL_PATH_RE = re.compile(r"\A/[A-Za-z0-9_\-./~?=&%#]*\Z")
 
 
-def _check_captcha() -> bool:
-    """CAPTCHA 検証。未設定時は常に True。"""
-    if not is_captcha_enabled():
-        return True
-    field = get_captcha_response_field()
-    token = request.form.get(field, "")
-    if not token or not verify_captcha_token(token):
-        flash("CAPTCHA認証に失敗しました。もう一度お試しください。", "danger")
-        return False
-    return True
+# CAPTCHA 検証は `services.captcha.check_captcha_or_flash` に共通化済
+# (auth.py / legal.py で同一実装を持っていた旧 `_check_captcha` を統合)。
 
 
 def _safe_next_url(fallback: str) -> str:
@@ -49,7 +41,7 @@ def login():
 
     form = LoginForm()
     if form.validate_on_submit():
-        if not _check_captcha():
+        if not check_captcha_or_flash():
             return render_template("auth/login.html", form=form)
         user = User.query.filter_by(username=form.username.data).first()
         if user and user.user_type == "personal" and user.check_password(form.password.data):
@@ -74,7 +66,7 @@ def login_auditor():
 
     form = LoginForm()
     if form.validate_on_submit():
-        if not _check_captcha():
+        if not check_captcha_or_flash():
             return render_template("auth/login_auditor.html", form=form)
         user = User.query.filter_by(username=form.username.data).first()
         if user and user.user_type == "auditor" and user.check_password(form.password.data):
@@ -99,7 +91,7 @@ def recovery_login():
         return redirect(url_for("dashboard.index"))
 
     if request.method == "POST":
-        if not _check_captcha():
+        if not check_captcha_or_flash():
             return render_template("auth/recovery.html")
         username = request.form.get("username", "").strip()
         code = request.form.get("recovery_code", "").strip()
@@ -201,7 +193,7 @@ def register():
 
     form = RegisterForm()
     if form.validate_on_submit():
-        if not _check_captcha():
+        if not check_captcha_or_flash():
             return render_template("auth/register.html", form=form)
         ok, invitation = _check_invitation_token(
             form, expected_user_type="personal",
@@ -256,7 +248,7 @@ def register_auditor():
 
     form = RegisterForm()
     if form.validate_on_submit():
-        if not _check_captcha():
+        if not check_captcha_or_flash():
             return render_template("auth/register_auditor.html", form=form)
         ok, invitation = _check_invitation_token(
             form, expected_user_type="auditor",
