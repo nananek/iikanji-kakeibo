@@ -1,7 +1,7 @@
 """CAPTCHA token verification"""
 
 import httpx
-from flask import current_app
+from flask import current_app, flash, request
 
 
 # Provider -> (verify URL, response form field name)
@@ -57,3 +57,15 @@ def verify_captcha_token(token: str) -> bool:
     except Exception as e:
         current_app.logger.error("CAPTCHA verification failed: %s", e)
         return False
+
+
+def check_captcha_or_flash() -> bool:
+    """CAPTCHA 検証に失敗したら flash して False を返す。未設定環境では常に True。"""
+    if not is_captcha_enabled():
+        return True
+    field = get_captcha_response_field()
+    token = request.form.get(field, "")
+    if not token or not verify_captcha_token(token):
+        flash("CAPTCHA 認証に失敗しました。もう一度お試しください。", "danger")
+        return False
+    return True

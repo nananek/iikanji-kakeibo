@@ -17,9 +17,7 @@ from flask import (
 
 from app.extensions import limiter
 from app.forms.contact import ContactForm
-from app.services.captcha import (
-    get_captcha_response_field, is_captcha_enabled, verify_captcha_token,
-)
+from app.services.captcha import check_captcha_or_flash
 from app.services.mail import send_email
 
 
@@ -62,18 +60,6 @@ def show(slug: str):
     )
 
 
-def _check_captcha() -> bool:
-    """CAPTCHA 検証。未設定環境では常に True (auth.py と同パターン)。"""
-    if not is_captcha_enabled():
-        return True
-    field = get_captcha_response_field()
-    token = request.form.get(field, "")
-    if not token or not verify_captcha_token(token):
-        flash("CAPTCHA 認証に失敗しました。もう一度お試しください。", "danger")
-        return False
-    return True
-
-
 @bp.route("/contact", methods=["GET", "POST"])
 @limiter.limit("5/hour", methods=["POST"])
 def contact():
@@ -92,7 +78,7 @@ def contact():
     """
     form = ContactForm()
     if form.validate_on_submit():
-        if not _check_captcha():
+        if not check_captcha_or_flash():
             return render_template(
                 "legal/contact.html", form=form,
                 page_title="お問い合わせ",
