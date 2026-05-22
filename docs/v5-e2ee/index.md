@@ -1524,10 +1524,11 @@ E3 の JSON-then-encrypt パターンを **画像 BLOB に適用**。電帳法�
 
 ```
 vouchers:
-  暗号化対象: original_filename, image_mime, file_hash (※ §13.4 参照)
+  暗号化対象: original_filename, image_mime (encrypted_meta_blob にまとめて格納)
   非暗号化:   id, user_id, journal_entry_id (FK 維持)
               image_key (ストレージパス、平文)
-              encrypted_meta_blob, meta_iv (新規、メタ情報の暗号化)
+              thumbnail_key (サムネイルのストレージパス、平文)
+              encrypted_meta_blob, meta_iv (新規、original_filename + image_mime 等のメタ情報)
               uploaded_at (時刻情報は脅威モデル §1「漏れて構わない情報」)
               file_hash_plain (クライアント計算) / file_hash_cipher (サーバ計算)
   画像本体:   ストレージ (Local / S3) に暗号化済バイト列として保存
@@ -1564,6 +1565,25 @@ voucher_audit_logs:
 
 サーバはバイト列しか触れない。画像の中身、ファイル名、MIME タイプすべて
 クライアントが復号後に得る。
+
+#### AAD 一覧 (vouchers 全暗号化フィールド)
+
+```
+画像本体:
+  aad = b"vimg\0"   + uint64_be(user_id) + b"\0" + uint64_be(voucher_id)
+
+サムネイル:
+  aad = b"vthumb\0" + uint64_be(user_id) + b"\0" + uint64_be(voucher_id)
+
+encrypted_meta_blob (original_filename + image_mime 等):
+  aad = b"vmeta\0"  + uint64_be(user_id) + b"\0" + uint64_be(voucher_id)
+
+voucher_audit_logs.encrypted_detail_blob:
+  aad = b"valog\0"  + uint64_be(user_id) + b"\0" + uint64_be(voucher_audit_log_id)
+```
+
+§12.2 のテーブル種別プレフィックスパターンを踏襲。テーブル間 / フィールド間
+のすり替え攻撃を全部検知。
 
 **AAD 重要**: `voucher_id` は POST 時にサーバが採番するため、**クライアントは
 2 段階で upload する必要がある**:
@@ -1700,6 +1720,34 @@ Phase E4 マイグレーション:
 注意: 画像はデータ量が大きいので、移行所要時間は仕訳の数十倍。バッチ処理 +
 進捗 UI が必須。E7 のメンテナンスウィンドウで E3 と並行して進める。
 
+#### 一時 MK の安全性と運用
+
+§6 と §10.2 / §12.9 で扱った「一時 MK」の E4 への適用詳細:
+
+1. **生成・配布**:
+   - サーバ管理者が `flask migration-genkey` CLI で生成 (32B random)
+   - サーバ DB に `users.migration_temp_mk` (一時カラム、暗号化なし) で保管
+   - 移行期間外は NULL のみ
+2. **再暗号化の進捗追跡**:
+   - `vouchers.encrypted_meta_blob IS NULL` の件数を `users` ごとに集計
+   - 集計値を `users.migration_pending_vouchers` (smallint, デバッグ用) に
+     キャッシュ
+   - クライアントが PUT で再暗号化するたびに -1 デクリメント
+3. **未完ユーザーの扱い**:
+   - 移行猶予期間 (§6 の 30 日) 経過後も未完了のユーザー: アカウントロック
+     → 「鍵設定完了するか退会するか」を選択させる UI
+   - 退会選択時はサーバが一時 MK で復号して CSV エクスポート (E2EE 完了前の
+     最後のチャンス、ユーザー同意の上)
+4. **一時 MK 廃棄条件**:
+   - 全アクティブユーザーの `migration_pending_vouchers = 0` を確認
+   - 管理者が `flask migration-finalize` CLI を実行
+     - 全 `users.migration_temp_mk` を SQL UPDATE で NULL
+     - 関連ストレージ上の旧 Fernet 鍵 (SECRET_KEY 経由) もローテーション
+   - 廃棄後は復元不可能 → ロックされたユーザーのデータは復号不能 (規約で明示)
+5. **ロスト防止**:
+   - 廃棄前のスナップショットをサーバ管理者が S3 など別ストレージに 30 日
+     保管 (緊急時の復旧用、運用ガイドに明記)
+
 ### 13.10 E4 完了条件
 
 - [ ] `vouchers` テーブルに `encrypted_meta_blob`, `meta_iv`, `file_hash_plain`, `thumbnail_key` カラム追加マイグレーション
@@ -1716,6 +1764,8 @@ Phase E4 マイグレーション:
 - [ ] テスト: 電帳法 Phase 2 検索 (日付 / 金額 / 取引先) がクライアントサイドで動作
 - [ ] テスト: VoucherAuditLog の detail 暗号化が機能
 - [ ] テスト: S3 / Local 両ストレージで E4 が動作
+- [ ] AuditPackage への証憑同梱用フック (E5 向け stub / API 設計メモ) の確認
+- [ ] 一時 MK 運用 CLI (`flask migration-genkey` / `flask migration-finalize`) の実装と運用ガイド整備
 
 ### 13.11 E5 (監査連携) への影響
 
