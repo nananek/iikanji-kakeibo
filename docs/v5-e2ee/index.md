@@ -1127,6 +1127,7 @@ E2EE 移行の中核。`JournalEntry` / `JournalEntryLine` / `MedicalExpense` /
 journal_entries:
   暗号化対象: date, description, source, batch_id, fiscal_period
   非暗号化:   id, user_id, entry_number (※ 採番のため平文)
+              fiscal_year (※ 年度フィルタのため新規・平文、date 暗号化に伴う代替)
               created_at, updated_at, encrypted_blob, blob_iv (新規)
 
 journal_entry_lines:
@@ -1144,6 +1145,12 @@ balance_caches:
   → **テーブル削除** (E2EE 下ではサーバが残高計算できない)
   → クライアント側で IndexedDB に暗号化済キャッシュを保持
 ```
+
+⚠️ **年度フィルタ用に `journal_entries.fiscal_year smallint` を新設** (平文)。
+`date` が暗号化されてサーバから見えなくなるため、`GET /api/v1/journals?year=2026`
+のようなサーバサイドフィルタは `fiscal_year` カラムで実現する。クライアントが
+date から年度を計算して書き込み時に同時に送る。漏れる情報は「何年度の仕訳が
+何件あるか」のみで、内容は守られる。
 
 各テーブルに `encrypted_blob (bytea)` + `blob_iv (bytea 12B)` を追加し、
 **1 レコード = 1 JSON 暗号文** とする。フィールド単位ではなくレコード単位の
@@ -1165,14 +1172,36 @@ balance_caches:
 // 暗号化フロー
 plaintext_bytes = utf8(JSON.stringify(plaintext))
 iv              = crypto.getRandomValues(new Uint8Array(12))
-ciphertext      = AES-GCM(MK, iv, plaintext_bytes, aad=user_id+"\0"+entry_id)
-                  ※ aad で「他ユーザーの暗号文を入れ替え」攻撃を防ぐ
+ciphertext      = AES-GCM(MK, iv, plaintext_bytes, aad)
 encrypted_blob  = ciphertext + 16B tag (cryptography ライブラリ既定)
 ```
 
+#### AAD フォーマット (全テーブル共通仕様)
+
+AAD は **テーブル種別 + 識別 ID の連結バイト列**。すべての ID は **big-endian
+8 バイト (uint64)** でエンコード。サーバが BLOB を別ユーザー / 別行にすり替えても
+復号失敗で検出される。
+
+```
+journal_entries:
+  aad = b"je\0" + uint64_be(user_id) + b"\0" + uint64_be(entry_id)
+
+journal_entry_lines:
+  aad = b"jel\0" + uint64_be(user_id) + b"\0" + uint64_be(journal_entry_id)
+                + b"\0" + uint64_be(line_id)
+  ※ line_id 単独だと他ユーザーの同 line_id にすり替え可能なので user_id + journal_entry_id も必須
+
+medical_expenses:
+  aad = b"me\0" + uint64_be(user_id) + b"\0" + uint64_be(expense_id)
+
+balance_cache_blobs:
+  aad = b"bcb\0" + uint64_be(user_id) + b"\0" + uint16_be(year) + b"\0" + uint16_be(period)
+```
+
+- テーブル種別プレフィックス (`je` / `jel` / `me` / `bcb`) で「JournalEntry の
+  暗号文を MedicalExpense 行に入れる」攻撃も検知
+- big-endian 固定長エンコードにより Web / Python / TUI クライアント間で完全互換
 - `v` (version) フィールドで将来のスキーマ変更に対応
-- AAD (additional authenticated data) として user_id + entry_id を含めることで、
-  サーバが BLOB を別ユーザーの行にすり替えても復号失敗で検出可能
 
 ### 12.3 レポート集計のクライアントサイド化
 
@@ -1260,6 +1289,18 @@ Web 貼り付け (Web Import) も同様にクライアント側パース化。
 - `AIDraft` テーブルは「下書きの暗号化スナップショット」のみ保管 (フル E2EE)
 - `discord_webhook_url` 等の外部通知は v5.0 で廃止 (§4 Webhook 非両立)
 
+#### Webhook 廃止のユーザー影響
+
+v4.x の Discord 通知 (`AIDraft.discord_webhook_url` / `WebhookConfig`) を
+利用しているユーザーは v5.0 アップグレード時に通知が止まる。リリースノート
+への明記が必須:
+
+- v5.0 リリース時の移行ガイドに「Webhook 通知は廃止。仕訳登録の確認は
+  クライアント常駐 + Page Visibility イベントで代替してください」
+- 既存 `WebhookConfig` レコードは移行マイグレーションで削除 (E7 で実行)
+- ユーザーが事前にエクスポートしたい場合のオプトアウト手段は不要 (Webhook URL
+  自体はユーザーが把握済み)
+
 ### 12.7 月次確定 (FiscalClose) の扱い
 
 `FiscalClose` テーブルは:
@@ -1320,20 +1361,51 @@ Phase E3 マイグレーション:
 - 期間中、クライアントは旧平文 or 新暗号文のどちらでも読める「dual read」
 - DROP 後は新暗号文のみ
 
+#### dual read 期間中の API 契約
+
+`GET /api/v1/journals` (および類似 endpoint) のレスポンスは
+**常に新形式 (encrypted_blob + blob_iv)** で返す。サーバ側で以下のロジック:
+
+```
+未移行行 (encrypted_blob IS NULL):
+  → サーバが「一時 MK」(§6 サーバ生成鍵フェーズの残り鍵) で旧カラムを暗号化
+    オンザフライで encrypted_blob + blob_iv を生成して返す
+  → クライアントはサーバ生成鍵で復号 (移行ウィザード中のみ可能)
+
+移行済行 (encrypted_blob IS NOT NULL):
+  → そのまま返す
+  → クライアントは自分の MK で復号
+```
+
+`POST /api/v1/journals` (新規仕訳作成) は**移行期間中も暗号文のみ受付**。
+クライアントが平文 POST するルートは v5.0 で廃止。これにより新規データは
+即時 E2EE 化される。
+
+dual read 期間後 (旧カラム DROP 後): サーバ側の一時 MK は破棄、`encrypted_blob`
+がない行は存在しなくなる。
+
 ### 12.10 E3 完了条件
 
 - [ ] journal_entries / journal_entry_lines / medical_expenses にカラム追加マイグレーション (encrypted_blob, blob_iv)
 - [ ] balance_cache_blobs テーブル新設 + 旧 balance_caches DROP
 - [ ] AAD (user_id + entry_id) による暗号文すり替え検知の実装
 - [ ] レポート計算のクライアントサイド化 (試算表 / P/L / B/S / 月次比較 / 確定申告集計 / 元帳 / 医療費控除)
-- [ ] CSV / OFX / Web 貼り付けのクライアントサイドパース化
+- [ ] CSV / OFX / Web 貼り付けのクライアントサイドパース化 (Web: JS、`client-py` / `client-tui`: 既存 Python ロジック流用 + 仕訳暗号化を追加)
 - [ ] AI 証憑仕訳 (AIDraft) のクライアントサイド AI 呼び出し統合
 - [ ] サーバ側 `tax.py` / `balance.py` / `csv_import.py` / `ofx_import.py` 等の廃止
 - [ ] IndexedDB キャッシュ戦略 (年度別、差分更新)
 - [ ] パフォーマンス目標: 仕訳 10 万件で初回ロード 5 秒以内
+- [ ] `journal_entries.fiscal_year smallint` (平文) カラム追加 + 既存データ移行
+- [ ] **クライアント側書き込みバリデーション**: debit / credit 合計一致、`fiscal_period=16` の手動入力禁止 (サーバ側バリデーションは fiscal_period 暗号化で消えるため)
+- [ ] dual read 期間中の API: `GET` は常に encrypted_blob 形式で返却 (未移行行はサーバ生成鍵で on-the-fly 暗号化)、`POST` は暗号文のみ受付
 - [ ] テスト: AAD 攻撃 (他ユーザーの暗号文を自分の行にすり替え) で復号失敗
+- [ ] テスト: テーブル種別プレフィックス付き AAD で異テーブル暗号文の混入を検知
 - [ ] テスト: 月次確定後の write 拒否がクライアント書き込みでも効く
+- [ ] テスト: クライアント側 debit/credit 合計一致バリデーションが効く
+- [ ] テスト: dual read 期間中の旧データ取得が成功する (移行前後の互換)
 - [ ] E2 で確立したパターン (BLOB + IV カラム、互換 endpoint) を E3 でも踏襲
+- [ ] `client-py` / `client-tui` の仕訳 CRUD API クライアントを E3 形式に更新
+- [ ] WebhookConfig / AIDraft.discord_webhook_url の v5.0 廃止 (E7 マイグレーションで削除、リリースノートに移行ガイド記載)
 
 ### 12.11 E4 (証憑画像) への影響
 
