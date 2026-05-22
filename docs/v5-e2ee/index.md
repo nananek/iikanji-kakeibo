@@ -379,7 +379,7 @@ Discord 等に **平文で送信** している。E3 で仕訳が暗号化され
 - **Lv1 (集計のみ)**: owner がレポート結果スナップショット (P/L / B/S /
   月次比較) だけを auditor の公開鍵で暗号化して送る。仕訳は渡らない
 - **Lv2 (税務科目限定)**: owner が税務科目フィルタを適用した仕訳セットだけを
-  auditor の公開鍵で暗号化して送る。`owner クライアントが` 強制するので
+  auditor の公開鍵で暗号化して送る。**owner クライアント側で強制** するので
   E2EE と矛盾しない (owner の意思によるフィルタ)
 - **Lv3 (本人代理に近い)**: 全仕訳スナップショット送信 + 修正案戻し。
   原理的に同じフローで実現可能。MK は共有しない
@@ -402,6 +402,61 @@ Discord 等に **平文で送信** している。E3 で仕訳が暗号化され
 - v4.x の Lv2 UX (auditor がログインして閲覧する形式) とは大きく異なる
 - 修正案のマージは owner の手動操作 (auditor が直接書き込めない)
 - 修正案の差分表示・コンフリクト解決の UI が必要 (差分 UI を新設)
+
+#### 未確定の設計課題 (E3 / E5 で確定)
+
+PR #120 review で指摘された 4 つの設計ギャップ。E3 (データモデル) 着手前に
+方針を決める必要がある。
+
+##### (i) 公開鍵の真正性検証 (MITM 耐性)
+
+`users.public_key` はサーバが平文管理する。サーバが侵害された場合、auditor
+の公開鍵をすり替えてスナップショットを傍受される可能性がある。完全な E2EE
+を謳うには鍵検証フローが必要。候補:
+
+- **TOFU (Trust On First Use)**: 初回の AuditGrant 確立時に公開鍵を
+  owner クライアントが pinning。以降サーバが返す公開鍵が変わったら警告
+- **帯域外 fingerprint 確認**: 公開鍵の指紋を別チャネル (対面 / 電話 / 紙)
+  で確認させる UI を提供
+- **Web of Trust 風の署名連鎖**: 過剰、本プロジェクトでは不採用
+
+→ **暫定: TOFU + fingerprint 表示** を E5 で実装。owner 設定画面で auditor
+の公開鍵 fingerprint を確認・承認するフローを設ける。
+
+##### (ii) 送付済み AuditPackage のフォワードセクレシー
+
+auditor の秘密鍵が将来漏洩した場合、サーバに残存する過去の AuditPackage が
+すべて復号される。候補:
+
+- **保持期間 TTL**: AuditPackage / AuditResponse に明示的な expiry を設け、
+  期限切れでサーバから自動削除 (例: 監査完了から 90 日)
+- **Ephemeral ECDH によるセッション鍵 (完全前方秘匿性)**: パッケージごとに
+  ephemeral X25519 鍵ペアを生成し、ECDH 後にセッション鍵を導出。送付完了で
+  ephemeral 秘密鍵を破棄。auditor の長期鍵を使わない設計
+- **両立**: TTL + ephemeral ECDH の併用が望ましい
+
+→ **暫定: ephemeral ECDH (per-package) + TTL 90 日** を E3 のデータモデルに
+組み込む。HPKE (RFC 9180) を流用すると実装が楽。
+
+##### (iii) AuditPackage / AuditResponse のサーバ側ストレージ
+
+- **保持期間**: TTL 90 日想定 (上記 (ii) と整合)
+- **アクセス制御**: owner / auditor のみが GET 可能、他ユーザーは 404
+- **サーバ上での追加暗号化**: ハイブリッド暗号文なのでサーバ側追加暗号化は
+  不要。ただし `image_key` 相当の path (もしあれば) は平文
+- **データモデル**: `audit_packages` / `audit_responses` テーブルを新設。
+  E3 設計時に確定
+
+##### (iv) マルチラウンドレビューの扱い
+
+owner が修正反映後に再スナップショットを送るケースを想定。プロトコルレベル
+の番号付け:
+
+- `audit_packages.round_id` (連番、AuditGrant 内で一意)
+- AuditResponse は対応する round_id を参照
+- auditor は最新 round のみ作業可能 (古い round は read-only)
+- コンフリクト検出: owner が新 round を送る前に未処理の AuditResponse が
+  あれば警告
 
 ### 候補比較
 
