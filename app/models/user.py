@@ -42,6 +42,17 @@ class User(UserMixin, db.Model):
     recovery_code_created_at = db.Column(db.DateTime(timezone=True), nullable=True)
     recovery_code_used_at = db.Column(db.DateTime(timezone=True), nullable=True)
 
+    # E2EE Phase E1 (#108): 鍵管理基盤関連カラム。設計書 §10 / §16 参照。
+    # is_active: 鍵未設定ユーザーのロック用 (Flask-Login の UserMixin は default True を
+    # 返すが、DB レベルで管理することで永続的なロック状態を保持できる)。
+    is_active = db.Column(db.Boolean, nullable=False, default=True)
+    # 一斉移行 (§16) 中の一時 MK 保管。移行完了後に NULL クリア。
+    migration_temp_mk = db.Column(db.LargeBinary, nullable=True)
+    # X25519 公開鍵 (E5 #112 監査連携で使用)。新規登録時に自動生成。
+    public_key = db.Column(db.LargeBinary, nullable=True)
+    # MK ローテーション進捗 (status / progress / new_wrapped_keys_id_set 等、§10.5)
+    mk_rotation_state = db.Column(db.JSON, nullable=True)
+
     accounts = db.relationship("Account", backref="user", lazy="dynamic")
     journal_entries = db.relationship("JournalEntry", backref="user", lazy="dynamic")
     medical_expenses = db.relationship("MedicalExpense", backref="user", lazy="dynamic")
