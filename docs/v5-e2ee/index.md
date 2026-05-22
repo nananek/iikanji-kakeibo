@@ -549,7 +549,199 @@ E1 終了前 (E3 設計の前提条件)。E3 (仕訳暗号化) のデータモ�
 
 ---
 
-## 10. 次のステップ
+## 10. E1 設計スケッチ (鍵管理基盤の詳細)
+
+E0 完了 (#107) を経て E1 (#108) 着手前の設計スケッチ。§2 が概念レベルなのに
+対し、本節は実装着手レベルの詳細を扱う。
+
+### 10.1 `wrapped_keys` テーブル
+
+```
+wrapped_keys
+| カラム               | 型              | 制約                          | 用途 |
+|--------------------|----------------|------------------------------|------|
+| id                 | bigserial      | PK                           | |
+| user_id            | bigint         | FK users.id ON DELETE CASCADE | |
+| method             | text           | NOT NULL                     | passkey_prf / passphrase / recovery_seed |
+| credential_id      | text           | NULL                         | method=passkey_prf 時のみ。webauthn_credentials.credential_id を参照 |
+| wrapped_master_key | bytea          | NOT NULL                     | AES-256-GCM ciphertext (IV + tag 含む) |
+| wrap_iv            | bytea          | NOT NULL                     | wrap 時の IV (12B) |
+| salt               | bytea          | NULL                         | method=passphrase / recovery_seed 時の per-user salt (16B) |
+| kdf_params         | jsonb          | NULL                         | Argon2id パラメータ (memory, iterations, parallelism) |
+| created_at         | timestamptz    | NOT NULL                     | |
+| last_used_at       | timestamptz    | NULL                         | アンラップ成功時に更新 |
+| label              | text           | NULL                         | UI 表示用 (例: "iPhone 14 Pro Passkey") |
+
+UNIQUE (user_id, method, credential_id)
+INDEX (user_id)
+```
+
+- `webauthn_credentials` 削除時は `credential_id` 一致行を CASCADE で同期削除
+- パスフレーズ / リカバリシードは 1 ユーザー 1 行のみ (UNIQUE 制約で強制)
+
+### 10.2 MK 生成シーケンス (新規ユーザー / 移行ユーザー)
+
+```
+client                              server
+  |                                  |
+  | 1. crypto.getRandomValues(32B)   |
+  |    → MK (Worker クロージャに保持) |
+  |                                  |
+  | 2. (Passkey 登録) 認証ダイアログ |
+  |    PRF eval → derived_key_passkey|
+  |                                  |
+  | 3. AES-GCM(derived_key, MK)      |
+  |    → wrapped + iv                |
+  |                                  |
+  | 4. POST /api/v1/wrapped-keys     |
+  |--------------------------------->|
+  |                                  | INSERT wrapped_keys
+  |<---------------------------------|
+  |                                  |
+  | 5. 同様に passphrase / recovery_seed もラップして保存 |
+```
+
+設計書 §6 (移行戦略) のサーバ生成鍵フェーズでは、サーバが一時的に MK を保持
+してデータを暗号化し、クライアントが鍵設定完了後に上記フローで「自分の鍵」
+で wrap し直す。
+
+### 10.3 MK アンラップシーケンス (ログイン後)
+
+```
+client                              server
+  |                                  |
+  | 1. ログイン認証 (Bearer or session)|
+  |                                  |
+  | 2. GET /api/v1/wrapped-keys      |
+  |--------------------------------->|
+  |<-- [{method, credential_id, wrapped, iv, salt, kdf_params, label}, ...] |
+  |                                  |
+  | 3. クライアントが利用可能な要素を選択 |
+  |    a. Passkey → PRF eval         |
+  |    b. パスフレーズ入力 → Argon2id |
+  |    c. リカバリシード入力 → HKDF   |
+  |                                  |
+  | 4. derived_key で wrapped を unwrap |
+  |    → MK を Worker クロージャに    |
+  |                                  |
+  | 5. PUT /api/v1/wrapped-keys/<id>/touch (last_used_at 更新) |
+  |--------------------------------->|
+```
+
+- アンラップ失敗 (タグ検証 NG) は「鍵が間違っている」を示す。攻撃検知では
+  ないので一般エラーで返す
+- リロード時は Worker メモリが揮発するため再アンラップが必要 (§5 と §11
+  Q10 整理参照)
+
+### 10.4 認証要素の追加・削除
+
+#### 追加 (例: Passkey 追加登録)
+
+前提: 既存セッションで MK を保持済み。
+
+```
+1. WebAuthn navigator.credentials.create() で新 Passkey 登録
+2. 直後に navigator.credentials.get() で PRF eval を取得
+3. AES-GCM(derived_key_new, MK) → wrapped_new
+4. POST /api/v1/wrapped-keys (新行 INSERT)
+5. webauthn_credentials にも新 credential を登録 (現行 v4.x のフロー)
+```
+
+#### 削除 (例: Passkey 削除)
+
+```
+1. webauthn_credentials の該当行を削除
+2. CASCADE で wrapped_keys の対応行も削除
+3. 残存 wrapped_keys の件数チェック
+   - 0 件になる場合は「最後の認証要素を削除すると復号不能になる」を警告し中止
+   - 1 件以上残るなら削除確定
+```
+
+UI 制約: 「Passkey 全削除 + パスフレーズなし + リカバリシードなし」状態への
+遷移は禁止 (= 復号不能状態への自分での誘導を防ぐ)。
+
+### 10.5 MK ローテーション
+
+#### 起動条件
+
+- 認証要素のいずれかが侵害された (パスフレーズ漏洩 / Passkey 紛失)
+- ユーザーが任意で実行
+
+#### フロー
+
+```
+client                              server
+  |                                  |
+  | 1. MK_new = crypto.getRandomValues(32B) |
+  |                                  |
+  | 2. 全暗号文をバッチ取得 (E3 以降のデータ全件)|
+  |    → MK_old で復号 → MK_new で再暗号化 |
+  |    → 再 PUT (ciphertext + iv 上書き)   |
+  |--------------------------------->|
+  |                                  | バッチ更新
+  |                                  |
+  | 3. 全 wrapped_keys を再生成        |
+  |    各認証要素で MK_new を wrap     |
+  |    POST /api/v1/wrapped-keys (全行)|
+  |--------------------------------->|
+  |                                  | DELETE old + INSERT new (トランザクション)
+  |                                  |
+  | 4. 完了通知 (E2 以降のデータ量に依存) |
+```
+
+- データ量が大きいと時間がかかる (E3 ベンチマーク次第)。バックグラウンド
+  ジョブ + 進捗バー UI が必要
+- ローテーション中は他クライアントからの書き込みをロック
+
+### 10.6 Q9 整理: REST API Bearer と鍵階層
+
+| レイヤ | 認証 | 役割 |
+|------|------|------|
+| サーバアクセス | OAuthToken (Bearer) or session cookie | 「自分のデータにアクセスする権利」 |
+| データ復号 | Master Key (クライアント保持) | 「データ内容を見る権利」 |
+
+E2EE では **両方が必要**。Bearer だけでは暗号文しか取得できず内容は見えない。
+
+client-py / client-tui:
+1. Bearer token を `~/.config/iikanji/credentials` 等に保存
+2. Master Key を OS のセキュアストレージ (keyring) に保存
+3. 起動時に両方をロード → API 呼び出し + ローカル復号
+
+Web クライアント:
+1. Cookie (sessionid) でサーバアクセス
+2. Master Key は Worker クロージャ + reload 毎に再アンラップ
+
+### 10.7 Q10 整理: リロード時の再認証 UX
+
+選択肢:
+
+- **(a) 毎回 Passkey 再認証**: 最も安全だが UX 悪化
+- **(b) sessionStorage に MK を保持**: XSS で全データ漏洩 → **禁止**
+- **(c) ServiceWorker 内 Web Worker でセッション維持**: ServiceWorker は
+  リロードを跨いで生存。同一 origin の Web Worker 鍵をブラウザ閉じるまで保持
+  可能。ただし ServiceWorker 自身が XSS で乗っ取られるリスクあり
+- **(d) Page Visibility / idle 検知で自動再認証**: 一定時間操作なしで自動
+  ロック (=ServiceWorker から MK を消す)。これは (c) と組合せる
+
+→ **暫定: (c) + (d) の組合せ**。ServiceWorker 内 Web Worker で MK 保持 +
+30 分 idle で自動ロック。実装は E0 プロトタイプ上で検証 (Q10)。
+
+### 10.8 E1 完了条件
+
+- [ ] `wrapped_keys` マイグレーション (`046_wrapped_keys` 想定)
+- [ ] `/api/v1/wrapped-keys` GET/POST/PUT エンドポイント
+- [ ] WebCrypto AES-GCM + Argon2id (hash-wasm) で MK wrap/unwrap が動作
+- [ ] WebAuthn PRF 拡張で Passkey 経由の MK 派生が動作 (Q2 結果次第で fallback 設計)
+- [ ] BIP-39 24 単語のリカバリシード生成 + 表示 + 検証 UI
+- [ ] MK ローテーション (空データでフロー検証、E3 で本番投入)
+- [ ] 既存 webauthn_credentials との CASCADE 連動
+- [ ] Q9/Q10 の実装 (Bearer + MK の併用、ServiceWorker セッション維持)
+
+E2 (API キー E2EE 化) はこの基盤を最初に使う「最小スコープ検証」。
+
+---
+
+## 11. 次のステップ
 
 1. 本書のレビュー・合意形成
 2. E0 プロトタイプ:
