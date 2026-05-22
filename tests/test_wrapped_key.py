@@ -204,6 +204,87 @@ def test_unique_passkey_per_credential(db):
     db.session.rollback()
 
 
+def test_unique_passphrase_per_user(db):
+    """同じユーザーに passphrase 行を 2 行作れない (uq_wrapped_keys_passphrase_recovery)。"""
+    user = _make_user(db)
+    db.session.add(
+        WrappedKey(
+            user_id=user.id,
+            method=METHOD_PASSPHRASE,
+            wrapped_master_key=b"\x00" * 48,
+            wrap_iv=b"\x01" * 12,
+            salt=b"\x02" * 16,
+            kdf_params={"memory": 65536, "iterations": 3, "parallelism": 1},
+        )
+    )
+    db.session.commit()
+
+    db.session.add(
+        WrappedKey(
+            user_id=user.id,
+            method=METHOD_PASSPHRASE,
+            wrapped_master_key=b"\x10" * 48,
+            wrap_iv=b"\x11" * 12,
+            salt=b"\x12" * 16,
+            kdf_params={"memory": 65536, "iterations": 3, "parallelism": 1},
+        )
+    )
+    with pytest.raises(IntegrityError):
+        db.session.commit()
+    db.session.rollback()
+
+
+def test_unique_recovery_seed_per_user(db):
+    """同じユーザーに recovery_seed 行を 2 行作れない (uq_wrapped_keys_passphrase_recovery)。"""
+    user = _make_user(db)
+    db.session.add(
+        WrappedKey(
+            user_id=user.id,
+            method=METHOD_RECOVERY_SEED,
+            wrapped_master_key=b"\x00" * 48,
+            wrap_iv=b"\x01" * 12,
+        )
+    )
+    db.session.commit()
+
+    db.session.add(
+        WrappedKey(
+            user_id=user.id,
+            method=METHOD_RECOVERY_SEED,
+            wrapped_master_key=b"\x10" * 48,
+            wrap_iv=b"\x11" * 12,
+        )
+    )
+    with pytest.raises(IntegrityError):
+        db.session.commit()
+    db.session.rollback()
+
+
+def test_passphrase_and_recovery_seed_coexist(db):
+    """passphrase と recovery_seed は同じ user で 1 行ずつ共存できる。"""
+    user = _make_user(db)
+    db.session.add_all([
+        WrappedKey(
+            user_id=user.id,
+            method=METHOD_PASSPHRASE,
+            wrapped_master_key=b"\x00" * 48,
+            wrap_iv=b"\x01" * 12,
+            salt=b"\x02" * 16,
+            kdf_params={"memory": 65536, "iterations": 3, "parallelism": 1},
+        ),
+        WrappedKey(
+            user_id=user.id,
+            method=METHOD_RECOVERY_SEED,
+            wrapped_master_key=b"\x10" * 48,
+            wrap_iv=b"\x11" * 12,
+        ),
+    ])
+    db.session.commit()
+
+    methods = sorted(r.method for r in user.wrapped_keys.all())
+    assert methods == [METHOD_PASSPHRASE, METHOD_RECOVERY_SEED]
+
+
 def test_multiple_passkeys_per_user(db):
     """異なる Passkey credential なら同じ user で複数行 OK。"""
     user = _make_user(db)
