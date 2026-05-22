@@ -15,11 +15,12 @@ jobs:
     name: Bandit (Python 暗号弱点)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-      - run: pip install bandit
+          cache: pip
+      - run: pip install "bandit[toml]==1.8.3"
       - name: Run Bandit
         run: |
           # 除外理由:
@@ -36,7 +37,7 @@ jobs:
     name: gitleaks (シークレットコミット検知)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
       - uses: gitleaks/gitleaks-action@v2
@@ -49,15 +50,16 @@ jobs:
     name: 平文 E2EE 鍵漏れ検査
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Lint logger calls for plaintext key leaks
         run: |
-          # logger.info / logger.debug などに E2EE 関連の生鍵キーワードが
-          # 含まれていないか検査 (str() 経由の漏洩も検出可能)
+          # logger / print に E2EE 関連の生鍵キーワードが含まれていないか検査。
           # 許容: ハッシュ化された値、prefix のみ、コメント (#)
           PATTERNS='(master_key|wrapped_master_key|migration_temp_mk|raw_seed|recovery_seed|derived_key|wrap_iv)'
-          # logger / print / current_app.logger 経由を検査
-          LOG_CALLS='(logger\.(info|debug|warning|error)|print|current_app\.logger\.(info|debug|warning|error))'
+          # logger / print 経由を検査。logger は app.logger / current_app.logger /
+          # モジュール直 logger 全てに対応。method は debug/info/warning/warn/error/
+          # critical/exception を全網羅
+          LOG_CALLS='((current_app\.|app\.)?logger\.(debug|info|warning|warn|error|critical|exception)|print\()'
           # 検査対象ファイルから tests/ と prototype/ を除く (テスト/プロトタイプは生鍵を扱う前提)
           if find app/ -name '*.py' -print0 \
              | xargs -0 grep -nE "${LOG_CALLS}.*${PATTERNS}" 2>/dev/null; then
@@ -71,10 +73,11 @@ jobs:
 
       - name: Lint API responses for raw key fields
         run: |
-          # jsonify / make_response 引数に master_key 系のフィールドが含まれていないか
-          # (PR-B 以降の API endpoint 実装時に有効)
-          PATTERNS='(master_key|migration_temp_mk|raw_seed|derived_key)'
-          if find app/views/ -name '*.py' -print0 \
+          # jsonify / make_response 引数に E2EE 関連の生鍵キーワードが含まれていないか
+          # (PR-B 以降の API endpoint 実装時に有効)。logger 側と同じキーワードセット。
+          PATTERNS='(master_key|wrapped_master_key|migration_temp_mk|raw_seed|recovery_seed|derived_key|wrap_iv)'
+          # app/ 全体を対象 (将来 services/ から直接レスポンスを返すケースにも対応)
+          if find app/ -name '*.py' -print0 \
              | xargs -0 grep -nE "(jsonify|make_response).*${PATTERNS}" 2>/dev/null; then
             echo ""
             echo "::error::API レスポンスに E2EE 生鍵が含まれている可能性があります"
