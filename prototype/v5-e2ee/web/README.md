@@ -25,7 +25,7 @@ python3 -m http.server 8765
 
 | セクション | 確認内容 |
 |----------|----------|
-| 1. Master Key 生成 | `generateKey()` で 32B 鍵が Worker 内に保持される。rawKey はメインスレッドに一度返るが、その後参照しない運用とする (テスト目的でのみ表示) |
+| 1. Master Key 生成 | `generateKey()` で 32B 鍵が Worker 内で生成・保持される。**rawKey はメインスレッドに渡さない** (Q12 の中核命題)。import 後は Worker 内のバッファをゼロ埋め |
 | 2. 単一暗号化/復号 | 12B IV + ciphertext (= plaintext_len + 16B tag) のサイズ膨張を観察 |
 | 3. 大量ベンチマーク | N=10K / 100K / 1M で encrypt/decrypt の ops/s を計測。設計書 §3 の Nonce 2^32 警告ラインとの距離感を確認 |
 | 4. 不正メッセージ耐性 | 非オブジェクト / 不足フィールド / 型違いを送りつけ、Worker がクラッシュせず `{ok: false, error}` を返すこと |
@@ -56,3 +56,7 @@ python3 -m http.server 8765
 - このプロトタイプは Argon2id を扱わない (パスフレーズ → MK 派生は別途 `argon2-browser` バンドルで実測する)
 - WebAuthn PRF からの鍵派生も別途 (この prototype は MK を直接生成)
 - IndexedDB への暗号文保存・Service Worker 連携も対象外
+- `CryptoClient.worker` は fuzz セクションから直接アクセスするため public のまま。
+  本実装では `#worker` (private field) にして外部からの postMessage を防ぐ想定
+- §5 の window 露出チェックは固定リスト方式。本実装では `Object.keys(window)` の
+  ベースライン差分を取る等で網羅性を上げる想定

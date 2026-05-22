@@ -66,9 +66,8 @@
     const $ = (id) => document.getElementById(id);
 
     $("gen").onclick = async () => {
-      const { rawKey } = await client.generateKey();
-      $("key-info").textContent =
-        `生成済: 32 bytes\nhex (先頭8B): ${Array.from(rawKey.slice(0, 8)).map(b => b.toString(16).padStart(2, "0")).join("")}…`;
+      const { keyBits } = await client.generateKey();
+      $("key-info").textContent = `生成済: ${keyBits}-bit (rawKey はメインスレッドに渡さない)`;
     };
 
     $("clear").onclick = async () => {

@@ -14,6 +14,13 @@ export class CryptoClient {
       if (ok) slot.resolve(rest);
       else slot.reject(new Error(error || "worker error"));
     };
+    const failAll = (label) => (ev) => {
+      const err = new Error(`${label}: ${ev && (ev.message || ev.type) || "unknown"}`);
+      for (const { reject } of this.pending.values()) reject(err);
+      this.pending.clear();
+    };
+    this.worker.onerror = failAll("worker crashed");
+    this.worker.onmessageerror = failAll("worker message error");
   }
 
   _send(payload) {
