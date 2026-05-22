@@ -661,6 +661,13 @@ client                              server
 リカバリ用途であり相互運用不要なので、A案でシンプルに統一する。Argon2id を
 挟まないのは BIP-39 24 単語のエントロピー (256 bit) が十分高く、辞書攻撃に
 耐性があるため。
+
+**入力時の BIP-39 チェックサム検証は必須**。24 単語 = 256 bit エントロピー +
+8 bit checksum (`SHA-256(entropy)` の **先頭 8 bit = 先頭 1 バイト**、
+[BIP-0039](https://github.com/bitcoin/bips/blob/master/bip-0039.mediawiki))。
+クライアント側で入力時にチェックサム検証を行い、不一致なら「入力ミスです」と
+即時エラー表示 (HKDF を回して「復号失敗」と出るより親切)。これにより
+「シードが違う」か「入力ミス」かをユーザーに伝えられる。
   |                                  |
   | 4. derived_key で wrapped を unwrap |
   |    → MK を Worker クロージャに    |
@@ -757,15 +764,17 @@ users.mk_rotation_state (jsonb, nullable):
   "started_at": "2026-05-22T08:00:00Z",
   "progress": {"total": 100000, "done": 23456, "unit": "journal_entry_lines"},
   "new_wrapped_keys_id_set": [101, 102, 103],
-  "rotation_token": "<32B cryptographically random>",  // X-Rotation-Id ヘッダで照合
+  "rotation_token_hash": "<SHA-256 of token, hex>",  // X-Rotation-Id ヘッダの SHA-256 と照合 (Bearer と同じパターン、DB 漏洩時の乗っ取り耐性)
   "auto_abort_at": "2026-05-29T08:00:00Z"  // 7 日後に自動 abort (運用安全策)
 }
 
 // rotation_token のライフサイクル:
-//  - ローテ開始 (POST /api/v1/wrapped-keys/rotate/begin) 時にサーバが生成して
-//    返却、mk_rotation_state.rotation_token に保存
-//  - 以後の PUT (再暗号化) では X-Rotation-Id ヘッダ必須、保存値と一致しない
-//    PUT は 423 Locked
+//  - ローテ開始 (POST /api/v1/wrapped-keys/rotate/begin) 時にサーバが生成、
+//    raw token はレスポンスで 1 回だけクライアントへ返却。サーバには
+//    SHA-256 ハッシュのみ rotation_token_hash として保存 (oauth_tokens.token_hash
+//    と同じパターン)
+//  - 以後の PUT (再暗号化) では X-Rotation-Id ヘッダ必須、サーバはヘッダ値の
+//    SHA-256 と rotation_token_hash を比較。一致しない PUT は 423 Locked
 //  - auto_abort_at まで有効。commit / abort で破棄
 ```
 
@@ -810,8 +819,9 @@ client                              server
   を検知 → 「ローテーション再開しますか / 中止しますか」UI 表示
 - **commit 直前で失敗**: 旧 wrapped_keys が残るので旧 MK でアンラップ可能
 - **commit 中で失敗**: トランザクションロールバックで旧状態維持
-- **ローテーション中の他クライアント書き込み**: `users.mk_rotation_state.status=rotating` 中は書き込み API を 423 Locked で拒否。ただし **ローテーション自身の PUT** は `X-Rotation-Id: <token>` ヘッダで識別してパススルー (token はローテ開始時にサーバが発行、`mk_rotation_state` に保存して照合)
-- **タイムアウト自動 abort**: `auto_abort_at` を 7 日後に設定。経過後はサーバが自動 abort して rotation_state を NULL クリア (デバイス紛失等で commit/abort のいずれも飛んでこないケースの救済)
+- **ローテーション中の他クライアント書き込み**: `users.mk_rotation_state.status=rotating` 中は書き込み API を 423 Locked で拒否。ただし **ローテーション自身の PUT** は `X-Rotation-Id: <token>` ヘッダで識別してパススルー (token はローテ開始時にサーバが発行、SHA-256 ハッシュを `mk_rotation_state` に保存して照合)
+- **ローテーション中の読み取り API は制限しない**: GET 系 (例: `/api/v1/journals`) はオーバーラップ期間中も継続提供。クライアントは MK_old でアンラップ可能なまま (MK_old は新 wrapped_keys が追加されるだけで削除されていない、つまり完全に有効)。読み取りロックすると UX が不必要に劣化するため
+- **タイムアウト自動 abort**: `auto_abort_at` を 7 日後に設定。経過後はサーバが自動 abort して rotation_state を NULL クリア (デバイス紛失等で commit/abort のいずれも飛んでこないケースの救済)。実行主体は **flask CLI コマンド `flask rotate-cleanup`** を cron / systemd timer で 1 時間ごとに起動する想定 (現行アプリは Celery / APScheduler を持たないため軽量に実装)
 
 #### サイズ感
 
@@ -897,10 +907,11 @@ v4.x → v5.0 の UX 変更の必然的帰結。`wrapped_keys.method='audit_gran
   - touch (`PUT /<id>/touch`) は認証必須 + 階層レート制限。**per-user を主軸**
     (例: 60 req/hour)、**per-IP は補助** (例: 5,000 req/hour、Tailscale / NAT 環境での
     バースト誤検知を避ける) という方針。具体値は本番運用ログを見て調整
-- [ ] `/api/v1/wrapped-keys/rotate/commit` `.../abort` (ローテーション制御)
+- [ ] `/api/v1/wrapped-keys/rotate/begin` `.../commit` `.../abort` (ローテーション制御、rotation_token は SHA-256 ハッシュでサーバ保存)
+- [ ] `flask rotate-cleanup` CLI コマンド (`auto_abort_at` 経過の自動 abort、1 時間ごと cron 起動想定)
 - [ ] WebCrypto AES-GCM + Argon2id (hash-wasm) で MK wrap/unwrap が動作
 - [ ] WebAuthn PRF 拡張で Passkey 経由の MK 派生が動作 (Q2 結果次第で fallback 設計)
-- [ ] BIP-39 24 単語のリカバリシード生成 + 表示 + 検証 UI (HKDF で derived_key 派生)
+- [ ] BIP-39 24 単語のリカバリシード生成 + 表示 + 入力時チェックサム検証 UI (HKDF で derived_key 派生)
 - [ ] MK ローテーション (空データでフロー検証、`mk_rotation_state` を含む再開可能設計、E3 で本番投入)
 - [ ] 既存 webauthn_credentials との DB レベル CASCADE 連動 (FK to `webauthn_credentials.id`)
 - [ ] Q9/Q10 の実装 (Bearer + MK の併用、ServiceWorker セッション維持、マルチタブ idle カウンタ共有)
