@@ -10,6 +10,8 @@ import pytest
 
 from app.extensions import limiter
 from app.models import User, WebAuthnCredential, WrappedKey
+from app.models.api_key import APIKey
+from app.models.oauth import OAuthToken
 from app.models.wrapped_key import (
     METHOD_PASSKEY_PRF,
     METHOD_PASSPHRASE,
@@ -436,3 +438,202 @@ def test_delete_other_user_returns_404(client, db):
     _login(client, me)
     resp = client.delete(f"/api/v1/wrapped-keys/{row.id}")
     assert resp.status_code == 404
+
+
+# --- Bearer 認証 ---
+
+
+def _make_api_key(db, user, scopes="journals:read"):
+    raw, h, prefix = APIKey.generate()
+    key = APIKey(
+        user_id=user.id,
+        name="test-key",
+        key_hash=h,
+        key_prefix=prefix,
+        scopes=scopes,
+    )
+    db.session.add(key)
+    db.session.commit()
+    return raw
+
+
+def _make_oauth_token(db, user, read_only=False):
+    raw, h, prefix = OAuthToken.generate()
+    token = OAuthToken(
+        user_id=user.id,
+        name="test-oauth",
+        token_hash=h,
+        token_prefix=prefix,
+        read_only=read_only,
+    )
+    db.session.add(token)
+    db.session.commit()
+    return raw
+
+
+def test_bearer_apikey_get(client, db):
+    """APIKey で GET 成功 (Web セッションなしでも認証通る)。"""
+    user = _make_user(db)
+    raw = _make_api_key(db, user)
+    # 既存の wrapped_key を 1 つ作成 (DB 経由)
+    db.session.add(
+        WrappedKey(
+            user_id=user.id, method=METHOD_PASSPHRASE,
+            wrapped_master_key=b"\x00" * 48, wrap_iv=b"\x01" * 12,
+            salt=b"\x02" * 16,
+            kdf_params={"memory": 65536, "iterations": 3, "parallelism": 1},
+        )
+    )
+    db.session.commit()
+
+    resp = client.get(
+        "/api/v1/wrapped-keys",
+        headers={"Authorization": f"Bearer {raw}"},
+    )
+    assert resp.status_code == 200
+    assert len(resp.get_json()["wrapped_keys"]) == 1
+
+
+def test_bearer_apikey_post(client, db):
+    """APIKey で POST 成功 (write)。"""
+    user = _make_user(db)
+    raw = _make_api_key(db, user)
+    resp = client.post(
+        "/api/v1/wrapped-keys",
+        json=_passphrase_payload(),
+        headers={"Authorization": f"Bearer {raw}"},
+    )
+    assert resp.status_code == 201
+
+
+def test_bearer_oauth_get(client, db):
+    """OAuth Token で GET 成功。"""
+    user = _make_user(db)
+    raw = _make_oauth_token(db, user, read_only=False)
+    resp = client.get(
+        "/api/v1/wrapped-keys",
+        headers={"Authorization": f"Bearer {raw}"},
+    )
+    assert resp.status_code == 200
+
+
+def test_bearer_oauth_readonly_get_ok(client, db):
+    """OAuth read-only Token は GET (read) は許可される。"""
+    user = _make_user(db)
+    raw = _make_oauth_token(db, user, read_only=True)
+    resp = client.get(
+        "/api/v1/wrapped-keys",
+        headers={"Authorization": f"Bearer {raw}"},
+    )
+    assert resp.status_code == 200
+
+
+def test_bearer_oauth_readonly_post_rejected(client, db):
+    """OAuth read-only Token は POST (write) を 403 で拒否。"""
+    user = _make_user(db)
+    raw = _make_oauth_token(db, user, read_only=True)
+    resp = client.post(
+        "/api/v1/wrapped-keys",
+        json=_passphrase_payload(),
+        headers={"Authorization": f"Bearer {raw}"},
+    )
+    assert resp.status_code == 403
+
+
+def test_bearer_oauth_readonly_delete_rejected(client, db):
+    """OAuth read-only Token は DELETE を 403 で拒否。"""
+    user = _make_user(db)
+    db.session.add_all([
+        WrappedKey(
+            user_id=user.id, method=METHOD_PASSPHRASE,
+            wrapped_master_key=b"\x00" * 48, wrap_iv=b"\x01" * 12,
+            salt=b"\x02" * 16,
+            kdf_params={"memory": 65536, "iterations": 3, "parallelism": 1},
+        ),
+        WrappedKey(
+            user_id=user.id, method=METHOD_RECOVERY_SEED,
+            wrapped_master_key=b"\x10" * 48, wrap_iv=b"\x11" * 12,
+        ),
+    ])
+    db.session.commit()
+    row = db.session.execute(
+        WrappedKey.__table__.select().where(WrappedKey.user_id == user.id)
+    ).fetchone()
+    raw = _make_oauth_token(db, user, read_only=True)
+    resp = client.delete(
+        f"/api/v1/wrapped-keys/{row.id}",
+        headers={"Authorization": f"Bearer {raw}"},
+    )
+    assert resp.status_code == 403
+
+
+def test_bearer_oauth_readonly_touch_rejected(client, db):
+    """OAuth read-only Token は PUT /touch を 403 で拒否 (last_used_at 更新は write 扱い)。"""
+    user = _make_user(db)
+    db.session.add(
+        WrappedKey(
+            user_id=user.id, method=METHOD_PASSPHRASE,
+            wrapped_master_key=b"\x00" * 48, wrap_iv=b"\x01" * 12,
+            salt=b"\x02" * 16,
+            kdf_params={"memory": 65536, "iterations": 3, "parallelism": 1},
+        )
+    )
+    db.session.commit()
+    row = db.session.execute(
+        WrappedKey.__table__.select().where(WrappedKey.user_id == user.id)
+    ).fetchone()
+    raw = _make_oauth_token(db, user, read_only=True)
+    resp = client.put(
+        f"/api/v1/wrapped-keys/{row.id}/touch",
+        headers={"Authorization": f"Bearer {raw}"},
+    )
+    assert resp.status_code == 403
+
+
+def test_bearer_invalid_token(client, db):
+    """無効な Bearer は 401。"""
+    user = _make_user(db)
+    resp = client.get(
+        "/api/v1/wrapped-keys",
+        headers={"Authorization": "Bearer ikt_invalid"},
+    )
+    assert resp.status_code == 401
+
+
+def test_bearer_revoked_oauth(client, db):
+    """is_active=False の OAuth Token は 401。"""
+    user = _make_user(db)
+    raw = _make_oauth_token(db, user)
+    # revoke
+    token = OAuthToken.query.filter_by(user_id=user.id).first()
+    token.is_active = False
+    db.session.commit()
+
+    resp = client.get(
+        "/api/v1/wrapped-keys",
+        headers={"Authorization": f"Bearer {raw}"},
+    )
+    assert resp.status_code == 401
+
+
+def test_bearer_other_user_isolation(client, db):
+    """Bearer で取得しても他ユーザーの wrapped_key は見えない (IDOR)。"""
+    me = _make_user(db, "me")
+    other = _make_user(db, "other")
+    db.session.add(
+        WrappedKey(
+            user_id=other.id, method=METHOD_PASSPHRASE,
+            wrapped_master_key=b"\x00" * 48, wrap_iv=b"\x01" * 12,
+            salt=b"\x02" * 16,
+            kdf_params={"memory": 65536, "iterations": 3, "parallelism": 1},
+        )
+    )
+    db.session.commit()
+
+    raw = _make_api_key(db, me)
+    resp = client.get(
+        "/api/v1/wrapped-keys",
+        headers={"Authorization": f"Bearer {raw}"},
+    )
+    assert resp.status_code == 200
+    assert resp.get_json()["wrapped_keys"] == []  # 自分の鍵は 0 件

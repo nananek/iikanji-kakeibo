@@ -10,14 +10,18 @@
 - DELETE /api/v1/wrapped-keys/<id>      — 削除 (最終要素は 409)
 """
 
+import functools
 from base64 import b64decode, b64encode
 from datetime import datetime, timezone
 
-from flask import Blueprint, jsonify, request
-from flask_login import current_user, login_required
+from flask import Blueprint, g, jsonify, request
+from flask_login import current_user
 from sqlalchemy.exc import IntegrityError
 
 from app.extensions import db, limiter
+from app.models.api_key import APIKey
+from app.models.oauth import OAuthToken
+from app.models.user import User
 from app.models.webauthn import WebAuthnCredential
 from app.models.wrapped_key import (
     ALLOWED_METHODS,
@@ -41,6 +45,82 @@ MAX_LABEL_LENGTH = 100
 KDF_MEMORY_MIN, KDF_MEMORY_MAX = 8192, 1048576       # 8MiB - 1GiB (KiB 単位)
 KDF_ITERATIONS_MIN, KDF_ITERATIONS_MAX = 1, 16
 KDF_PARALLELISM_MIN, KDF_PARALLELISM_MAX = 1, 8
+
+
+def _resolve_auth(write: bool) -> tuple[User | None, tuple | None]:
+    """Bearer or Web session 認証を解決して User を返す。
+
+    - Authorization: Bearer <ikt_...> → OAuthToken (read_only なら write 拒否)
+    - Authorization: Bearer <ik_...>  → APIKey
+    - ヘッダなし → Flask-Login のセッション
+    戻り値: (user, error_response or None)
+    """
+    auth = request.headers.get("Authorization", "")
+    if auth.startswith("Bearer "):
+        raw = auth[7:]
+        now = datetime.now(timezone.utc)
+        # OAuth Device Flow Token
+        if raw.startswith("ikt_"):
+            token_hash = OAuthToken.hash_token(raw)
+            token = OAuthToken.query.filter_by(
+                token_hash=token_hash, is_active=True
+            ).first()
+            if not token:
+                return None, (jsonify(error="Invalid token"), 401)
+            if write and token.read_only:
+                return None, (jsonify(error="read-only token"), 403)
+            token.last_used_at = now
+            db.session.commit()
+            user = db.session.get(User, token.user_id)
+            if user is None:
+                return None, (jsonify(error="User not found"), 401)
+            return user, None
+        # 従来の APIKey
+        key_hash = APIKey.hash_key(raw)
+        api_key = APIKey.query.filter_by(
+            key_hash=key_hash, is_active=True
+        ).first()
+        if not api_key:
+            return None, (jsonify(error="Invalid API key"), 401)
+        api_key.last_used_at = now
+        db.session.commit()
+        user = db.session.get(User, api_key.user_id)
+        if user is None:
+            return None, (jsonify(error="User not found"), 401)
+        return user, None
+
+    # Web セッション
+    if current_user.is_authenticated:
+        return current_user._get_current_object(), None
+    return None, (jsonify(error="Authentication required"), 401)
+
+
+def auth_required(write: bool = False):
+    """Bearer + Web セッションの両方を受け入れる統合デコレータ。
+
+    認証成功時、`g.auth_user` に User をセット。エンドポイントは
+    `g.auth_user.id` を使って自身のリソースをフィルタする。
+    write=True なら OAuth read-only トークンを拒否 (403)。
+    """
+    def decorator(f):
+        @functools.wraps(f)
+        def wrapper(*args, **kwargs):
+            user, err = _resolve_auth(write=write)
+            if err is not None:
+                return err
+            g.auth_user = user
+            return f(*args, **kwargs)
+        return wrapper
+    return decorator
+
+
+def _rate_limit_key() -> str:
+    """auth_user が解決された後にレート制限の per-user キーとして使う。"""
+    user = getattr(g, "auth_user", None)
+    if user is not None:
+        return f"user:{user.id}"
+    # Fallback (auth_required 未通過時): IP ベース
+    return request.remote_addr or "anonymous"
 
 
 def _b64(b: bytes | None) -> str | None:
@@ -81,13 +161,13 @@ def _b64_or_400(payload: dict, key: str, *, required: bool = True) -> bytes | No
 
 
 @bp.get("")
-@login_required
-@limiter.limit("120 per hour", key_func=lambda: f"user:{current_user.id}")
+@auth_required(write=False)
+@limiter.limit("120 per hour", key_func=_rate_limit_key)
 def list_wrapped_keys():
     """自身の wrapped_keys 一覧を返す。"""
     rows = (
         WrappedKey.query
-        .filter_by(user_id=current_user.id)
+        .filter_by(user_id=g.auth_user.id)
         .order_by(WrappedKey.id.asc())
         .all()
     )
@@ -114,8 +194,8 @@ def _validate_kdf_params(kdf_params: dict) -> str | None:
 
 
 @bp.post("")
-@login_required
-@limiter.limit("20 per hour", key_func=lambda: f"user:{current_user.id}")
+@auth_required(write=True)
+@limiter.limit("20 per hour", key_func=_rate_limit_key)
 def create_wrapped_key():
     """新規 wrapped MK を登録。サーバは復号しない。"""
     payload = request.get_json(silent=True) or {}
@@ -161,7 +241,7 @@ def create_wrapped_key():
             return jsonify(error="passkey_prf requires webauthn_credential_id"), 400
         # 他ユーザーの credential を指定できないように所有確認
         cred = db.session.get(WebAuthnCredential, webauthn_credential_id)
-        if cred is None or cred.user_id != current_user.id:
+        if cred is None or cred.user_id != g.auth_user.id:
             return jsonify(error="webauthn_credential not found"), 404
     elif method == METHOD_PASSPHRASE:
         if webauthn_credential_id is not None:
@@ -187,7 +267,7 @@ def create_wrapped_key():
             ), 400
 
     row = WrappedKey(
-        user_id=current_user.id,
+        user_id=g.auth_user.id,
         method=method,
         webauthn_credential_id=webauthn_credential_id,
         wrapped_master_key=wrapped,
@@ -209,9 +289,9 @@ def create_wrapped_key():
 
 
 @bp.put("/<int:wrapped_key_id>/touch")
-@login_required
+@auth_required(write=True)
 # per-user で 60 req/hour、per-IP で 5000 req/hour (設計書 §10.9)
-@limiter.limit("60 per hour", key_func=lambda: f"user:{current_user.id}")
+@limiter.limit("60 per hour", key_func=_rate_limit_key)
 @limiter.limit("5000 per hour")
 def touch_wrapped_key(wrapped_key_id: int):
     """アンラップ成功時に last_used_at を更新する。
@@ -221,7 +301,7 @@ def touch_wrapped_key(wrapped_key_id: int):
     """
     row = (
         WrappedKey.query
-        .filter_by(id=wrapped_key_id, user_id=current_user.id)
+        .filter_by(id=wrapped_key_id, user_id=g.auth_user.id)
         .first()
     )
     if row is None:
@@ -233,8 +313,8 @@ def touch_wrapped_key(wrapped_key_id: int):
 
 
 @bp.delete("/<int:wrapped_key_id>")
-@login_required
-@limiter.limit("20 per hour", key_func=lambda: f"user:{current_user.id}")
+@auth_required(write=True)
+@limiter.limit("20 per hour", key_func=_rate_limit_key)
 def delete_wrapped_key(wrapped_key_id: int):
     """wrapped_key を削除。削除後の件数が 0 になる場合は 409 Conflict。
 
@@ -244,7 +324,7 @@ def delete_wrapped_key(wrapped_key_id: int):
     """
     row = (
         WrappedKey.query
-        .filter_by(id=wrapped_key_id, user_id=current_user.id)
+        .filter_by(id=wrapped_key_id, user_id=g.auth_user.id)
         .first()
     )
     if row is None:
@@ -260,7 +340,7 @@ def delete_wrapped_key(wrapped_key_id: int):
     db.session.flush()
     remaining_count = (
         WrappedKey.query
-        .filter_by(user_id=current_user.id)
+        .filter_by(user_id=g.auth_user.id)
         .count()
     )
     if remaining_count == 0:
