@@ -678,7 +678,7 @@ client                              server
 
 - アンラップ失敗 (タグ検証 NG) は「鍵が間違っている」を示す。攻撃検知では
   ないので一般エラーで返す
-- リロード時は Worker メモリが揮発するため再アンラップが必要 (§5 と §11
+- リロード時は Worker メモリが揮発するため再アンラップが必要 (§5 と §10.7
   Q10 整理参照)
 
 #### PRF 非対応環境のフォールバック (Q2)
@@ -967,8 +967,8 @@ class UserAIConfig(db.Model):
 - 暗号文を保管するだけ
 - 復号は一切行わない (`decrypt_api_key` 関数は **削除**)
 - AI 呼び出しは v5.0 で **クライアント側に移行**:
-  - Web: `client-py` を Web Worker で動かせない (Python なので) → ブラウザの
-    fetch で OpenAI/Anthropic API を直接呼ぶ
+  - Web: サーバサイドルート (現行 `ai_receipt.py`) が使えない (E2EE 前提でサーバ
+    が平文を扱えない) ので、ブラウザの fetch で OpenAI/Anthropic API を直接呼ぶ
   - `client-py` / `client-tui`: 元々クライアント側で動くので問題なし
 
 ### 11.3 サーバ側 AI 呼び出しの廃止
@@ -1040,6 +1040,19 @@ Phase E2-b (旧カラム削除):
 全ユーザー移行完了後に SECRET_KEY を rotate して残存リスクを下げる。
 ```
 
+#### migrate-key endpoint のセキュリティ要件
+
+`/api/v1/ai-config/migrate-key` は本来 E2EE の前提を破る "サーバ側復号" を
+許容する **移行限定の例外 endpoint** であり、悪用されると全ユーザーの API
+キーが取得可能になる。以下を実装必須:
+
+- `@login_required` (current_user 以外の鍵は返さない)
+- レート制限: **per-user 1 回限り** (`UserAIConfig.migrated_at` 等で再呼出しを拒否)
+- 呼出成功後は即時 `api_key_encrypted = NULL` にしてサーバ側鍵材料を消去
+- 全件 NULL 確認用の CLI: `flask ai-config migration-status` (未移行件数を集計)
+- 全ユーザー移行完了確認後、`flask ai-config drop-migrate-key` 等で route 削除
+  + マイグレーション (旧カラム DROP) を実行
+
 ### 11.5 API 変更
 
 ```
@@ -1078,13 +1091,16 @@ ai_receipt.py 利用箇所:
 
 - [ ] `user_ai_configs` マイグレーション (旧 `api_key_encrypted` 削除、新 `api_key_blob` / `api_key_iv` 追加、2 段階)
 - [ ] `/api/v1/ai-config` GET / POST / DELETE (暗号文受け渡しのみ)
-- [ ] `/api/v1/ai-config/migrate-key` (互換 endpoint、移行完了後に削除)
+- [ ] `/api/v1/ai-config/migrate-key` (互換 endpoint、per-user 1 回限り、呼出成功後に旧カラム NULL クリア、移行完了後に削除)
+- [ ] `flask ai-config migration-status` / `drop-migrate-key` CLI (移行進捗確認 + 完了後 route 削除)
 - [ ] クライアント側 (Web) で MK を使った AES-GCM 暗号化/復号
 - [ ] AI 呼び出しのクライアントサイド移行 (ai_receipt.py 廃止候補の整理)
+- [ ] `client-py` / `client-tui` の `/api/v1/ai-config` I/F 更新 (POST が平文 → 暗号文に変わるため)
 - [ ] サーバ側 `decrypt_api_key` / `_get_fernet` 削除 (移行完了後)
 - [ ] `SECRET_KEY` のローテーション (移行完了後の残存リスク低減)
 - [ ] テスト: 旧 Fernet 暗号化済データから新形式への移行が成功する
 - [ ] テスト: サーバが api_key_blob を復号できないことの確認 (= Fernet で復号試行が失敗)
+- [ ] テスト: migrate-key endpoint の per-user 1 回限り制約
 
 ### 11.8 E3 への影響
 
