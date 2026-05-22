@@ -1116,7 +1116,406 @@ E2 で確立されるパターン:
 
 ---
 
-## 12. 次のステップ
+## 12. E3 設計スケッチ (仕訳データの暗号化 — 本丸)
+
+E2EE 移行の中核。`JournalEntry` / `JournalEntryLine` / `MedicalExpense` /
+`BalanceCache` を暗号化 BLOB に変換し、レポート集計と検索のクライアントサイド化を行う。
+
+### 12.1 暗号化対象テーブル
+
+```
+journal_entries:
+  暗号化対象: date, description, source, batch_id, fiscal_period
+  非暗号化:   id, user_id, entry_number (※ 採番のため平文)
+              fiscal_year (※ 年度フィルタのため新規・平文、date 暗号化に伴う代替)
+              created_at, updated_at, encrypted_blob, blob_iv (新規)
+
+journal_entry_lines:
+  暗号化対象: account_code, debit_amount, credit_amount, description
+  非暗号化:   id, journal_entry_id, line_order (※ ソートのため)
+              created_at, updated_at, account_user_id (テナント分離 FK 維持)
+              encrypted_blob, blob_iv (新規)
+
+medical_expenses:
+  暗号化対象: 全フィールド (patient_name, hospital_name, amount_paid 等)
+  非暗号化:   id, user_id, year (税年度集計のため平文)
+              encrypted_blob, blob_iv (新規)
+
+balance_caches:
+  → **テーブル削除** (E2EE 下ではサーバが残高計算できない)
+  → クライアント側で IndexedDB に暗号化済キャッシュを保持
+```
+
+⚠️ **年度フィルタ用に `journal_entries.fiscal_year smallint` を新設** (平文)。
+`date` が暗号化されてサーバから見えなくなるため、`GET /api/v1/journals?year=2026`
+のようなサーバサイドフィルタは `fiscal_year` カラムで実現する。クライアントが
+date から年度を計算して書き込み時に同時に送る。漏れる情報は「何年度の仕訳が
+何件あるか」のみで、内容は守られる。
+
+各テーブルに `encrypted_blob (bytea)` + `blob_iv (bytea 12B)` を追加し、
+**1 レコード = 1 JSON 暗号文** とする。フィールド単位ではなくレコード単位の
+暗号化により、IV 管理が単純化される。
+
+### 12.2 暗号化レコード形式 (JSON-then-encrypt)
+
+```json
+// JournalEntry の plaintext (シリアライズ前)
+{
+  "v": 1,
+  "date": "2026-05-22",
+  "description": "スーパーで食材購入",
+  "source": "cashbook",
+  "batch_id": null,
+  "fiscal_period": 5
+}
+
+// 暗号化フロー
+plaintext_bytes = utf8(JSON.stringify(plaintext))
+iv              = crypto.getRandomValues(new Uint8Array(12))
+ciphertext      = AES-GCM(MK, iv, plaintext_bytes, aad)
+encrypted_blob  = ciphertext + 16B tag (cryptography ライブラリ既定)
+```
+
+#### AAD フォーマット (全テーブル共通仕様)
+
+AAD は **テーブル種別 + 識別 ID の連結バイト列**。すべての整数フィールドは
+**big-endian 固定長エンコード**。サーバが BLOB を別ユーザー / 別行に
+すり替えても復号失敗で検出される。
+
+エンコード仕様:
+- 整数 ID (user_id, entry_id, line_id, expense_id): **uint64 big-endian (8B)**
+- 年 / 期 (year, period): **uint16 big-endian (2B)** (smallint カラムに対応)
+- セパレータ `\0`: 可読性のため挿入 (固定長なので曖昧性排除には不要だが、
+  ダンプ時の境界を見やすくする)
+
+```
+journal_entries:
+  aad = b"je\0" + uint64_be(user_id) + b"\0" + uint64_be(entry_id)
+
+journal_entry_lines:
+  aad = b"jel\0" + uint64_be(user_id) + b"\0" + uint64_be(journal_entry_id)
+                + b"\0" + uint64_be(line_id)
+  ※ line_id 単独だと他ユーザーの同 line_id にすり替え可能なので user_id + journal_entry_id も必須
+
+medical_expenses:
+  aad = b"me\0" + uint64_be(user_id) + b"\0" + uint64_be(expense_id)
+
+balance_cache_blobs:
+  aad = b"bcb\0" + uint64_be(user_id) + b"\0" + uint16_be(year) + b"\0" + uint16_be(period)
+```
+
+- テーブル種別プレフィックス (`je` / `jel` / `me` / `bcb`) で「JournalEntry の
+  暗号文を MedicalExpense 行に入れる」攻撃も検知
+- big-endian 固定長エンコードにより Web / Python / TUI クライアント間で完全互換
+- `v` (version) フィールドで将来のスキーマ変更に対応
+
+### 12.3 レポート集計のクライアントサイド化
+
+現行 (v4.x) はサーバ側でレポート集計:
+
+```python
+# app/services/tax.py 等
+trial_balance = db.session.query(
+    func.sum(JournalEntryLine.debit_amount),
+    func.sum(JournalEntryLine.credit_amount),
+).group_by(JournalEntryLine.account_code).all()
+# ↑ サーバが平文 (account_code, debit_amount, credit_amount) を見て集計
+```
+
+E2EE 後はサーバが暗号文しか見られないので、**クライアント側で全件取得 → 復号 → JS / Python で集計**:
+
+```javascript
+// Web クライアント (集計サービスは E3 完了条件で新設)
+const lines = await fetchAllJournalEntryLines();  // 暗号文を全件 GET
+const plaintexts = await Promise.all(
+  lines.map(l => crypto.decrypt(l.encrypted_blob, l.blob_iv, aad=...))
+);
+const trialBalance = aggregate(plaintexts);  // クライアントで集計
+```
+
+#### 影響を受けるレポート
+
+| レポート | 現行サーバ集計 | E2EE 後 |
+|---|---|---|
+| 試算表 | `app/services/balance.py` | クライアント側 (`/static/js/reports.js`) |
+| 損益計算書 | `app/views/reports.py` | クライアント側 |
+| 貸借対照表 | `app/views/reports.py` | クライアント側 |
+| 月次比較 | `app/services/tax.py` | クライアント側 |
+| 確定申告集計 | `app/services/tax.py` | クライアント側 |
+| 元帳 | `app/views/reports.py` | クライアント側 (年度全件取得 + フィルタ) |
+| 医療費控除 | `app/services/medical.py` | クライアント側 |
+
+#### パフォーマンス影響 (Q3)
+
+- 仕訳行数 1 万件 → 復号約 20ms (AES-256-GCM, 開発機 538K ops/s 基準)
+- 仕訳行数 10 万件 → 復号約 200ms (実用範囲)
+- 仕訳行数 100 万件 → 復号約 2秒 (E3 で実測、必要なら年度別シャーディング)
+- IndexedDB キャッシュで「初回ロード時のみ全件復号、以後は差分のみ」戦略
+
+### 12.4 検索の代替手段
+
+サーバ側で `date BETWEEN ... AND ...` や `description LIKE '%...%'` ができなくなる。
+
+選択肢:
+
+- **(a) クライアント全件取得 + JS フィルタ** (推奨): 検索性は犠牲、E2EE 純度高い
+- **(b) クライアント側全文インデックス** (IndexedDB に検索用 token を保管):
+  実装複雑、暗号化との両立が課題
+- **(c) サーバ側 blind index** (HMAC ベース): 部分検索不可、決定論的なので
+  パターン推測されうる
+
+→ **暫定: (a) を採用**。検索 UI は「年度フィルタ + 全件取得 + JS で絞り込み」。
+年度別にデータを分けて取得することで 1 リクエストあたりの転送量を抑える。
+
+### 12.5 CSV / OFX / Web 貼り付けの E2EE 対応
+
+現行はサーバ側で CSV をパースして仕訳を生成:
+
+```
+v4.x:
+  client → upload CSV → server (parse) → preview → confirm → INSERT 仕訳
+
+v5.0:
+  client → parse CSV locally → preview → confirm
+         → client が仕訳を暗号化 → POST /api/v1/journals (暗号文一括)
+```
+
+サーバ側の `csv_import.py` / `ofx_import.py` は **クライアント側へ移行**:
+- Web: JS で CSV / OFX をパース (PapaParse 等、~20KB)
+- `client-py` / `client-tui`: Python で完結 (既存ロジック流用)
+
+Web 貼り付け (Web Import) も同様にクライアント側パース化。
+
+### 12.6 AI 証憑仕訳 (AIDraft) の E2EE 対応
+
+§11.3 の方針 (サーバ側 AI 呼び出し全廃) と整合:
+
+- 証憑画像は E4 でクライアント暗号化済みストレージへ
+- AI 解析はクライアント側で直接 LLM (OpenAI/Anthropic) を fetch
+- `AIDraft` テーブルは「下書きの暗号化スナップショット」のみ保管 (フル E2EE)
+- `discord_webhook_url` 等の外部通知は v5.0 で廃止 (§4 Webhook 非両立)
+
+#### Webhook 廃止のユーザー影響
+
+v4.x の Discord 通知 (`AIDraft.discord_webhook_url` / `WebhookConfig`) を
+利用しているユーザーは v5.0 アップグレード時に通知が止まる。リリースノート
+への明記が必須:
+
+- v5.0 リリース時の移行ガイドに「Webhook 通知は廃止。仕訳登録の確認は
+  クライアント常駐 + Page Visibility イベントで代替してください」
+- 既存 `WebhookConfig` レコードは移行マイグレーションで削除 (E7 で実行)
+- ユーザーが事前にエクスポートしたい場合のオプトアウト手段は不要 (Webhook URL
+  自体はユーザーが把握済み)
+
+### 12.7 月次確定 (FiscalClose) の扱い
+
+`FiscalClose` テーブルは:
+- `user_id, year, closed_period` の連番管理 → **平文維持** (フィルタに必要)
+- 確定済み判定はサーバ側で続行 (write API でロック判定)
+- 暗号化された仕訳の改ざんは AAD + タグ検証で検出されるので、`closed_period`
+  のみで write 拒否すれば整合性は保てる
+
+### 12.8 BalanceCache の廃止と代替
+
+現行 `BalanceCache` テーブル (確定済み残高キャッシュ) は **削除**:
+
+```
+v4.x:
+  fiscal_close 確定時に balance_caches に累計借方/貸方を INSERT
+  サーバが集計クエリで利用
+
+v5.0:
+  サーバが残高を計算できない → balance_caches は無意味
+  クライアント側の IndexedDB に暗号化済みキャッシュを保持
+  - キー: (year, period, account_code)
+  - 値: 暗号化された accumulated_debit / accumulated_credit
+  fiscal_close 確定時にクライアントがキャッシュを生成 → サーバに POST
+                                                       (encrypted_blob として)
+```
+
+新テーブル `balance_cache_blobs` (例):
+
+```
+| カラム            | 型           | 用途 |
+|------------------|--------------|------|
+| id               | bigserial    | PK |
+| user_id          | bigint       | テナント分離 |
+| year             | smallint     | 平文 (フィルタ用) |
+| period           | smallint     | 平文 (フィルタ用) |
+| encrypted_blob   | bytea        | 全 account_code の残高を 1 JSON にまとめて暗号化 |
+| blob_iv          | bytea (12B)  | |
+
+UNIQUE (user_id, year, period)
+```
+
+サーバはストレージとしてのみ機能、クライアントが復号して使用。
+
+### 12.9 マイグレーション戦略 (§6 と連動)
+
+§6 で確定済の「一斉移行」を実行する (`§6 移行戦略 (一斉移行)` 参照)。E3 が
+最大の移行コスト。
+
+**一時 MK のライフサイクル (§6 から要約)**:
+- メンテナンスウィンドウ開始時にサーバが一時 MK を生成
+- 全データをサーバ側で一時 MK で暗号化 (この時点で旧平文カラムは
+  encrypted_blob にも入る)
+- 各ユーザーが Passkey / パスフレーズ設定完了後、クライアントが「一時 MK で
+  復号 → 自分の MK で再暗号化」を実行
+- 全ユーザー再暗号化完了後、サーバから一時 MK を破棄
+
+```
+Phase E3 マイグレーション:
+  1. 全テーブルに encrypted_blob / blob_iv カラムを ADD (NULL)
+  2. メンテナンスウィンドウで全データを暗号化変換 (§6 のサーバ生成鍵フェーズ)
+  3. クライアント鍵設定完了後、再暗号化 (§6 続き)
+  4. 全件 encrypted_blob が NOT NULL になったら旧平文カラムを DROP
+```
+
+旧平文カラム DROP までの猶予期間:
+- §6 の「猶予期間 30 日」と整合
+- 期間中、クライアントは旧平文 or 新暗号文のどちらでも読める「dual read」
+- DROP 後は新暗号文のみ
+
+#### dual read 期間中の API 契約
+
+`GET /api/v1/journals` (および類似 endpoint) のレスポンスは
+**常に新形式 (encrypted_blob + blob_iv)** で返す。サーバ側で以下のロジック:
+
+```
+未移行行 (encrypted_blob IS NULL):
+  → サーバが「一時 MK」(§6 サーバ生成鍵フェーズの残り鍵) で旧カラムを暗号化
+    オンザフライで encrypted_blob + blob_iv を生成して返す
+  → クライアントはサーバ生成鍵で復号 (移行ウィザード中のみ可能)
+
+移行済行 (encrypted_blob IS NOT NULL):
+  → そのまま返す
+  → クライアントは自分の MK で復号
+```
+
+`POST /api/v1/journals` (新規仕訳作成) は**移行期間中も暗号文のみ受付**。
+クライアントが平文 POST するルートは v5.0 で廃止。これにより新規データは
+即時 E2EE 化される。
+
+dual read 期間後 (旧カラム DROP 後): サーバ側の一時 MK は破棄、`encrypted_blob`
+がない行は存在しなくなる。
+
+### 12.10 E3 完了条件
+
+- [ ] journal_entries / journal_entry_lines / medical_expenses にカラム追加マイグレーション (encrypted_blob, blob_iv)
+- [ ] balance_cache_blobs テーブル新設 + 旧 balance_caches DROP
+- [ ] AAD (user_id + entry_id) による暗号文すり替え検知の実装
+- [ ] レポート計算のクライアントサイド化 (試算表 / P/L / B/S / 月次比較 / 確定申告集計 / 元帳 / 医療費控除)
+- [ ] CSV / OFX / Web 貼り付けのクライアントサイドパース化 (Web: JS、`client-py` / `client-tui`: 既存 Python ロジック流用 + 仕訳暗号化を追加)
+- [ ] AI 証憑仕訳 (AIDraft) のクライアントサイド AI 呼び出し統合
+- [ ] サーバ側 `tax.py` / `balance.py` / `csv_import.py` / `ofx_import.py` 等の廃止
+- [ ] IndexedDB キャッシュ戦略 (年度別、差分更新)
+- [ ] パフォーマンス目標: 仕訳 10 万件で初回ロード 5 秒以内
+- [ ] `journal_entries.fiscal_year smallint` (平文) カラム追加 + 既存データ移行
+- [ ] **クライアント側書き込みバリデーション**: debit / credit 合計一致、`fiscal_period=16` の手動入力禁止 (サーバ側バリデーションは fiscal_period 暗号化で消えるため)
+- [ ] dual read 期間中の API: `GET` は常に encrypted_blob 形式で返却 (未移行行はサーバ生成鍵で on-the-fly 暗号化)、`POST` は暗号文のみ受付
+- [ ] テスト: AAD 攻撃 (他ユーザーの暗号文を自分の行にすり替え) で復号失敗
+- [ ] テスト: テーブル種別プレフィックス付き AAD で異テーブル暗号文の混入を検知
+- [ ] テスト: 月次確定後の write 拒否がクライアント書き込みでも効く
+- [ ] テスト: クライアント側 debit/credit 合計一致バリデーションが効く
+- [ ] テスト: dual read 期間中の旧データ取得が成功する (移行前後の互換)
+- [ ] E2 で確立したパターン (BLOB + IV カラム、互換 endpoint) を E3 でも踏襲
+- [ ] `client-py` / `client-tui` の仕訳 CRUD API クライアントを E3 形式に更新
+- [ ] WebhookConfig / AIDraft.discord_webhook_url の v5.0 廃止 (E7 マイグレーションで削除、リリースノートに移行ガイド記載)
+
+### 12.11 信頼境界の変化 (サーバサイドバリデーション喪失)
+
+E3 後、複式簿記の整合性検証はサーバから消える。具体的に失われる検証:
+
+| 現行サーババリデーション | E2EE 後 | 代替 |
+|---|---|---|
+| `debit_amount + credit_amount` 合計一致 | サーバから見えず | クライアント側 + 監査時の整合性検査 |
+| `fiscal_period=16` (損益振替) の手動入力禁止 | サーバから見えず | クライアント側 |
+| `account_code` が `accounts` テーブルに存在するか | サーバから見えず | クライアント側 (`account_user_id` FK のみサーバが検証) |
+| `fiscal_period` の月次確定整合性 | `closed_period` 平文維持で部分的に継続 | サーバ書き込み拒否 + クライアント警告 |
+
+#### 影響と緩和策
+
+1. **悪意あるクライアント (自前実装で改ざん)**:
+   - 不正な仕訳 (合計不一致、`fiscal_period=16` 手動入力) を POST 可能
+   - **本人のデータが壊れるだけで他ユーザーへの影響なし** (AAD で隔離)
+   - クライアントが自分で自分のデータを壊しても規約上免責 (リカバリシード等
+     と同じく「自己責任の自由」)
+2. **バグのあるクライアント (公式 Web / client-py / client-tui のバグ)**:
+   - 同様にデータ破損リスク → リリース前の自動テスト網羅で予防
+   - 修復可能性のために「ユーザーが自分の MK でローカル整合性チェック → 修復
+     提案」を offer する管理 UI を E6 で検討
+3. **監査アカウント (Lv2/Lv3) からの不正書き込み**:
+   - §7 (d) ワークフロー方式により監査者は MK を持たない → そもそも書き込み
+     不可能。修正案を owner に返すだけ。owner が反映するか拒否するかは owner
+     の意思で決まる
+4. **クライアント側バリデーションのテスト**:
+   - 公式 Web / client-py / client-tui は同じバリデーションロジックを共有
+     (将来は `iikanji-validation` 共通ライブラリ等に切り出し検討)
+
+#### 受容するリスク
+
+- 「サーバが複式簿記の整合性を強制できない」ことは E2EE の本質的トレードオフ
+- 帳簿の整合性 = ユーザーが信頼するクライアントの正しさ + 自分の操作の正しさ
+- 整合性違反は事後的にクライアント側監査で検出可能 (年次決算前のチェックを
+  推奨)
+
+### 12.12 平文で漏れる情報 (脅威モデル §1 補完)
+
+E3 後にサーバから可視な仕訳メタデータ:
+
+- 仕訳の **件数** (entry_id 連番から推測可能)
+- 仕訳の **作成時刻 / 更新時刻** (created_at / updated_at 平文)
+- 仕訳の **年度別件数** (`journal_entries.fiscal_year` 平文)
+- 仕訳明細の **本数の分布** (1 仕訳あたり何本の `journal_entry_lines` があるか)
+- **使用科目の数** (`account_user_id` 平文 FK から、ユーザーが何個の科目を
+  運用しているかが分かる)
+- AI 証憑画像のサイズ・件数 (E4 で対応、現状は §4 「暗号文のサイズ」として
+  許容)
+
+これらは脅威モデル §1 「守らないもの」と整合。事業規模・使用頻度の推測は可能
+だが、内容 (金額・取引先・科目名) は保護される。
+
+### 12.13 `balance_cache_blobs` のペイロードサイズと部分更新コスト
+
+§12.8 で「全 account_code の残高を 1 JSON にまとめて暗号化」する設計は、
+月次確定時に **一部の account_code 変更でも全 BLOB を再生成・再アップロード**
+する必要がある。意図的なトレードオフ:
+
+- **採用理由**: 1 (year, period) ペアあたり 1 BLOB に集約することで、API
+  呼び出し数とサーバストレージのインデックスサイズを最小化
+- **想定ペイロード**: 個人事業主の標準科目 ~100 個 × 1 行 ~50B = 5KB 程度。
+  暗号化後でも 5-6KB。問題なし
+- **法人や大規模ユーザー**: 科目数が 1000+ の場合は 50KB 程度。それでも 1
+  リクエストで完結する範囲
+- **代替案 (科目別分割)**: 採用しない。インデックスが肥大化し、ローテーション
+  時の処理対象数が増える
+
+### 12.14 PapaParse 等のクライアントライブラリ
+
+§12.5 で言及した CSV パーサ等の管理方針:
+
+- **CDN 経由 + SRI 必須**: jsdelivr で `<script integrity="sha384-...">` 形式
+- **バージョン固定**: メジャー固定 + マイナーパッチは手動更新で評価
+- 候補: PapaParse 5.x (MIT, ~20KB minified) / csv-parse (MIT, ~30KB)
+- 実装フェーズで SBOM (Software Bill of Materials) に追加して脆弱性監視に組込
+
+### 12.15 E4 (証憑画像) への影響
+
+E3 で確立されるパターン:
+
+- JSON-then-encrypt (レコード単位の暗号化)
+- AAD で「他ユーザーの暗号文すり替え」攻撃を防ぐ
+- IndexedDB クライアントキャッシュ
+- レポート集計の完全クライアントサイド化
+
+E4 では同じパターンを画像 BLOB に適用:
+- 画像本体 = AES-GCM(MK, iv, image_bytes)
+- AAD = user_id + voucher_id
+- サムネイル生成もクライアント側
+
+---
+
+## 13. 次のステップ
 
 1. 本書のレビュー・合意形成
 2. E0 プロトタイプ:
