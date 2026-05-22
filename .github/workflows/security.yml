@@ -1,0 +1,83 @@
+name: Security
+
+on:
+  push:
+    branches: [develop, master]
+  pull_request:
+    branches: [develop, master]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  bandit:
+    name: Bandit (Python 暗号弱点)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install bandit
+      - name: Run Bandit
+        run: |
+          # 除外理由:
+          # B101 (assert): テストで使用、本体には影響なし
+          # B311 (random): 連番採番等で random.choice 等を使用、暗号用途は secrets を使用
+          # B314 (xml ET.fromstring): app/services/sources/webdav.py で使用するが、
+          #   v5.0 で Auto Import (WebDAV) は廃止予定 (設計書 §15.6)。それまでは
+          #   サーバ運営者が設定した WebDAV ソースなので信頼境界内
+          bandit -r app/ -ll \
+            --skip B101,B311,B314 \
+            -f txt
+
+  gitleaks:
+    name: gitleaks (シークレットコミット検知)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # PR の場合は base からの差分のみスキャン
+          GITLEAKS_ENABLE_COMMENTS: false
+
+  e2ee-plaintext-leak:
+    name: 平文 E2EE 鍵漏れ検査
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Lint logger calls for plaintext key leaks
+        run: |
+          # logger.info / logger.debug などに E2EE 関連の生鍵キーワードが
+          # 含まれていないか検査 (str() 経由の漏洩も検出可能)
+          # 許容: ハッシュ化された値、prefix のみ、コメント (#)
+          PATTERNS='(master_key|wrapped_master_key|migration_temp_mk|raw_seed|recovery_seed|derived_key|wrap_iv)'
+          # logger / print / current_app.logger 経由を検査
+          LOG_CALLS='(logger\.(info|debug|warning|error)|print|current_app\.logger\.(info|debug|warning|error))'
+          # 検査対象ファイルから tests/ と prototype/ を除く (テスト/プロトタイプは生鍵を扱う前提)
+          if find app/ -name '*.py' -print0 \
+             | xargs -0 grep -nE "${LOG_CALLS}.*${PATTERNS}" 2>/dev/null; then
+            echo ""
+            echo "::error::ロガー/print 出力に E2EE 鍵キーワードが含まれている可能性があります"
+            echo "上記の行を確認し、生鍵が出力されていないか確認してください。"
+            echo "(意図的なログ出力は無効化、デバッグ用ならコメント化してください)"
+            exit 1
+          fi
+          echo "✓ E2EE 鍵キーワードのログ出力なし"
+
+      - name: Lint API responses for raw key fields
+        run: |
+          # jsonify / make_response 引数に master_key 系のフィールドが含まれていないか
+          # (PR-B 以降の API endpoint 実装時に有効)
+          PATTERNS='(master_key|migration_temp_mk|raw_seed|derived_key)'
+          if find app/views/ -name '*.py' -print0 \
+             | xargs -0 grep -nE "(jsonify|make_response).*${PATTERNS}" 2>/dev/null; then
+            echo ""
+            echo "::error::API レスポンスに E2EE 生鍵が含まれている可能性があります"
+            exit 1
+          fi
+          echo "✓ API レスポンスに E2EE 生鍵なし"
