@@ -83,6 +83,11 @@ def upgrade():
     op.create_index(
         "ix_wrapped_keys_user_id", "wrapped_keys", ["user_id"]
     )
+    op.create_index(
+        "ix_wrapped_keys_webauthn_credential_id",
+        "wrapped_keys",
+        ["webauthn_credential_id"],
+    )
     # passkey_prf 行は (user_id, credential_id) 単位で UNIQUE
     op.execute(
         "CREATE UNIQUE INDEX uq_wrapped_keys_passkey "
@@ -100,6 +105,9 @@ def upgrade():
 def downgrade():
     op.drop_index("uq_wrapped_keys_passphrase_recovery", table_name="wrapped_keys")
     op.drop_index("uq_wrapped_keys_passkey", table_name="wrapped_keys")
+    op.drop_index(
+        "ix_wrapped_keys_webauthn_credential_id", table_name="wrapped_keys"
+    )
     op.drop_index("ix_wrapped_keys_user_id", table_name="wrapped_keys")
     op.drop_table("wrapped_keys")
     op.drop_column("users", "mk_rotation_state")

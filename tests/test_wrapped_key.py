@@ -93,19 +93,20 @@ def test_create_recovery_seed_row(db):
     assert row.salt is None  # BIP-39 mnemonic 自体が高エントロピー、salt 不要
 
 
-def test_method_check_constraint(db):
-    """method は CHECK 制約で 3 値に限定される (PostgreSQL 本番)。"""
+def test_method_validates_rejects_invalid(db):
+    """method は @validates で値域 (ALLOWED_METHODS) を強制される。
+
+    PostgreSQL 本番では CHECK 制約も効くが、SQLite テストでも同じ動作を
+    保証するため SQLAlchemy validator で弾く。
+    """
     user = _make_user(db)
-    row = WrappedKey(
-        user_id=user.id,
-        method="invalid_method",
-        wrapped_master_key=b"\x00" * 48,
-        wrap_iv=b"\x01" * 12,
-    )
-    db.session.add(row)
-    # SQLite テストでは CHECK 制約自体は宣言されていないが、ALLOWED_METHODS
-    # 定数で値域を保証する設計なのでアプリ側で確認できる
-    assert "invalid_method" not in ALLOWED_METHODS
+    with pytest.raises(ValueError, match="method must be one of"):
+        WrappedKey(
+            user_id=user.id,
+            method="invalid_method",
+            wrapped_master_key=b"\x00" * 48,
+            wrap_iv=b"\x01" * 12,
+        )
 
 
 def test_allowed_methods_constants(db):
@@ -249,6 +250,28 @@ def test_user_e2ee_columns_defaults(db):
     assert user.migration_temp_mk is None
     assert user.public_key is None
     assert user.mk_rotation_state is None
+
+
+def test_inactive_user_blocked_by_flask_login(client, db):
+    """User.is_active=False のとき Flask-Login が UserMixin.is_active を
+    DB カラムで上書きし、login_user() がそのユーザーを拒否することを確認。
+
+    認証フロー全体ではなく、UserMixin.is_active 経由のセッション維持 (auth ミドル
+    ウェア) でロックされることを確認 (§16.5 の鍵未設定ユーザーロック)。
+    """
+    user = _make_user(db, username="locked-user")
+    user.is_active = False
+    db.session.commit()
+
+    # DB カラムが UserMixin プロパティを上書きしているか直接確認
+    assert user.is_active is False
+    # Flask-Login の get_id() は呼べる (削除されていない) が、login_user 経由
+    # では is_active=False で session に乗らない (UserMixin.is_active を参照)
+    from flask_login import login_user
+
+    with client.application.test_request_context():
+        result = login_user(user)
+        assert result is False  # 非アクティブユーザーは login 拒否
 
 
 def test_user_mk_rotation_state_jsonb(db):

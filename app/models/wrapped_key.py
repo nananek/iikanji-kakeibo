@@ -8,6 +8,7 @@ recovery_seed) でそれぞれラップしてサーバに保管する。サー�
 from datetime import datetime, timezone
 
 from sqlalchemy import CheckConstraint, Index
+from sqlalchemy.orm import validates
 
 from app.extensions import db
 
@@ -55,10 +56,12 @@ class WrappedKey(db.Model):
     )
     method = db.Column(db.String(20), nullable=False)
     # method=passkey_prf 時のみ非 NULL。webauthn_credentials.id (PK) への FK。
+    # index=True: 「credential X に紐づく wrapped_keys を一覧」クエリの効率化
     webauthn_credential_id = db.Column(
         db.Integer,
         db.ForeignKey("webauthn_credentials.id", ondelete="CASCADE"),
         nullable=True,
+        index=True,
     )
     wrapped_master_key = db.Column(db.LargeBinary, nullable=False)
     # AES-GCM IV (12B)、ciphertext とは別カラムで保管 (設計書 §10.1 注記)。
@@ -84,6 +87,16 @@ class WrappedKey(db.Model):
         ),
     )
     webauthn_credential = db.relationship("WebAuthnCredential")
+
+    @validates("method")
+    def _validate_method(self, key, value):
+        # DB の CHECK 制約は PostgreSQL 本番でのみ有効 (SQLite は無視)。
+        # アプリ層でも値域チェックして、本番/テスト両方で同じ動作を保証する。
+        if value not in ALLOWED_METHODS:
+            raise ValueError(
+                f"method must be one of {ALLOWED_METHODS}, got {value!r}"
+            )
+        return value
 
     def __repr__(self):
         return f"<WrappedKey id={self.id} user={self.user_id} method={self.method}>"
