@@ -678,7 +678,7 @@ client                              server
 
 - アンラップ失敗 (タグ検証 NG) は「鍵が間違っている」を示す。攻撃検知では
   ないので一般エラーで返す
-- リロード時は Worker メモリが揮発するため再アンラップが必要 (§5 と §11
+- リロード時は Worker メモリが揮発するため再アンラップが必要 (§5 と §10.7
   Q10 整理参照)
 
 #### PRF 非対応環境のフォールバック (Q2)
@@ -920,7 +920,203 @@ E2 (API キー E2EE 化) はこの基盤を最初に使う「最小スコープ�
 
 ---
 
-## 11. 次のステップ
+## 11. E2 設計スケッチ (API キー E2EE 化 — 最小スコープ検証)
+
+E1 で構築した鍵管理基盤の **最初の実応用**。`UserAIConfig.api_key_encrypted`
+(現状 Fernet サーバ暗号化) を **クライアント暗号化** に移行する。データ量が
+小さく (1 ユーザー数行)、影響範囲が限定的なため、E3 (仕訳暗号化) の前に
+パターンを確立する位置づけ。
+
+### 11.1 現状 (v4.x) の構造
+
+```python
+# app/models/ai_config.py
+class UserAIConfig(db.Model):
+    api_key_encrypted = db.Column(db.LargeBinary, nullable=False)
+    # ↑ Fernet 暗号化された API キーバイト列
+
+# app/services/ai_receipt.py
+def _get_fernet():
+    """SECRET_KEY から Fernet インスタンスを生成"""
+
+def decrypt_api_key(encrypted_bytes):
+    return _get_fernet().decrypt(encrypted_bytes)
+
+# ai_receipt.py:723
+raw_key = decrypt_api_key(config.api_key_encrypted)
+# ↑ サーバが復号できる = サーバ侵害で全ユーザーの API キーが漏洩
+```
+
+問題点:
+- サーバが `SECRET_KEY` を持っているので Fernet 暗号化は実質「暗号化された状態
+  でストレージに置く」程度の効果しかない (サーバ侵害時の保護が弱い)
+- E2EE の脅威モデル §1 で挙げた「サーバ内部犯」「サーバ侵害」を防げない
+
+### 11.2 目標 (v5.0)
+
+```python
+# app/models/ai_config.py (E2 後)
+class UserAIConfig(db.Model):
+    # 旧: api_key_encrypted (LargeBinary)
+    api_key_blob = db.Column(db.LargeBinary, nullable=False)  # 暗号文 + タグ
+    api_key_iv   = db.Column(db.LargeBinary, nullable=False)  # AES-GCM IV (12B)
+    # サーバは復号できない。クライアントが MK で復号
+```
+
+サーバの責務:
+- 暗号文を保管するだけ
+- 復号は一切行わない (`decrypt_api_key` 関数は **削除**)
+- AI 呼び出しは v5.0 で **クライアント側に移行**:
+  - Web: サーバサイドルート (現行 `ai_receipt.py`) が使えない (E2EE 前提でサーバ
+    が平文を扱えない) ので、ブラウザの fetch で OpenAI/Anthropic API を直接呼ぶ
+  - `client-py` / `client-tui`: 元々クライアント側で動くので問題なし
+
+### 11.3 サーバ側 AI 呼び出しの廃止
+
+現行のサーバ側 AI 呼び出し (ai_receipt.py の各 provider handler) は v5.0 で
+**全廃** する。理由:
+
+1. サーバが API キーを復号できない (E2EE の前提)
+2. サーバが画像を復号できない (E4 後)
+3. サーバが LLM プロンプトを組み立てる材料が暗号化される
+
+クライアント側で完結する形に移行:
+
+```
+[v4.x]
+client → upload image → server → decrypt → call OpenAI → return suggestion → server → store ai_draft
+                                  ↑ サーバが平文を扱う
+
+[v5.0]
+client → encrypt image → upload → server (暗号文ストレージのみ)
+client → fetch image → decrypt → call OpenAI directly → encrypt suggestion → upload as ai_draft
+       ↑ クライアントが直接 LLM を呼ぶ。サーバは一切平文を見ない
+```
+
+UX 影響:
+- ブラウザ閉じてる間に AI 解析を進める「バックグラウンド解析」は実現困難
+  (= クライアントが起動していないと AI 解析できない)
+- 自家ホスト LLM (`llama_cpp` provider) は E2EE と両立不可なので v5.0 で廃止
+  (確定事項表)
+- BYOK (ユーザー自身の API キー) のみサポート
+
+### 11.4 マイグレーション戦略
+
+`user_ai_configs` テーブルに新カラム追加 + 旧カラム削除を 2 段階で:
+
+```
+Phase E2-a (互換期間):
+  1. ALTER TABLE user_ai_configs
+     ADD COLUMN api_key_blob bytea NULL,
+     ADD COLUMN api_key_iv   bytea NULL;
+  2. 既存ユーザー: ログイン時にクライアントで以下を実行
+     - サーバから api_key_encrypted を取得 (一時的にサーバが復号して平文返却)
+     - クライアントが MK で再暗号化 → api_key_blob/iv を PUT
+     - サーバで api_key_encrypted = NULL に更新
+  3. 全ユーザーの api_key_encrypted = NULL になったら次フェーズ
+
+Phase E2-b (旧カラム削除):
+  4. ALTER TABLE user_ai_configs
+     ALTER COLUMN api_key_blob SET NOT NULL,
+     ALTER COLUMN api_key_iv   SET NOT NULL,
+     DROP COLUMN api_key_encrypted;
+```
+
+§6 の一斉移行とは異なり、E2 だけは **段階的移行が可能**。データ量が小さく、
+ユーザーごとに独立しているため。
+
+⚠️ **Phase E2-a の一時平文返却はサーバが MK を知らない状況下では不可能**。
+正しいフロー:
+
+```
+クライアント (移行ユーザー):
+  1. 旧 api_key_encrypted を GET (サーバが Fernet で復号して平文返す)
+     → これは互換 endpoint `/api/v1/ai-config/migrate-key` (E2 限定)
+  2. クライアントが MK で再暗号化 → PUT /api/v1/ai-config (api_key_blob/iv)
+  3. サーバが旧カラムを NULL クリア
+  4. 全件移行完了したら互換 endpoint も廃止 + 旧カラム DROP
+
+セキュリティ: 移行期間中、サーバ生成の SECRET_KEY による復号能力が残る。
+全ユーザー移行完了後に SECRET_KEY を rotate して残存リスクを下げる。
+```
+
+#### migrate-key endpoint のセキュリティ要件
+
+`/api/v1/ai-config/migrate-key` は本来 E2EE の前提を破る "サーバ側復号" を
+許容する **移行限定の例外 endpoint** であり、悪用されると全ユーザーの API
+キーが取得可能になる。以下を実装必須:
+
+- `@login_required` (current_user 以外の鍵は返さない)
+- レート制限: **per-user 1 回限り** (`UserAIConfig.migrated_at` 等で再呼出しを拒否)
+- 呼出成功後は即時 `api_key_encrypted = NULL` にしてサーバ側鍵材料を消去
+- 全件 NULL 確認用の CLI: `flask ai-config migration-status` (未移行件数を集計)
+- 全ユーザー移行完了確認後、`flask ai-config drop-migrate-key` 等で route 削除
+  + マイグレーション (旧カラム DROP) を実行
+
+### 11.5 API 変更
+
+```
+変更前 (v4.x):
+  GET    /api/v1/ai-config        → 復号せず metadata のみ返却
+  POST   /api/v1/ai-config        → 平文 api_key を受け取り Fernet 暗号化して保存
+  DELETE /api/v1/ai-config        → 削除
+
+変更後 (v5.0):
+  GET    /api/v1/ai-config        → api_key_blob + api_key_iv をそのまま返却 (暗号文)
+  POST   /api/v1/ai-config        → api_key_blob + api_key_iv を受け取って保存
+                                    (サーバは復号しない)
+  DELETE /api/v1/ai-config        → 削除
+  POST   /api/v1/ai-config/migrate-key (E2-a 限定、移行完了後に廃止)
+                                  → 旧 api_key_encrypted を返却 (Fernet 復号済)
+```
+
+### 11.6 クライアント実装の変更
+
+```
+v4.x: 設定画面
+  ユーザーが API キーを入力 → POST /api/v1/ai-config (平文)
+                              ↑ HTTPS で守られるがサーバが平文を見る
+
+v5.0: 設定画面
+  ユーザーが API キーを入力 → クライアントが MK で AES-GCM 暗号化
+                              → POST /api/v1/ai-config (暗号文 + IV)
+                              ↑ サーバは復号できない
+```
+
+ai_receipt.py 利用箇所:
+- Web: 廃止 (クライアント側で直接 LLM を呼ぶ)
+- client-py / client-tui: API キーをローカル復号 → 直接 LLM 呼び出し
+
+### 11.7 E2 完了条件
+
+- [ ] `user_ai_configs` マイグレーション (旧 `api_key_encrypted` 削除、新 `api_key_blob` / `api_key_iv` 追加、2 段階)
+- [ ] `/api/v1/ai-config` GET / POST / DELETE (暗号文受け渡しのみ)
+- [ ] `/api/v1/ai-config/migrate-key` (互換 endpoint、per-user 1 回限り、呼出成功後に旧カラム NULL クリア、移行完了後に削除)
+- [ ] `flask ai-config migration-status` / `drop-migrate-key` CLI (移行進捗確認 + 完了後 route 削除)
+- [ ] クライアント側 (Web) で MK を使った AES-GCM 暗号化/復号
+- [ ] AI 呼び出しのクライアントサイド移行 (ai_receipt.py 廃止候補の整理)
+- [ ] `client-py` / `client-tui` の `/api/v1/ai-config` I/F 更新 (POST が平文 → 暗号文に変わるため)
+- [ ] サーバ側 `decrypt_api_key` / `_get_fernet` 削除 (移行完了後)
+- [ ] `SECRET_KEY` のローテーション (移行完了後の残存リスク低減)
+- [ ] テスト: 旧 Fernet 暗号化済データから新形式への移行が成功する
+- [ ] テスト: サーバが api_key_blob を復号できないことの確認 (= Fernet で復号試行が失敗)
+- [ ] テスト: migrate-key endpoint の per-user 1 回限り制約
+
+### 11.8 E3 への影響
+
+E2 で確立されるパターン:
+
+- クライアント暗号化されたバイト列を BLOB として保管
+- IV を別カラムに保管
+- マイグレーションは段階的に (旧カラム残しつつ新カラム導入 → 移行完了で旧削除)
+- サーバ側の復号関数は完全削除
+
+これを `journal_entries` / `journal_entry_lines` / `medical_expenses` 等の
+大規模テーブルへ適用するのが E3。E2 のテストカバレッジが E3 設計の基礎になる。
+
+---
+
+## 12. 次のステップ
 
 1. 本書のレビュー・合意形成
 2. E0 プロトタイプ:
