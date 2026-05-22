@@ -51,36 +51,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - name: Lint logger calls for plaintext key leaks
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Run AST-based plaintext key linter
         run: |
-          # logger / print に E2EE 関連の生鍵キーワードが含まれていないか検査。
-          # 許容: ハッシュ化された値、prefix のみ、コメント (#)
-          PATTERNS='(master_key|wrapped_master_key|migration_temp_mk|raw_seed|recovery_seed|derived_key|wrap_iv)'
-          # logger / print 経由を検査。logger は app.logger / current_app.logger /
-          # モジュール直 logger 全てに対応。method は debug/info/warning/warn/error/
-          # critical/exception を全網羅
-          LOG_CALLS='((current_app\.|app\.)?logger\.(debug|info|warning|warn|error|critical|exception)|print\()'
-          # 検査対象ファイルから tests/ と prototype/ を除く (テスト/プロトタイプは生鍵を扱う前提)
-          if find app/ -name '*.py' -print0 \
-             | xargs -0 grep -nE "${LOG_CALLS}.*${PATTERNS}" 2>/dev/null; then
-            echo ""
-            echo "::error::ロガー/print 出力に E2EE 鍵キーワードが含まれている可能性があります"
-            echo "上記の行を確認し、生鍵が出力されていないか確認してください。"
-            echo "(意図的なログ出力は無効化、デバッグ用ならコメント化してください)"
-            exit 1
-          fi
-          echo "✓ E2EE 鍵キーワードのログ出力なし"
-
-      - name: Lint API responses for raw key fields
-        run: |
-          # jsonify / make_response 引数に E2EE 関連の生鍵キーワードが含まれていないか
-          # (PR-B 以降の API endpoint 実装時に有効)。logger 側と同じキーワードセット。
-          PATTERNS='(master_key|wrapped_master_key|migration_temp_mk|raw_seed|recovery_seed|derived_key|wrap_iv)'
-          # app/ 全体を対象 (将来 services/ から直接レスポンスを返すケースにも対応)
-          if find app/ -name '*.py' -print0 \
-             | xargs -0 grep -nE "(jsonify|make_response).*${PATTERNS}" 2>/dev/null; then
-            echo ""
-            echo "::error::API レスポンスに E2EE 生鍵が含まれている可能性があります"
-            exit 1
-          fi
-          echo "✓ API レスポンスに E2EE 生鍵なし"
+          # scripts/lint_e2ee_plaintext.py が AST 解析で raw key 変数の logger/
+          # jsonify/print への伝搬を検出 (文字列リテラルの誤検知を回避)。
+          # 詳細は scripts/lint_e2ee_plaintext.py の docstring 参照。
+          python scripts/lint_e2ee_plaintext.py app/
