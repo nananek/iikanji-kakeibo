@@ -126,17 +126,25 @@
       const lines = [];
       for (const c of cases) {
         try {
-          await new Promise((resolve, reject) => {
-            const id = Math.floor(Math.random() * 1e9);
+          // プリミティブ入力では Worker が id を取り出せず id=-1 を返すので、
+          // オブジェクト入力 (id 一致) と非オブジェクト入力 (id=-1 でも受理) を分ける
+          const isObj = typeof c === "object" && c !== null;
+          const myId = Math.floor(Math.random() * 1e9);
+          await new Promise((resolve) => {
             const h = (ev) => {
-              if (ev.data && ev.data.id === id) {
+              if (!ev.data) return;
+              const match = isObj ? ev.data.id === myId : ev.data.id === -1;
+              if (match) {
                 client.worker.removeEventListener("message", h);
                 resolve(ev.data);
               }
             };
             client.worker.addEventListener("message", h);
-            client.worker.postMessage(typeof c === "object" && c !== null ? { ...c, id } : c);
-            setTimeout(() => { client.worker.removeEventListener("message", h); resolve({ id, ok: "timeout" }); }, 200);
+            client.worker.postMessage(isObj ? { ...c, id: myId } : c);
+            setTimeout(() => {
+              client.worker.removeEventListener("message", h);
+              resolve({ ok: "timeout" });
+            }, 200);
           }).then(r => lines.push(JSON.stringify({ input: c, result: r })));
         } catch (e) {
           lines.push(`${JSON.stringify(c)} → throw: ${e.message}`);

@@ -51,6 +51,23 @@ python3 -m http.server 8765
 | `{id:3, type:"setKey", rawKey: Uint8Array(16)}` (32B 期待) | | |
 | `{id:4, type:"unknown"}` | | |
 
+## 利用ガイド
+
+### `setKey(rawKey)` の呼び出し側責務
+
+`setKey` は `postMessage` の structured clone で `rawKey` のコピーを Worker に
+渡し、Worker 側では `importMasterKey` 後に `fill(0)` でゼロ埋めする。一方で
+**メインスレッド側の元バッファは Worker からは触れない** ので、呼び出し元が
+明示的にゼロ埋めする必要がある:
+
+```js
+const raw = await deriveFromPassphrase(...); // 例: Argon2id 出力
+await client.setKey(raw);
+raw.fill(0); // 呼び出し側の責務
+```
+
+Argon2id / WebAuthn PRF 連携を実装する際の必須手順。
+
 ## 制限事項
 
 - このプロトタイプは Argon2id を扱わない (パスフレーズ → MK 派生は別途 `argon2-browser` バンドルで実測する)
