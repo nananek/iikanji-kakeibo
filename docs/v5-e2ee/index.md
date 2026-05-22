@@ -572,13 +572,22 @@ wrapped_keys
 | last_used_at             | timestamptz | NULL                                     | アンラップ成功時に更新 |
 | label                    | text        | NULL                                     | UI 表示用 (例: "iPhone 14 Pro Passkey") |
 
-UNIQUE (user_id, method, webauthn_credential_id)
-INDEX (user_id)
+-- UNIQUE 制約 (PostgreSQL の NULL 仕様に対応した partial index で実装)
+CREATE UNIQUE INDEX uq_wrapped_keys_passkey
+  ON wrapped_keys (user_id, method, webauthn_credential_id)
+  WHERE webauthn_credential_id IS NOT NULL;
+CREATE UNIQUE INDEX uq_wrapped_keys_password_recovery
+  ON wrapped_keys (user_id, method)
+  WHERE webauthn_credential_id IS NULL;
+CREATE INDEX ix_wrapped_keys_user_id ON wrapped_keys (user_id);
 ```
 
 - `wrapped_master_key` は **タグ込みの ciphertext** のみを格納し、**IV は `wrap_iv` カラムに分離**。`concat(iv || ciphertext)` の連結保管はしない (実装者の混乱防止)
 - `webauthn_credentials` PK (`id`) を FK 参照。`webauthn_credentials.credential_id` (bytea, UNIQUE) ではなく PK 参照にすることで `ON DELETE CASCADE` が DB レベルで効く
-- パスフレーズ / リカバリシードは 1 ユーザー 1 行のみ (UNIQUE 制約で強制)
+- パスフレーズ / リカバリシードは 1 ユーザー 1 行のみ (上記の **partial UNIQUE INDEX** で強制)。
+  PostgreSQL は `NULL ≠ NULL` のため通常の `UNIQUE (a, b, c)` では NULL を含む
+  カラムで複数行が共存できてしまうので、`WHERE` 句で 2 つに分けた partial
+  index にする必要がある
 - **マイグレーション番号は仮**。現行 develop の最新 (現時点で `045_voucher_active_partial_index`) の次番号に合わせて確定する
 
 ### 10.2 MK 生成シーケンス (新規ユーザー / 移行ユーザー)
@@ -629,9 +638,20 @@ client                              server
   | 3. クライアントが利用可能な要素を選択 |
   |    a. Passkey → PRF eval (32B 出力をそのまま derived_key として使用) |
   |    b. パスフレーズ → Argon2id (kdf_params + salt 使用) → derived_key |
-  |    c. リカバリシード (BIP-39 24 単語) → HKDF (info="iikanji-recovery-v1") → derived_key |
-  |    ※ 各要素の KDF は 10.1 表に従う。recovery_seed は高エントロピーな |
-  |       ため Argon2id 不要 (HKDF で十分)、salt カラムも未使用 |
+  |    c. リカバリシード (BIP-39 24 単語) → 下記 A案 で derived_key 派生 |
+  |    ※ 各要素の KDF は 10.1 表に従う |
+
+リカバリシード KDF: **A案 (ニーモニック文字列直接 HKDF)** を採用。
+
+- ニーモニックを UTF-8 バイト列に変換 (例: "abandon abandon ... art" → bytes)
+- HKDF-SHA256(input=bytes, salt=zero, info="iikanji-recovery-key-v1", L=32)
+- 派生した 32B を derived_key として使用
+
+理由: BIP-39 標準フロー (B案: ニーモニック → PBKDF2-HMAC-SHA512 → 512bit シード
+→ HKDF) はハードウェアウォレットとの相互運用のためのもの。本サービスは独立した
+リカバリ用途であり相互運用不要なので、A案でシンプルに統一する。Argon2id を
+挟まないのは BIP-39 24 単語のエントロピー (256 bit) が十分高く、辞書攻撃に
+耐性があるため。
   |                                  |
   | 4. derived_key で wrapped を unwrap |
   |    → MK を Worker クロージャに    |
@@ -693,8 +713,9 @@ users.mk_rotation_state (jsonb, nullable):
 {
   "status": "rotating",       // null=非ローテ中 / rotating / verifying / committed
   "started_at": "2026-05-22T08:00:00Z",
-  "progress": {"total": 100000, "done": 23456},
-  "new_wrapped_keys_id_set": [101, 102, 103]  // MK_new で wrap した wrapped_keys.id
+  "progress": {"total": 100000, "done": 23456, "unit": "journal_entry_lines"},
+  "new_wrapped_keys_id_set": [101, 102, 103],
+  "auto_abort_at": "2026-05-29T08:00:00Z"  // 7 日後に自動 abort (運用安全策)
 }
 ```
 
@@ -720,14 +741,17 @@ client                              server
   |                                  |
   | 4. 完了 → POST /api/v1/wrapped-keys/rotate/commit |
   |--------------------------------->|
-  |                                  | トランザクション:
-  |                                  |   DELETE wrapped_keys WHERE id NOT IN new_set
-  |                                  |   UPDATE users.mk_rotation_state = {status:"committed"}
-  |                                  |   (もしくは NULL クリア)
+  |                                  | トランザクション (user_id フィルタを厳格適用):
+  |                                  |   DELETE wrapped_keys WHERE user_id=current_user.id AND id NOT IN new_set
+  |                                  |   UPDATE users.mk_rotation_state = NULL
+  |                                  |   ※ サーバは new_set の id も user_id=current_user.id を |
+  |                                  |     満たすかをトランザクション内で再検証 (IDOR 防止)        |
   |                                  |
   | 5. 失敗時 (commit 前) /api/v1/wrapped-keys/rotate/abort |
   |--------------------------------->|
-  |                                  | ロールバック: 新 wrapped_keys を削除し旧 MK で復元
+  |                                  | ロールバック: 新 wrapped_keys 行 (MK_new wrap) を |
+  |                                  | DELETE。データ本体は MK_old で復号可能なまま (再暗号化が |
+  |                                  | 未完了なので "復元" 操作不要)。users.mk_rotation_state=NULL |
 ```
 
 #### 失敗パターン
@@ -737,6 +761,7 @@ client                              server
 - **commit 直前で失敗**: 旧 wrapped_keys が残るので旧 MK でアンラップ可能
 - **commit 中で失敗**: トランザクションロールバックで旧状態維持
 - **ローテーション中の他クライアント書き込み**: `users.mk_rotation_state.status=rotating` 中は書き込み API を 423 Locked で拒否
+- **タイムアウト自動 abort**: `auto_abort_at` を 7 日後に設定。経過後はサーバが自動 abort して rotation_state を NULL クリア (デバイス紛失等で commit/abort のいずれも飛んでこないケースの救済)
 
 #### サイズ感
 
@@ -791,13 +816,36 @@ idle カウントの仕様:
 これにより「タブ B を開いたまま放置してタブ A で操作中」のシナリオで誤って
 ロックが発火する事故を防ぐ。
 
-### 10.8 E1 完了条件
+### 10.8 監査アカウント (Lv1/Lv2/Lv3) と E1 鍵管理の関係
+
+**結論**: §7 (d) 非同期ワークフロー方式により、**監査者は owner の MK にアクセスしない**。
+E1 で `wrapped_keys` に監査用エントリを追加する必要は **ない**。
+
+詳細:
+
+- 監査者 (auditor) も通常ユーザーと同じく自分の MK / `wrapped_keys` を持つ
+- owner が監査依頼を出すとき: 自分のクライアントで仕訳を MK 復号 → auditor の
+  X25519 公開鍵で再暗号化 → AuditPackage としてサーバに保存
+- auditor は自分の MK で自分の秘密鍵を unwrap → AuditPackage を復号
+- **Lv3 (本人代理に近い) も同じフロー**で実現。「全仕訳スナップショット」を
+  渡すだけで、リアルタイム代理閲覧は提供しない
+
+これは「同時編集は本来の税務顧問のあり方ではない」(§7 (d) 推奨理由) という
+v4.x → v5.0 の UX 変更の必然的帰結。`wrapped_keys.method='audit_grant'` 等の
+追加は不要 (鍵共有を行わないため)。
+
+実装上の追加は §7 で扱う `audit_packages` / `audit_responses` テーブル。
+これは E1 ではなく **E5 (監査連携) のスコープ**。E1 は通常ユーザーの鍵管理
+基盤のみに集中する。
+
+### 10.9 E1 完了条件
 
 - [ ] `wrapped_keys` マイグレーション (実装時の最新 revision の次番号)
 - [ ] `users.mk_rotation_state` カラム追加 (同マイグレーション)
 - [ ] `/api/v1/wrapped-keys` GET/POST/PUT/DELETE エンドポイント
   - DELETE は最終要素削除時に 409 Conflict
-  - touch (`PUT /<id>/touch`) は認証必須 + per-IP レート制限 (ブルートフォース検知に使われうるため)
+  - touch (`PUT /<id>/touch`) は認証必須 + per-IP + per-user 両軸のレート制限
+    (Tailscale / NAT 環境でのバースト誤検知を避けつつ、ブルートフォース検知に使われうるため)
 - [ ] `/api/v1/wrapped-keys/rotate/commit` `.../abort` (ローテーション制御)
 - [ ] WebCrypto AES-GCM + Argon2id (hash-wasm) で MK wrap/unwrap が動作
 - [ ] WebAuthn PRF 拡張で Passkey 経由の MK 派生が動作 (Q2 結果次第で fallback 設計)
