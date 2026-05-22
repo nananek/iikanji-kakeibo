@@ -2145,7 +2145,217 @@ E6 では:
 
 ---
 
-## 15. 次のステップ
+## 15. E6 設計スケッチ (クライアント全面対応 + データ一括 zip ダウンロード)
+
+E1–E5 で確立した暗号化基盤を **全クライアント (Web / client-py / client-tui)** に
+適用し、E2EE 化を完成させる。MCP サーバの配布停止、Webhook / 自家ホスト LLM の
+廃止、データ一括 zip ダウンロードもこのフェーズで実装。
+
+### 15.1 全クライアントの対応マトリクス
+
+| 機能 | Web | client-py | client-tui | iikanji-mcp |
+|---|---|---|---|---|
+| Master Key 管理 (§10) | ✅ ServiceWorker + Web Worker | ✅ OS keyring | ✅ OS keyring | ❌ E2EE 非両立 |
+| Passkey PRF | ✅ WebAuthn | — (Bearer + パスフレーズ) | — | — |
+| API キー設定 (§11) | ✅ クライアント暗号化 | ✅ ローカル復号して直接 LLM | ✅ 同左 | ❌ 廃止 |
+| 仕訳 CRUD (§12) | ✅ JSON-then-encrypt | ✅ 同左 | ✅ 同左 | ❌ 廃止 |
+| CSV/OFX/Web import | ✅ JS パース | ✅ Python パース | ✅ 同左 | — |
+| AI 証憑解析 (§13.6) | ✅ ブラウザ fetch 直接 | ✅ 直接 LLM 呼出 | ✅ 同左 | ❌ 廃止 |
+| 証憑画像 (§13) | ✅ canvas + AES-GCM | ✅ Pillow + AES-GCM | ✅ 同左 | ❌ 廃止 |
+| サムネイル生成 | ✅ クライアント | ✅ クライアント | ✅ 同左 | — |
+| 監査ワークフロー (§14) | ✅ HPKE | ✅ hpke-py | ✅ 同左 | ❌ 廃止 |
+| レポート集計 (§12.3) | ✅ クライアント | ✅ pandas etc | ✅ 同左 | — |
+| 検索 (§12.4) | ✅ JS フィルタ | ✅ Python filter | ✅ 同左 | — |
+| データ一括 zip DL (§15.4) | ✅ Web Worker | ✅ CLI コマンド | — | — |
+
+### 15.2 MCP サーバ (`iikanji-mcp`) の配布停止
+
+確定事項表通り **v5.0 で配布停止**:
+
+- 理由: MCP は Claude Desktop 等の LLM に平文データを渡すため E2EE と本質的に
+  両立不可
+- リポジトリ: `nananek/iikanji-kakeibo-client-mcp` を archive 化
+- README に「v4.x 以前で利用可、v5.0 では使えません」と明記
+- v4.x 最終版で deprecation 警告を表示
+- 代替案を README に追記:
+  - Claude Desktop で家計簿データを使いたい場合は、`client-py` でローカル
+    エクスポート → 手動でファイルアップロードするしかない
+  - これは E2EE と AI の根本的なトレードオフであり、本サービスでは E2EE を
+    優先する
+
+### 15.3 Webhook と自家ホスト LLM の廃止確認
+
+§4 / §11.3 / §12.6 で言及済みの廃止を E6 でハードコードレベルで確定:
+
+```
+v5.0 マイグレーション時に DELETE する v4.x データ:
+- webhook_configs (全行)
+- ai_drafts.discord_webhook_url (カラム DROP)
+- user_ai_configs WHERE provider = 'llama_cpp' (廃止 provider)
+  → ユーザーには移行ガイドで「自家ホスト LLM は廃止、OpenAI/Anthropic などの
+    BYOK に切替えてください」と案内
+```
+
+`flask v5-migrate-cleanup` CLI で実行:
+
+```
+flask v5-migrate-cleanup --dry-run  # 削除対象を表示
+flask v5-migrate-cleanup --execute  # 実行
+```
+
+### 15.4 データ一括 zip ダウンロード
+
+確定事項表で「クライアントサイド復号 + バックグラウンド zip 生成 + メール通知」
+と決定済み。実装詳細:
+
+#### フロー (Web)
+
+```
+1. ユーザーが /settings/export をクリック
+2. クライアントが暗号化された全データを取得 (journal_entries, vouchers,
+   medical_expenses, balance_cache_blobs)
+3. Web Worker 内で:
+   a. 各テーブルを MK で復号 (E3 / E4 のフロー)
+   b. CSV 形式に変換 (仕訳帳 / 元帳 / 証憑メタデータ等)
+   c. 証憑画像も平文に戻して画像ファイルとして含める
+   d. JSZip 等で zip 化 (バンドルサイズ: ~50 KB minified)
+4. zip を直接ブラウザでダウンロード (Blob URL) OR 大きすぎる場合はサーバに
+   一時アップロード:
+   - 暗号化 zip (= AES-GCM(MK, ...) で再暗号化) をサーバに POST
+   - サーバが presigned URL を 24 時間有効で発行
+   - ユーザーのメールに DL リンクを送信 (送信失敗時はサイト内通知)
+   - 期限切れで自動削除
+```
+
+#### フロー (client-py)
+
+```
+iikanji export --output-dir ./backup --format zip
+  - ローカル MK で全データを復号
+  - ./backup/ に CSV + 画像をディレクトリ構造で展開、または zip で一括出力
+  - サーバ往復不要、完全ローカル処理
+```
+
+#### 大きいデータの扱い
+
+仕訳 10 万件 + 証憑 1 GB のユーザーを想定:
+
+- Web Worker での復号 5 秒以内 (§12.3 パフォーマンス目標)
+- 証憑画像復号は 1 枚 ~10ms × 千枚 = 10 秒程度
+- zip 化は **`fflate` で chunk-by-chunk stream 処理**:
+  - `pako` は deflate のみで zip 形式を生成できないので不採用
+  - `fflate` (MIT, ~10KB minified) は zip stream API あり、Web Worker 対応
+  - 証憑画像を 1 枚ずつ復号 → zip stream に追記 → 解放 (メモリピーク抑制)
+- メモリピーク試算: 暗号文 + 平文 + zip バッファで暗号文サイズの 3 倍が上限。
+  証憑 200 MB 超のユーザーは Chrome のメモリ制限 (2GB) に近づくため
+  **client-py 推奨閾値**:
+  - 証憑 200 枚超 OR 合計 200 MB 超の場合は Web UI で警告表示 + client-py 案内
+- 大規模ユーザーは client-py で完全ローカル処理 (バッチサイズ無制限)
+
+#### メール通知
+
+```
+件名: 「いいかんじ™家計簿: データエクスポートが完了しました」
+本文:
+  YYYY/MM/DD HH:MM に開始されたエクスポートが完了しました。
+  以下の URL から 24 時間以内にダウンロードしてください:
+
+  https://example.com/exports/abc123
+
+  ※ このリンクは E2EE 暗号化されたファイルへのリンクです。
+    ダウンロード後、サイトで自分の MK を使って復号してください。
+```
+
+#### サーバ側 export_jobs テーブル
+
+```
+export_jobs
+| カラム            | 型           | 用途 |
+|-----------------|--------------|------|
+| id              | bigserial    | PK |
+| user_id         | bigint       | FK |
+| status          | text         | pending / generating / ready / expired / failed |
+| storage_key     | text         | ストレージパス (Local/S3) |
+| created_at      | timestamptz  | |
+| ready_at        | timestamptz  | NULL |
+| expires_at      | timestamptz  | created_at + 24 hours |
+| download_count  | smallint     | 0 (`EXPORT_MAX_DOWNLOADS` まで、デフォルト 3) |
+
+INDEX (user_id, expires_at)
+```
+
+### 15.5 退会フローとの統合 (Phase 4 #94)
+
+§15.4 のデータ一括 zip は退会フローの前段として位置付け:
+
+```
+退会フロー (v5.0):
+  1. /settings/account/delete を選択
+  2. 「退会前にデータをダウンロードしますか?」UI
+  3. はい → §15.4 のフロー → ダウンロード完了確認後、退会へ
+  4. いいえ → 即時退会 (データ完全削除、復元不能)
+```
+
+E2EE 下では退会後の救済 (運営者によるリカバリ) は不可能なので、ダウンロード
+の重要性をユーザーに強調表示。
+
+### 15.6 既存機能の E2EE 適合性チェックリスト
+
+v4.x の全機能を E6 で監査:
+
+- [x] 出納帳 (cashbook) — E3 のフローで対応
+- [x] 仕訳帳 (journal) — E3
+- [x] 医療費管理 (medical) — E3 (medical_expenses)
+- [x] レポート全般 — E3 クライアントサイド集計
+- [x] 勘定科目管理 (accounts) — 平文維持で OK (`account_user_id` FK のみサーバが参照)
+- [x] CSV / OFX / Web import — §12.5
+- [x] AI 証憑仕訳 — §11.3 / §13.6
+- [x] 設定全般 (UserAIConfig 等) — §11
+- [x] 月次確定 (FiscalClose) — §12.7
+- [x] Passkey — §10
+- [x] 監査連携 (AuditGrant) — §14
+- [x] 証憑 — §13
+- [x] REST API (api blueprint) — Bearer + MK の二段階 (§10.6)
+- [x] OAuth (Device Flow) — Bearer 単独で動作 (MK は client-py 側保持)
+- [ ] **Auto Import** (auto_import_sources) — 廃止 (サーバ側で WebDAV
+      フェッチして AI 解析する設計、E2EE と非両立)
+- [ ] **Webhook (WebhookConfig)** — 廃止
+- [ ] **iikanji-mcp** — 廃止
+
+Auto Import (WebDAV) は v4.x で既にオプトアウト済 (CLAUDE.md記載) なので、
+v5.0 で完全削除。
+
+### 15.7 E6 完了条件
+
+- [ ] Web クライアントの全機能 E2EE 化 (E3 で開始、E4 / E5 で連動、E6 で完了)
+- [ ] `client-py` の全 API endpoint E2EE 対応 (Bearer + ローカル MK)
+- [ ] `client-tui` の全画面 E2EE 対応
+- [ ] `iikanji-mcp` リポジトリの archive 化と README 更新
+- [ ] webhook_configs / discord_webhook_url / llama_cpp provider の DROP マイグレーション
+- [ ] auto_import_sources / auto_import_processed_files の DROP
+- [ ] `/settings/export` UI (Web): Web Worker での zip 生成 + メール通知
+- [ ] `iikanji export` CLI (client-py)
+- [ ] `export_jobs` テーブルマイグレーション
+- [ ] `flask export-cleanup` CLI (期限切れ自動削除、auto_abort 系と統一)
+- [ ] 退会フローと export の統合 UI
+- [ ] v4.x → v5.0 移行ガイド (README + リリースノート)
+- [ ] テスト: Web Worker zip 生成のメモリプロファイル (大規模ユーザー想定)
+- [ ] テスト: メール通知の DL リンクが有効期限切れで 410 Gone を返す
+- [ ] テスト: 退会後のデータが復元不能 (DB 全 NULL クリア、ストレージ削除)
+
+### 15.8 E7 (一斉移行) への影響
+
+E6 までで実装が完成し、E7 はそれを稼働中サービスに適用する **運用フェーズ**:
+
+- 全 v4.x ユーザーへの事前通知
+- メンテナンスウィンドウの実施
+- §6 のフローに従ったサーバ生成鍵 → ユーザー鍵への移行
+- 移行完了後のサーバ生成鍵の完全削除
+- E7 完了時点で **v4.x のサーバサイド AI / Fernet 等は完全廃止**
+
+---
+
+## 16. 次のステップ
 
 1. 本書のレビュー・合意形成
 2. E0 プロトタイプ:
