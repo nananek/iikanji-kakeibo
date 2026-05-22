@@ -129,19 +129,23 @@ v5.0 では (a)-(c) は採用せず、メアド平文保持で運用。
 ### Wrapped Master Key の保管
 
 ```
-wrapped_keys テーブル (擬似):
-| id | user_id | method | wrapped_master_key | salt | created_at |
-| 1  | 42      | passkey_prf_<credid> | (32 bytes ciphertext) | NULL | ... |
-| 2  | 42      | passphrase           | (32 bytes ciphertext) | salt | ... |
-| 3  | 42      | recovery_seed        | (32 bytes ciphertext) | salt | ... |
+wrapped_keys (擬似、詳細は §10.1):
+| id | user_id | method        | webauthn_credential_id | wrap_iv | wrapped_master_key   | salt | kdf_params |
+| 1  | 42      | passkey_prf   | 17 (FK PK)             | (12B)   | (ciphertext + tag)   | NULL | NULL       |
+| 2  | 42      | passphrase    | NULL                   | (12B)   | (ciphertext + tag)   | (16B)| {m,t,p}    |
+| 3  | 42      | recovery_seed | NULL                   | (12B)   | (ciphertext + tag)   | NULL | NULL       |
 ```
+
+→ 実装着手レベルの詳細 (制約・partial UNIQUE INDEX・CASCADE) は **§10.1** 参照。
 
 ### 複数 Passkey のスケール
 
 WebAuthn は複数 Passkey 登録をサポートしている (v4.x で既に対応)。
 1 デバイス = 1 Passkey と仮定すると、Passkey を 3 台に登録した場合は
-`wrapped_keys` に `passkey_prf_<credid_1>`, `passkey_prf_<credid_2>`,
-`passkey_prf_<credid_3>` の 3 行が並ぶ。
+`wrapped_keys` に `(method='passkey_prf', webauthn_credential_id=17)`,
+`(method='passkey_prf', webauthn_credential_id=23)`,
+`(method='passkey_prf', webauthn_credential_id=42)` の 3 行が並ぶ
+(`webauthn_credential_id` は `webauthn_credentials.id` PK の FK)。
 追加挙動:
 - 新規 Passkey 登録時: 既存セッションで MK を取得 → 新 Passkey の PRF
   で MK を再ラップ → 新行を INSERT
@@ -156,7 +160,10 @@ WebAuthn は複数 Passkey 登録をサポートしている (v4.x で既に対�
   ため、実装時は `new TextEncoder().encode("iikanji-master-key-v1")`
   で UTF-8 バイト列に変換する)
 - ブラウザ / 認証器が決定論的に 32 バイトの PRF 出力を返す
-- これを HKDF で派生して `derived_key_passkey` とする
+- これを HKDF-SHA256(input=PRF出力, salt=zero, info="iikanji-master-key-v1", L=32)
+  で派生して `derived_key_passkey` とする
+  - 確定方針: **HKDF を挟む** (info パラメータでドメイン分離。将来の鍵用途
+    拡張 (例: AuditPackage 暗号化用の別 info) に備える)
 - パスキー紛失時は **別の Passkey** か **パスフレーズ** か **リカバリシード** で MK を復元 → 新しい Passkey に再ラップ
 
 ### パスフレーズ
@@ -562,11 +569,11 @@ wrapped_keys
 |------------------------- |-------------|------------------------------------------|------|
 | id                       | bigserial   | PK                                       | |
 | user_id                  | bigint      | FK users.id ON DELETE CASCADE            | |
-| method                   | text        | NOT NULL                                 | passkey_prf / passphrase / recovery_seed |
+| method                   | text        | NOT NULL, CHECK (method IN ('passkey_prf','passphrase','recovery_seed')) | enum 相当 |
 | webauthn_credential_id   | bigint      | NULL, FK webauthn_credentials.id ON DELETE CASCADE | method=passkey_prf 時のみ。`webauthn_credentials.id` (PK) を参照 |
 | wrapped_master_key       | bytea       | NOT NULL                                 | AES-256-GCM ciphertext (タグ含む。**IV は別カラム**) |
 | wrap_iv                  | bytea       | NOT NULL                                 | wrap 時の IV (12B) |
-| salt                     | bytea       | NULL                                     | method=passphrase 時の per-user salt (16B、Argon2id 用)。method=recovery_seed では未使用 (BIP-39 が salt 相当) |
+| salt                     | bytea       | NULL                                     | method=passphrase 時の per-user salt (16B、Argon2id 用)。method=recovery_seed では NULL (HKDF の入力は mnemonic UTF-8 バイト列, salt=zero) |
 | kdf_params               | jsonb       | NULL                                     | method=passphrase 時のみ。`{memory, iterations, parallelism}` (Argon2id) |
 | created_at               | timestamptz | NOT NULL                                 | |
 | last_used_at             | timestamptz | NULL                                     | アンラップ成功時に更新 |
@@ -636,10 +643,10 @@ client                              server
   |<-- [{method, credential_id, wrapped, iv, salt, kdf_params, label}, ...] |
   |                                  |
   | 3. クライアントが利用可能な要素を選択 |
-  |    a. Passkey → PRF eval (32B 出力をそのまま derived_key として使用) |
+  |    a. Passkey → PRF eval (32B) → HKDF-SHA256(salt=zero, info="iikanji-master-key-v1") → derived_key |
   |    b. パスフレーズ → Argon2id (kdf_params + salt 使用) → derived_key |
   |    c. リカバリシード (BIP-39 24 単語) → 下記 A案 で derived_key 派生 |
-  |    ※ 各要素の KDF は 10.1 表に従う |
+  |    ※ 各要素の KDF は 10.1 表に従う。§2「Passkey PRF からの鍵派生」と整合 |
 
 リカバリシード KDF: **A案 (ニーモニック文字列直接 HKDF)** を採用。
 
@@ -694,6 +701,21 @@ UI 制約 + **サーバ側強制**: 「Passkey 全削除 + パスフレーズな
 側の UI チェックは bypass 可能なため、`DELETE /api/v1/wrapped-keys/<id>` の
 サーバ実装でも「削除後に wrapped_keys 件数が 0 になる場合は 409 Conflict
 を返す」ガードを必須化する。
+
+#### リカバリシード使用後の再生成 (§8 連動)
+
+§8 の「recovery seed は 1 回限り使用、新シードを生成」を実装フローに落とす:
+
+```
+1. リカバリシード入力で MK アンラップ成功
+2. 即時に旧 wrapped_keys (method='recovery_seed') 行を DELETE
+3. 新しい BIP-39 24 単語を生成 → HKDF で derived_key_new 派生
+4. derived_key_new で MK を wrap → 新 wrapped_keys (method='recovery_seed') 行を INSERT
+5. ユーザーに新シードを 1 回だけ表示 (ユーザーが紙にメモするまで dismiss 不可)
+```
+
+これにより、同じシードが流出した場合の二次被害を防ぐ (パスフレーズ漏洩時の
+パスフレーズ変更フローと同等の扱い)。
 
 ### 10.5 MK ローテーション
 
@@ -760,7 +782,7 @@ client                              server
   を検知 → 「ローテーション再開しますか / 中止しますか」UI 表示
 - **commit 直前で失敗**: 旧 wrapped_keys が残るので旧 MK でアンラップ可能
 - **commit 中で失敗**: トランザクションロールバックで旧状態維持
-- **ローテーション中の他クライアント書き込み**: `users.mk_rotation_state.status=rotating` 中は書き込み API を 423 Locked で拒否
+- **ローテーション中の他クライアント書き込み**: `users.mk_rotation_state.status=rotating` 中は書き込み API を 423 Locked で拒否。ただし **ローテーション自身の PUT** は `X-Rotation-Id: <token>` ヘッダで識別してパススルー (token はローテ開始時にサーバが発行、`mk_rotation_state` に保存して照合)
 - **タイムアウト自動 abort**: `auto_abort_at` を 7 日後に設定。経過後はサーバが自動 abort して rotation_state を NULL クリア (デバイス紛失等で commit/abort のいずれも飛んでこないケースの救済)
 
 #### サイズ感
@@ -844,8 +866,9 @@ v4.x → v5.0 の UX 変更の必然的帰結。`wrapped_keys.method='audit_gran
 - [ ] `users.mk_rotation_state` カラム追加 (同マイグレーション)
 - [ ] `/api/v1/wrapped-keys` GET/POST/PUT/DELETE エンドポイント
   - DELETE は最終要素削除時に 409 Conflict
-  - touch (`PUT /<id>/touch`) は認証必須 + per-IP + per-user 両軸のレート制限
-    (Tailscale / NAT 環境でのバースト誤検知を避けつつ、ブルートフォース検知に使われうるため)
+  - touch (`PUT /<id>/touch`) は認証必須 + 階層レート制限。**per-user を主軸**
+    (例: 60 req/hour)、**per-IP は補助** (例: 5,000 req/hour、Tailscale / NAT 環境での
+    バースト誤検知を避ける) という方針。具体値は本番運用ログを見て調整
 - [ ] `/api/v1/wrapped-keys/rotate/commit` `.../abort` (ローテーション制御)
 - [ ] WebCrypto AES-GCM + Argon2id (hash-wasm) で MK wrap/unwrap が動作
 - [ ] WebAuthn PRF 拡張で Passkey 経由の MK 派生が動作 (Q2 結果次第で fallback 設計)
