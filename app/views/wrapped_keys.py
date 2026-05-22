@@ -94,17 +94,22 @@ def list_wrapped_keys():
     return jsonify(wrapped_keys=[_serialize(r) for r in rows])
 
 
+def _is_int(x) -> bool:
+    """JSON の True/False が int として通り抜けるのを防ぐ厳格チェック。"""
+    return isinstance(x, int) and not isinstance(x, bool)
+
+
 def _validate_kdf_params(kdf_params: dict) -> str | None:
     """Argon2id パラメータの範囲チェック。エラー時は文字列を返す。"""
     mem = kdf_params.get("memory")
     itr = kdf_params.get("iterations")
     par = kdf_params.get("parallelism")
-    if not isinstance(mem, int) or not (KDF_MEMORY_MIN <= mem <= KDF_MEMORY_MAX):
-        return f"kdf_params.memory must be {KDF_MEMORY_MIN}..{KDF_MEMORY_MAX} (KiB)"
-    if not isinstance(itr, int) or not (KDF_ITERATIONS_MIN <= itr <= KDF_ITERATIONS_MAX):
-        return f"kdf_params.iterations must be {KDF_ITERATIONS_MIN}..{KDF_ITERATIONS_MAX}"
-    if not isinstance(par, int) or not (KDF_PARALLELISM_MIN <= par <= KDF_PARALLELISM_MAX):
-        return f"kdf_params.parallelism must be {KDF_PARALLELISM_MIN}..{KDF_PARALLELISM_MAX}"
+    if not _is_int(mem) or not (KDF_MEMORY_MIN <= mem <= KDF_MEMORY_MAX):
+        return f"kdf_params.memory must be int {KDF_MEMORY_MIN}..{KDF_MEMORY_MAX} (KiB)"
+    if not _is_int(itr) or not (KDF_ITERATIONS_MIN <= itr <= KDF_ITERATIONS_MAX):
+        return f"kdf_params.iterations must be int {KDF_ITERATIONS_MIN}..{KDF_ITERATIONS_MAX}"
+    if not _is_int(par) or not (KDF_PARALLELISM_MIN <= par <= KDF_PARALLELISM_MAX):
+        return f"kdf_params.parallelism must be int {KDF_PARALLELISM_MIN}..{KDF_PARALLELISM_MAX}"
     return None
 
 
@@ -145,10 +150,8 @@ def create_wrapped_key():
             ), 400
 
     # 型検証: JSON で文字列等を渡されたら 400 で弾く (SQLAlchemy 例外で 500 に
-    # ならないように)
-    if webauthn_credential_id is not None and not isinstance(
-        webauthn_credential_id, int
-    ):
+    # ならないように)。bool が int として通り抜けるのを防ぐため _is_int 使用
+    if webauthn_credential_id is not None and not _is_int(webauthn_credential_id):
         return jsonify(error="webauthn_credential_id must be int"), 400
 
     # method ごとの制約チェック (@validates でも弾かれるが、ユーザーフレンドリーな

@@ -30,6 +30,10 @@ def create_app(config_class=Config):
     # E2EE 鍵管理 API (E1 #108) も JSON 専用。PR-C で Bearer 対応する際に
     # 非ブラウザクライアントが CSRF トークンを得られない問題を避けるため、
     # 既存 api_bp / webauthn_bp と一貫して csrf.exempt する。
+    # ⚠️ Bearer 対応 (PR-C) までの間、Web セッション認証のみで CSRF 免除と
+    # いう構成上、悪意あるサイトから fetch + credentials:include で DELETE
+    # 等を発火される可能性がある (id 推測難 + 最終鍵削除 409 ガードで
+    # アカウントロックアウトは防止)。
     from app.views.wrapped_keys import bp as wrapped_keys_bp
     csrf.exempt(wrapped_keys_bp)
     # OAuth Device Flow のクライアント向けエンドポイントは CSRF 免除
