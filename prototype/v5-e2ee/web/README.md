@@ -18,7 +18,8 @@ WebCrypto は HTTPS or `localhost` でしか動かない。任意の静的サー
 ```bash
 cd server/prototype/v5-e2ee/web
 python3 -m http.server 8765
-# → http://localhost:8765/ を開く
+# → http://localhost:8765/index.html (AES-GCM + Worker 隔離 demo)
+# → http://localhost:8765/argon2-bench.html (Argon2id WASM 比較)
 ```
 
 ## 観点
@@ -68,10 +69,13 @@ raw.fill(0); // 呼び出し側の責務
 
 Argon2id / WebAuthn PRF 連携を実装する際の必須手順。
 
+## 関連プロトタイプ
+
+- `argon2-bench.html` — Argon2id WASM の候補ライブラリ (argon2-browser / hash-wasm / libsodium) のバンドルサイズ・初期化コスト・派生時間を比較する別ページ。設計書 §3 「Argon2id の WASM バンドル」の選定根拠用 (Q5)
+
 ## 制限事項
 
-- このプロトタイプは Argon2id を扱わない (パスフレーズ → MK 派生は別途 `argon2-browser` バンドルで実測する)
-- WebAuthn PRF からの鍵派生も別途 (この prototype は MK を直接生成)
+- WebAuthn PRF からの鍵派生は別途 (この prototype は MK を直接生成)
 - IndexedDB への暗号文保存・Service Worker 連携も対象外
 - `CryptoClient.worker` は fuzz セクションから直接アクセスするため public のまま。
   本実装では `#worker` (private field) にして外部からの postMessage を防ぐ想定
