@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <title>E2EE Prototype — WebCrypto AES-GCM + Worker</title>
+  <style>
+    body { font-family: -apple-system, system-ui, sans-serif; max-width: 720px; margin: 2em auto; padding: 0 1em; }
+    section { border: 1px solid #ccc; padding: 1em; margin-bottom: 1em; border-radius: 6px; }
+    pre { background: #f4f4f4; padding: 0.5em; overflow-x: auto; }
+    button { margin-right: 0.5em; }
+    .ok { color: #080; }
+    .ng { color: #c00; }
+    label { display: block; margin: 0.5em 0; }
+    textarea { width: 100%; height: 4em; }
+  </style>
+</head>
+<body>
+  <h1>E2EE プロトタイプ: WebCrypto AES-GCM + Worker</h1>
+  <p>Master Key は Web Worker クロージャ内のみ。<code>window.*</code> には露出しない。</p>
+
+  <section>
+    <h2>1. Master Key 生成</h2>
+    <button id="gen">generateKey()</button>
+    <button id="clear">clearKey()</button>
+    <pre id="key-info">未生成</pre>
+  </section>
+
+  <section>
+    <h2>2. 単一暗号化/復号</h2>
+    <label>平文:
+      <textarea id="plaintext">2026-05-22 食費 ¥1,234 スーパーで食材購入</textarea>
+    </label>
+    <button id="enc">encrypt</button>
+    <button id="dec" disabled>decrypt</button>
+    <pre id="ct-info">—</pre>
+    <pre id="pt-info">—</pre>
+  </section>
+
+  <section>
+    <h2>3. 大量ベンチマーク (N 件の仕訳行を暗号化)</h2>
+    <label>件数: <input id="n" type="number" value="10000" min="100" max="1000000" step="1000"></label>
+    <button id="bench-enc">N 件 encrypt</button>
+    <button id="bench-dec" disabled>N 件 decrypt</button>
+    <pre id="bench-info">—</pre>
+  </section>
+
+  <section>
+    <h2>4. 不正メッセージ耐性 (Q12)</h2>
+    <button id="fuzz">不正メッセージを送る</button>
+    <pre id="fuzz-info">—</pre>
+  </section>
+
+  <section>
+    <h2>5. window 露出チェック</h2>
+    <button id="expose">window.IIKANJI_MK / __mk 等を確認</button>
+    <pre id="expose-info">—</pre>
+  </section>
+
+  <script type="module">
+    import { CryptoClient, utf8, fromUtf8 } from "./crypto-client.js";
+
+    const client = new CryptoClient("./crypto-worker.js");
+    let lastCt = null, lastIv = null;
+    let benchCts = null;
+
+    const $ = (id) => document.getElementById(id);
+
+    $("gen").onclick = async () => {
+      const { keyBits } = await client.generateKey();
+      $("key-info").textContent = `生成済: ${keyBits}-bit (rawKey はメインスレッドに渡さない)`;
+    };
+
+    $("clear").onclick = async () => {
+      await client.clearKey();
+      $("key-info").textContent = "未生成 (クリア済)";
+    };
+
+    $("enc").onclick = async () => {
+      const pt = utf8($("plaintext").value);
+      const { iv, ciphertext } = await client.encrypt(pt);
+      lastCt = ciphertext; lastIv = iv;
+      $("ct-info").textContent = `IV (12B): ${[...iv].map(b => b.toString(16).padStart(2, "0")).join("")}\nciphertext: ${ciphertext.byteLength} bytes`;
+      $("dec").disabled = false;
+    };
+
+    $("dec").onclick = async () => {
+      const { plaintext } = await client.decrypt(lastCt, lastIv);
+      $("pt-info").textContent = `復号: ${fromUtf8(plaintext)}`;
+    };
+
+    $("bench-enc").onclick = async () => {
+      const n = parseInt($("n").value, 10);
+      const row = utf8('{"date":"2026-05-22","account":"5110","debit":1234,"credit":0,"desc":"食費"}');
+      const t0 = performance.now();
+      const results = [];
+      for (let i = 0; i < n; i++) {
+        results.push(await client.encrypt(row));
+      }
+      const t1 = performance.now();
+      benchCts = results;
+      const totalBytes = results.reduce((s, r) => s + r.ciphertext.byteLength, 0);
+      $("bench-info").textContent =
+        `encrypt: N=${n}, ${(t1 - t0).toFixed(0)} ms, ${(n / ((t1 - t0) / 1000)).toFixed(0)} ops/s, 合計 ${totalBytes} bytes`;
+      $("bench-dec").disabled = false;
+    };
+
+    $("bench-dec").onclick = async () => {
+      const t0 = performance.now();
+      for (const { iv, ciphertext } of benchCts) {
+        await client.decrypt(ciphertext, iv);
+      }
+      const t1 = performance.now();
+      $("bench-info").textContent += `\ndecrypt: ${(t1 - t0).toFixed(0)} ms, ${(benchCts.length / ((t1 - t0) / 1000)).toFixed(0)} ops/s`;
+    };
+
+    $("fuzz").onclick = async () => {
+      const cases = [
+        null,
+        "string",
+        42,
+        { id: 1, type: "encrypt" },
+        { id: 2, type: "decrypt", ciphertext: "not-uint8array" },
+        { id: 3, type: "setKey", rawKey: new Uint8Array(16) },
+        { id: 4, type: "unknown" },
+      ];
+      const lines = [];
+      for (const c of cases) {
+        try {
+          await new Promise((resolve, reject) => {
+            const id = Math.floor(Math.random() * 1e9);
+            const h = (ev) => {
+              if (ev.data && ev.data.id === id) {
+                client.worker.removeEventListener("message", h);
+                resolve(ev.data);
+              }
+            };
+            client.worker.addEventListener("message", h);
+            client.worker.postMessage(typeof c === "object" && c !== null ? { ...c, id } : c);
+            setTimeout(() => { client.worker.removeEventListener("message", h); resolve({ id, ok: "timeout" }); }, 200);
+          }).then(r => lines.push(JSON.stringify({ input: c, result: r })));
+        } catch (e) {
+          lines.push(`${JSON.stringify(c)} → throw: ${e.message}`);
+        }
+      }
+      $("fuzz-info").textContent = lines.join("\n");
+    };
+
+    $("expose").onclick = () => {
+      const suspects = ["IIKANJI_MK", "__mk", "masterKey", "MK", "key", "cryptoClient"];
+      const found = suspects.filter(k => k in window && typeof window[k] !== "undefined");
+      $("expose-info").innerHTML = found.length
+        ? `<span class="ng">発見: ${found.join(", ")}</span>`
+        : `<span class="ok">window に鍵関連の露出なし ✓</span>`;
+    };
+  </script>
+</body>
+</html>
