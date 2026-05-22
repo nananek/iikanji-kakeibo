@@ -558,26 +558,28 @@ E0 完了 (#107) を経て E1 (#108) 着手前の設計スケッチ。§2 が概
 
 ```
 wrapped_keys
-| カラム               | 型              | 制約                          | 用途 |
-|--------------------|----------------|------------------------------|------|
-| id                 | bigserial      | PK                           | |
-| user_id            | bigint         | FK users.id ON DELETE CASCADE | |
-| method             | text           | NOT NULL                     | passkey_prf / passphrase / recovery_seed |
-| credential_id      | text           | NULL                         | method=passkey_prf 時のみ。webauthn_credentials.credential_id を参照 |
-| wrapped_master_key | bytea          | NOT NULL                     | AES-256-GCM ciphertext (IV + tag 含む) |
-| wrap_iv            | bytea          | NOT NULL                     | wrap 時の IV (12B) |
-| salt               | bytea          | NULL                         | method=passphrase / recovery_seed 時の per-user salt (16B) |
-| kdf_params         | jsonb          | NULL                         | Argon2id パラメータ (memory, iterations, parallelism) |
-| created_at         | timestamptz    | NOT NULL                     | |
-| last_used_at       | timestamptz    | NULL                         | アンラップ成功時に更新 |
-| label              | text           | NULL                         | UI 表示用 (例: "iPhone 14 Pro Passkey") |
+| カラム                    | 型           | 制約                                       | 用途 |
+|------------------------- |-------------|------------------------------------------|------|
+| id                       | bigserial   | PK                                       | |
+| user_id                  | bigint      | FK users.id ON DELETE CASCADE            | |
+| method                   | text        | NOT NULL                                 | passkey_prf / passphrase / recovery_seed |
+| webauthn_credential_id   | bigint      | NULL, FK webauthn_credentials.id ON DELETE CASCADE | method=passkey_prf 時のみ。`webauthn_credentials.id` (PK) を参照 |
+| wrapped_master_key       | bytea       | NOT NULL                                 | AES-256-GCM ciphertext (タグ含む。**IV は別カラム**) |
+| wrap_iv                  | bytea       | NOT NULL                                 | wrap 時の IV (12B) |
+| salt                     | bytea       | NULL                                     | method=passphrase 時の per-user salt (16B、Argon2id 用)。method=recovery_seed では未使用 (BIP-39 が salt 相当) |
+| kdf_params               | jsonb       | NULL                                     | method=passphrase 時のみ。`{memory, iterations, parallelism}` (Argon2id) |
+| created_at               | timestamptz | NOT NULL                                 | |
+| last_used_at             | timestamptz | NULL                                     | アンラップ成功時に更新 |
+| label                    | text        | NULL                                     | UI 表示用 (例: "iPhone 14 Pro Passkey") |
 
-UNIQUE (user_id, method, credential_id)
+UNIQUE (user_id, method, webauthn_credential_id)
 INDEX (user_id)
 ```
 
-- `webauthn_credentials` 削除時は `credential_id` 一致行を CASCADE で同期削除
+- `wrapped_master_key` は **タグ込みの ciphertext** のみを格納し、**IV は `wrap_iv` カラムに分離**。`concat(iv || ciphertext)` の連結保管はしない (実装者の混乱防止)
+- `webauthn_credentials` PK (`id`) を FK 参照。`webauthn_credentials.credential_id` (bytea, UNIQUE) ではなく PK 参照にすることで `ON DELETE CASCADE` が DB レベルで効く
 - パスフレーズ / リカバリシードは 1 ユーザー 1 行のみ (UNIQUE 制約で強制)
+- **マイグレーション番号は仮**。現行 develop の最新 (現時点で `045_voucher_active_partial_index`) の次番号に合わせて確定する
 
 ### 10.2 MK 生成シーケンス (新規ユーザー / 移行ユーザー)
 
@@ -601,9 +603,17 @@ client                              server
   | 5. 同様に passphrase / recovery_seed もラップして保存 |
 ```
 
-設計書 §6 (移行戦略) のサーバ生成鍵フェーズでは、サーバが一時的に MK を保持
-してデータを暗号化し、クライアントが鍵設定完了後に上記フローで「自分の鍵」
-で wrap し直す。
+⚠️ **移行フェーズ限定の例外**: 設計書 §6 (移行戦略) のサーバ生成鍵フェーズでは、
+サーバが一時的に MK を保持してデータを暗号化する。これは E2EE のゼロ知識
+モデルの**一時的な例外**であり、その期間はサーバ侵害で過去データが漏れる
+リスクがある。手順:
+
+1. メンテナンスウィンドウ中、サーバが一時 MK を生成してデータを暗号化
+2. ユーザーが鍵設定完了 (本フローで自分の wrapped_keys を登録)
+3. クライアントが一時 MK で復号 → 自分の MK で再暗号化
+4. **完了後、サーバから一時 MK を即時削除** (`mk_rotation_state` で進捗管理、
+   全データの再暗号化完了をサーバが確認した上で削除)
+5. 移行 SLA: 鍵設定完了から N 日以内に再暗号化完了 (§6 で精緻化)
 
 ### 10.3 MK アンラップシーケンス (ログイン後)
 
@@ -617,9 +627,11 @@ client                              server
   |<-- [{method, credential_id, wrapped, iv, salt, kdf_params, label}, ...] |
   |                                  |
   | 3. クライアントが利用可能な要素を選択 |
-  |    a. Passkey → PRF eval         |
-  |    b. パスフレーズ入力 → Argon2id |
-  |    c. リカバリシード入力 → HKDF   |
+  |    a. Passkey → PRF eval (32B 出力をそのまま derived_key として使用) |
+  |    b. パスフレーズ → Argon2id (kdf_params + salt 使用) → derived_key |
+  |    c. リカバリシード (BIP-39 24 単語) → HKDF (info="iikanji-recovery-v1") → derived_key |
+  |    ※ 各要素の KDF は 10.1 表に従う。recovery_seed は高エントロピーな |
+  |       ため Argon2id 不要 (HKDF で十分)、salt カラムも未使用 |
   |                                  |
   | 4. derived_key で wrapped を unwrap |
   |    → MK を Worker クロージャに    |
@@ -657,8 +669,11 @@ client                              server
    - 1 件以上残るなら削除確定
 ```
 
-UI 制約: 「Passkey 全削除 + パスフレーズなし + リカバリシードなし」状態への
-遷移は禁止 (= 復号不能状態への自分での誘導を防ぐ)。
+UI 制約 + **サーバ側強制**: 「Passkey 全削除 + パスフレーズなし + リカバリシード
+なし」状態への遷移は禁止 (= 復号不能状態への自分での誘導を防ぐ)。クライアント
+側の UI チェックは bypass 可能なため、`DELETE /api/v1/wrapped-keys/<id>` の
+サーバ実装でも「削除後に wrapped_keys 件数が 0 になる場合は 409 Conflict
+を返す」ガードを必須化する。
 
 ### 10.5 MK ローテーション
 
@@ -667,31 +682,66 @@ UI 制約: 「Passkey 全削除 + パスフレーズなし + リカバリシー�
 - 認証要素のいずれかが侵害された (パスフレーズ漏洩 / Passkey 紛失)
 - ユーザーが任意で実行
 
-#### フロー
+#### 原子性の保証
+
+バッチ再暗号化は全件を 1 トランザクションで完了できない (データ量大)。
+途中失敗から復旧可能にするため、`users.mk_rotation_state` (jsonb) を追加し、
+**MK_old と MK_new の wrap を両方持つ "オーバーラップ期間"** を設ける:
+
+```
+users.mk_rotation_state (jsonb, nullable):
+{
+  "status": "rotating",       // null=非ローテ中 / rotating / verifying / committed
+  "started_at": "2026-05-22T08:00:00Z",
+  "progress": {"total": 100000, "done": 23456},
+  "new_wrapped_keys_id_set": [101, 102, 103]  // MK_new で wrap した wrapped_keys.id
+}
+```
+
+#### フロー (再開可能設計)
 
 ```
 client                              server
   |                                  |
-  | 1. MK_new = crypto.getRandomValues(32B) |
+  | 1. MK_new = crypto.getRandomValues(32B)|
   |                                  |
-  | 2. 全暗号文をバッチ取得 (E3 以降のデータ全件)|
-  |    → MK_old で復号 → MK_new で再暗号化 |
-  |    → 再 PUT (ciphertext + iv 上書き)   |
+  | 2. 全認証要素で MK_new をラップ      |
+  |    POST /api/v1/wrapped-keys (新行を追加 INSERT、旧行は残す)|
   |--------------------------------->|
-  |                                  | バッチ更新
+  |                                  | INSERT + UPDATE users.mk_rotation_state = {status:"rotating", ...}
   |                                  |
-  | 3. 全 wrapped_keys を再生成        |
-  |    各認証要素で MK_new を wrap     |
-  |    POST /api/v1/wrapped-keys (全行)|
+  | 3. データ全件を順次 GET → 復号 → 再暗号化 → PUT |
+  |    PUT 時に rotation_id をヘッダ付与 (冪等性確保)|
   |--------------------------------->|
-  |                                  | DELETE old + INSERT new (トランザクション)
+  |                                  | progress 更新
+  |    ※ 途中クラッシュ → 再開時は mk_rotation_state.progress から再開 |
+  |    ※ 各レコードは MK_old で復号 → タグ検証成功なら MK_new で再書き込み |
+  |    ※ 既に MK_new 済のレコードは MK_old で復号失敗 → スキップ (冪等) |
   |                                  |
-  | 4. 完了通知 (E2 以降のデータ量に依存) |
+  | 4. 完了 → POST /api/v1/wrapped-keys/rotate/commit |
+  |--------------------------------->|
+  |                                  | トランザクション:
+  |                                  |   DELETE wrapped_keys WHERE id NOT IN new_set
+  |                                  |   UPDATE users.mk_rotation_state = {status:"committed"}
+  |                                  |   (もしくは NULL クリア)
+  |                                  |
+  | 5. 失敗時 (commit 前) /api/v1/wrapped-keys/rotate/abort |
+  |--------------------------------->|
+  |                                  | ロールバック: 新 wrapped_keys を削除し旧 MK で復元
 ```
 
-- データ量が大きいと時間がかかる (E3 ベンチマーク次第)。バックグラウンド
-  ジョブ + 進捗バー UI が必要
-- ローテーション中は他クライアントからの書き込みをロック
+#### 失敗パターン
+
+- **クライアントクラッシュ中**: 次回ログイン時に `mk_rotation_state.status=rotating`
+  を検知 → 「ローテーション再開しますか / 中止しますか」UI 表示
+- **commit 直前で失敗**: 旧 wrapped_keys が残るので旧 MK でアンラップ可能
+- **commit 中で失敗**: トランザクションロールバックで旧状態維持
+- **ローテーション中の他クライアント書き込み**: `users.mk_rotation_state.status=rotating` 中は書き込み API を 423 Locked で拒否
+
+#### サイズ感
+
+データ量が大きいと時間がかかる (E3 ベンチマーク次第)。バックグラウンド
+ジョブ + 進捗バー UI が必要。E5 (監査) と E7 (移行) でも同じ仕組みを流用。
 
 ### 10.6 Q9 整理: REST API Bearer と鍵階層
 
@@ -726,16 +776,35 @@ Web クライアント:
 → **暫定: (c) + (d) の組合せ**。ServiceWorker 内 Web Worker で MK 保持 +
 30 分 idle で自動ロック。実装は E0 プロトタイプ上で検証 (Q10)。
 
+#### マルチタブ時の挙動
+
+ServiceWorker は同一 origin の全タブで共有されるため、タブ A でアンラップ
+した MK はタブ B でも即座に利用可能になる。これは利便性として望ましい。
+
+idle カウントの仕様:
+- **タブ単位ではなく ServiceWorker 単位で 1 つのカウンタ** を持つ
+- いずれかのタブで Page Visibility が `visible` or ユーザー操作 (mouse/keyboard)
+  があればカウンタリセット
+- どのタブもアクティブでない状態が 30 分継続したら MK を消去
+- 消去後はどのタブからの操作も再認証要求
+
+これにより「タブ B を開いたまま放置してタブ A で操作中」のシナリオで誤って
+ロックが発火する事故を防ぐ。
+
 ### 10.8 E1 完了条件
 
-- [ ] `wrapped_keys` マイグレーション (`046_wrapped_keys` 想定)
-- [ ] `/api/v1/wrapped-keys` GET/POST/PUT エンドポイント
+- [ ] `wrapped_keys` マイグレーション (実装時の最新 revision の次番号)
+- [ ] `users.mk_rotation_state` カラム追加 (同マイグレーション)
+- [ ] `/api/v1/wrapped-keys` GET/POST/PUT/DELETE エンドポイント
+  - DELETE は最終要素削除時に 409 Conflict
+  - touch (`PUT /<id>/touch`) は認証必須 + per-IP レート制限 (ブルートフォース検知に使われうるため)
+- [ ] `/api/v1/wrapped-keys/rotate/commit` `.../abort` (ローテーション制御)
 - [ ] WebCrypto AES-GCM + Argon2id (hash-wasm) で MK wrap/unwrap が動作
 - [ ] WebAuthn PRF 拡張で Passkey 経由の MK 派生が動作 (Q2 結果次第で fallback 設計)
-- [ ] BIP-39 24 単語のリカバリシード生成 + 表示 + 検証 UI
-- [ ] MK ローテーション (空データでフロー検証、E3 で本番投入)
-- [ ] 既存 webauthn_credentials との CASCADE 連動
-- [ ] Q9/Q10 の実装 (Bearer + MK の併用、ServiceWorker セッション維持)
+- [ ] BIP-39 24 単語のリカバリシード生成 + 表示 + 検証 UI (HKDF で derived_key 派生)
+- [ ] MK ローテーション (空データでフロー検証、`mk_rotation_state` を含む再開可能設計、E3 で本番投入)
+- [ ] 既存 webauthn_credentials との DB レベル CASCADE 連動 (FK to `webauthn_credentials.id`)
+- [ ] Q9/Q10 の実装 (Bearer + MK の併用、ServiceWorker セッション維持、マルチタブ idle カウンタ共有)
 
 E2 (API キー E2EE 化) はこの基盤を最初に使う「最小スコープ検証」。
 
