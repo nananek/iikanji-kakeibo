@@ -1816,6 +1816,7 @@ audit_packages
 | snapshot_hash    | bytea (32)  | NOT NULL                            | SHA-256(plaintext snapshot) 改ざん検出 |
 | created_at       | timestamptz | NOT NULL                            | |
 | expires_at       | timestamptz | NOT NULL                            | created_at + 90 days (FS / TTL) |
+| owner_accepted_at | timestamptz | NULL                               | owner が採用を確定した時刻 (NULL = 未対応 or 差戻し)。§14.2 参照 |
 
 UNIQUE (audit_grant_id, round_id)
 INDEX (owner_user_id)
@@ -1858,6 +1859,61 @@ owner が「採用」を選んだ場合は **AuditResponse は作成しない**�
 
 これにより auditor は (a) 採用 / (b) 差戻し / (c) 修正案 (新仕訳作成) の
 3 つの結果を区別できる。
+
+#### HPKE base mode の送信者認証
+
+HPKE base mode では **受信者は送信者の真正性を暗号的に検証できない** (送信者
+署名なし)。本設計では以下で補完:
+
+- **サーバ認証 (Bearer / Session)**: POST `/api/v1/audit-packages` 時に
+  サーバが `current_user.id == owner_user_id` を検証
+- **TOFU pinning (§14.4)**: owner クライアントは auditor の公開鍵を
+  IndexedDB に固定 → 中間者攻撃 (サーバが公開鍵すり替え) を検知
+- 将来の auth mode 移行検討時には HPKE auth mode (送信者認証付き) を採用
+  する選択肢あり (`@hpke-js/core` の Auth Mode サポート要)
+
+### 14.2.1 Lv1 / Lv3 のスナップショット内容
+
+§14.5 は Lv2 を例にしたが、Lv1 / Lv3 のスナップショット内容も明示:
+
+```
+Lv1 (集計のみ):
+  snapshot = {
+    "v": 1,
+    "level": 1,
+    "trial_balance": {...},     # 試算表 (年度集計)
+    "profit_loss": {...},       # 損益計算書
+    "balance_sheet": {...}      # 貸借対照表
+  }
+  仕訳本体は含まない、auditor は数字のみ見る
+
+Lv2 (税務科目限定):
+  snapshot = {
+    "v": 1,
+    "level": 2,
+    "entries": [<税務科目に該当する仕訳のみ>],
+    "vouchers": [<該当仕訳の証憑画像>]
+  }
+  owner クライアントがフィルタした分だけ
+
+Lv3 (全権限相当):
+  snapshot = {
+    "v": 1,
+    "level": 3,
+    "entries": [<全仕訳>],
+    "vouchers": [<全証憑画像>],
+    "medical_expenses": [<医療費>],
+    "balance_caches": [<確定済残高>]
+  }
+  全データを送信、Lv2 のフィルタなし
+```
+
+Lv3 は元の代理閲覧 UX (リアルタイム閲覧) と異なり、**「スナップショット時点
+の全データを auditor に渡す」セマンティクスに変わる**。auditor は閲覧後に
+新仕訳を作成できないので、修正案を返して owner が反映するワークフローのみ。
+
+これは v4.x の Lv3 ユーザーには大きな UX 変更だが、E2EE 純粋性を保つための
+必然的トレードオフ (§7 (d) 採用理由 #1)。
 
 ### 14.3 HPKE (RFC 9180) フロー
 
@@ -1926,6 +1982,19 @@ client-side (IndexedDB):
 
 サーバ側に「fingerprint 確認済」フラグを置くと意味がないので、すべて
 クライアント側で管理。
+
+#### IndexedDB クリア時の UX
+
+ユーザーが「ブラウザデータ削除」「履歴クリア」等で IndexedDB を消した場合、
+TOFU の pinning が失われる。挙動:
+
+- pinning が消えた場合: **再 fingerprint 確認を促す** ダイアログを表示
+  (サイレント再ピンニングは中間者攻撃を見逃すリスクがあるため不採用)
+- ダイアログ文言: 「セキュリティ情報がリセットされました。監査者本人に
+  fingerprint を再確認してください」
+- ユーザーが確認 → 再 pinning。新しい fingerprint が旧と一致するなら問題なし、
+  異なる場合は警告 (公開鍵がすり替わった可能性)
+- このフローは v4.x の Passkey 再登録と類似の UX
 
 ### 14.5 監査フロー全体 (Lv2 を例に)
 
