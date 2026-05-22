@@ -1793,7 +1793,259 @@ E5 では AuditPackage の暗号化 (X25519 公開鍵 + AES-GCM のハイブリ�
 
 ---
 
-## 14. 次のステップ
+## 14. E5 設計スケッチ (監査連携の実装着手レベル詳細)
+
+§7 (d) 非同期ワークフロー方式の実装着手レベル設計。HPKE ハイブリッド暗号、
+audit_packages / audit_responses テーブル、TOFU + fingerprint UI、マルチ
+ラウンド管理、Voucher 添付。
+
+### 14.1 audit_packages テーブル
+
+```
+audit_packages
+| カラム             | 型           | 制約                              | 用途 |
+|------------------|-------------|-------------------------------------|------|
+| id               | bigserial   | PK                                  | |
+| audit_grant_id   | bigint      | FK audit_grants.id ON DELETE CASCADE| |
+| round_id         | int         | NOT NULL                            | 連番、(audit_grant_id, round_id) で UNIQUE |
+| owner_user_id    | bigint      | FK users.id (denormalized)          | サーバ側フィルタ用、テナント分離 |
+| auditor_user_id  | bigint      | FK users.id (denormalized)          | サーバ側フィルタ用 |
+| permission_level | smallint    | NOT NULL                            | 1 (Lv1) / 2 (Lv2) / 3 (Lv3) |
+| ephemeral_pubkey | bytea (32)  | NOT NULL                            | HPKE encapsulated key (送信側 ephemeral X25519 pub) |
+| ciphertext       | bytea       | NOT NULL                            | HPKE 暗号文 (仕訳 / 残高 / 画像のスナップショット JSON) |
+| snapshot_hash    | bytea (32)  | NOT NULL                            | SHA-256(plaintext snapshot) 改ざん検出 |
+| created_at       | timestamptz | NOT NULL                            | |
+| expires_at       | timestamptz | NOT NULL                            | created_at + 90 days (FS / TTL) |
+
+UNIQUE (audit_grant_id, round_id)
+INDEX (owner_user_id)
+INDEX (auditor_user_id)
+INDEX (expires_at)  -- 自動削除バッチ用
+```
+
+### 14.2 audit_responses テーブル
+
+```
+audit_responses
+| カラム             | 型           | 制約                              | 用途 |
+|------------------|-------------|-------------------------------------|------|
+| id               | bigserial   | PK                                  | |
+| audit_package_id | bigint      | FK audit_packages.id ON DELETE CASCADE | 対応する依頼 |
+| response_type    | text        | CHECK (response_type IN ('revision', 'rejection')) | 修正案 / 差戻し |
+| ephemeral_pubkey | bytea (32)  | NOT NULL                            | HPKE (auditor → owner 方向) |
+| ciphertext       | bytea       | NOT NULL                            | HPKE 暗号文 (修正案 JSON or 差戻し理由) |
+| created_at       | timestamptz | NOT NULL                            | |
+| expires_at       | timestamptz | NOT NULL                            | 同 90 days |
+| owner_acknowledged_at | timestamptz | NULL                          | owner が確認した時刻 |
+
+INDEX (audit_package_id)
+INDEX (expires_at)
+```
+
+### 14.3 HPKE (RFC 9180) フロー
+
+ephemeral 鍵 + AEAD でフォワードセクレシーを実現:
+
+```
+[owner クライアント] 送信時:
+  1. snapshot = MK で復号した仕訳 / 残高 / 画像のフィルタ結果 (JSON)
+  2. snapshot_hash = SHA-256(snapshot)
+  3. ephemeral_priv, ephemeral_pub = X25519 ペア生成
+  4. shared_secret = X25519(ephemeral_priv, auditor.public_key)
+  5. key, base_nonce = HKDF(shared_secret, info="iikanji-audit-package-v1", L=44)
+     ※ HPKE base mode の標準フロー
+  6. aad = b"ap\0" + uint64_be(audit_package_id) + b"\0" + uint32_be(round_id)
+  7. ciphertext = AES-256-GCM.Seal(key, base_nonce, snapshot, aad)
+  8. ephemeral_priv を破棄 (フォワードセクレシー)
+  9. POST /api/v1/audit-packages { ephemeral_pubkey, ciphertext, snapshot_hash, ... }
+
+[auditor クライアント] 受信時:
+  10. GET /api/v1/audit-packages/<id> → ephemeral_pubkey, ciphertext, snapshot_hash
+  11. shared_secret = X25519(auditor.private_key, ephemeral_pubkey)
+  12. key, base_nonce = HKDF(shared_secret, info="iikanji-audit-package-v1", L=44)
+  13. aad = b"ap\0" + uint64_be(audit_package_id) + b"\0" + uint32_be(round_id)
+  14. snapshot = AES-256-GCM.Open(key, base_nonce, ciphertext, aad)
+  15. SHA-256(snapshot) == snapshot_hash で改ざん検証
+```
+
+返信 (audit_response) も同じパターンで owner の public_key を使用。
+
+#### フォワードセクレシーの効果
+
+- ephemeral_priv はサーバに保存されない (作成直後に破棄)
+- auditor の long-term private_key が将来漏洩しても、過去の audit_packages
+  は復号できない (ephemeral_priv が必要だが破棄済)
+- 90 日 TTL 後はサーバから自動削除されるので、長期的なリスクも限定的
+
+### 14.4 X25519 公開鍵の真正性検証 (TOFU + fingerprint)
+
+§7 で確定済の TOFU フローを実装:
+
+```
+owner クライアント:
+  - 初回 AuditGrant 作成時にサーバから auditor.public_key を取得
+  - SHA-256(public_key) の最初の 20 バイトを Base32 エンコード →
+    "iikanji-AUDITOR-XXXX-XXXX-XXXX-XXXX" 形式の fingerprint を表示
+  - owner UI で「この fingerprint を auditor 本人に電話 / 対面で確認」
+    と促す
+  - 確認チェックボックスを押すと auditor.public_key を IndexedDB に pinning
+  - 以降、サーバが返す public_key が変わったら警告ダイアログ
+```
+
+データモデル:
+
+```
+client-side (IndexedDB):
+  pinned_auditor_keys = {
+    auditor_user_id: { public_key_sha256, pinned_at }
+  }
+```
+
+サーバ側に「fingerprint 確認済」フラグを置くと意味がないので、すべて
+クライアント側で管理。
+
+### 14.5 監査フロー全体 (Lv2 を例に)
+
+```
+[owner クライアント]
+1. /settings/audit-grants で auditor を選択
+2. AuditGrant.permission_level = 2 を設定、税務科目を選択 (account_user_id リスト)
+3. クライアントが暗号化済仕訳から税務科目該当行のみ抽出 → 復号 → snapshot 作成
+4. auditor.public_key を取得 → fingerprint 確認 → 暗号化
+5. POST /api/v1/audit-packages → round_id = 1
+
+[auditor クライアント]
+6. 監査ダッシュボード → AuditPackage round_id=1 取得
+7. 自分の MK で X25519 秘密鍵をアンラップ → HPKE 復号
+8. snapshot を仮想的な「監査用試算表」として表示
+9. 修正案を作成 (JSON: [{entry_id, changes: {...}}, ...])
+10. owner.public_key で暗号化 → POST /api/v1/audit-responses
+
+[owner クライアント]
+11. AuditResponse 取得 → 復号 → 修正案を画面表示
+12. 「採用」「差戻し」を選択
+   - 採用: クライアントが新仕訳を作成して MK 暗号化 → POST (E3 フロー)
+   - 差戻し: 何もしないか、新 round_id=2 で再スナップショット送信
+
+オプション (再ラウンド):
+13. owner が新たな snapshot を作成して POST → round_id=2
+14. auditor は最新 round のみ作業可能 (UI で旧 round はロック表示)
+```
+
+### 14.6 Voucher 同梱 (§13.7 連携)
+
+監査対象に証憑画像を含める場合:
+
+```
+owner クライアント:
+  1. snapshot に "vouchers" 配列を追加:
+     [{voucher_id, image_bytes_base64, mime, original_filename}, ...]
+  2. image_bytes は MK 復号後の平文を base64 エンコード
+  3. 全体を HPKE で auditor.public_key 暗号化
+  ※ 1 AuditPackage に複数画像、合計サイズは API 上限 (例 10MB) 内
+  ※ 大きい画像は別の AuditPackageAttachment テーブルで分割 (E5 で検討)
+```
+
+代替案: `audit_package_attachments` テーブルを新設して画像を別 BLOB 化。
+スナップショット JSON は軽量に保ち、画像は個別取得。E5 実装時に確定。
+
+### 14.7 マルチラウンドレビュー
+
+`(audit_grant_id, round_id)` UNIQUE で連番管理:
+
+- owner は新 round 作成前に未処理 AuditResponse がないか確認
+- 未処理がある場合は警告: 「監査者から未処理の修正案があります。先に対応
+  してください」
+- 強制で新 round 作成も可能 (差戻し扱い + 警告ログ)
+- auditor は最新 round のみ作業可能、旧 round は read-only (UI)
+- AuditPackage 削除は CASCADE で AuditResponse も削除 (90日 TTL での自動削除)
+
+### 14.8 自動削除と TTL
+
+`expires_at = created_at + 90 days` を CLI で実行:
+
+```
+flask audit-cleanup
+  - DELETE audit_packages WHERE expires_at < NOW()
+  - CASCADE で audit_responses も削除
+```
+
+§10.5 の `flask rotate-cleanup` と同じく cron / systemd timer で 1 時間ごと
+起動を想定。
+
+### 14.9 監査者 UX (差分表示・コンフリクト解決)
+
+修正案の差分 UI:
+
+```
+auditor 画面:
+  | 日付       | 借方科目 | 借方金額 | 貸方科目 | 貸方金額 | 摘要       |
+  | 2026-05-22 | 通信費   | 5,000   | 現金     | 5,000   | 携帯料金   | ← 現状
+  | 2026-05-22 | 通信費   | 5,000   | 普通預金 | 5,000   | 携帯料金   | ← 修正案 (赤強調)
+                                      ^^^^^^^^^ 差分表示
+```
+
+owner 画面:
+
+```
+| 仕訳 | 監査者の修正案                | 採用 | 差戻し |
+| #123 | 貸方科目 現金 → 普通預金     | ☐    | ☐     |
+| #124 | 摘要 「電話代」→「通信費」  | ☐    | ☐     |
+```
+
+採用すると `JournalEntry` を新規作成 (旧仕訳の削除 + 新仕訳の作成) し、E3 の
+フローに従う。差戻しは何もしない (またはコメント返信)。
+
+### 14.10 権限取消の単純化
+
+§7 (d) で確定済の通り、(a/b/c) 共通の「MK ローテーション」は **不要**:
+
+- AuditGrant.revoked_at をセット
+- 既存 AuditPackage は 90 日 TTL で自動消滅
+- 監査者は AuditGrant.status='revoked' なら新規 GET 拒否
+
+E5 実装で `AuditGrant.revoked_at` を見てサーバ側で 403 を返すロジックを追加。
+クライアント側の鍵ローテーションは不要。
+
+### 14.11 E5 完了条件
+
+- [ ] `audit_packages` / `audit_responses` テーブル新設マイグレーション
+- [ ] `users.public_key` カラム追加 + 登録時の自動 X25519 鍵ペア生成 (E1 と連動)
+- [ ] HPKE (RFC 9180 base mode) のクライアント実装 (Web: `@hpke-js/core` 等 / Python: `hpke-py`)
+- [ ] `/api/v1/audit-packages` GET / POST + サーバ側 owner_user_id / auditor_user_id フィルタ (IDOR 防止)
+- [ ] `/api/v1/audit-responses` GET / POST
+- [ ] TOFU + fingerprint 確認 UI (owner 設定画面、IndexedDB pinning)
+- [ ] 監査者ダッシュボードの差分表示 UI
+- [ ] owner 側の修正案レビュー UI (採用 / 差戻し)
+- [ ] マルチラウンド管理 (未処理 response 警告、最新 round のみ作業可)
+- [ ] AuditGrant.revoked_at による新規 GET 拒否
+- [ ] `flask audit-cleanup` CLI (90 日 TTL の自動削除、cron / systemd timer 連動)
+- [ ] v4.x の Lv2 リアルタイム閲覧 UX (auditor がログインして閲覧) の廃止
+- [ ] 既存 AuditGrant ユーザーへの移行ガイド (v5.0 で非同期ワークフローに切替)
+- [ ] テスト: HPKE 復号失敗 (rogue ephemeral_pubkey すり替え) → 検知
+- [ ] テスト: AAD すり替え (他 round_id への入れ替え) → 復号失敗
+- [ ] テスト: owner_user_id / auditor_user_id フィルタ IDOR (他者の package が取れない)
+- [ ] テスト: revoked AuditGrant への POST 拒否
+- [ ] テスト: 90 日 TTL 経過の自動削除
+
+### 14.12 E6 (クライアント全面対応) への影響
+
+E5 で確立されるパターン:
+
+- HPKE ハイブリッド暗号 (ephemeral + AEAD) によるフォワードセクレシー
+- TOFU + fingerprint による信頼境界の構築
+- スナップショットベースの非同期ワークフロー
+- 90 日 TTL による自動廃棄
+
+E6 では:
+- 全クライアント (Web / client-py / client-tui) で同じ HPKE 仕様を実装
+- `iikanji-mcp` の配布停止
+- 全画面の E2EE 対応完了
+- データ一括 zip ダウンロード (確定事項表)
+
+---
+
+## 15. 次のステップ
 
 1. 本書のレビュー・合意形成
 2. E0 プロトタイプ:
