@@ -8,12 +8,25 @@ from uuid import uuid4
 
 import pytest
 
+from app.extensions import limiter
 from app.models import User, WebAuthnCredential, WrappedKey
 from app.models.wrapped_key import (
     METHOD_PASSKEY_PRF,
     METHOD_PASSPHRASE,
     METHOD_RECOVERY_SEED,
 )
+
+
+@pytest.fixture(autouse=True)
+def _reset_rate_limits(app):
+    """各テストで Flask-Limiter のカウンタをリセット (per-user 20/h 等が
+    複数テストにまたがって枯渇しないように)。"""
+    with app.app_context():
+        try:
+            limiter.reset()
+        except Exception:
+            pass
+    yield
 
 
 def _make_user(db, username=None):
@@ -196,6 +209,61 @@ def test_create_invalid_credential_id_type(client, db):
     payload["webauthn_credential_id"] = "not-an-int"
     resp = client.post("/api/v1/wrapped-keys", json=payload)
     assert resp.status_code == 400
+
+
+def test_create_recovery_seed_with_credential_returns_400(client, db):
+    """recovery_seed で credential_id を渡すと 400。"""
+    user = _make_user(db)
+    cred = _make_credential(db, user)
+    _login(client, user)
+    payload = _recovery_payload()
+    payload["webauthn_credential_id"] = cred.id
+    resp = client.post("/api/v1/wrapped-keys", json=payload)
+    assert resp.status_code == 400
+
+
+def test_create_wrapped_key_too_large(client, db):
+    """wrapped_master_key が 256B 超なら 400 (DoS 防止)。"""
+    user = _make_user(db)
+    _login(client, user)
+    payload = _passphrase_payload()
+    # 257 バイト
+    payload["wrapped_master_key"] = b64encode(b"\x00" * 257).decode()
+    resp = client.post("/api/v1/wrapped-keys", json=payload)
+    assert resp.status_code == 400
+    assert "too large" in resp.get_json()["error"]
+
+
+def test_create_label_too_long(client, db):
+    """label が 100 文字超なら 400。"""
+    user = _make_user(db)
+    _login(client, user)
+    payload = _passphrase_payload()
+    payload["label"] = "x" * 101
+    resp = client.post("/api/v1/wrapped-keys", json=payload)
+    assert resp.status_code == 400
+
+
+def test_create_kdf_params_out_of_range_memory(client, db):
+    """kdf_params.memory が極端な値なら 400 (クライアント DoS 防止)。"""
+    user = _make_user(db)
+    _login(client, user)
+    payload = _passphrase_payload()
+    payload["kdf_params"] = {"memory": 999999999, "iterations": 3, "parallelism": 1}
+    resp = client.post("/api/v1/wrapped-keys", json=payload)
+    assert resp.status_code == 400
+    assert "memory" in resp.get_json()["error"]
+
+
+def test_create_kdf_params_out_of_range_iterations(client, db):
+    """kdf_params.iterations が範囲外なら 400。"""
+    user = _make_user(db)
+    _login(client, user)
+    payload = _passphrase_payload()
+    payload["kdf_params"] = {"memory": 65536, "iterations": 999, "parallelism": 1}
+    resp = client.post("/api/v1/wrapped-keys", json=payload)
+    assert resp.status_code == 400
+    assert "iterations" in resp.get_json()["error"]
 
 
 def test_create_passkey_success(client, db):

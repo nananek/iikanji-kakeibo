@@ -30,6 +30,18 @@ from app.models.wrapped_key import (
 
 bp = Blueprint("wrapped_keys", __name__, url_prefix="/api/v1/wrapped-keys")
 
+# サイズ上限。AES-256-GCM wrapped MK は 48B (= 32B 鍵 + 16B tag) 想定。
+# label は users が UI で識別する短い文字列 (例: "iPhone 14 Pro Passkey")。
+MAX_WRAPPED_KEY_SIZE = 256
+MAX_LABEL_LENGTH = 100
+
+# Argon2id パラメータの許容範囲 (passphrase method の弱パラメータ DoS 防止、
+# 設計書 §10.1 の推奨値 memory=65536, iterations=3, parallelism=1 を中心に
+# 余裕を持たせた範囲)。
+KDF_MEMORY_MIN, KDF_MEMORY_MAX = 8192, 1048576       # 8MiB - 1GiB (KiB 単位)
+KDF_ITERATIONS_MIN, KDF_ITERATIONS_MAX = 1, 16
+KDF_PARALLELISM_MIN, KDF_PARALLELISM_MAX = 1, 8
+
 
 def _b64(b: bytes | None) -> str | None:
     return b64encode(b).decode("ascii") if b is not None else None
@@ -70,6 +82,7 @@ def _b64_or_400(payload: dict, key: str, *, required: bool = True) -> bytes | No
 
 @bp.get("")
 @login_required
+@limiter.limit("120 per hour", key_func=lambda: f"user:{current_user.id}")
 def list_wrapped_keys():
     """自身の wrapped_keys 一覧を返す。"""
     rows = (
@@ -81,8 +94,23 @@ def list_wrapped_keys():
     return jsonify(wrapped_keys=[_serialize(r) for r in rows])
 
 
+def _validate_kdf_params(kdf_params: dict) -> str | None:
+    """Argon2id パラメータの範囲チェック。エラー時は文字列を返す。"""
+    mem = kdf_params.get("memory")
+    itr = kdf_params.get("iterations")
+    par = kdf_params.get("parallelism")
+    if not isinstance(mem, int) or not (KDF_MEMORY_MIN <= mem <= KDF_MEMORY_MAX):
+        return f"kdf_params.memory must be {KDF_MEMORY_MIN}..{KDF_MEMORY_MAX} (KiB)"
+    if not isinstance(itr, int) or not (KDF_ITERATIONS_MIN <= itr <= KDF_ITERATIONS_MAX):
+        return f"kdf_params.iterations must be {KDF_ITERATIONS_MIN}..{KDF_ITERATIONS_MAX}"
+    if not isinstance(par, int) or not (KDF_PARALLELISM_MIN <= par <= KDF_PARALLELISM_MAX):
+        return f"kdf_params.parallelism must be {KDF_PARALLELISM_MIN}..{KDF_PARALLELISM_MAX}"
+    return None
+
+
 @bp.post("")
 @login_required
+@limiter.limit("20 per hour", key_func=lambda: f"user:{current_user.id}")
 def create_wrapped_key():
     """新規 wrapped MK を登録。サーバは復号しない。"""
     payload = request.get_json(silent=True) or {}
@@ -101,9 +129,20 @@ def create_wrapped_key():
     if not wrap_iv or len(wrap_iv) != 12:
         return jsonify(error="IV length must be 12 bytes"), 400
 
+    if len(wrapped) > MAX_WRAPPED_KEY_SIZE:
+        return jsonify(
+            error=f"wrapped_master_key too large (max {MAX_WRAPPED_KEY_SIZE} bytes)"
+        ), 400
+
     webauthn_credential_id = payload.get("webauthn_credential_id")
     kdf_params = payload.get("kdf_params")
     label = payload.get("label")
+
+    if label is not None:
+        if not isinstance(label, str) or len(label) > MAX_LABEL_LENGTH:
+            return jsonify(
+                error=f"label must be a string of at most {MAX_LABEL_LENGTH} characters"
+            ), 400
 
     # 型検証: JSON で文字列等を渡されたら 400 で弾く (SQLAlchemy 例外で 500 に
     # ならないように)
@@ -132,6 +171,12 @@ def create_wrapped_key():
             return jsonify(error="passphrase requires salt"), 400
         if not isinstance(kdf_params, dict):
             return jsonify(error="passphrase requires kdf_params dict"), 400
+        # 極端な Argon2 パラメータでクライアントを DoS させないようサーバ側で
+        # 範囲を強制 (E2EE 下ではサーバが復号できないので "信頼すべき" 範囲を
+        # 設計書 §10.1 に明示)
+        kdf_err = _validate_kdf_params(kdf_params)
+        if kdf_err:
+            return jsonify(error=kdf_err), 400
     elif method == METHOD_RECOVERY_SEED:
         if webauthn_credential_id is not None:
             return jsonify(
@@ -186,6 +231,7 @@ def touch_wrapped_key(wrapped_key_id: int):
 
 @bp.delete("/<int:wrapped_key_id>")
 @login_required
+@limiter.limit("20 per hour", key_func=lambda: f"user:{current_user.id}")
 def delete_wrapped_key(wrapped_key_id: int):
     """wrapped_key を削除。削除後の件数が 0 になる場合は 409 Conflict。
 
@@ -201,21 +247,23 @@ def delete_wrapped_key(wrapped_key_id: int):
     if row is None:
         return jsonify(error="not found"), 404
 
-    # TOCTOU 注意: 並行リクエストで他 key が削除されると「最後の key」が
-    # 削除可能になりうる。個人アプリでの現実リスクは低いが、PostgreSQL 本番
-    # では SELECT ... FOR UPDATE + トランザクション内チェックで対応すべき
-    # (E1 PR-D で改善検討)。
+    # TOCTOU 軽減: 削除を先に flush (トランザクション内のみ確定) → 残件数を
+    # チェック → 0 件なら rollback。並行 DELETE がほぼ同時に 2 件削除しようと
+    # した場合でも、両者がそれぞれ rollback されて 1 件以上残る (片方が勝つ
+    # ケースもあるが、いずれも「最後の鍵」になる前に防がれる)。
+    # PostgreSQL 本番では SELECT ... FOR UPDATE で行ロックを取るのが望ましい
+    # (E1 PR-D で改善)。
+    db.session.delete(row)
+    db.session.flush()
     remaining_count = (
         WrappedKey.query
         .filter_by(user_id=current_user.id)
-        .filter(WrappedKey.id != wrapped_key_id)
         .count()
     )
     if remaining_count == 0:
+        db.session.rollback()
         return jsonify(
             error="cannot delete the last wrapped_key (account would be locked)"
         ), 409
-
-    db.session.delete(row)
     db.session.commit()
     return "", 204
