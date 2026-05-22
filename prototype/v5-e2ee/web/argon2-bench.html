@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <title>E2EE Prototype — Argon2id WASM bench</title>
+  <style>
+    body { font-family: -apple-system, system-ui, sans-serif; max-width: 760px; margin: 2em auto; padding: 0 1em; }
+    section { border: 1px solid #ccc; padding: 1em; margin-bottom: 1em; border-radius: 6px; }
+    pre { background: #f4f4f4; padding: 0.5em; overflow-x: auto; white-space: pre-wrap; }
+    button { margin-right: 0.5em; }
+    label { display: block; margin: 0.3em 0; }
+    input[type=number] { width: 6em; }
+    .ok { color: #080; }
+    .ng { color: #c00; }
+    table { border-collapse: collapse; margin-top: 0.5em; }
+    th, td { border: 1px solid #ddd; padding: 0.3em 0.6em; text-align: right; }
+    th:first-child, td:first-child { text-align: left; }
+  </style>
+</head>
+<body>
+  <h1>E2EE プロトタイプ: Argon2id WASM bench</h1>
+  <p>設計書 §2 のパスフレーズ KDF 用 Argon2id を、候補ライブラリでバンドルサイズ・初期化コスト・派生時間を比較する。</p>
+
+  <section>
+    <h2>1. 候補ライブラリ</h2>
+    <table>
+      <tr><th>ライブラリ</th><th>JS</th><th>WASM</th><th>合計</th><th>備考</th></tr>
+      <tr><td>argon2-browser</td><td>45 KB</td><td>26 KB</td><td><b>72 KB</b></td><td>WASM 別ファイル</td></tr>
+      <tr><td>hash-wasm (Argon2)</td><td>30 KB</td><td>—</td><td><b>30 KB</b></td><td>WASM 埋め込み base64、Argon2 だけ</td></tr>
+      <tr><td>libsodium (full)</td><td>98 KB</td><td>521 KB</td><td><b>619 KB</b></td><td>Argon2id + XChaCha20-Poly1305 込み</td></tr>
+    </table>
+    <p>※ 全て gzip 前 (圧縮で 30-50% 程度減るがブラウザ転送量の上限見積もり)</p>
+  </section>
+
+  <section>
+    <h2>2. パラメータ</h2>
+    <label>パスフレーズ: <input id="pw" value="correct horse battery staple" size="40"></label>
+    <label>メモリ (MiB): <input id="mem" type="number" value="64" min="8" max="1024"></label>
+    <label>iterations (t): <input id="iter" type="number" value="3" min="1" max="20"></label>
+    <label>parallelism (p): <input id="par" type="number" value="1" min="1" max="8"></label>
+    <p>設計書 §2 の暫定推奨: <b>memory=64 MiB, iter=3, p=1</b></p>
+  </section>
+
+  <section>
+    <h2>3. argon2-browser</h2>
+    <button id="argon2br-run">ロード + 派生</button>
+    <pre id="argon2br-out">—</pre>
+  </section>
+
+  <section>
+    <h2>4. hash-wasm</h2>
+    <button id="hashwasm-run">ロード + 派生</button>
+    <pre id="hashwasm-out">—</pre>
+  </section>
+
+  <section>
+    <h2>5. 派生結果サマリー</h2>
+    <table id="summary">
+      <tr><th>ライブラリ</th><th>転送 (B)</th><th>init (ms)</th><th>派生 (ms)</th><th>ピーク mem (MiB)</th></tr>
+    </table>
+    <p>※ 転送量は <code>PerformanceObserver</code> の resource entries、init は import 完了まで、派生は KDF 単独時間</p>
+  </section>
+
+  <script type="module">
+    const $ = (id) => document.getElementById(id);
+    const params = () => ({
+      pw: $("pw").value,
+      mem: parseInt($("mem").value, 10),
+      iter: parseInt($("iter").value, 10),
+      par: parseInt($("par").value, 10),
+    });
+
+    function addRow(name, transfer, init, derive, mem) {
+      const t = $("summary");
+      const row = t.insertRow();
+      row.insertCell().textContent = name;
+      row.insertCell().textContent = transfer.toLocaleString();
+      row.insertCell().textContent = init.toFixed(0);
+      row.insertCell().textContent = derive.toFixed(0);
+      row.insertCell().textContent = mem ? mem.toFixed(1) : "—";
+    }
+
+    function getTransferBytes(filter) {
+      return performance.getEntriesByType("resource")
+        .filter((e) => filter.test(e.name))
+        .reduce((s, e) => s + (e.transferSize || e.encodedBodySize || 0), 0);
+    }
+
+    function getPeakMemMiB() {
+      const m = performance.memory;
+      return m ? m.usedJSHeapSize / (1024 * 1024) : null;
+    }
+
+    $("argon2br-run").onclick = async () => {
+      const p = params();
+      const out = $("argon2br-out");
+      out.textContent = "ロード中...";
+      const t0 = performance.now();
+      const mod = await import("https://cdn.jsdelivr.net/npm/argon2-browser@1.18.0/+esm");
+      const t1 = performance.now();
+      out.textContent = `init: ${(t1 - t0).toFixed(0)} ms\n派生中...`;
+      const t2 = performance.now();
+      const r = await mod.default.hash({
+        pass: p.pw,
+        salt: crypto.getRandomValues(new Uint8Array(16)),
+        time: p.iter,
+        mem: p.mem * 1024,
+        parallelism: p.par,
+        hashLen: 32,
+        type: mod.default.ArgonType.Argon2id,
+      });
+      const t3 = performance.now();
+      const transfer = getTransferBytes(/argon2-browser/);
+      const mem = getPeakMemMiB();
+      out.textContent =
+        `init: ${(t1 - t0).toFixed(0)} ms\n` +
+        `派生: ${(t3 - t2).toFixed(0)} ms\n` +
+        `転送量 (network): ${transfer.toLocaleString()} B\n` +
+        `JS heap (現時点): ${mem ? mem.toFixed(1) + " MiB" : "未取得"}\n` +
+        `hash (hex 先頭16B): ${r.hashHex.slice(0, 32)}…`;
+      addRow("argon2-browser", transfer, t1 - t0, t3 - t2, mem);
+    };
+
+    $("hashwasm-run").onclick = async () => {
+      const p = params();
+      const out = $("hashwasm-out");
+      out.textContent = "ロード中...";
+      const t0 = performance.now();
+      const mod = await import("https://cdn.jsdelivr.net/npm/hash-wasm@4.12.0/+esm");
+      const t1 = performance.now();
+      out.textContent = `init: ${(t1 - t0).toFixed(0)} ms\n派生中...`;
+      const t2 = performance.now();
+      const hashHex = await mod.argon2id({
+        password: p.pw,
+        salt: crypto.getRandomValues(new Uint8Array(16)),
+        parallelism: p.par,
+        iterations: p.iter,
+        memorySize: p.mem * 1024,
+        hashLength: 32,
+        outputType: "hex",
+      });
+      const t3 = performance.now();
+      const transfer = getTransferBytes(/hash-wasm/);
+      const mem = getPeakMemMiB();
+      out.textContent =
+        `init: ${(t1 - t0).toFixed(0)} ms\n` +
+        `派生: ${(t3 - t2).toFixed(0)} ms\n` +
+        `転送量 (network): ${transfer.toLocaleString()} B\n` +
+        `JS heap (現時点): ${mem ? mem.toFixed(1) + " MiB" : "未取得"}\n` +
+        `hash (hex 先頭16B): ${hashHex.slice(0, 32)}…`;
+      addRow("hash-wasm", transfer, t1 - t0, t3 - t2, mem);
+    };
+  </script>
+</body>
+</html>
