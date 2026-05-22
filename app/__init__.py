@@ -71,6 +71,10 @@ def create_app(config_class=Config):
         }
         if endpoint in allowed_endpoints or endpoint.startswith("static"):
             return
+        # E2EE 鍵管理 API は JSON。pending_recovery 中でも自分の wrapped_keys
+        # を確認/更新できる必要がある (リカバリ後の鍵再設定フロー)。
+        if endpoint.startswith("wrapped_keys."):
+            return
         return redirect(url_for("settings.passkeys"))
 
     # Before-request hook for terms acceptance check
@@ -113,6 +117,9 @@ def create_app(config_class=Config):
             # オープンにしておく。Web UI 経由のアクセス時に同意フローへ
             # 誘導される設計。
             or endpoint.startswith("oauth.")
+            # E2EE 鍵管理 API (E1 #108) は JSON クライアント。302 リダイレクト
+            # ではなくクライアント側で規約同意状態を別途確認させる。
+            or endpoint.startswith("wrapped_keys.")
         ):
             return
         # 元々アクセスしようとしていたパスに戻れるよう ?next= を引き継ぐ
@@ -139,6 +146,10 @@ def create_app(config_class=Config):
             or endpoint.startswith("auth.")
             or endpoint.startswith("api.")
             or endpoint.startswith("legal.")
+            # E2EE 鍵管理 API は監査者本人 (Lv1-3) も自分の wrapped_keys に
+            # アクセスする必要がある (auditor 自身の MK 管理)。代理閲覧中の
+            # owner 鍵には触れないので、user_id フィルタで安全に分離されている。
+            or endpoint.startswith("wrapped_keys.")
         ):
             return
         # Auditor exit: always allow

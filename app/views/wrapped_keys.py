@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 
 from flask import Blueprint, jsonify, request
 from flask_login import current_user, login_required
+from sqlalchemy.exc import IntegrityError
 
 from app.extensions import db, limiter
 from app.models.webauthn import WebAuthnCredential
@@ -132,10 +133,11 @@ def create_wrapped_key():
     db.session.add(row)
     try:
         db.session.commit()
-    except Exception as exc:
+    except IntegrityError:
         db.session.rollback()
         # UNIQUE 制約違反 (passphrase / recovery_seed の重複 or 同 credential 重複)
         return jsonify(error="conflict with existing wrapped_key"), 409
+    # IntegrityError 以外は 500 として Flask に処理させる (DB 接続エラー等)
 
     return jsonify(_serialize(row)), 201
 
@@ -181,6 +183,10 @@ def delete_wrapped_key(wrapped_key_id: int):
     if row is None:
         return jsonify(error="not found"), 404
 
+    # TOCTOU 注意: 並行リクエストで他 key が削除されると「最後の key」が
+    # 削除可能になりうる。個人アプリでの現実リスクは低いが、PostgreSQL 本番
+    # では SELECT ... FOR UPDATE + トランザクション内チェックで対応すべき
+    # (E1 PR-D で改善検討)。
     remaining_count = (
         WrappedKey.query
         .filter_by(user_id=current_user.id)
