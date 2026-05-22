@@ -591,6 +591,7 @@ CREATE INDEX ix_wrapped_keys_user_id ON wrapped_keys (user_id);
 
 - `wrapped_master_key` は **タグ込みの ciphertext** のみを格納し、**IV は `wrap_iv` カラムに分離**。`concat(iv || ciphertext)` の連結保管はしない (実装者の混乱防止)
 - `webauthn_credentials` PK (`id`) を FK 参照。`webauthn_credentials.credential_id` (bytea, UNIQUE) ではなく PK 参照にすることで `ON DELETE CASCADE` が DB レベルで効く
+- `last_used_at` のセマンティクスは `webauthn_credentials.last_used_at` (WebAuthn 認証成功時に更新) と区別される: **`wrapped_keys.last_used_at` は MK アンラップ成功時のみ更新**。同じ Passkey でも WebAuthn 認証は成功したが PRF で MK アンラップに失敗するケース (例: PRF 非対応端末) を分けて記録できる
 - パスフレーズ / リカバリシードは 1 ユーザー 1 行のみ (上記の **partial UNIQUE INDEX** で強制)。
   PostgreSQL は `NULL ≠ NULL` のため通常の `UNIQUE (a, b, c)` では NULL を含む
   カラムで複数行が共存できてしまうので、`WHERE` 句で 2 つに分けた partial
@@ -640,7 +641,8 @@ client                              server
   |                                  |
   | 2. GET /api/v1/wrapped-keys      |
   |--------------------------------->|
-  |<-- [{method, credential_id, wrapped, iv, salt, kdf_params, label}, ...] |
+  |<-- [{id, method, webauthn_credential_id, wrapped_master_key, wrap_iv, salt, kdf_params, label}, ...] |
+  |   (API レスポンスのフィールド名は §10.1 の DB カラム名と一致させる) |
   |                                  |
   | 3. クライアントが利用可能な要素を選択 |
   |    a. Passkey → PRF eval (32B) → HKDF-SHA256(salt=zero, info="iikanji-master-key-v1") → derived_key |
@@ -671,6 +673,24 @@ client                              server
   ないので一般エラーで返す
 - リロード時は Worker メモリが揮発するため再アンラップが必要 (§5 と §11
   Q10 整理参照)
+
+#### PRF 非対応環境のフォールバック (Q2)
+
+Passkey PRF (`extensions.prf`) は 2026 年時点で Chrome / Edge / Firefox 系は
+対応、iOS Safari は OS バージョン依存。クライアントは PRF 利用可否を起動時に
+検出し、非対応なら以下のフォールバック:
+
+```
+1. WebAuthn 認証成功時に extensions.prf.results が undefined → PRF 非対応と判定
+2. 「この端末では Passkey 単独で MK を復元できません」と UI 通知
+3. ユーザーにパスフレーズ入力を要求 → Argon2id で derived_key 派生 → MK アンラップ
+4. 同セッション中の以後の操作は MK 保持済 (= UX は実質変わらない)
+5. wrapped_keys は変更しない (Passkey PRF 用の行を残しておくと PRF 対応端末で
+   別途使えるため)
+```
+
+非対応端末では「Passkey ボタン押下 → 失敗 → パスフレーズ強制」のひと手間
+が発生するが、移行は強制しない (PRF 対応端末からの利便性を確保)。
 
 ### 10.4 認証要素の追加・削除
 
@@ -737,8 +757,16 @@ users.mk_rotation_state (jsonb, nullable):
   "started_at": "2026-05-22T08:00:00Z",
   "progress": {"total": 100000, "done": 23456, "unit": "journal_entry_lines"},
   "new_wrapped_keys_id_set": [101, 102, 103],
+  "rotation_token": "<32B cryptographically random>",  // X-Rotation-Id ヘッダで照合
   "auto_abort_at": "2026-05-29T08:00:00Z"  // 7 日後に自動 abort (運用安全策)
 }
+
+// rotation_token のライフサイクル:
+//  - ローテ開始 (POST /api/v1/wrapped-keys/rotate/begin) 時にサーバが生成して
+//    返却、mk_rotation_state.rotation_token に保存
+//  - 以後の PUT (再暗号化) では X-Rotation-Id ヘッダ必須、保存値と一致しない
+//    PUT は 423 Locked
+//  - auto_abort_at まで有効。commit / abort で破棄
 ```
 
 #### フロー (再開可能設計)
