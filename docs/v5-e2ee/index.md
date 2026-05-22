@@ -2242,9 +2242,15 @@ iikanji export --output-dir ./backup --format zip
 
 - Web Worker での復号 5 秒以内 (§12.3 パフォーマンス目標)
 - 証憑画像復号は 1 枚 ~10ms × 千枚 = 10 秒程度
-- zip 化は JSZip だと遅いので `pako` で stream 圧縮
-- メモリピークは 500 MB 程度 → Web Worker メモリ制限 (Chrome は 2GB 程度) 内
-- 大規模ユーザーは client-py 推奨 (バッチサイズ無制限)
+- zip 化は **`fflate` で chunk-by-chunk stream 処理**:
+  - `pako` は deflate のみで zip 形式を生成できないので不採用
+  - `fflate` (MIT, ~10KB minified) は zip stream API あり、Web Worker 対応
+  - 証憑画像を 1 枚ずつ復号 → zip stream に追記 → 解放 (メモリピーク抑制)
+- メモリピーク試算: 暗号文 + 平文 + zip バッファで暗号文サイズの 3 倍が上限。
+  証憑 200 MB 超のユーザーは Chrome のメモリ制限 (2GB) に近づくため
+  **client-py 推奨閾値**:
+  - 証憑 200 枚超 OR 合計 200 MB 超の場合は Web UI で警告表示 + client-py 案内
+- 大規模ユーザーは client-py で完全ローカル処理 (バッチサイズ無制限)
 
 #### メール通知
 
@@ -2273,7 +2279,7 @@ export_jobs
 | created_at      | timestamptz  | |
 | ready_at        | timestamptz  | NULL |
 | expires_at      | timestamptz  | created_at + 24 hours |
-| download_count  | smallint     | 0 (セキュリティのため最大 N 回まで) |
+| download_count  | smallint     | 0 (`EXPORT_MAX_DOWNLOADS` まで、デフォルト 3) |
 
 INDEX (user_id, expires_at)
 ```
