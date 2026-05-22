@@ -616,6 +616,22 @@ def test_bearer_revoked_oauth(client, db):
     assert resp.status_code == 401
 
 
+def test_bearer_revoked_apikey(client, db):
+    """is_active=False の APIKey は 401。"""
+    user = _make_user(db)
+    raw = _make_api_key(db, user)
+    # revoke
+    key = APIKey.query.filter_by(user_id=user.id).first()
+    key.is_active = False
+    db.session.commit()
+
+    resp = client.get(
+        "/api/v1/wrapped-keys",
+        headers={"Authorization": f"Bearer {raw}"},
+    )
+    assert resp.status_code == 401
+
+
 def test_bearer_other_user_isolation(client, db):
     """Bearer で取得しても他ユーザーの wrapped_key は見えない (IDOR)。"""
     me = _make_user(db, "me")
