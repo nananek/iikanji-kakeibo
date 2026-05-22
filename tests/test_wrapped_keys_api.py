@@ -154,6 +154,50 @@ def test_create_passkey_credential_must_belong_to_user(client, db):
     assert resp.status_code == 404
 
 
+def test_create_recovery_seed_success(client, db):
+    user = _make_user(db)
+    _login(client, user)
+    resp = client.post("/api/v1/wrapped-keys", json=_recovery_payload())
+    assert resp.status_code == 201
+    body = resp.get_json()
+    assert body["method"] == METHOD_RECOVERY_SEED
+    assert body["webauthn_credential_id"] is None
+    assert body["salt"] is None
+    assert body["id"] is not None
+
+
+def test_create_passphrase_requires_salt(client, db):
+    """passphrase で salt が無いと 400 (弱い KDF を防ぐ)。"""
+    user = _make_user(db)
+    _login(client, user)
+    payload = _passphrase_payload()
+    payload.pop("salt")
+    resp = client.post("/api/v1/wrapped-keys", json=payload)
+    assert resp.status_code == 400
+    assert "salt" in resp.get_json()["error"]
+
+
+def test_create_passphrase_requires_kdf_params(client, db):
+    """passphrase で kdf_params が無いと 400。"""
+    user = _make_user(db)
+    _login(client, user)
+    payload = _passphrase_payload()
+    payload.pop("kdf_params")
+    resp = client.post("/api/v1/wrapped-keys", json=payload)
+    assert resp.status_code == 400
+    assert "kdf_params" in resp.get_json()["error"]
+
+
+def test_create_invalid_credential_id_type(client, db):
+    """webauthn_credential_id に文字列を渡すと 400 (SQLAlchemy 例外で 500 にならない)。"""
+    user = _make_user(db)
+    _login(client, user)
+    payload = _passphrase_payload()
+    payload["webauthn_credential_id"] = "not-an-int"
+    resp = client.post("/api/v1/wrapped-keys", json=payload)
+    assert resp.status_code == 400
+
+
 def test_create_passkey_success(client, db):
     user = _make_user(db)
     cred = _make_credential(db, user)

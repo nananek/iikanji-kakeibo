@@ -105,6 +105,13 @@ def create_wrapped_key():
     kdf_params = payload.get("kdf_params")
     label = payload.get("label")
 
+    # 型検証: JSON で文字列等を渡されたら 400 で弾く (SQLAlchemy 例外で 500 に
+    # ならないように)
+    if webauthn_credential_id is not None and not isinstance(
+        webauthn_credential_id, int
+    ):
+        return jsonify(error="webauthn_credential_id must be int"), 400
+
     # method ごとの制約チェック (@validates でも弾かれるが、ユーザーフレンドリーな
     # メッセージのためにここでも明示的にチェック)
     if method == METHOD_PASSKEY_PRF:
@@ -114,7 +121,18 @@ def create_wrapped_key():
         cred = db.session.get(WebAuthnCredential, webauthn_credential_id)
         if cred is None or cred.user_id != current_user.id:
             return jsonify(error="webauthn_credential not found"), 404
-    elif method in (METHOD_PASSPHRASE, METHOD_RECOVERY_SEED):
+    elif method == METHOD_PASSPHRASE:
+        if webauthn_credential_id is not None:
+            return jsonify(
+                error=f"{method} must not have webauthn_credential_id"
+            ), 400
+        # passphrase は Argon2id KDF を使うため salt + kdf_params 必須
+        # (設計書 §10.1: 弱い鍵派生を防ぐ)
+        if salt is None:
+            return jsonify(error="passphrase requires salt"), 400
+        if not isinstance(kdf_params, dict):
+            return jsonify(error="passphrase requires kdf_params dict"), 400
+    elif method == METHOD_RECOVERY_SEED:
         if webauthn_credential_id is not None:
             return jsonify(
                 error=f"{method} must not have webauthn_credential_id"
