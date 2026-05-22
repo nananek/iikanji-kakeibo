@@ -27,6 +27,11 @@ def create_app(config_class=Config):
     csrf.exempt(webauthn_bp)
     from app.views.api import bp as api_bp
     csrf.exempt(api_bp)
+    # E2EE 鍵管理 API (E1 #108) も JSON 専用。PR-C で Bearer 対応する際に
+    # 非ブラウザクライアントが CSRF トークンを得られない問題を避けるため、
+    # 既存 api_bp / webauthn_bp と一貫して csrf.exempt する。
+    from app.views.wrapped_keys import bp as wrapped_keys_bp
+    csrf.exempt(wrapped_keys_bp)
     # OAuth Device Flow のクライアント向けエンドポイントは CSRF 免除
     # (ブラウザ向けの authorize エンドポイントは CSRF 保護を維持)
     from app.views.oauth import device_authorization, token as oauth_token_view
