@@ -194,6 +194,7 @@ def test_create_invalid_iv_length(client, db):
     resp = client.post("/api/v1/wrapped-keys", json=payload)
     assert resp.status_code == 400
     assert "12 bytes" in resp.get_json()["error"]
+    assert "IV" in resp.get_json()["error"]
 
 
 def test_create_invalid_base64(client, db):

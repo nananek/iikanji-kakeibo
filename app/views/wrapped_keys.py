@@ -98,7 +98,7 @@ def create_wrapped_key():
         return jsonify(error=str(exc)), 400
 
     if not wrap_iv or len(wrap_iv) != 12:
-        return jsonify(error="wrap_iv must be 12 bytes"), 400
+        return jsonify(error="IV length must be 12 bytes"), 400
 
     webauthn_credential_id = payload.get("webauthn_credential_id")
     kdf_params = payload.get("kdf_params")
