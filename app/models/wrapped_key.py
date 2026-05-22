@@ -28,6 +28,15 @@ class WrappedKey(db.Model):
             "method IN ('passkey_prf', 'passphrase', 'recovery_seed')",
             name="ck_wrapped_keys_method",
         ),
+        # method と webauthn_credential_id の相互依存:
+        #   passkey_prf → credential_id 必須
+        #   passphrase / recovery_seed → credential_id は必ず NULL
+        CheckConstraint(
+            "(method = 'passkey_prf' AND webauthn_credential_id IS NOT NULL)"
+            " OR (method IN ('passphrase', 'recovery_seed')"
+            " AND webauthn_credential_id IS NULL)",
+            name="ck_wrapped_keys_method_credential",
+        ),
         # passkey_prf: (user_id, method, credential_id) 単位で UNIQUE
         Index(
             "uq_wrapped_keys_passkey",
@@ -86,16 +95,46 @@ class WrappedKey(db.Model):
             "wrapped_keys", lazy="dynamic", passive_deletes=True
         ),
     )
-    webauthn_credential = db.relationship("WebAuthnCredential")
+    webauthn_credential = db.relationship(
+        "WebAuthnCredential", passive_deletes=True
+    )
 
-    @validates("method")
-    def _validate_method(self, key, value):
-        # DB の CHECK 制約は PostgreSQL 本番でのみ有効 (SQLite は無視)。
-        # アプリ層でも値域チェックして、本番/テスト両方で同じ動作を保証する。
-        if value not in ALLOWED_METHODS:
-            raise ValueError(
-                f"method must be one of {ALLOWED_METHODS}, got {value!r}"
-            )
+    @validates("method", "webauthn_credential_id")
+    def _validate_method_credential(self, key, value):
+        """DB の CHECK 制約と同じルールをアプリ層 (SQLite テスト) でも強制。
+
+        - method は ALLOWED_METHODS に含まれる
+        - method='passkey_prf' → webauthn_credential_id 必須
+        - method=passphrase / recovery_seed → webauthn_credential_id は NULL
+        """
+        if key == "method":
+            if value not in ALLOWED_METHODS:
+                raise ValueError(
+                    f"method must be one of {ALLOWED_METHODS}, got {value!r}"
+                )
+            # 既に credential_id がセットされているならクロスチェック
+            cred = self.webauthn_credential_id
+            if value == METHOD_PASSKEY_PRF and cred is None:
+                # この時点では未設定の可能性もあるので credential_id 側の set
+                # で再確認 (新規作成時の引数順序に依存しない)
+                pass
+            elif value in (METHOD_PASSPHRASE, METHOD_RECOVERY_SEED) and cred is not None:
+                raise ValueError(
+                    f"method={value} must not have webauthn_credential_id"
+                )
+        elif key == "webauthn_credential_id":
+            method = self.method
+            if method == METHOD_PASSKEY_PRF and value is None:
+                raise ValueError(
+                    "method=passkey_prf requires webauthn_credential_id"
+                )
+            if (
+                method in (METHOD_PASSPHRASE, METHOD_RECOVERY_SEED)
+                and value is not None
+            ):
+                raise ValueError(
+                    f"method={method} must not have webauthn_credential_id"
+                )
         return value
 
     def __repr__(self):

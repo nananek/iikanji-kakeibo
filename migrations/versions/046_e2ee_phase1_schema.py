@@ -71,6 +71,13 @@ def upgrade():
             "method IN ('passkey_prf', 'passphrase', 'recovery_seed')",
             name="ck_wrapped_keys_method",
         ),
+        # method と webauthn_credential_id の相互依存制約
+        sa.CheckConstraint(
+            "(method = 'passkey_prf' AND webauthn_credential_id IS NOT NULL)"
+            " OR (method IN ('passphrase', 'recovery_seed')"
+            " AND webauthn_credential_id IS NULL)",
+            name="ck_wrapped_keys_method_credential",
+        ),
         sa.ForeignKeyConstraint(
             ["user_id"], ["users.id"], ondelete="CASCADE",
         ),

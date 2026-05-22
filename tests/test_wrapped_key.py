@@ -4,6 +4,8 @@
 モデルの基本動作を検証する。
 """
 
+from uuid import uuid4
+
 import pytest
 from sqlalchemy.exc import IntegrityError
 
@@ -16,7 +18,9 @@ from app.models.wrapped_key import (
 )
 
 
-def _make_user(db, username="alice"):
+def _make_user(db, username=None):
+    # UUID で衝突を回避 (パラレル実行 or テスト順序変更時の保険)
+    username = username or f"u{uuid4().hex[:8]}"
     u = User(username=username, email=f"{username}@example.com")
     u.set_password("pw")
     db.session.add(u)
@@ -107,6 +111,60 @@ def test_method_validates_rejects_invalid(db):
             wrapped_master_key=b"\x00" * 48,
             wrap_iv=b"\x01" * 12,
         )
+
+
+def test_passkey_prf_requires_credential_id(db):
+    """method=passkey_prf で credential_id=NULL は弾かれる。"""
+    user = _make_user(db)
+    cred = _make_credential(db, user)
+    # まず credential_id をセット → 後から method を passkey_prf に
+    row = WrappedKey(
+        user_id=user.id,
+        webauthn_credential_id=cred.id,
+        method=METHOD_PASSKEY_PRF,
+        wrapped_master_key=b"\x00" * 48,
+        wrap_iv=b"\x01" * 12,
+    )
+    db.session.add(row)
+    db.session.commit()
+    assert row.id is not None
+
+    # credential_id=NULL を passkey_prf に設定しようとすると ValueError
+    with pytest.raises(ValueError, match="requires webauthn_credential_id"):
+        WrappedKey(
+            user_id=user.id,
+            method=METHOD_PASSKEY_PRF,
+            webauthn_credential_id=None,
+            wrapped_master_key=b"\x00" * 48,
+            wrap_iv=b"\x01" * 12,
+        )
+
+
+def test_passphrase_must_not_have_credential_id(db):
+    """method=passphrase / recovery_seed に credential_id をセットすると弾く。"""
+    user = _make_user(db)
+    cred = _make_credential(db, user)
+    # method を先にセット → 後で credential_id を入れる
+    with pytest.raises(ValueError, match="must not have webauthn_credential_id"):
+        row = WrappedKey(
+            user_id=user.id,
+            method=METHOD_PASSPHRASE,
+            wrapped_master_key=b"\x00" * 48,
+            wrap_iv=b"\x01" * 12,
+            salt=b"\x02" * 16,
+            kdf_params={"memory": 65536, "iterations": 3, "parallelism": 1},
+        )
+        row.webauthn_credential_id = cred.id
+
+    # recovery_seed も同様
+    with pytest.raises(ValueError, match="must not have webauthn_credential_id"):
+        row2 = WrappedKey(
+            user_id=user.id,
+            method=METHOD_RECOVERY_SEED,
+            wrapped_master_key=b"\x00" * 48,
+            wrap_iv=b"\x01" * 12,
+        )
+        row2.webauthn_credential_id = cred.id
 
 
 def test_allowed_methods_constants(db):
