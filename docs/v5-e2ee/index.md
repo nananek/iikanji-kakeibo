@@ -1515,7 +1515,285 @@ E4 では同じパターンを画像 BLOB に適用:
 
 ---
 
-## 13. 次のステップ
+## 13. E4 設計スケッチ (証憑画像の E2EE 化)
+
+E3 の JSON-then-encrypt パターンを **画像 BLOB に適用**。電帳法の改ざん防止
+要件と E2EE をどう両立させるかが核心。
+
+### 13.1 暗号化対象
+
+```
+vouchers:
+  暗号化対象: original_filename, image_mime (encrypted_meta_blob にまとめて格納)
+  非暗号化:   id, user_id, journal_entry_id (FK 維持)
+              image_key (ストレージパス、平文)
+              thumbnail_key (サムネイルのストレージパス、平文)
+              encrypted_meta_blob, meta_iv (新規、original_filename + image_mime 等のメタ情報)
+              uploaded_at (時刻情報は脅威モデル §1「漏れて構わない情報」)
+              file_hash_plain (クライアント計算) / file_hash_cipher (サーバ計算)
+  画像本体:   ストレージ (Local / S3) に暗号化済バイト列として保存
+              ファイル名は image_key (UUID 等)、復号鍵は MK
+
+voucher_audit_logs:
+  暗号化対象: detail (JSON)
+  非暗号化:   id, voucher_id, user_id, action, created_at (フィルタ用途)
+              encrypted_detail_blob, detail_iv (新規)
+```
+
+### 13.2 画像本体の暗号化
+
+```
+クライアント (アップロード):
+  1. ユーザーが画像選択 (File API)
+  2. image_bytes = await file.arrayBuffer()
+  3. iv = crypto.getRandomValues(new Uint8Array(12))
+  4. aad = b"vimg\0" + uint64_be(user_id) + b"\0" + uint64_be(voucher_id)
+  5. ciphertext = AES-GCM(MK, iv, image_bytes, aad)
+  6. POST /api/v1/vouchers (multipart):
+     - file: ciphertext blob (元画像と同じ extension 不可。`.bin` 等)
+     - iv: hex string
+     - mime_blob: 暗号化された image/jpeg 等の文字列
+     - original_filename_blob: 暗号化された元ファイル名
+  7. サーバ: ストレージに ciphertext を保存、image_key を返却
+
+クライアント (閲覧):
+  1. GET /api/v1/vouchers/<id> → encrypted_meta_blob, image_key
+  2. GET /api/v1/vouchers/<id>/image (or presigned URL) → ciphertext
+  3. クライアントで AES-GCM 復号 (aad = b"vimg\0" + ...)
+  4. <img src="blob:..."> で表示
+```
+
+サーバはバイト列しか触れない。画像の中身、ファイル名、MIME タイプすべて
+クライアントが復号後に得る。
+
+#### AAD 一覧 (vouchers 全暗号化フィールド)
+
+```
+画像本体:
+  aad = b"vimg\0"   + uint64_be(user_id) + b"\0" + uint64_be(voucher_id)
+
+サムネイル:
+  aad = b"vthumb\0" + uint64_be(user_id) + b"\0" + uint64_be(voucher_id)
+
+encrypted_meta_blob (original_filename + image_mime 等):
+  aad = b"vmeta\0"  + uint64_be(user_id) + b"\0" + uint64_be(voucher_id)
+
+voucher_audit_logs.encrypted_detail_blob:
+  aad = b"valog\0"  + uint64_be(user_id) + b"\0" + uint64_be(voucher_audit_log_id)
+```
+
+§12.2 のテーブル種別プレフィックスパターンを踏襲。テーブル間 / フィールド間
+のすり替え攻撃を全部検知。
+
+**AAD 重要**: `voucher_id` は POST 時にサーバが採番するため、**クライアントは
+2 段階で upload する必要がある**:
+
+```
+Step 1: POST /api/v1/vouchers/init → voucher_id 採番のみ (空レコード作成)
+Step 2: 採番された voucher_id を AAD に含めて暗号化 → PUT /api/v1/vouchers/<id> で
+        実体 upload
+```
+
+または、サーバが採番時にプレースホルダ (UUID) を返し、それを `voucher_id` の
+代わりに AAD に使う方式も検討。E4 実装時に確定。
+
+### 13.3 サムネイル生成のクライアントサイド化
+
+現行 (v4.x) はサーバ側で Pillow を使ってサムネイル生成。E2EE 後はサーバが
+原画像を見られない:
+
+```
+クライアント (アップロード時):
+  1. <canvas> で original_image を 200x200 にリサイズ
+  2. canvas.toBlob() で thumbnail_bytes 取得
+  3. AES-GCM 暗号化 (aad = b"vthumb\0" + uint64_be(user_id) + b"\0" + uint64_be(voucher_id))
+  4. POST /api/v1/vouchers/<id>/thumbnail (同様に暗号文を upload)
+```
+
+`Voucher` テーブルに `thumbnail_key` (Local / S3 上のパス) を追加。サムネイル
+表示時もクライアント復号。
+
+代替案 (見送り): サーバ側で「暗号文 → サムネイル生成」は不可能 (画像本体を
+見られない)。
+
+### 13.4 電帳法 `file_hash` の扱い (Q11)
+
+**Q11**: 電帳法スキャナ保存の改ざん防止証跡 (`Voucher.file_hash`、現行は
+サーバが SHA-256 計算) を E2EE 下でどう扱うか。
+
+選択肢:
+
+- **(a) 暗号文の SHA-256 を保存**: サーバが計算可能だが、暗号文の不変性しか
+  証明しない (鍵紛失 = 検証不能)
+- **(b) 平文の SHA-256 をクライアントが計算してアップロード**: サーバは
+  クライアントを信頼する必要があるが、電帳法上の「改ざん防止」は維持
+- **(c) HMAC(MK, plaintext)**: タンパー検出に MK が必要 (= ユーザー自身)、
+  暗号学的に最も堅い
+
+→ **(b) + (a) のハイブリッド**:
+- `file_hash_plain` (= SHA-256(plaintext), 平文ハッシュ): サーバに保存。
+  クライアントが復号後に再計算して検証
+- `file_hash_cipher` (= SHA-256(ciphertext), 暗号文ハッシュ): サーバが
+  upload 時に計算して保存。サーバ管理者が「あるはずの画像が改ざんされて
+  いないか」を MK なしで検証可能
+- 両方が `Voucher` テーブルにあれば、改ざん検出は二重化される
+
+データモデル:
+
+```
+vouchers:
+  file_hash_plain  bytea  -- SHA-256(plaintext)、クライアント送信
+  file_hash_cipher bytea  -- SHA-256(ciphertext)、サーバ計算 (v4.x の file_hash 相当)
+```
+
+#### 電帳法対応の継続性
+
+- 「訂正削除の事実と内容を確認できること」: `VoucherAuditLog` 継続 (detail は
+  暗号化、action は平文でフィルタ可能)
+- 「タイムスタンプ」: `uploaded_at` 平文継続
+- 「ハッシュ検証」: `file_hash_plain` + `file_hash_cipher` 二重化
+- 「検索機能 (日付 / 金額 / 取引先)」: §13.5 参照
+
+### 13.5 検索 (Voucher search 電帳法対応) の影響
+
+現行 `Voucher` 検索は仕訳の `date / amount / description` 経由 (Phase 2)。
+E3 後はこれらが暗号化されるので、§12.4 の「クライアント全件取得 + JS フィルタ」
+を踏襲。
+
+- 日付フィルタ: `journal_entries.fiscal_year` (平文) で年度別取得 → クライ
+  アント側で日付フィルタ
+- 金額フィルタ: クライアント側でレンジ計算
+- 摘要 / 取引先検索: クライアント側で部分一致
+
+### 13.6 AI 証憑解析の連携 (§11.3, §12.6 と整合)
+
+```
+クライアント (AI 解析):
+  1. 暗号文画像を fetch + AES-GCM 復号 → 平文 image_bytes
+  2. base64(image_bytes) を OpenAI/Anthropic API に直接送信
+  3. レスポンス (仕訳候補 JSON) を MK で暗号化
+  4. POST /api/v1/ai-drafts (encrypted_blob として)
+```
+
+サーバ側 AI 呼び出し (`ai_receipt.py`) は v5.0 で全廃 (§11.3 / §12.6 と一致)。
+
+### 13.7 AuditPackage の証憑添付 (§7 (d) と連携)
+
+§7 (d) ワークフロー方式で監査者にスナップショットを送る際、関連証憑画像も
+同梱する場合:
+
+```
+クライアント (AuditPackage 作成):
+  1. 仕訳セットを auditor の公開鍵で暗号化 (§7 (d))
+  2. 関連 voucher 画像も復号 → auditor 公開鍵で再暗号化
+  3. AuditPackage に画像 BLOB を含める (or 別の attachment テーブル)
+```
+
+実装詳細は E5 (監査連携) で確定。E4 ではフックを残しておく形。
+
+### 13.8 ストレージ抽象化 (Local / S3) との両立
+
+現行 `app/services/storage.py` の `LocalStorage` / `S3Storage` を維持:
+
+- 違いは「バイト列を Local / S3 に書く」のみで、E2EE 化に影響なし
+- presigned URL (S3) も暗号文を返すだけなので OK
+- ETag / Content-Type は暗号文に対するもの (`application/octet-stream`)
+
+### 13.9 マイグレーション戦略
+
+```
+Phase E4 マイグレーション:
+  1. vouchers テーブルに新カラム ADD:
+     - encrypted_meta_blob, meta_iv (NULL)
+     - file_hash_plain (NULL)
+     - thumbnail_key (NULL)
+  2. メンテナンスウィンドウで全画像を暗号化変換:
+     - サーバ側で「Fernet 復号できる API キー」と同じ要領で、平文画像を読み
+       一時 MK で暗号化 → ストレージに上書き
+     - file_hash (v4.x) → file_hash_cipher にリネーム / コピー
+  3. ユーザーが鍵設定完了後、クライアントが再暗号化:
+     - 一時 MK で復号 → 自分の MK で再暗号化 → 再 upload
+     - file_hash_plain をクライアントが計算して PUT
+  4. 全件再暗号化完了後、サーバから一時 MK 破棄
+```
+
+注意: 画像はデータ量が大きいので、移行所要時間は仕訳の数十倍。バッチ処理 +
+進捗 UI が必須。E7 のメンテナンスウィンドウで E3 と並行して進める。
+
+#### 一時 MK の安全性と運用
+
+§6 と §10.2 / §12.9 で扱った「一時 MK」の E4 への適用詳細:
+
+1. **生成・配布**:
+   - サーバ管理者が `flask migration-genkey` CLI で生成 (32B random)
+   - サーバ DB に `users.migration_temp_mk` (一時カラム、暗号化なし) で保管
+   - 移行期間外は NULL のみ
+2. **再暗号化の進捗追跡**:
+   - `vouchers.encrypted_meta_blob IS NULL` の件数を `users` ごとに集計
+   - 集計値を `users.migration_pending_vouchers` (smallint, デバッグ用) に
+     キャッシュ
+   - クライアントが PUT で再暗号化するたびに -1 デクリメント
+3. **未完ユーザーの扱い**:
+   - 移行猶予期間 (§6 の 30 日) 経過後も未完了のユーザー: アカウントロック
+     → 「鍵設定完了するか退会するか」を選択させる UI
+   - 退会選択時はサーバが一時 MK で復号して CSV エクスポート (E2EE 完了前の
+     最後のチャンス、ユーザー同意の上)
+4. **一時 MK 廃棄条件**:
+   - 全アクティブユーザーの `migration_pending_vouchers = 0` を確認
+   - 管理者が `flask migration-finalize` CLI を実行
+     - 全 `users.migration_temp_mk` を SQL UPDATE で NULL
+     - 関連ストレージ上の旧 Fernet 鍵 (SECRET_KEY 経由) もローテーション
+   - 廃棄後は復元不可能 → ロックされたユーザーのデータは復号不能 (規約で明示)
+5. **ロスト防止**:
+   - 廃棄前のスナップショットをサーバ管理者が S3 など別ストレージに 30 日
+     保管 (緊急時の復旧用、運用ガイドに明記)
+6. **一時 MK の保管リスクと緩和策**:
+   - `migration_temp_mk` は DB 平文保存。移行ウィンドウ中に DB が侵害されると
+     **全ユーザーの一時 MK が漏洩し、移行中データが解読可能** になる
+   - 緩和策の選択肢 (運用ガイドで規定):
+     - **(a) HSM / KMS 連携**: AWS KMS, GCP KMS, Azure Key Vault 等の外部
+       鍵管理サービスで一時 MK を保管。サーバアプリは KMS 経由で復号操作
+       のみ可能
+     - **(b) 短時間保持**: メンテナンスウィンドウ (数時間) のみ DB 平文保管、
+       終了後即 NULL クリア。簡易だが運用が固い
+   - v5.0 リリース時は (b) を最小要件、(a) を推奨として運用ガイドに記載
+
+注: §12.9 (E3) の一時 MK についても同じリスクと緩和策が適用される (本節を
+参照)。
+
+### 13.10 E4 完了条件
+
+- [ ] `vouchers` テーブルに `encrypted_meta_blob`, `meta_iv`, `file_hash_plain`, `thumbnail_key` カラム追加マイグレーション
+- [ ] `voucher_audit_logs` に `encrypted_detail_blob`, `detail_iv` 追加
+- [ ] 2 段階 upload (init で voucher_id 採番 → AAD に含めて実体 upload) の API 設計確定
+- [ ] 画像本体のクライアントサイド AES-GCM 暗号化 (AAD `vimg\0` + user_id + voucher_id)
+- [ ] サムネイル生成のクライアントサイド化 (canvas, 200x200, AAD `vthumb\0` + ...)
+- [ ] `file_hash_plain` (クライアント計算) と `file_hash_cipher` (サーバ計算) の二重化
+- [ ] サーバ側 Pillow サムネイル生成コード (`image.py`) の廃止
+- [ ] サーバ側 AI 解析 (`ai_receipt.py`) のクライアントサイド移行 (§11.3, §12.6)
+- [ ] presigned URL 取得 → クライアント復号フロー (S3 / Local 両対応)
+- [ ] テスト: AAD `vimg` / `vthumb` 攻撃で復号失敗
+- [ ] テスト: file_hash_plain / file_hash_cipher の両方が改ざん検出に効く
+- [ ] テスト: 電帳法 Phase 2 検索 (日付 / 金額 / 取引先) がクライアントサイドで動作
+- [ ] テスト: VoucherAuditLog の detail 暗号化が機能
+- [ ] テスト: S3 / Local 両ストレージで E4 が動作
+- [ ] AuditPackage への証憑同梱用フック (E5 向け stub / API 設計メモ) の確認
+- [ ] 一時 MK 運用 CLI (`flask migration-genkey` / `flask migration-finalize`) の実装と運用ガイド整備
+
+### 13.11 E5 (監査連携) への影響
+
+E4 で確立されるパターン:
+
+- 画像 BLOB の AES-GCM 暗号化 (AAD = テーブル種別 + user_id + entity_id)
+- file_hash の plain / cipher 二重化 (改ざん防止 + サーバ独立検証)
+- ストレージ抽象化 (Local / S3) と暗号化の両立
+
+E5 では AuditPackage の暗号化 (X25519 公開鍵 + AES-GCM のハイブリッド) と
+画像同梱 (E4 で復号 → 監査者公開鍵で再暗号化) を組合せる。
+
+---
+
+## 14. 次のステップ
 
 1. 本書のレビュー・合意形成
 2. E0 プロトタイプ:
