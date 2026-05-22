@@ -1842,9 +1842,30 @@ INDEX (audit_package_id)
 INDEX (expires_at)
 ```
 
+#### 採用 (acceptance) の扱い
+
+owner が「採用」を選んだ場合は **AuditResponse は作成しない**。理由:
+
+- 修正案の採用 = E3 フローで新仕訳を作成すること (AuditResponse とは別の操作)
+- auditor 側は「対応する仕訳が更新された」ことを次回スナップショットで観察
+  可能 (差分表示)
+- 別 endpoint で `audit_packages.owner_accepted_at` を更新し、auditor 画面に
+  「採用済」表示
+  ```
+  POST /api/v1/audit-packages/<id>/accept  → owner_accepted_at = NOW()
+  ```
+- `audit_packages` に `owner_accepted_at timestamptz NULL` カラムを追加
+
+これにより auditor は (a) 採用 / (b) 差戻し / (c) 修正案 (新仕訳作成) の
+3 つの結果を区別できる。
+
 ### 14.3 HPKE (RFC 9180) フロー
 
-ephemeral 鍵 + AEAD でフォワードセクレシーを実現:
+ephemeral 鍵 + AEAD でフォワードセクレシーを実現。
+**以下の擬似コードは HPKE ライブラリ内部処理の解説**。実装側は HPKE ライブラリ
+(`@hpke-js/core` / `hpke-py`) の高レベル API
+(`createSenderContext` / `seal` / `open`) を呼び出すだけで内部的に同じことが
+行われる。:
 
 ```
 [owner クライアント] 送信時:
@@ -1854,7 +1875,9 @@ ephemeral 鍵 + AEAD でフォワードセクレシーを実現:
   4. shared_secret = X25519(ephemeral_priv, auditor.public_key)
   5. key, base_nonce = HKDF(shared_secret, info="iikanji-audit-package-v1", L=44)
      ※ HPKE base mode の標準フロー
-  6. aad = b"ap\0" + uint64_be(audit_package_id) + b"\0" + uint32_be(round_id)
+  6. aad = b"ap" (2B) + uint64_be(audit_package_id) (8B) + uint32_be(round_id) (4B) = 14B
+     ※ §12.2 と同様、固定長エンコードのためセパレータ \0 はオプション
+     (本仕様では含めない。実装時は HPKE ライブラリの aad パラメータに 14B を渡す)
   7. ciphertext = AES-256-GCM.Seal(key, base_nonce, snapshot, aad)
   8. ephemeral_priv を破棄 (フォワードセクレシー)
   9. POST /api/v1/audit-packages { ephemeral_pubkey, ciphertext, snapshot_hash, ... }
@@ -1863,7 +1886,7 @@ ephemeral 鍵 + AEAD でフォワードセクレシーを実現:
   10. GET /api/v1/audit-packages/<id> → ephemeral_pubkey, ciphertext, snapshot_hash
   11. shared_secret = X25519(auditor.private_key, ephemeral_pubkey)
   12. key, base_nonce = HKDF(shared_secret, info="iikanji-audit-package-v1", L=44)
-  13. aad = b"ap\0" + uint64_be(audit_package_id) + b"\0" + uint32_be(round_id)
+  13. aad = b"ap" + uint64_be(audit_package_id) + uint32_be(round_id) (14B、送信側と同一)
   14. snapshot = AES-256-GCM.Open(key, base_nonce, ciphertext, aad)
   15. SHA-256(snapshot) == snapshot_hash で改ざん検証
 ```
@@ -2021,7 +2044,15 @@ E5 実装で `AuditGrant.revoked_at` を見てサーバ側で 403 を返すロ�
 - [ ] AuditGrant.revoked_at による新規 GET 拒否
 - [ ] `flask audit-cleanup` CLI (90 日 TTL の自動削除、cron / systemd timer 連動)
 - [ ] v4.x の Lv2 リアルタイム閲覧 UX (auditor がログインして閲覧) の廃止
+- [ ] **段階的告知計画**:
+  - v4.x 最終マイナー (例 v4.9.0) で auditor ダッシュボードに deprecation
+    バナー表示「v5.0 から監査連携は非同期ワークフロー方式に変わります」
+  - v5.0 リリース 1 ヶ月前にメール通知 (§6 と統合)
+  - v5.0 移行猶予期間中は dual UX (v4.x スタイルと v5.0 ワークフロー両対応)
+    は実装しない (UX が複雑化するため)
+  - 猶予期間後はワークフロー方式のみ、リアルタイム閲覧 UI は完全削除
 - [ ] 既存 AuditGrant ユーザーへの移行ガイド (v5.0 で非同期ワークフローに切替)
+- [ ] `audit_packages.owner_accepted_at` カラム追加 + `/accept` endpoint
 - [ ] テスト: HPKE 復号失敗 (rogue ephemeral_pubkey すり替え) → 検知
 - [ ] テスト: AAD すり替え (他 round_id への入れ替え) → 復号失敗
 - [ ] テスト: owner_user_id / auditor_user_id フィルタ IDOR (他者の package が取れない)
