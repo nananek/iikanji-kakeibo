@@ -1,0 +1,5 @@
+{
+  "type": "module",
+  "private": true,
+  "description": "E2EE crypto modules (E1 #108). Set type=module so Node can run these via ES module imports for tests; browser loads via <script type=\"module\"> independently."
+}
