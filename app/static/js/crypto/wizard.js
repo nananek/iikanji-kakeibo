@@ -220,7 +220,15 @@ export function encryptionKeyWizard() {
         await this._client.unwrap(derived, wk.wrapped_master_key, wk.wrap_iv);
         await this._onUnlockSuccess();
       } catch (e) {
-        this.error = e?.message || "Passkey 解除に失敗しました。";
+        // 情報漏洩防止: 内部メッセージ (Worker タイムアウト・AES-GCM タグ NG
+        // 等) はそのまま UI に出さず、汎用メッセージに統一する。
+        // WebAuthn キャンセル (NotAllowedError) のみユーザー操作の意図が
+        // 明確なので区別可能にする。
+        if (e?.name === "NotAllowedError") {
+          this.error = "Passkey 認証がキャンセルされました。";
+        } else {
+          this.error = "解除に失敗しました。正しい Passkey を使用しているか確認してください。";
+        }
       } finally {
         if (derived && derived.byteLength > 0) {
           try { derived.fill(0); } catch (_e) { /* detached */ }
