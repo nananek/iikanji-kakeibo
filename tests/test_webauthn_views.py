@@ -252,6 +252,25 @@ class TestKeyDerivationOptions:
             from webauthn.helpers.structs import UserVerificationRequirement
             assert call_kwargs["user_verification"] == UserVerificationRequirement.REQUIRED
 
+    def test_credential_id_must_be_int(self, db, logged_in_client, user, accounts):
+        """credential_id に文字列等を渡すと 400 (500 にしない)。"""
+        # まず Passkey を登録 (未登録だと別の 400 になる)
+        cred = WebAuthnCredential(
+            user_id=user.id, credential_id=b"\x99",
+            credential_public_key=b"pub", current_sign_count=0,
+        )
+        db.session.add(cred)
+        db.session.commit()
+
+        for bad in ["abc", [1, 2], {"k": 1}, True, False, 0, -1, 1.5]:
+            resp = logged_in_client.post(
+                "/webauthn/key-derivation/options",
+                json={"credential_id": bad},
+            )
+            assert resp.status_code == 400, f"input {bad!r} should reject"
+            body = resp.get_json()
+            assert "credential_id" in body["error"]
+
     def test_filter_by_credential_id(self, db, logged_in_client, user, accounts):
         cred_a = WebAuthnCredential(
             user_id=user.id, credential_id=b"\x01",

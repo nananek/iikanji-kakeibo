@@ -226,6 +226,20 @@ def key_derivation_options():
     body = request.get_json(silent=True) or {}
     target_db_id = body.get("credential_id")
 
+    # credential_id は省略可だが、指定する場合は正の整数のみ受理。
+    # 文字列・配列を渡すと SQLAlchemy が PostgreSQL に INTEGER = 'abc' を
+    # 送って InvalidTextRepresentation → 500 エラーになる経路を塞ぐ。
+    if target_db_id is not None:
+        # bool は int のサブクラスなので明示的に除外
+        if isinstance(target_db_id, bool) or not isinstance(target_db_id, int):
+            return jsonify(
+                error="credential_id は正の整数で指定してください。",
+            ), 400
+        if target_db_id <= 0:
+            return jsonify(
+                error="credential_id は正の整数で指定してください。",
+            ), 400
+
     query = WebAuthnCredential.query.filter_by(user_id=current_user.id)
     if target_db_id is not None:
         query = query.filter(WebAuthnCredential.id == target_db_id)
