@@ -121,6 +121,7 @@ export async function rotateBegin() {
     method: "POST",
     credentials: "include",
     headers: _baseHeaders(),
+    body: "{}",  // Content-Type=application/json と整合させる (WAF/プロキシ対策)
   });
   if (!r.ok) throw new Error(`rotate begin failed: HTTP ${r.status}`);
   return r.json();  // { rotation_token, auto_abort_at }
@@ -131,6 +132,7 @@ export async function rotateCommit(rotationToken) {
     method: "POST",
     credentials: "include",
     headers: { ..._baseHeaders(), "X-Rotation-Id": rotationToken },
+    body: "{}",
   });
   if (!r.ok) {
     const err = await r.json().catch(() => ({}));
@@ -144,6 +146,7 @@ export async function rotateAbort(rotationToken) {
     method: "POST",
     credentials: "include",
     headers: { ..._baseHeaders(), "X-Rotation-Id": rotationToken },
+    body: "{}",
   });
   if (!r.ok) throw new Error(`rotate abort failed: HTTP ${r.status}`);
   return r.json();  // { deleted }

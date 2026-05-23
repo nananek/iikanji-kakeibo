@@ -49,7 +49,12 @@ export async function aesGcmDecrypt(key, ciphertext, iv, aad) {
   return new Uint8Array(pt);
 }
 
-/** rawMK (32B) を rawWrappingKey (32B) で AES-GCM 暗号化。{ iv, wrapped } を返す。 */
+/**
+ * rawMK (32B) を rawWrappingKey (32B) で AES-GCM 暗号化。{ iv, wrapped } を返す。
+ *
+ * 呼び出し側へのお願い: 機密性の高い rawMk / rawWrappingKey は呼び出し後に
+ * `.fill(0)` でゼロ埋めすること (Worker 内では worker.js が実施済み)。
+ */
 export async function wrapMasterKey(rawMk, rawWrappingKey) {
   if (!isUint8(rawMk) || rawMk.byteLength !== 32) {
     throw new Error("rawMk must be Uint8Array of 32 bytes");
@@ -61,7 +66,12 @@ export async function wrapMasterKey(rawMk, rawWrappingKey) {
   return aesGcmEncrypt(wrappingKey, rawMk);
 }
 
-/** wrapped を rawWrappingKey (32B) で AES-GCM 復号 → rawMK (32B) を返す。 */
+/**
+ * wrapped を rawWrappingKey (32B) で AES-GCM 復号 → rawMK (32B) を返す。
+ *
+ * 呼び出し側へのお願い: 復号成功した rawMK と rawWrappingKey は使用後に
+ * `.fill(0)` でゼロ埋めすること。
+ */
 export async function unwrapMasterKey(wrapped, iv, rawWrappingKey) {
   if (!isUint8(rawWrappingKey) || rawWrappingKey.byteLength !== 32) {
     throw new Error("rawWrappingKey must be Uint8Array of 32 bytes");

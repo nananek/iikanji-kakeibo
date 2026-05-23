@@ -9,12 +9,16 @@
 //   console.log(fromUtf8(plaintext));  // "hello"
 
 export class CryptoClient {
+  // #worker は private field。外部コードから直接 postMessage されると
+  // setKey で既知鍵注入 / clearKey で可用性破壊 / id 偽装で Promise 汚染
+  // が可能になるため、必ずこのクラスのメソッド経由で送信させる。
+  #worker;
+
   constructor(workerUrl) {
-    // #worker (private field) で外部からの直接 postMessage を防ぐ
-    this.worker = new Worker(workerUrl, { type: "module" });
+    this.#worker = new Worker(workerUrl, { type: "module" });
     this.nextId = 1;
     this.pending = new Map();
-    this.worker.onmessage = (ev) => {
+    this.#worker.onmessage = (ev) => {
       const { id, ok, error, ...rest } = ev.data || {};
       const slot = this.pending.get(id);
       if (!slot) return;
@@ -29,15 +33,15 @@ export class CryptoClient {
       for (const { reject } of this.pending.values()) reject(err);
       this.pending.clear();
     };
-    this.worker.onerror = failAll("worker crashed");
-    this.worker.onmessageerror = failAll("worker message error");
+    this.#worker.onerror = failAll("worker crashed");
+    this.#worker.onmessageerror = failAll("worker message error");
   }
 
   _send(payload) {
     const id = this.nextId++;
     return new Promise((resolve, reject) => {
       this.pending.set(id, { resolve, reject });
-      this.worker.postMessage({ id, ...payload });
+      this.#worker.postMessage({ id, ...payload });
     });
   }
 
@@ -87,7 +91,7 @@ export class CryptoClient {
   }
 
   terminate() {
-    this.worker.terminate();
+    this.#worker.terminate();
     for (const { reject } of this.pending.values()) {
       reject(new Error("worker terminated"));
     }

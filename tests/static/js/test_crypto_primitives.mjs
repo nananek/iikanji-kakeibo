@@ -125,3 +125,32 @@ test("wrap 結果は毎回異なる (IV が乱数)", async () => {
   assert.notDeepEqual([...a.iv], [...b.iv]);
   assert.notDeepEqual([...a.ciphertext], [...b.ciphertext]);
 });
+
+
+test("wrapMasterKey は rawMk 32B 以外を弾く", async () => {
+  await assert.rejects(
+    () => wrapMasterKey(randomBytes(16), randomBytes(32)),
+    /rawMk must be Uint8Array of 32 bytes/,
+  );
+});
+
+
+test("wrapMasterKey は rawWrappingKey 32B 以外を弾く", async () => {
+  await assert.rejects(
+    () => wrapMasterKey(randomBytes(32), randomBytes(16)),
+    /rawWrappingKey must be Uint8Array of 32 bytes/,
+  );
+});
+
+
+test("unwrapMasterKey は rawWrappingKey 32B 以外を弾く", async () => {
+  // 有効な wrap 結果を用意
+  const rawMk = randomBytes(32);
+  const rawWk = randomBytes(32);
+  const { iv, ciphertext } = await wrapMasterKey(rawMk, rawWk);
+  // wrongSize な wrappingKey で unwrap → reject
+  await assert.rejects(
+    () => unwrapMasterKey(ciphertext, iv, randomBytes(24)),
+    /rawWrappingKey must be Uint8Array of 32 bytes/,
+  );
+});
