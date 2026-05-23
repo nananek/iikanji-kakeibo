@@ -31,6 +31,7 @@ export class IdleMonitor {
   #handlers = [];
   #lastTouch = 0;
   #stopped = false;
+  #started = false;
 
   /**
    * @param {CryptoClientLike} client          touch() を持つ SharedCryptoClient 等
@@ -55,8 +56,13 @@ export class IdleMonitor {
     this.throttleMs = opts.throttleMs ?? DEFAULT_THROTTLE_MS;
   }
 
-  /** 購読開始。初回 touch を即時発火する (last activity を確定するため)。 */
+  /**
+   * 購読開始。初回 touch を即時発火する (last activity を確定するため)。
+   * 二重呼び出しは no-op (リスナー二重登録防止)。
+   */
   start() {
+    if (this.#started) return;
+    this.#started = true;
     if (this.#target) {
       const opts = { passive: true, capture: true };
       const onActivity = () => this.touch();
@@ -104,6 +110,7 @@ export class IdleMonitor {
 
   stop() {
     this.#stopped = true;
+    this.#started = false;
     for (const h of this.#handlers) {
       try {
         if (h.opts) h.target.removeEventListener(h.event, h.fn, h.opts);

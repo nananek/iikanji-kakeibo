@@ -156,6 +156,27 @@ test("stop 後はイベントが来ても touch しない", () => {
 });
 
 
+test("start() 二重呼び出しはリスナーを二重登録しない", () => {
+  const client = makeStubClient();
+  const target = new EventTarget();
+  const doc = makeStubDoc();
+  let t = 1000;
+  const m = new IdleMonitor(client, {
+    target, docTarget: doc, throttleMs: 100,
+    now: () => t,
+    events: ["mousedown"],
+  });
+  m.start();
+  m.start(); // 二度目は no-op
+  client.calls.length = 0;
+  t = 1500;
+  target.dispatchEvent(new Event("mousedown"));
+  // 二重登録されていれば 2 回呼ばれる。1 回だけなら OK
+  assert.equal(client.calls.length, 1);
+  m.stop();
+});
+
+
 test("client.touch が reject しても IdleMonitor は止まらない", async () => {
   const calls = [];
   const client = {

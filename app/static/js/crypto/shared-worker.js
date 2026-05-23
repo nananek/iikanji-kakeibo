@@ -26,13 +26,22 @@ const state = new MasterKeyState();
 const ports = new Set();
 
 function broadcast(eventName) {
+  // postMessage が throw した port は dead (close 済み) とみなして Set から除去。
+  // 注: タブが正常クローズしたケースは postMessage が silent no-op になる
+  //     (throw しない) ため、ここでは完全な dead 検知はできない。
+  // 注: `onmessageerror` は受信メッセージのデシリアライズ失敗時のみ発火し、
+  //     タブクローズでは発火しないため、close 検知ハンドラとしては機能しない。
+  // SharedWorker は全タブクローズで終了するため leak は寿命内に限定される。
+  // 完全なクローズ検知が必要なら BroadcastChannel + heartbeat への移行を検討。
+  const dead = [];
   for (const port of ports) {
     try {
       port.postMessage({ event: eventName });
     } catch (_e) {
-      // ポートが既に閉じられている場合は次の onmessageerror で除去される
+      dead.push(port);
     }
   }
+  for (const p of dead) ports.delete(p);
 }
 
 self.onconnect = (ev) => {
@@ -57,6 +66,7 @@ self.onconnect = (ev) => {
   };
 
   port.onmessageerror = () => {
+    // 受信メッセージのデシリアライズ失敗時に発火。port が壊れているので除去。
     ports.delete(port);
   };
 

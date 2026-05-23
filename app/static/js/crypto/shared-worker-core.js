@@ -56,7 +56,16 @@ export class MasterKeyState {
     if (!isUint8(rawBytes) || rawBytes.byteLength !== 32) {
       throw new Error("master key must be Uint8Array of 32 bytes");
     }
-    this.cryptoKey = await importAesKey(rawBytes, ["encrypt", "decrypt"]);
+    // 順序の意図 (importAesKey 失敗時にも整合性を保つ):
+    //   1) await して新 cryptoKey を得る — ここで throw すれば全フィールド未変更で巻き戻る
+    //   2) 以降は同期ブロック: cryptoKey 代入 → 旧 rawMasterKey ゼロ埋め →
+    //      新 rawMasterKey 代入 → hasKey=true まで他タスク割り込み不可
+    //      (JS は単一スレッド、await のない連続代入は他のメッセージハンドラから
+    //       中間状態として観測されない)
+    // 逆に「rawMasterKey を await 前に先行代入」は failure 時に
+    // cryptoKey と rawMasterKey が不整合になるため不可。
+    const newCryptoKey = await importAesKey(rawBytes, ["encrypt", "decrypt"]);
+    this.cryptoKey = newCryptoKey;
     if (this.rawMasterKey) this.rawMasterKey.fill(0);
     this.rawMasterKey = new Uint8Array(rawBytes); // コピー保持
     this.hasKey = true;
