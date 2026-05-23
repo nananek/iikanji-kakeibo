@@ -27,6 +27,7 @@ import {
   generateMnemonic,
 } from "./bip39.js";
 import { loadHashWasm } from "./hash_wasm_loader.js";
+import { beginPasskeyKeyDerivation } from "./passkey_flow.js";
 
 
 // SharedWorker URL は base.html 等で `window.IIKANJI_SHARED_WORKER_URL` に
@@ -133,6 +134,54 @@ export function encryptionKeyWizard() {
       this.passphrase = "";
       this.passphraseConfirm = "";
       this.step = "passphrase";
+    },
+
+    /**
+     * Passkey 方式の選択。WebAuthn PRF 拡張で derived_key を派生する。
+     * 既存登録済みの Passkey が前提 (新規 Passkey 登録は /settings/passkeys)。
+     */
+    async selectPasskey() {
+      this.error = "";
+      this.loading = true;
+      let workerKeyGenerated = false;
+      try {
+        await this._ensureNewKeySafe();
+        // 1. Passkey PRF 認証 → derived_key + credential DB PK
+        const { derivedKey, credentialDbId } = await beginPasskeyKeyDerivation();
+        // 2. SharedWorker で新規 MK 生成
+        await this._client.generateKey();
+        workerKeyGenerated = true;
+        try {
+          // 3. derived_key で MK を wrap
+          const { wrapped, iv } = await this._client.wrap(derivedKey);
+          // 4. wrapped_keys に登録 (method=passkey_prf + webauthn_credential_id)
+          await createWrappedKey({
+            method: "passkey_prf",
+            wrapped_master_key: wrapped,
+            wrap_iv: iv,
+            salt: null,
+            kdf_params: null,
+            webauthn_credential_id: credentialDbId,
+            label: "Passkey (初回)",
+          });
+        } finally {
+          if (derivedKey && derivedKey.byteLength > 0) {
+            try { derivedKey.fill(0); } catch (_e) { /* detached */ }
+          }
+        }
+        workerKeyGenerated = false;
+        this.doneMethod = "passkey_prf";
+        this.step = "done";
+        this.hasKey = true;
+      } catch (e) {
+        this.error = e?.message || String(e);
+        if (workerKeyGenerated) {
+          await this._rollbackWorkerKey();
+          this.hasKey = false;
+        }
+      } finally {
+        this.loading = false;
+      }
     },
 
     async selectRecovery() {

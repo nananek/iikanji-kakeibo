@@ -1,3 +1,4 @@
+import base64
 import logging
 from datetime import datetime, timezone
 from urllib.parse import urlparse
@@ -19,7 +20,7 @@ from webauthn.helpers.structs import (
     UserVerificationRequirement,
 )
 
-from app.extensions import db
+from app.extensions import db, limiter
 from app.models.user import User
 from app.models.webauthn import WebAuthnCredential
 from app.views.helpers import maybe_clear_pending_recovery
@@ -159,8 +160,6 @@ def authenticate_verify():
     raw_id = body.get("rawId", "")
 
     # credential_id をバイナリに変換して検索
-    import base64
-
     try:
         credential_id_bytes = base64.urlsafe_b64decode(raw_id + "==")
     except Exception:
@@ -197,3 +196,125 @@ def authenticate_verify():
     if parsed.netloc or parsed.scheme:
         next_page = "/"
     return jsonify(ok=True, redirect=next_page)
+
+
+# ---------- 鍵派生用 認証 (login しない、E1 PR-F3a) ----------
+#
+# 通常の認証 (`/authenticate/verify`) は login_user を呼んでセッションを開く
+# が、鍵派生用途では「ログイン済みユーザーが Passkey をタッチして PRF
+# 出力を取り出す」ことだけが目的。session login はせず、credential の
+# 所有者検証と sign_count 更新のみ行う。
+#
+# PRF 出力 (32B) は authenticator がクライアントに返し、サーバには到達
+# しない。サーバが返すのは「この credential はあなたの所有である」確認
+# と DB PK (`webauthn_credentials.id`)。クライアントはこの DB PK を
+# wrapped_keys.webauthn_credential_id に紐付けて保存する。
+
+
+@bp.route("/key-derivation/options", methods=["POST"])
+# challenge 生成は計算負荷小だが、繰り返しブルートフォース防止として緩めに制限
+@limiter.limit("20 per minute")
+@login_required
+def key_derivation_options():
+    """鍵派生用 WebAuthn 認証チャレンジを生成。
+
+    Body (JSON): なし or {"credential_id": <db PK>} — 特定 Passkey に限定する場合
+    Returns: PublicKeyCredentialRequestOptions JSON。allow_credentials は
+             current_user の Passkey に限定する (他ユーザーの Passkey は使えない)。
+             PRF 拡張入力はクライアント側で挿入する (webauthn_prf.js
+             getPrfEvalInputBytes() を使用)。
+    """
+    body = request.get_json(silent=True) or {}
+    target_db_id = body.get("credential_id")
+
+    # credential_id は省略可だが、指定する場合は正の整数のみ受理。
+    # 文字列・配列を渡すと SQLAlchemy が PostgreSQL に INTEGER = 'abc' を
+    # 送って InvalidTextRepresentation → 500 エラーになる経路を塞ぐ。
+    if target_db_id is not None:
+        # bool は int のサブクラスなので明示的に除外
+        if isinstance(target_db_id, bool) or not isinstance(target_db_id, int):
+            return jsonify(
+                error="credential_id は正の整数で指定してください。",
+            ), 400
+        if target_db_id <= 0:
+            return jsonify(
+                error="credential_id は正の整数で指定してください。",
+            ), 400
+
+    query = WebAuthnCredential.query.filter_by(user_id=current_user.id)
+    if target_db_id is not None:
+        query = query.filter(WebAuthnCredential.id == target_db_id)
+    credentials = query.all()
+    if not credentials:
+        return jsonify(error="Passkey が登録されていません。"), 400
+
+    rp_id, _ = _get_rp_id_and_origin()
+    options = generate_authentication_options(
+        rp_id=rp_id,
+        user_verification=UserVerificationRequirement.REQUIRED,
+        allow_credentials=[
+            PublicKeyCredentialDescriptor(id=c.credential_id)
+            for c in credentials
+        ],
+    )
+    session["webauthn_key_derivation_challenge"] = options.challenge
+    return current_app.response_class(
+        options_to_json(options), content_type="application/json"
+    )
+
+
+@bp.route("/key-derivation/finalize", methods=["POST"])
+# 署名検証 + DB 書込あり。既存 authenticate_verify (未制限) よりは厳しめに
+@limiter.limit("10 per minute")
+@login_required
+def key_derivation_finalize():
+    """鍵派生フローの所有権検証 + sign_count 更新。
+
+    Body (JSON): WebAuthn credential response (rawId, response, etc.)
+    Returns: {"ok": true, "credential_id": <db PK>}
+
+    通常の認証と異なり session login は行わない。current_user は既に
+    Flask-Login でログイン済みである前提 (`@login_required`)。本人の
+    credential であることを確認することで「他のタブで他人の Passkey
+    使われる」リスクを排除する。
+    """
+    challenge = session.pop("webauthn_key_derivation_challenge", None)
+    if not challenge:
+        return jsonify(error="チャレンジが見つかりません。"), 400
+
+    body = request.get_json()
+    raw_id = body.get("rawId", "")
+
+    try:
+        credential_id_bytes = base64.urlsafe_b64decode(raw_id + "==")
+    except Exception:
+        return jsonify(error="無効なクレデンシャル ID です。"), 400
+
+    stored = WebAuthnCredential.query.filter_by(
+        credential_id=credential_id_bytes,
+        user_id=current_user.id,  # 本人の credential のみ受理 (IDOR 対策)
+    ).first()
+    if not stored:
+        return jsonify(error="このユーザーに紐付かない Passkey です。"), 400
+
+    rp_id, origin = _get_rp_id_and_origin()
+    try:
+        verification = verify_authentication_response(
+            credential=body,
+            expected_challenge=challenge,
+            expected_rp_id=rp_id,
+            expected_origin=origin,
+            credential_public_key=stored.credential_public_key,
+            credential_current_sign_count=stored.current_sign_count,
+        )
+    except Exception:
+        logger.warning(
+            "WebAuthn key-derivation verification failed", exc_info=True
+        )
+        return jsonify(error="認証に失敗しました。"), 400
+
+    stored.current_sign_count = verification.new_sign_count
+    stored.last_used_at = datetime.now(timezone.utc)
+    db.session.commit()
+
+    return jsonify(ok=True, credential_id=stored.id)
