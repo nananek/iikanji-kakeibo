@@ -97,13 +97,18 @@ def auth_required(write: bool = False, allow_session: bool = True):
 
 
 def rate_limit_key() -> str:
-    """`auth_user` 解決後のレート制限 key_func。
+    """レート制限の per-user キー。
 
-    注意: Flask-Limiter は before_request で評価するため、デコレータ順序
-    によっては `g.auth_user` 未設定で呼ばれる場合がある。その場合は IP に
-    フォールバック。
+    Flask-Limiter は before_request で評価するため、`@auth_required` ラッパー
+    が `g.auth_user` を設定する前に呼ばれる。フォールバック順:
+
+    1. `g.auth_user.id` (`@auth_required` 内で明示セットされた場合のみ — 通常は届かない)
+    2. Flask-Login の `current_user` (セッション認証は user_loader で既に確定)
+    3. IP アドレス (Bearer 認証時のフォールバック、将来 PR で per-token キーに拡張可能)
     """
     user = getattr(g, "auth_user", None)
     if user is not None:
         return f"user:{user.id}"
+    if current_user.is_authenticated:
+        return f"user:{current_user.id}"
     return request.remote_addr or "anonymous"
