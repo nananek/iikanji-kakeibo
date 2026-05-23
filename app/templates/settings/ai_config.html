@@ -46,102 +46,153 @@
     </div>
     {% endif %}
 
-    <div class="card mb-4">
+    <div class="alert alert-info small">
+      <i class="bi bi-shield-check"></i>
+      <strong>v5.0 E2EE 移行中:</strong> API キーは <strong>あなたの端末で</strong>
+      マスター鍵 (MK) により AES-256-GCM 暗号化された上で保存されます。サーバは
+      復号できません。事前に <a href="{{ url_for('settings.encryption_keys') }}">暗号鍵管理</a>
+      で MK を設定 + 解除しておく必要があります。
+    </div>
+
+    <div x-data="aiConfigForm({{ {
+      'provider': config.provider if config else 'openai',
+      'model_name': config.model_name if config else '',
+      'custom_prompt': config.custom_prompt if config else '',
+      'compliance_check': (config.compliance_check if config else False)
+    } | tojson }})" x-init="init()" class="card mb-4 shadow-sm">
+
       <div class="card-header">
         <i class="bi bi-gear"></i>
-        {% if config %}設定を変更{% else %}新規設定{% endif %}
+        <span x-text="hasConfig ? '設定を変更' : '新規設定'"></span>
       </div>
+
       <div class="card-body">
-        <form method="POST" action="{{ url_for('settings.ai_config_save') }}">
-          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <!-- 状態別バナー -->
+        <template x-if="state === 'loading'">
+          <p class="text-muted small mb-0"><span class="spinner-border spinner-border-sm me-2"></span>初期化中...</p>
+        </template>
 
-          <div class="mb-3">
-            <label class="form-label" for="providerSelect">AIプロバイダー</label>
-            <select class="form-select" name="provider" id="providerSelect">
-              {% for key, label in provider_labels.items() %}
-              <option value="{{ key }}"
-                {% if config and config.provider == key %}selected{% endif %}>
-                {{ label }}
-              </option>
-              {% endfor %}
-            </select>
+        <template x-if="state === 'no_keys'">
+          <div class="alert alert-warning small">
+            <i class="bi bi-exclamation-triangle"></i>
+            <strong>暗号鍵が未設定です。</strong>
+            <a href="{{ url_for('settings.encryption_keys') }}">暗号鍵管理</a>
+            で鍵を作成してから戻ってきてください。
           </div>
+        </template>
 
-          <div class="mb-3" id="llamaCppNote" style="display:none;">
-            <div class="alert alert-info small mb-0">
-              <i class="bi bi-info-circle"></i>
-              llama.cpp はサーバー管理者が提供しています。API キーは不要です。
-              サーバー管理者が提供を停止した場合は別のプロバイダーを選択してください。
+        <template x-if="state === 'locked'">
+          <div class="alert alert-warning small">
+            <i class="bi bi-lock"></i>
+            <strong>MK がロック中です。</strong>
+            <a href="{{ url_for('settings.encryption_keys') }}">暗号鍵管理</a>
+            で解除してから戻ってきてください。
+          </div>
+        </template>
+
+        <template x-if="state === 'need_migration'">
+          <div class="alert alert-warning small">
+            <i class="bi bi-arrow-repeat"></i>
+            <strong>旧形式 (Fernet サーバ暗号化) の API キーが残っています。</strong>
+            E2EE 形式 (クライアント暗号化) に移行してください。移行は 1 度きりで、
+            サーバ側の旧暗号データは消去されます。
+            <div class="mt-2">
+              <button class="btn btn-sm btn-warning" @click="migrate()" :disabled="migrating">
+                <span x-show="migrating" class="spinner-border spinner-border-sm me-1"></span>
+                <i class="bi bi-arrow-repeat"></i>
+                <span x-text="migrating ? '移行中...' : 'E2EE 形式に移行する'"></span>
+              </button>
             </div>
           </div>
+        </template>
 
-          <div class="mb-3">
-            <label class="form-label" for="apiKeyInput">
-              APIキー<span id="apiKeyOptional" style="display:none;" class="text-muted">（省略可）</span>
-            </label>
-            <input type="password" class="form-control" name="api_key" id="apiKeyInput"
-                   placeholder="{% if config %}(設定済み・変更する場合のみ入力){% else %}sk-... / AIza... 等{% endif %}"
-                   {% if not config %}required{% endif %}>
-            <div class="form-text">
-              APIキーは暗号化して保存されます。外部に送信されることはありません。
+        <div x-show="error" x-cloak class="alert alert-danger small" x-text="error"></div>
+        <div x-show="notice" x-cloak class="alert alert-success small" x-text="notice"></div>
+
+        <!-- 入力フォーム (ready 状態のみ表示) -->
+        <template x-if="state === 'ready'">
+          <div>
+            <div class="mb-3">
+              <label class="form-label">AI プロバイダー</label>
+              <select class="form-select" x-model="provider">
+                {% for key, label in provider_labels.items() %}
+                <option value="{{ key }}">{{ label }}</option>
+                {% endfor %}
+              </select>
             </div>
-          </div>
 
-          <div class="mb-3">
-            <label class="form-label" for="modelNameInput">モデル名（省略時はデフォルト）</label>
-            <input type="text" class="form-control" name="model_name" id="modelNameInput"
-                   value="{{ config.model_name if config else '' }}"
-                   placeholder="省略時: デフォルトモデルを使用">
-            <div class="form-text" id="defaultModelHint"></div>
-          </div>
-
-          <div class="mb-3">
-            <label class="form-label" for="customPromptInput">定型プロンプト（省略可）</label>
-            <textarea class="form-control" name="custom_prompt" id="customPromptInput"
-                      rows="4" placeholder="例: QUICPayはJCB CARD Wのこと&#10;Suicaチャージは交通費に分類">{{ config.custom_prompt if config else '' }}</textarea>
-            <div class="form-text">
-              証憑解析時にAIへ追加で伝える情報です。決済手段の対応関係や分類ルールなどを記述できます。
+            <div class="mb-3" x-show="provider === 'llama_cpp'" x-cloak>
+              <div class="alert alert-info small mb-0">
+                <i class="bi bi-info-circle"></i>
+                llama.cpp はサーバー管理者が提供しています。API キーは不要です。
+              </div>
             </div>
-          </div>
 
-          <div class="mb-3">
-            <div class="form-check form-switch">
-              <input type="checkbox" class="form-check-input" name="compliance_check"
-                     id="complianceCheckInput" role="switch"
-                     {% if config and config.compliance_check %}checked{% endif %}>
-              <label class="form-check-label" for="complianceCheckInput">
-                電帳法コンプライアンスチェック
+            <div class="mb-3" x-show="provider !== 'llama_cpp'" x-cloak>
+              <label class="form-label">
+                API キー
+                <span class="text-muted" x-show="isE2ee">(設定済み・変更する場合のみ入力)</span>
               </label>
+              <input type="password" class="form-control" x-model="apiKey"
+                     :placeholder="isE2ee ? '(変更する場合のみ入力)' : 'sk-... / AIza... 等'"
+                     :disabled="saving" autocomplete="new-password">
+              <div class="form-text">
+                <i class="bi bi-shield-check text-success"></i>
+                クライアント側で MK により AES-256-GCM 暗号化されます。サーバは平文を受け取りません。
+              </div>
             </div>
-            <div class="form-text">
-              有効にすると、画像解析時に電帳法スキャナ保存の要件（画像品質・必須情報の視認性・書類の妥当性）をAIがチェックします。
+
+            <div class="mb-3">
+              <label class="form-label">モデル名 (省略時はデフォルト)</label>
+              <input type="text" class="form-control" x-model="modelName" :disabled="saving">
             </div>
+
+            <div class="mb-3">
+              <label class="form-label">定型プロンプト (省略可)</label>
+              <textarea class="form-control" x-model="customPrompt" :disabled="saving"
+                        rows="4" placeholder="例: QUICPayはJCB CARD Wのこと"></textarea>
+              <div class="form-text">
+                証憑解析時に AI へ追加で伝える情報です。
+              </div>
+            </div>
+
+            <div class="mb-3">
+              <div class="form-check form-switch">
+                <input type="checkbox" class="form-check-input" x-model="complianceCheck"
+                       id="complianceCheckInput" role="switch" :disabled="saving">
+                <label class="form-check-label" for="complianceCheckInput">
+                  電帳法コンプライアンスチェック
+                </label>
+              </div>
+              <div class="form-text">
+                有効にすると、画像解析時に電帳法スキャナ保存の要件をチェックします。
+              </div>
+            </div>
+
+            <button class="btn btn-primary" @click="save()" :disabled="saving">
+              <span x-show="saving" class="spinner-border spinner-border-sm me-2"></span>
+              <i class="bi bi-check-lg"></i>
+              <span x-text="saving ? '暗号化中...' : '保存 (E2EE)'"></span>
+            </button>
+
+            <button class="btn btn-outline-danger ms-2" @click="deleteConfig()"
+                    x-show="hasConfig" :disabled="saving">
+              <i class="bi bi-trash"></i> 削除
+            </button>
           </div>
-
-          <button type="submit" class="btn btn-primary">
-            <i class="bi bi-check-lg"></i> 保存
-          </button>
-        </form>
+        </template>
       </div>
     </div>
 
-    {% if config %}
-    <div class="card border-danger">
-      <div class="card-header text-danger">
-        <i class="bi bi-trash"></i> 設定を削除
-      </div>
-      <div class="card-body">
-        <p class="text-muted">API設定を削除すると、AI証憑仕訳機能が使用できなくなります。</p>
-        <form method="POST" action="{{ url_for('settings.ai_config_delete') }}"
-              onsubmit="return confirm('外部AI設定を削除しますか？')">
-          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-          <button type="submit" class="btn btn-outline-danger">
-            <i class="bi bi-trash"></i> 削除
-          </button>
-        </form>
-      </div>
-    </div>
-    {% endif %}
+    <script type="module">
+      // プロジェクトの標準パターン (alpine-components.js と一致) に従い、
+      // Alpine.data('aiConfigForm', factory) で登録する。globalThis 代入は
+      // 読込順 (defer な Alpine が後ロード) に依存して脆いため避ける。
+      import { aiConfigForm } from "{{ url_for('static', filename='js/crypto/ai_config_form.js') }}";
+      document.addEventListener('alpine:init', () => {
+        Alpine.data('aiConfigForm', aiConfigForm);
+      });
+    </script>
   </div>
 
   <div class="col-lg-4">

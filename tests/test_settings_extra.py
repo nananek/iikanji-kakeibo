@@ -140,6 +140,52 @@ class TestAiConfig:
         assert resp.status_code in (302, 303)
         assert UserAIConfig.query.filter_by(user_id=user.id).first() is None
 
+    def test_page_uses_e2ee_alpine_component(
+        self, db, logged_in_client, user, accounts,
+    ):
+        """E2-B: 設定ページが Alpine.js E2EE フォーム (aiConfigForm) を使う。"""
+        resp = logged_in_client.get("/settings/ai")
+        assert resp.status_code == 200
+        body = resp.data.decode()
+        # Alpine コンポーネント呼び出し
+        assert "aiConfigForm(" in body
+        # 暗号鍵管理への誘導リンク
+        assert "/settings/encryption-keys" in body
+        # E2EE 説明文
+        assert "AES-256-GCM" in body or "E2EE" in body
+        # ai_config_form.js が読み込まれる
+        assert "ai_config_form.js" in body
+
+    def test_page_renders_existing_config_via_alpine(
+        self, db, logged_in_client, user, accounts,
+    ):
+        """既存設定が Alpine 初期値として渡される (provider 等)。
+
+        x-data の JSON 部分に "provider": "anthropic" 等が含まれることを直接
+        確認する (`<option value="anthropic">` 等の provider_labels 出力
+        と区別するため)。
+        """
+        from app.services.ai_receipt import encrypt_api_key
+        cfg = UserAIConfig(
+            user_id=user.id, provider="anthropic",
+            api_key_encrypted=encrypt_api_key("sk-existing"),
+            model_name="claude-3-5-sonnet", custom_prompt="my prompt",
+        )
+        db.session.add(cfg)
+        db.session.commit()
+        resp = logged_in_client.get("/settings/ai")
+        body = resp.data.decode()
+        # JSON 化された initial 値が x-data 属性に埋め込まれる
+        # (HTML escape された &quot; 形式で含まれる)
+        assert (
+            '&#34;provider&#34;: &#34;anthropic&#34;' in body
+            or '"provider": "anthropic"' in body
+        )
+        assert (
+            '&#34;model_name&#34;: &#34;claude-3-5-sonnet&#34;' in body
+            or '"model_name": "claude-3-5-sonnet"' in body
+        )
+
 
 class TestApiKeys:
     def test_get(self, logged_in_client, accounts):
