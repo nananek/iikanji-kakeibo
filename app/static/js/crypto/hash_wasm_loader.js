@@ -8,9 +8,18 @@
 // hash-wasm@4.12.0 (2024-12 リリース) は package "argon2id" を含む。
 //
 // セキュリティ:
-// - SRI (Subresource Integrity) hash でファイル改ざんを検出
-// - hash-wasm は MIT ライセンス + WASM ビルドで決定的、PR #117 dependa での
-//   バージョンアップは別 PR でハンドリング
+// - **本実装は SRI 検証なしで CDN を信頼している**。dynamic import() は
+//   `<script integrity="...">` 属性をサポートせず、Import Maps の
+//   `integrity` フィールド (Chrome 122+) もブラウザサポートが限定的なため、
+//   v5.0 プレビュー段階では「jsdelivr の正当性」を信頼前提としている。
+// - CDN MITM / jsdelivr 侵害シナリオでは hash-wasm にバックドアを仕込まれ、
+//   Argon2id 派生で MK の元 derived_key を窃取される可能性が残る。
+// - 将来の対策候補 (実装は別 PR):
+//   1. Import Maps integrity を使う (Chrome 122+ / Firefox 還元待ち)
+//   2. hash-wasm@4.12.0 のビルドを `app/static/js/vendor/` に同梱する
+//      (バンドラなし制約下でも単純コピーで対応可)
+// - hash-wasm は MIT ライセンス。バージョンアップ (dependa の PR 等) は
+//   別 PR でハンドリングし、本ファイルの URL も同時更新する。
 
 const HASH_WASM_VERSION = "4.12.0";
 // jsdelivr ESM bundle. argon2id を含む単一バンドル

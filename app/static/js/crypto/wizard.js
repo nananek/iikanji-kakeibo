@@ -204,10 +204,13 @@ export function encryptionKeyWizard() {
             try { derived.fill(0); } catch (_e) { /* detached */ }
           }
         }
+        // Alpine reactive data に mnemonic を残すと DevTools で 24 単語を
+        // inspect できてしまうため、成功後すぐに空文字へクリアする。
+        this.mnemonic = "";
+        this.mnemonicAcked = false;
         this.doneMethod = "recovery_seed";
         this.step = "done";
         this.hasKey = true;
-        // mnemonic は完了画面で再表示しない (リロードで消える)
       } catch (e) {
         this.error = e?.message || String(e);
       } finally {
