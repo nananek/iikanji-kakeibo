@@ -34,6 +34,19 @@ jobs:
       - name: Run tests
         run: python -m pytest tests/ -v --tb=short
 
+  js-crypto:
+    name: JS crypto primitives (Node)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+      - name: Run primitives unit tests
+        # Node 22+ の WebCrypto API + node --test を使う ESM テスト。
+        # primitives.js は worker.js が import する純粋関数 (E2EE 暗号プリミティブ)。
+        run: node --test tests/static/js/*.mjs
+
   e2e:
     runs-on: ubuntu-latest
 
