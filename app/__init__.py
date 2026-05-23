@@ -610,6 +610,7 @@ def register_cli(app):
         aborted = 0
         deleted_total = 0
         skipped = 0
+        errors = 0
         for user in users:
             state = user.mk_rotation_state or {}
             if state.get("status") != "rotating":
@@ -624,7 +625,8 @@ def register_cli(app):
             if deadline is None or deadline > now:
                 skipped += 1
                 continue
-            # auto_abort 実行
+            # auto_abort をユーザー単位で実行・コミット (1 ユーザーの失敗を他に
+            # 巻き込まないよう独立トランザクション)
             new_set = state.get("new_wrapped_keys_id_set", []) or []
             if dry_run:
                 aborted += 1
@@ -635,20 +637,24 @@ def register_cli(app):
                     f"deadline={auto_abort_at}"
                 )
                 continue
-            if new_set:
-                deleted = (
-                    WrappedKey.query
-                    .filter_by(user_id=user.id)
-                    .filter(WrappedKey.id.in_(new_set))
-                    .delete(synchronize_session=False)
-                )
-                deleted_total += deleted
-            user.mk_rotation_state = None
-            aborted += 1
-        if not dry_run:
-            db.session.commit()
+            try:
+                if new_set:
+                    deleted = (
+                        WrappedKey.query
+                        .filter_by(user_id=user.id)
+                        .filter(WrappedKey.id.in_(new_set))
+                        .delete(synchronize_session=False)
+                    )
+                    deleted_total += deleted
+                user.mk_rotation_state = None
+                db.session.commit()
+                aborted += 1
+            except Exception as exc:
+                db.session.rollback()
+                errors += 1
+                print(f"  skip: user_id={user.id} error={exc}")
         print(
             f"rotate-cleanup: aborted={aborted}, "
             f"deleted_wrapped_keys={deleted_total}, "
-            f"still_in_window={skipped}"
+            f"still_in_window={skipped}, errors={errors}"
         )

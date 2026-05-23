@@ -249,7 +249,11 @@ def create_wrapped_key():
         # UNIQUE 制約違反 (passphrase / recovery_seed の重複 or 同 credential 重複)
         return jsonify(error="conflict with existing wrapped_key"), 409
 
-    # X-Rotation-Id ヘッダがあれば new_wrapped_keys_id_set に登録 (§10.5)
+    # X-Rotation-Id ヘッダがあれば new_wrapped_keys_id_set に登録 (§10.5)。
+    # 並行性注意: 別リクエストの abort が flush〜commit の間に走ると、
+    # この commit が state を旧 dict で上書きして「state 復活」する可能性が
+    # ある。ローテーション中の並行操作は実用上避けられる (UI で 1 つの
+    # rotation 操作中は他をブロック) ので許容範囲。
     if _verify_rotation_token(g.auth_user):
         _record_new_wrapped_key_id(g.auth_user, row.id)
 
@@ -376,8 +380,10 @@ def rotate_commit():
 
     new_set = set(state.get("new_wrapped_keys_id_set", []))
     if not new_set:
+        # commit する new wrapped_key が無い場合は abort で state クリアして
+        # やり直すのが正しいフロー (commit は new_set を残さないため)
         return jsonify(
-            error="no new wrapped_keys recorded for this rotation"
+            error="no new wrapped_keys recorded; use /rotate/abort to clear state"
         ), 409
 
     # user_id フィルタを厳格適用して旧 wrapped_keys を削除 (IDOR 防止)。

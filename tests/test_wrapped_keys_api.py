@@ -829,6 +829,36 @@ def test_rotate_abort_deletes_new_keys(client, db):
     assert user_refreshed.mk_rotation_state is None
 
 
+def test_rotate_abort_without_token_returns_403(client, db):
+    """abort も token なしは 403。"""
+    user = _make_user(db)
+    _begin_rotation(client, user)
+    resp = client.post("/api/v1/wrapped-keys/rotate/abort")
+    assert resp.status_code == 403
+
+
+def test_rotate_abort_with_wrong_token_returns_403(client, db):
+    """abort も wrong token は 403。"""
+    user = _make_user(db)
+    _begin_rotation(client, user)
+    resp = client.post(
+        "/api/v1/wrapped-keys/rotate/abort",
+        headers={"X-Rotation-Id": "rot_wrong"},
+    )
+    assert resp.status_code == 403
+
+
+def test_rotate_abort_when_not_rotating_returns_403(client, db):
+    """rotation 未開始で abort も 403 (token 検証で state=None なら一律 403)。"""
+    user = _make_user(db)
+    _login(client, user)
+    resp = client.post(
+        "/api/v1/wrapped-keys/rotate/abort",
+        headers={"X-Rotation-Id": "rot_anything"},
+    )
+    assert resp.status_code == 403
+
+
 def test_rotate_other_user_cannot_use_token(client, db):
     """他ユーザーの rotation_token では rotation 操作不可。
 
