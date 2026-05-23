@@ -121,6 +121,9 @@ export function aiConfigForm(initial = {}) {
     provider: initial.provider || "openai",
     apiKey: "",
     modelName: initial.model_name || "",
+    // 「現在サーバに保存されている provider」のスナップショット。
+    // 切替検出に使い、provider 変更時に新 API キー入力を強制する。
+    _savedProvider: null,
     customPrompt: initial.custom_prompt || "",
     complianceCheck: !!initial.compliance_check,
     saving: false,
@@ -167,6 +170,7 @@ export function aiConfigForm(initial = {}) {
           this.hasLegacyKey = !!cfg.has_legacy_key;
           this.isE2ee = !!cfg.is_e2ee;
           this.provider = cfg.provider || this.provider;
+          this._savedProvider = cfg.provider || null;
           this.modelName = cfg.model_name || "";
           this.customPrompt = cfg.custom_prompt || "";
           this.complianceCheck = !!cfg.compliance_check;
@@ -178,7 +182,10 @@ export function aiConfigForm(initial = {}) {
         this.state = "ready";
       } catch (e) {
         this.error = `初期化エラー: ${e?.message || e}`;
-        this.state = "ready"; // フォームは出すが警告つき
+        // _client が null のままフォームを出すと save() で TypeError になるため
+        // loading のままに留めてフォーム非表示にする。ユーザーは error バナーを
+        // 見て再読込する。
+        this.state = "loading";
       }
     },
 
@@ -223,8 +230,19 @@ export function aiConfigForm(initial = {}) {
       const isLlamaCpp = this.provider === "llama_cpp";
       // llama_cpp はサーバ管理者提供 API なので API キー不要。
       // 新規登録時の API キー必須は llama_cpp 以外のみ。
-      if (!isLlamaCpp && !this.apiKey && !this.isE2ee) {
+      if (!isLlamaCpp && !this.apiKey && !this.hasConfig) {
         this.error = "API キーを入力してください。";
+        return;
+      }
+      // provider 切替時に既存 blob (= 前 provider 用の暗号化キー、または
+      // llama_cpp の空文字列暗号化) を流用するのは危険。新 API キー必須化。
+      const providerChanged =
+        this._savedProvider !== null && this._savedProvider !== this.provider;
+      if (!isLlamaCpp && providerChanged && !this.apiKey) {
+        this.error = (
+          `プロバイダーを変更しました (${this._savedProvider} → ${this.provider})。` +
+          " 新しい API キーを入力してください。"
+        );
         return;
       }
       this.saving = true;
@@ -274,6 +292,8 @@ export function aiConfigForm(initial = {}) {
         this.hasConfig = true;
         this.isE2ee = true;
         this.hasLegacyKey = false;
+        // 保存に成功した provider をスナップショット (次回の切替検出用)
+        this._savedProvider = this.provider;
       } catch (e) {
         this.error = `保存に失敗しました: ${e?.message || e}`;
       } finally {
@@ -300,6 +320,8 @@ export function aiConfigForm(initial = {}) {
       if (!window.confirm("外部 AI 設定を削除しますか?")) return;
       this.error = "";
       try {
+        // 注: /api/v1/* は CSRF 免除済みだが、X-CSRFToken は belt-and-suspenders
+        // として送り続ける (将来 CSRF 免除を外した場合の後方互換)
         const r = await fetch("/api/v1/ai-config", {
           method: "DELETE",
           credentials: "include",
