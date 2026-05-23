@@ -177,6 +177,35 @@ test("start() 二重呼び出しはリスナーを二重登録しない", () => 
 });
 
 
+test("stop() → start() で再起動して touch が再び動く", () => {
+  const client = makeStubClient();
+  const target = new EventTarget();
+  const doc = makeStubDoc();
+  let t = 1000;
+  const m = new IdleMonitor(client, {
+    target, docTarget: doc, throttleMs: 100,
+    now: () => t,
+    events: ["mousedown"],
+  });
+  m.start();
+  assert.equal(client.calls.length, 1); // 初回 touch
+  m.stop();
+  client.calls.length = 0;
+
+  // 再起動
+  t = 2000;
+  m.start();
+  // 初回 touch (force=true) が発火するはず
+  assert.equal(client.calls.length, 1);
+
+  // 通常のイベントも届く
+  t = 3000;
+  target.dispatchEvent(new Event("mousedown"));
+  assert.equal(client.calls.length, 2);
+  m.stop();
+});
+
+
 test("client.touch が reject しても IdleMonitor は止まらない", async () => {
   const calls = [];
   const client = {

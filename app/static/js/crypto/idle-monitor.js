@@ -59,9 +59,11 @@ export class IdleMonitor {
   /**
    * 購読開始。初回 touch を即時発火する (last activity を確定するため)。
    * 二重呼び出しは no-op (リスナー二重登録防止)。
+   * stop() 後の再起動もサポート (#stopped も合わせてリセット)。
    */
   start() {
     if (this.#started) return;
+    this.#stopped = false;  // stop → start の再起動を有効化
     this.#started = true;
     if (this.#target) {
       const opts = { passive: true, capture: true };

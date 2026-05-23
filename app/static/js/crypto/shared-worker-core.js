@@ -88,6 +88,9 @@ export class MasterKeyState {
     }
     switch (msg.type) {
       case "generateKey": {
+        // 注意: 既に MK が設定済みでも上書きする。呼び出し側で hasKey
+        // チェックすべき (上位 API SharedCryptoClient.generateKey() の
+        // JSDoc に警告あり)。
         const raw = crypto.getRandomValues(new Uint8Array(32));
         try {
           await this._setRaw(raw);
