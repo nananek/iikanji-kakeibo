@@ -266,6 +266,20 @@ export function encryptionKeyWizard() {
       this.mnemonicAcked = false;
       this.step = "start";
     },
+
+    /**
+     * 方式選択画面に戻る (recovery/passphrase ステップから)。
+     * 直接 `step = 'choose'` を代入するとセンシティブ情報 (mnemonic /
+     * passphrase) が Alpine reactive data に残る。必ずこの helper を介する。
+     */
+    goToChoose() {
+      this.error = "";
+      this.passphrase = "";
+      this.passphraseConfirm = "";
+      this.mnemonic = "";
+      this.mnemonicAcked = false;
+      this.step = "choose";
+    },
   };
 }
 

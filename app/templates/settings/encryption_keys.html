@@ -58,7 +58,7 @@
       <div>
         <h5 class="mb-3"><i class="bi bi-2-square"></i> 派生方式を選択</h5>
         <p class="text-muted small">
-          マスター鍵 (MK) を保護する派生方式を選んでください。**1 つ目** の方式は初回必須です。
+          マスター鍵 (MK) を保護する派生方式を選んでください。<strong>1 つ目</strong>の方式は初回必須です。
           後から別方式を追加できます (次期 PR)。
         </p>
 
@@ -110,7 +110,7 @@
             <span x-show="loading" class="spinner-border spinner-border-sm me-2"></span>
             <span x-text="loading ? '派生中...' : '登録する'"></span>
           </button>
-          <button class="btn btn-outline-secondary" @click="step = 'choose'" :disabled="loading">
+          <button class="btn btn-outline-secondary" @click="goToChoose()" :disabled="loading">
             戻る
           </button>
         </div>
@@ -151,7 +151,7 @@
             <span x-show="loading" class="spinner-border spinner-border-sm me-2"></span>
             <span x-text="loading ? '登録中...' : '登録する'"></span>
           </button>
-          <button class="btn btn-outline-secondary" @click="step = 'choose'" :disabled="loading">
+          <button class="btn btn-outline-secondary" @click="goToChoose()" :disabled="loading">
             戻る
           </button>
         </div>
