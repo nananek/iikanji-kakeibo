@@ -36,6 +36,10 @@ def create_app(config_class=Config):
     # アカウントロックアウトは防止)。
     from app.views.wrapped_keys import bp as wrapped_keys_bp
     csrf.exempt(wrapped_keys_bp)
+    # ai-config E2EE API も Bearer 認証 / JSON 専用なので CSRF 免除
+    # (既存 api_bp / wrapped_keys_bp と同じ方針)
+    from app.views.ai_config_api import bp as ai_config_api_bp
+    csrf.exempt(ai_config_api_bp)
     # OAuth Device Flow のクライアント向けエンドポイントは CSRF 免除
     # (ブラウザ向けの authorize エンドポイントは CSRF 保護を維持)
     from app.views.oauth import device_authorization, token as oauth_token_view
@@ -658,3 +662,78 @@ def register_cli(app):
             f"deleted_wrapped_keys={deleted_total}, "
             f"still_in_window={skipped}, errors={errors}"
         )
+
+    @app.cli.command("ai-config-migration-status")
+    def ai_config_migration_status_command():
+        """E2 Phase E2-a の UserAIConfig 移行状況を集計表示する。
+
+        設計書 §11.4 / §11.7: 全ユーザー移行完了を確認してから Phase E2-b
+        (旧カラム DROP) と migrate-key endpoint 削除に進む。
+        """
+        from app.models.ai_config import UserAIConfig
+
+        total = UserAIConfig.query.count()
+        # 旧 Fernet 形式が残存しているユーザー (未移行)
+        legacy = UserAIConfig.query.filter(
+            UserAIConfig.api_key_encrypted.isnot(None)
+        ).count()
+        # E2EE 形式に移行済 (blob/iv が入っている)
+        e2ee_migrated = UserAIConfig.query.filter(
+            UserAIConfig.api_key_blob.isnot(None),
+            UserAIConfig.api_key_iv.isnot(None),
+        ).count()
+        # migrate-key を呼出済 (再呼出防止フラグ)
+        migrate_key_called = UserAIConfig.query.filter(
+            UserAIConfig.migrated_at.isnot(None)
+        ).count()
+        print(
+            f"ai-config-migration-status: total={total}, "
+            f"legacy_remaining={legacy}, e2ee_migrated={e2ee_migrated}, "
+            f"migrate_key_called={migrate_key_called}"
+        )
+        if legacy == 0 and total > 0:
+            print(
+                "  → 全ユーザー移行完了。Phase E2-b (旧カラム DROP + "
+                "migrate-key endpoint 削除) に進めます。"
+            )
+
+    @app.cli.command("ai-config-reset-migrate-key")
+    @click.argument("user_id", type=int)
+    def ai_config_reset_migrate_key_command(user_id):
+        """指定ユーザーの migrate-key 1 回限り制約を解除する (管理者リカバリ用)。
+
+        通常 migrate-key は per-user 1 回限り (`migrated_at` で判定) だが、
+        コミット成功後にネットワーク障害でクライアントが平文を受け取れず
+        詰むケース等で再呼出を許可するための管理コマンド。
+
+        ⚠️ 注意: 旧 `api_key_encrypted` は migrate-key 呼出成功時に即時
+        NULL クリアされているため、本コマンドで `migrated_at` を NULL に
+        戻しても、再呼出すると 404 (no legacy api_key_encrypted to migrate)
+        になる。実用上はユーザーに「設定画面で API キー再入力」を促すのが
+        本来の対処。本コマンドは主に「クライアント側で平文を受け取れた
+        が migrate-key 経路を再現したい」開発者向けデバッグ用途。
+        """
+        from app.models.ai_config import UserAIConfig
+
+        config = UserAIConfig.query.filter_by(user_id=user_id).first()
+        if config is None:
+            print(f"user_id={user_id} has no UserAIConfig.")
+            return
+        if config.migrated_at is None:
+            print(
+                f"user_id={user_id} not yet migrated "
+                f"(migrated_at is already NULL). No-op."
+            )
+            return
+        old = config.migrated_at
+        config.migrated_at = None
+        db.session.commit()
+        print(
+            f"reset migrated_at for user_id={user_id} "
+            f"(was {old.isoformat() if old else 'NULL'})."
+        )
+        if config.api_key_encrypted is None:
+            print(
+                "  注: api_key_encrypted は既に NULL クリア済みのため、"
+                "再呼出しても 404 になります。設定画面で API キー再入力を促してください。"
+            )
