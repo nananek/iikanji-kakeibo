@@ -86,18 +86,40 @@ export function encryptionKeyWizard() {
     /**
      * 新規 MK を SharedWorker 内で生成する前に必ず status() で hasKey=false
      * を確認する。これは PR #139 review の申し送り事項。
+     *
+     * **TOCTOU 対策**: `this.existingKeys` (init 時キャッシュ) ではなく、
+     * 都度 `listWrappedKeys()` を再取得する。別タブ・並行リクエストで鍵が
+     * 登録された場合にチェックをすり抜ける問題を防ぐ。
      */
     async _ensureNewKeySafe() {
-      const s = await this._client.status();
+      const [s, freshKeys] = await Promise.all([
+        this._client.status(),
+        listWrappedKeys(),
+      ]);
       if (s.hasKey) {
         throw new Error(
           "既に MK が SharedWorker にロードされています。設定済みの鍵を上書きすると既存暗号文が復号不能になります。一度ロックしてからやり直してください。",
         );
       }
-      if (this.existingKeys.length > 0) {
+      if (freshKeys.length > 0) {
+        // キャッシュも最新に揃える (start 画面表示用)
+        this.existingKeys = freshKeys;
         throw new Error(
-          `既に登録済みの鍵 (${this.existingKeys.length} 件) があります。新規 MK 生成は最初のセットアップ時のみ可能です。`,
+          `既に登録済みの鍵 (${freshKeys.length} 件) があります。新規 MK 生成は最初のセットアップ時のみ可能です。`,
         );
+      }
+    },
+
+    /**
+     * generateKey 後に createWrappedKey などが失敗した時の SharedWorker
+     * ロールバック。失敗状態を放置すると hasKey=true / DB に行なし という
+     * 矛盾状態でリトライ不能になるため、必ず clearKey する。
+     */
+    async _rollbackWorkerKey() {
+      try {
+        await this._client.clearKey();
+      } catch (_e) {
+        // clearKey 自体の失敗は致命的でないが、UI に通知する手段がないので無視
       }
     },
 
@@ -138,11 +160,14 @@ export function encryptionKeyWizard() {
         return;
       }
       this.loading = true;
+      // generateKey 成功後に後続が失敗したらロールバックすべき
+      let workerKeyGenerated = false;
       try {
         await this._ensureNewKeySafe();
         // hash-wasm を CDN からロード (初回のみ実体取得)
         await loadHashWasm();
         await this._client.generateKey();
+        workerKeyGenerated = true;
         const salt = generateSalt();
         let derived;
         try {
@@ -156,7 +181,7 @@ export function encryptionKeyWizard() {
             salt,
             kdf_params: { ...ARGON2ID_DEFAULTS },
             webauthn_credential_id: null,
-            label: "Passphrase (初回)",
+            label: "パスフレーズ (初回)",
           });
         } finally {
           // derived は wrap で detach されているはずだが二重防御
@@ -164,6 +189,8 @@ export function encryptionKeyWizard() {
             try { derived.fill(0); } catch (_e) { /* detached */ }
           }
         }
+        // 成功パス: rollback フラグを下ろす
+        workerKeyGenerated = false;
         this.passphrase = "";
         this.passphraseConfirm = "";
         this.doneMethod = "passphrase";
@@ -171,6 +198,11 @@ export function encryptionKeyWizard() {
         this.hasKey = true;
       } catch (e) {
         this.error = e?.message || String(e);
+        // generateKey 成功後の失敗なら Worker の MK を clear して矛盾状態を解消
+        if (workerKeyGenerated) {
+          await this._rollbackWorkerKey();
+          this.hasKey = false;
+        }
       } finally {
         this.loading = false;
       }
@@ -183,9 +215,11 @@ export function encryptionKeyWizard() {
         return;
       }
       this.loading = true;
+      let workerKeyGenerated = false;
       try {
         await this._ensureNewKeySafe();
         await this._client.generateKey();
+        workerKeyGenerated = true;
         let derived;
         try {
           derived = await deriveKeyFromMnemonic(this.mnemonic);
@@ -197,13 +231,15 @@ export function encryptionKeyWizard() {
             salt: null,
             kdf_params: null,
             webauthn_credential_id: null,
-            label: "Recovery Seed (初回)",
+            label: "リカバリシード (初回)",
           });
         } finally {
           if (derived && derived.byteLength > 0) {
             try { derived.fill(0); } catch (_e) { /* detached */ }
           }
         }
+        // 成功パス: rollback フラグを下ろす
+        workerKeyGenerated = false;
         // Alpine reactive data に mnemonic を残すと DevTools で 24 単語を
         // inspect できてしまうため、成功後すぐに空文字へクリアする。
         this.mnemonic = "";
@@ -213,6 +249,10 @@ export function encryptionKeyWizard() {
         this.hasKey = true;
       } catch (e) {
         this.error = e?.message || String(e);
+        if (workerKeyGenerated) {
+          await this._rollbackWorkerKey();
+          this.hasKey = false;
+        }
       } finally {
         this.loading = false;
       }

@@ -59,9 +59,11 @@ function resolveBrowserImpl() {
   // globalThis はモダンブラウザ / SharedWorker / Node いずれでも defined。
   // ブラウザでは globalThis === window。SharedWorker では globalThis === self。
   // Node では globalThis === global。これ 1 つで全環境カバー。
+  // 1行目で object 確認済みなので 2行目は `?.` 不要。
   if (
     typeof globalThis.hashwasm === "object" &&
-    typeof globalThis.hashwasm?.argon2id === "function"
+    globalThis.hashwasm !== null &&
+    typeof globalThis.hashwasm.argon2id === "function"
   ) {
     return globalThis.hashwasm.argon2id;
   }

@@ -50,15 +50,12 @@ test.describe("暗号鍵管理ウィザード", () => {
 
   test("初期画面に「初回設定を開始」ボタンがある", async ({ page }) => {
     await page.goto(`${BASE_URL}/settings/encryption-keys`);
-    // Alpine の init() を待つ
-    await page.waitForTimeout(500);
     const btn = page.locator("button", { hasText: "初回設定を開始" });
-    await expect(btn).toBeVisible();
+    await expect(btn).toBeVisible(); // Alpine init 後に表示される
   });
 
   test("方式選択画面に 2 つの選択肢がある", async ({ page }) => {
     await page.goto(`${BASE_URL}/settings/encryption-keys`);
-    await page.waitForTimeout(500);
     await page.locator("button", { hasText: "初回設定を開始" }).click();
     await expect(page.locator("button", { hasText: "パスフレーズ" })).toBeVisible();
     await expect(
@@ -68,7 +65,6 @@ test.describe("暗号鍵管理ウィザード", () => {
 
   test("パスフレーズ画面に入力フィールド 2 つが表示される", async ({ page }) => {
     await page.goto(`${BASE_URL}/settings/encryption-keys`);
-    await page.waitForTimeout(500);
     await page.locator("button", { hasText: "初回設定を開始" }).click();
     await page.locator("button", { hasText: "パスフレーズ" }).first().click();
     const pwInputs = page.locator('input[type="password"]');
@@ -82,7 +78,6 @@ test.describe("暗号鍵管理ウィザード", () => {
 
   test("方式選択画面から戻るボタンで開始画面に戻る", async ({ page }) => {
     await page.goto(`${BASE_URL}/settings/encryption-keys`);
-    await page.waitForTimeout(500);
     await page.locator("button", { hasText: "初回設定を開始" }).click();
     await page.locator("button", { hasText: "戻る" }).click();
     await expect(page.locator("button", { hasText: "初回設定を開始" })).toBeVisible();
