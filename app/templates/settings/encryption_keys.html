@@ -1,0 +1,184 @@
+{% extends "base.html" %}
+{% block title %}暗号鍵管理 - いいかんじ™家計簿{% endblock %}
+
+{% block content %}
+<h2 class="mb-3"><i class="bi bi-shield-lock"></i> 暗号鍵管理 (v5.0 準備)</h2>
+
+<div class="alert alert-warning small">
+  <i class="bi bi-info-circle"></i>
+  <strong>プレビュー機能:</strong> v5.0 で導入予定のエンドツーエンド暗号化 (E2EE) の鍵管理基盤です。
+  現在は鍵の<strong>登録</strong>のみ可能で、仕訳や証憑への暗号化適用は次期マイルストーンで段階的に行われます。
+  鍵を登録しても既存の家計簿データへの影響はありません。
+</div>
+
+<div x-data="encryptionKeyWizard()" x-init="init()" class="card shadow-sm">
+  <div class="card-body">
+
+    <!-- エラー表示 -->
+    <div class="alert alert-danger small" x-show="error" x-text="error" x-cloak></div>
+
+    <!-- ステップ 1: 開始画面 -->
+    <template x-if="step === 'start'">
+      <div>
+        <h5 class="mb-3"><i class="bi bi-list-check"></i> 登録済みの鍵</h5>
+        <template x-if="existingKeys.length === 0">
+          <p class="text-muted small">まだ暗号鍵が登録されていません。下のボタンから初回設定を開始してください。</p>
+        </template>
+        <template x-if="existingKeys.length > 0">
+          <ul class="list-group mb-3">
+            <template x-for="k in existingKeys" :key="k.id">
+              <li class="list-group-item d-flex justify-content-between align-items-center">
+                <div>
+                  <span class="badge bg-secondary me-2" x-text="k.method"></span>
+                  <span x-text="k.label || '(ラベルなし)'"></span>
+                </div>
+                <small class="text-muted" x-text="k.created_at"></small>
+              </li>
+            </template>
+          </ul>
+        </template>
+
+        <div class="d-flex gap-2 mt-4">
+          <template x-if="existingKeys.length === 0">
+            <button class="btn btn-primary" @click="proceedChoose()">
+              <i class="bi bi-key"></i> 初回設定を開始
+            </button>
+          </template>
+          <template x-if="existingKeys.length > 0">
+            <span class="text-muted small">
+              鍵の追加 (Passkey 連携・新しいパスフレーズ) は次期 PR で対応予定です。
+            </span>
+          </template>
+        </div>
+      </div>
+    </template>
+
+    <!-- ステップ 2: 方式選択 -->
+    <template x-if="step === 'choose'">
+      <div>
+        <h5 class="mb-3"><i class="bi bi-2-square"></i> 派生方式を選択</h5>
+        <p class="text-muted small">
+          マスター鍵 (MK) を保護する派生方式を選んでください。<strong>1 つ目</strong>の方式は初回必須です。
+          後から別方式を追加できます (次期 PR)。
+        </p>
+
+        <div class="row row-cols-1 row-cols-md-2 g-3">
+          <div class="col">
+            <button class="btn btn-outline-primary w-100 text-start p-3 h-100"
+                    @click="selectPassphrase()">
+              <h6 class="mb-1"><i class="bi bi-key"></i> パスフレーズ</h6>
+              <small class="text-muted">8 文字以上の文字列で MK を保護。ログイン時に入力。</small>
+            </button>
+          </div>
+          <div class="col">
+            <button class="btn btn-outline-primary w-100 text-start p-3 h-100"
+                    @click="selectRecovery()" :disabled="loading">
+              <h6 class="mb-1"><i class="bi bi-card-list"></i> リカバリシード (24 単語)</h6>
+              <small class="text-muted">BIP-39 形式の 24 単語フレーズ。緊急復旧用、紙にメモして保管。</small>
+            </button>
+          </div>
+        </div>
+
+        <div class="mt-3">
+          <button class="btn btn-link btn-sm" @click="backToStart()">
+            <i class="bi bi-arrow-left"></i> 戻る
+          </button>
+        </div>
+      </div>
+    </template>
+
+    <!-- ステップ 3a: パスフレーズ入力 -->
+    <template x-if="step === 'passphrase'">
+      <div>
+        <h5 class="mb-3"><i class="bi bi-key"></i> パスフレーズ設定</h5>
+        <p class="text-muted small">
+          8 文字以上のパスフレーズを設定します。Argon2id (64 MiB / 3 iter) で派生します。
+          <strong>このパスフレーズを忘れると MK 復元不能になります。</strong>
+        </p>
+        <div class="mb-3">
+          <label class="form-label">パスフレーズ</label>
+          <input type="password" class="form-control" x-model="passphrase"
+                 :disabled="loading" autocomplete="new-password">
+        </div>
+        <div class="mb-3">
+          <label class="form-label">パスフレーズ (確認)</label>
+          <input type="password" class="form-control" x-model="passphraseConfirm"
+                 :disabled="loading" autocomplete="new-password">
+        </div>
+        <div class="d-flex gap-2">
+          <button class="btn btn-primary" @click="submitPassphrase()" :disabled="loading">
+            <span x-show="loading" class="spinner-border spinner-border-sm me-2"></span>
+            <span x-text="loading ? '派生中...' : '登録する'"></span>
+          </button>
+          <button class="btn btn-outline-secondary" @click="goToChoose()" :disabled="loading">
+            戻る
+          </button>
+        </div>
+      </div>
+    </template>
+
+    <!-- ステップ 3b: リカバリシード生成 -->
+    <template x-if="step === 'recovery'">
+      <div>
+        <h5 class="mb-3"><i class="bi bi-card-list"></i> リカバリシード (24 単語)</h5>
+        <div class="alert alert-danger small">
+          <strong><i class="bi bi-exclamation-triangle"></i> この 24 単語が表示されるのは 1 回のみ</strong>。
+          紙にメモして安全に保管してください (スクリーンショットや写真は推奨しません — クラウド同期で漏洩リスク)。
+          紛失すると MK 復元不可能、再生成は MK アンラップ済の状態でのみ可能です。
+        </div>
+        <div class="card bg-light mb-3">
+          <div class="card-body">
+            <div class="row row-cols-3 row-cols-md-4 row-cols-lg-6 g-2 small font-monospace">
+              <template x-for="(word, idx) in mnemonic.split(' ')" :key="idx">
+                <div class="col">
+                  <span class="text-muted" x-text="(idx + 1) + '.'"></span>
+                  <span x-text="word"></span>
+                </div>
+              </template>
+            </div>
+          </div>
+        </div>
+        <div class="form-check mb-3">
+          <input class="form-check-input" type="checkbox" id="mnemonic-acked"
+                 x-model="mnemonicAcked" :disabled="loading">
+          <label class="form-check-label" for="mnemonic-acked">
+            24 単語を紙にメモしました。紛失すると復元不可能であることを理解しました。
+          </label>
+        </div>
+        <div class="d-flex gap-2">
+          <button class="btn btn-primary" @click="submitRecovery()"
+                  :disabled="loading || !mnemonicAcked">
+            <span x-show="loading" class="spinner-border spinner-border-sm me-2"></span>
+            <span x-text="loading ? '登録中...' : '登録する'"></span>
+          </button>
+          <button class="btn btn-outline-secondary" @click="goToChoose()" :disabled="loading">
+            戻る
+          </button>
+        </div>
+      </div>
+    </template>
+
+    <!-- ステップ 4: 完了 -->
+    <template x-if="step === 'done'">
+      <div class="text-center py-4">
+        <i class="bi bi-check-circle-fill text-success display-1"></i>
+        <h4 class="mt-3">鍵を登録しました</h4>
+        <p class="text-muted">
+          方式: <code x-text="doneMethod"></code> /
+          次期 PR でロック画面・他端末ログインに対応します。
+        </p>
+        <a href="{{ url_for('settings.index') }}" class="btn btn-outline-secondary">
+          設定トップへ戻る
+        </a>
+      </div>
+    </template>
+
+  </div>
+</div>
+
+<script type="module">
+  // wizard.js が encryptionKeyWizard をグローバル登録する。Alpine の `x-data`
+  // からは globalThis.encryptionKeyWizard() を直接呼び出す。
+  import "{{ url_for('static', filename='js/crypto/wizard.js') }}";
+</script>
+{% endblock %}

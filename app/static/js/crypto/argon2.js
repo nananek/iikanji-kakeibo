@@ -54,21 +54,18 @@ export const ARGON2ID_DEFAULTS = Object.freeze({
 
 let _defaultImpl = null;
 
-/** ブラウザでの自動解決を試みる。`window.hashwasm.argon2id` を探す。 */
+/** ブラウザでの自動解決を試みる。`globalThis.hashwasm.argon2id` を探す。 */
 function resolveBrowserImpl() {
+  // globalThis はモダンブラウザ / SharedWorker / Node いずれでも defined。
+  // ブラウザでは globalThis === window。SharedWorker では globalThis === self。
+  // Node では globalThis === global。これ 1 つで全環境カバー。
+  // 1行目で object 確認済みなので 2行目は `?.` 不要。
   if (
-    typeof globalThis !== "undefined" &&
-    globalThis.hashwasm &&
+    typeof globalThis.hashwasm === "object" &&
+    globalThis.hashwasm !== null &&
     typeof globalThis.hashwasm.argon2id === "function"
   ) {
     return globalThis.hashwasm.argon2id;
-  }
-  if (
-    typeof window !== "undefined" &&
-    window.hashwasm &&
-    typeof window.hashwasm.argon2id === "function"
-  ) {
-    return window.hashwasm.argon2id;
   }
   return null;
 }

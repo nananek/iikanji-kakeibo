@@ -40,6 +40,21 @@ class TestSettingsIndex:
         assert "/settings/auto-import" in html
         assert "/settings/api-keys" in html
         assert "/settings/passkeys" in html
+        assert "/settings/encryption-keys" in html
+
+    def test_personal_sees_encryption_keys_card(self, db, logged_in_client):
+        resp = logged_in_client.get("/settings/")
+        html = resp.data.decode()
+        assert "暗号鍵管理" in html
+        assert "v5.0 準備" in html
+
+    def test_auditor_does_not_see_encryption_keys(self, app, client, auditor):
+        with client.session_transaction() as sess:
+            sess["_user_id"] = str(auditor.id)
+        resp = client.get("/settings/")
+        html = resp.data.decode()
+        # 監査ユーザーには表示しない (E2EE 機能は本人 MK 専用)
+        assert "暗号鍵管理" not in html
 
     def test_personal_user_sees_audit(self, db, logged_in_client, user):
         assert user.user_type == "personal"
@@ -53,6 +68,46 @@ class TestSettingsIndex:
         resp = client.get("/settings/")
         html = resp.data.decode()
         assert "監査アクセス管理" not in html
+
+
+class TestEncryptionKeysView:
+    """GET /settings/encryption-keys — E2EE 鍵管理ウィザード (v5.0 準備)"""
+
+    def test_unauthenticated_redirects(self, client):
+        resp = client.get("/settings/encryption-keys")
+        assert resp.status_code == 302
+        assert "/login" in resp.headers["Location"]
+
+    def test_personal_user_200(self, db, logged_in_client):
+        resp = logged_in_client.get("/settings/encryption-keys")
+        assert resp.status_code == 200
+        html = resp.data.decode()
+        # ウィザード骨格 + Alpine 初期化属性
+        assert "encryptionKeyWizard()" in html
+        assert "パスフレーズ" in html
+        assert "リカバリシード" in html
+        # クライアント JS が読み込まれている
+        assert "js/crypto/wizard.js" in html
+
+    def test_auditor_redirects_to_settings_index(self, app, client, auditor):
+        with client.session_transaction() as sess:
+            sess["_user_id"] = str(auditor.id)
+        resp = client.get("/settings/encryption-keys", follow_redirects=False)
+        assert resp.status_code == 302
+        assert "/settings/" in resp.headers["Location"]
+        # follow_redirects=True で settings.index に到達することを確認
+        # (flash は showToast で JS 経由表示のため、Unicode-escape された
+        #  形で HTML に埋め込まれる → 内容文字列の直接 assert は脆い)
+        resp2 = client.get("/settings/encryption-keys", follow_redirects=True)
+        assert resp2.status_code == 200
+        # ウィザード骨格は表示されない (= リダイレクト成功)
+        assert "encryptionKeyWizard()" not in resp2.data.decode()
+
+    def test_warning_banner_present(self, db, logged_in_client):
+        """v5.0 準備中である旨の警告バナーが表示されること。"""
+        resp = logged_in_client.get("/settings/encryption-keys")
+        html = resp.data.decode()
+        assert "プレビュー機能" in html or "v5.0" in html
 
 
 class TestDisplaySettings:

@@ -13,8 +13,16 @@
 // 含まれていないため、本モジュールは E1 鍵管理基盤の独立レイヤとして提供する。
 // PR-F2 でウィザード UI から呼び出す想定。
 
+// 重要: PRF_EVAL_INPUT と HKDF_INFO は意図的に同値 "iikanji-master-key-v1"。
+//   - PRF_EVAL_INPUT: WebAuthn 認証時に PRF 拡張に渡す入力 (authenticator が
+//     credentialId + これを元に決定的に 32B を返す)
+//   - HKDF_INFO: PRF 出力を 32B derived_key に派生する際の HKDF info コンテキスト
+// 同じ文字列を使うことで「マスター鍵用途」のドメイン分離を一意化する。
+// 将来別用途 (例: AuditPackage 暗号化用の鍵派生) を追加する場合は **両方を**
+// 別文字列に変更すること (info だけ変えても PRF eval は credentialId に依存
+// するため、PRF 出力自体は同じになる → ドメイン分離が崩れる)。
 const HKDF_INFO = "iikanji-master-key-v1";
-const PRF_EVAL_INPUT = "iikanji-master-key-v1"; // 別用途で info を変える際は変更
+const PRF_EVAL_INPUT = "iikanji-master-key-v1";
 
 /** PRF eval 入力 (32B 未満でもブラウザが内部で展開する。文字列 → UTF-8) */
 export function getPrfEvalInputBytes() {

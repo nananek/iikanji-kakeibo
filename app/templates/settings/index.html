@@ -164,6 +164,14 @@
       </div>
     </a>
   </div>
+  <div class="col">
+    <a href="{{ url_for('settings.encryption_keys') }}" class="card h-100 text-decoration-none shadow-sm">
+      <div class="card-body">
+        <h6 class="card-title"><i class="bi bi-shield-lock text-primary"></i> 暗号鍵管理 <span class="badge bg-info">v5.0 準備</span></h6>
+        <p class="card-text text-muted small mb-0">E2EE のマスター鍵 (MK) を派生する方式 (パスフレーズ / リカバリシード) を登録</p>
+      </div>
+    </a>
+  </div>
   {% endif %}
 </div>
 
