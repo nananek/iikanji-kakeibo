@@ -17,6 +17,15 @@
 // - 戻り値 derived_key (32B) は wrap/unwrap 後に呼び出し側で必ずゼロ埋め
 // - パスフレーズ文字列は JS string で GC 制御不能 (ゼロ埋め不可)。これは
 //   WebCrypto API の制約で受容する。ただし Uint8Array に変換後はゼロ埋め可能
+//
+// Unicode 正規化:
+// - 同じ「見た目のパスフレーズ」を異なる端末/IME で入力した時の derived_key
+//   不一致 (= MK 復元不能) を防ぐため、**NFKD で正規化してから UTF-8 化** する。
+//   例: アクセント文字 "é" は U+00E9 (合成済み) と U+0065+U+0301 (合成可能) の
+//   2 表現があり、NFKD で互換分解した上で結合文字を含む正規形に統一する
+// - NFKD を選ぶ理由: BIP-39 仕様もパスフレーズに NFKD を使う。Argon2id 用にも
+//   同じ正規化を適用することで「同じ文字列」の判定をプラットフォーム間で
+//   揃える
 
 // 設計書既定の Argon2id パラメータ。インスタンス間で固定値として共有する。
 export const ARGON2ID_DEFAULTS = Object.freeze({
@@ -73,9 +82,20 @@ export function setArgon2idImpl(impl) {
 }
 
 /**
+ * パスフレーズを NFKD 正規化して UTF-8 バイト列に変換する。
+ * テスト用に export しているが、通常は deriveKeyFromPassphrase 経由で呼ばれる。
+ */
+export function normalizePassphraseBytes(passphrase) {
+  if (typeof passphrase !== "string" || passphrase.length === 0) {
+    throw new Error("passphrase must be non-empty string");
+  }
+  return new TextEncoder().encode(passphrase.normalize("NFKD"));
+}
+
+/**
  * パスフレーズ + salt から 32B の derived_key を派生する。
  *
- * @param {string} passphrase  ユーザー入力 (UTF-8 として処理)
+ * @param {string} passphrase  ユーザー入力 (NFKD 正規化後に UTF-8 化される)
  * @param {Uint8Array} salt    per-user salt (16B、wrapped_keys.salt)
  * @param {Object} [opts]
  * @param {Object} [opts.params]    Argon2id パラメータ ({memory, iterations, parallelism})
@@ -97,23 +117,32 @@ export async function deriveKeyFromPassphrase(passphrase, salt, opts = {}) {
     );
   }
   const params = { ...ARGON2ID_DEFAULTS, ...(opts.params ?? {}) };
-  const result = await impl({
-    password: passphrase,
-    salt,
-    parallelism: params.parallelism,
-    iterations: params.iterations,
-    memorySize: params.memorySize,
-    hashLength: params.hashLength,
-    outputType: "binary",
-  });
-  if (!(result instanceof Uint8Array) || result.byteLength !== params.hashLength) {
-    throw new Error(
-      `argon2id returned unexpected output: ${
-        result?.byteLength ?? typeof result
-      } bytes`,
-    );
+  // NFKD 正規化 + UTF-8 化。derived_key 生成後にゼロ埋めする
+  const passwordBytes = normalizePassphraseBytes(passphrase);
+  try {
+    const result = await impl({
+      password: passwordBytes,
+      salt,
+      parallelism: params.parallelism,
+      iterations: params.iterations,
+      memorySize: params.memorySize,
+      hashLength: params.hashLength,
+      outputType: "binary",
+    });
+    if (
+      !(result instanceof Uint8Array) ||
+      result.byteLength !== params.hashLength
+    ) {
+      throw new Error(
+        `argon2id returned unexpected output: ${
+          result?.byteLength ?? typeof result
+        } bytes`,
+      );
+    }
+    return result;
+  } finally {
+    passwordBytes.fill(0);
   }
-  return result;
 }
 
 /**

@@ -36,6 +36,10 @@ if (BIP39_ENGLISH_WORDLIST.length !== 2048) {
   );
 }
 
+// 逆引き Map: 単語 → インデックス。O(1) ルックアップ用 (mnemonicToEntropy で使用)。
+// モジュール初期化時に 1 度だけ構築。
+const WORD_TO_INDEX = new Map(BIP39_ENGLISH_WORDLIST.map((w, i) => [w, i]));
+
 /**
  * 32B エントロピーをチェックサム付きで 24 単語に符号化。
  * @param {Uint8Array} entropy 32 バイト
@@ -86,8 +90,8 @@ export async function mnemonicToEntropy(mnemonic) {
   }
   let bits = "";
   for (const w of words) {
-    const idx = BIP39_ENGLISH_WORDLIST.indexOf(w);
-    if (idx === -1) {
+    const idx = WORD_TO_INDEX.get(w);
+    if (idx === undefined) {
       throw new Error(`unknown word in mnemonic: "${w}"`);
     }
     bits += idx.toString(2).padStart(BITS_PER_WORD, "0");
@@ -150,20 +154,24 @@ export async function deriveKeyFromMnemonic(mnemonic) {
   const inputBytes = new TextEncoder().encode(normalized);
   const salt = new Uint8Array(32); // all-zero (HKDF-SHA256 推奨の hashLen=32)
   const infoBytes = new TextEncoder().encode(HKDF_INFO);
-
-  // HKDF: importKey(raw, HKDF) → deriveBits(HKDF, salt, info, L=256 bit)
-  const ikm = await crypto.subtle.importKey(
-    "raw", inputBytes, { name: "HKDF" }, false, ["deriveBits"],
-  );
-  const derived = await crypto.subtle.deriveBits(
-    {
-      name: "HKDF",
-      hash: "SHA-256",
-      salt,
-      info: infoBytes,
-    },
-    ikm,
-    256,
-  );
-  return new Uint8Array(derived);
+  try {
+    // HKDF: importKey(raw, HKDF) → deriveBits(HKDF, salt, info, L=256 bit)
+    const ikm = await crypto.subtle.importKey(
+      "raw", inputBytes, { name: "HKDF" }, false, ["deriveBits"],
+    );
+    const derived = await crypto.subtle.deriveBits(
+      {
+        name: "HKDF",
+        hash: "SHA-256",
+        salt,
+        info: infoBytes,
+      },
+      ikm,
+      256,
+    );
+    return new Uint8Array(derived);
+  } finally {
+    // mnemonic UTF-8 表現も鍵素材相当なので派生後にゼロ埋め
+    inputBytes.fill(0);
+  }
 }
