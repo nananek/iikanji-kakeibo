@@ -1,22 +1,31 @@
-"""E2EE wrapped_keys API エンドポイント (E1 #108 / 設計書 §10.3, §10.9)。
+"""E2EE wrapped_keys API エンドポイント (E1 #108 / 設計書 §10.3-10.5, §10.9)。
 
 設計書 §10 で確立した Master Key 管理基盤のサーバ側 API。本エンドポイントは
 **暗号文の保管・取得のみ** を担当し、サーバは MK 平文を一切触らない。
 
 エンドポイント:
-- GET    /api/v1/wrapped-keys           — 自身の wrapped MK 一覧
-- POST   /api/v1/wrapped-keys           — 新規登録 (暗号文受け取り)
-- PUT    /api/v1/wrapped-keys/<id>/touch — last_used_at 更新
-- DELETE /api/v1/wrapped-keys/<id>      — 削除 (最終要素は 409)
+- GET    /api/v1/wrapped-keys                — 自身の wrapped MK 一覧
+- POST   /api/v1/wrapped-keys                — 新規登録 (暗号文受け取り)
+                                                X-Rotation-Id ヘッダがあれば
+                                                ローテーション中の new_wrapped_keys
+                                                として state に記録
+- PUT    /api/v1/wrapped-keys/<id>/touch     — last_used_at 更新
+- DELETE /api/v1/wrapped-keys/<id>           — 削除 (最終要素は 409)
+- POST   /api/v1/wrapped-keys/rotate/begin   — MK ローテーション開始
+- POST   /api/v1/wrapped-keys/rotate/commit  — 完了 (旧 wrapped_keys 削除)
+- POST   /api/v1/wrapped-keys/rotate/abort   — 中止 (新 wrapped_keys 削除)
 """
 
+import hashlib
+import secrets
 from base64 import b64decode, b64encode
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from flask import Blueprint, g, jsonify, request
 from sqlalchemy.exc import IntegrityError
 
 from app.extensions import db, limiter
+from app.models.user import User
 from app.models.webauthn import WebAuthnCredential
 from app.models.wrapped_key import (
     ALLOWED_METHODS,
@@ -41,6 +50,42 @@ MAX_LABEL_LENGTH = 100
 KDF_MEMORY_MIN, KDF_MEMORY_MAX = 8192, 1048576       # 8MiB - 1GiB (KiB 単位)
 KDF_ITERATIONS_MIN, KDF_ITERATIONS_MAX = 1, 16
 KDF_PARALLELISM_MIN, KDF_PARALLELISM_MAX = 1, 8
+
+# MK ローテーション (§10.5)
+ROTATION_TTL = timedelta(days=7)
+ROTATION_TOKEN_PREFIX = "rot_"
+
+
+def _hash_rotation_token(raw: str) -> str:
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _verify_rotation_token(user: User) -> bool:
+    """X-Rotation-Id ヘッダの token を user.mk_rotation_state と照合。"""
+    raw = request.headers.get("X-Rotation-Id", "")
+    if not raw:
+        return False
+    state = user.mk_rotation_state or {}
+    stored_hash = state.get("rotation_token_hash")
+    if not stored_hash:
+        return False
+    return secrets.compare_digest(
+        stored_hash, _hash_rotation_token(raw)
+    )
+
+
+def _record_new_wrapped_key_id(user: User, wrapped_key_id: int) -> None:
+    """ローテーション中の新 wrapped_keys に id を記録 (state.new_wrapped_keys_id_set)。
+
+    SQLAlchemy の JSON column は in-place mutation を検知しないため、
+    必ず新しい dict を作って user.mk_rotation_state に代入する。
+    """
+    state = dict(user.mk_rotation_state or {})
+    ids = list(state.get("new_wrapped_keys_id_set", []))
+    if wrapped_key_id not in ids:
+        ids.append(wrapped_key_id)
+    state["new_wrapped_keys_id_set"] = ids
+    user.mk_rotation_state = state
 
 
 def _b64(b: bytes | None) -> str | None:
@@ -198,13 +243,17 @@ def create_wrapped_key():
     )
     db.session.add(row)
     try:
-        db.session.commit()
+        db.session.flush()
     except IntegrityError:
         db.session.rollback()
         # UNIQUE 制約違反 (passphrase / recovery_seed の重複 or 同 credential 重複)
         return jsonify(error="conflict with existing wrapped_key"), 409
-    # IntegrityError 以外は 500 として Flask に処理させる (DB 接続エラー等)
 
+    # X-Rotation-Id ヘッダがあれば new_wrapped_keys_id_set に登録 (§10.5)
+    if _verify_rotation_token(g.auth_user):
+        _record_new_wrapped_key_id(g.auth_user, row.id)
+
+    db.session.commit()
     return jsonify(_serialize(row)), 201
 
 
@@ -250,12 +299,16 @@ def delete_wrapped_key(wrapped_key_id: int):
     if row is None:
         return jsonify(error="not found"), 404
 
-    # TOCTOU 軽減: 削除を先に flush (トランザクション内のみ確定) → 残件数を
-    # チェック → 0 件なら rollback。並行 DELETE がほぼ同時に 2 件削除しようと
-    # した場合でも、両者がそれぞれ rollback されて 1 件以上残る (片方が勝つ
-    # ケースもあるが、いずれも「最後の鍵」になる前に防がれる)。
-    # PostgreSQL 本番では SELECT ... FOR UPDATE で行ロックを取るのが望ましい
-    # (E1 PR-D で改善)。
+    # TOCTOU 対策: PostgreSQL では同一ユーザーの wrapped_keys 全行に
+    # SELECT ... FOR UPDATE を取り、残件数チェック → DELETE をトランザクション
+    # 内で実行。並行 DELETE はロック待ちでシリアライズされる。
+    # SQLite では行ロックは no-op だが、flush→count→rollback で論理的に
+    # 等価な動作になる (一方が勝って rollback、もう一方は最終チェックで残件数 1)。
+    db.session.execute(
+        db.select(WrappedKey)
+        .where(WrappedKey.user_id == g.auth_user.id)
+        .with_for_update()
+    )
     db.session.delete(row)
     db.session.flush()
     remaining_count = (
@@ -270,3 +323,102 @@ def delete_wrapped_key(wrapped_key_id: int):
         ), 409
     db.session.commit()
     return "", 204
+
+
+# --- MK ローテーション (設計書 §10.5) -------------------------------------
+
+
+@bp.post("/rotate/begin")
+@auth_required(write=True)
+@limiter.limit("5 per hour", key_func=rate_limit_key)
+def rotate_begin():
+    """ローテーション開始: rotation_token を発行し state を初期化。
+
+    レスポンスで返す raw token は **1 回限り**。クライアントは X-Rotation-Id
+    ヘッダで以後の write 操作を識別する。
+    """
+    user = g.auth_user
+    state = user.mk_rotation_state
+    if state and state.get("status") == "rotating":
+        return jsonify(error="rotation already in progress"), 409
+
+    now = datetime.now(timezone.utc)
+    raw_token = ROTATION_TOKEN_PREFIX + secrets.token_hex(32)
+    user.mk_rotation_state = {
+        "status": "rotating",
+        "started_at": now.isoformat(),
+        "rotation_token_hash": _hash_rotation_token(raw_token),
+        "auto_abort_at": (now + ROTATION_TTL).isoformat(),
+        "new_wrapped_keys_id_set": [],
+    }
+    db.session.commit()
+    return jsonify({
+        "rotation_token": raw_token,
+        "auto_abort_at": user.mk_rotation_state["auto_abort_at"],
+    }), 201
+
+
+@bp.post("/rotate/commit")
+@auth_required(write=True)
+@limiter.limit("10 per hour", key_func=rate_limit_key)
+def rotate_commit():
+    """ローテーション完了: state.new_wrapped_keys_id_set に含まれない旧 wrapped_keys を削除。
+
+    X-Rotation-Id ヘッダ必須。state は NULL クリア。
+    """
+    user = g.auth_user
+    if not _verify_rotation_token(user):
+        return jsonify(error="invalid rotation token"), 403
+
+    state = user.mk_rotation_state or {}
+    if state.get("status") != "rotating":
+        return jsonify(error="no rotation in progress"), 409
+
+    new_set = set(state.get("new_wrapped_keys_id_set", []))
+    if not new_set:
+        return jsonify(
+            error="no new wrapped_keys recorded for this rotation"
+        ), 409
+
+    # user_id フィルタを厳格適用して旧 wrapped_keys を削除 (IDOR 防止)。
+    # new_set に含まれない自身の行のみが削除対象。
+    deleted = (
+        WrappedKey.query
+        .filter_by(user_id=user.id)
+        .filter(~WrappedKey.id.in_(new_set))
+        .delete(synchronize_session=False)
+    )
+    user.mk_rotation_state = None
+    db.session.commit()
+    return jsonify(deleted=deleted), 200
+
+
+@bp.post("/rotate/abort")
+@auth_required(write=True)
+@limiter.limit("10 per hour", key_func=rate_limit_key)
+def rotate_abort():
+    """ローテーション中止: state.new_wrapped_keys_id_set の行を削除。
+
+    X-Rotation-Id ヘッダ必須。state は NULL クリア。データ本体は再暗号化が
+    未完了なので旧 MK で復号可能なまま (設計書 §10.5)。
+    """
+    user = g.auth_user
+    if not _verify_rotation_token(user):
+        return jsonify(error="invalid rotation token"), 403
+
+    state = user.mk_rotation_state or {}
+    if state.get("status") != "rotating":
+        return jsonify(error="no rotation in progress"), 409
+
+    new_set = state.get("new_wrapped_keys_id_set", [])
+    deleted = 0
+    if new_set:
+        deleted = (
+            WrappedKey.query
+            .filter_by(user_id=user.id)
+            .filter(WrappedKey.id.in_(new_set))
+            .delete(synchronize_session=False)
+        )
+    user.mk_rotation_state = None
+    db.session.commit()
+    return jsonify(deleted=deleted), 200
