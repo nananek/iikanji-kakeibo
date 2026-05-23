@@ -678,8 +678,8 @@ client                              server
 
 - アンラップ失敗 (タグ検証 NG) は「鍵が間違っている」を示す。攻撃検知では
   ないので一般エラーで返す
-- リロード時は Worker メモリが揮発するため再アンラップが必要 (§5 と §10.7
-  Q10 整理参照)
+- リロード時の MK 揮発対策は SharedWorker による永続化で解消 (§10.7
+  Q10 整理参照)。タブが 1 つでも生きていれば再アンラップ不要
 
 #### PRF 非対応環境のフォールバック (Q2)
 
@@ -852,29 +852,57 @@ Web クライアント:
 
 - **(a) 毎回 Passkey 再認証**: 最も安全だが UX 悪化
 - **(b) sessionStorage に MK を保持**: XSS で全データ漏洩 → **禁止**
-- **(c) ServiceWorker 内 Web Worker でセッション維持**: ServiceWorker は
-  リロードを跨いで生存。同一 origin の Web Worker 鍵をブラウザ閉じるまで保持
-  可能。ただし ServiceWorker 自身が XSS で乗っ取られるリスクあり
+- **(c-old) ServiceWorker 内に MK を保持**: ServiceWorker はブラウザによって
+  任意のタイミングで殺される (idle 中・メモリ圧迫時等) ため、状態保持には
+  本質的に不向き → **棄却**
+- **(c) SharedWorker で MK を保持**: SharedWorker は同一 origin の全タブで
+  共有され、タブが 1 つでも生きていれば寿命が続く。リロード跨ぎ・タブ間
+  共有とも自然に実現できる
 - **(d) Page Visibility / idle 検知で自動再認証**: 一定時間操作なしで自動
-  ロック (=ServiceWorker から MK を消す)。これは (c) と組合せる
+  ロック (=SharedWorker から MK を消す)。(c) と組合せる
+- **(e-rejected) IndexedDB に MK や wrapping key を永続化**: ブラウザクローズ後も
+  保持できるが、XSS 1 件で全データ漏洩 → E2EE の前提を破るため **不採用**
 
-→ **暫定: (c) + (d) の組合せ**。ServiceWorker 内 Web Worker で MK 保持 +
-30 分 idle で自動ロック。実装は E0 プロトタイプ上で検証 (Q10)。
+→ **確定: (c) + (d) の組合せ**。SharedWorker 内 MK 保持 + 60 分 idle で
+自動ロック。ブラウザを全タブ閉じれば MK は消滅 (再認証必要) — これは
+平文鍵をディスク永続化しないための仕様。
+
+#### 60 分タイムアウトの根拠
+
+当初設計は 30 分だったが、実利用では誤ロックが頻発するため 60 分に拡大。
+ロック解除はパスフレーズ入力 (Argon2id で遅い) より Passkey タップ (1 秒)
+が遥かに快適なため、idle ロック自体が **パスフレーズ → Passkey 移行の
+インセンティブ** として機能する設計意図がある。
+
+公開後のユーザーログから idle 分布を観測し、必要なら 30〜90 分の範囲で
+さらに調整する。
 
 #### マルチタブ時の挙動
 
-ServiceWorker は同一 origin の全タブで共有されるため、タブ A でアンラップ
-した MK はタブ B でも即座に利用可能になる。これは利便性として望ましい。
+SharedWorker は同一 origin の全タブで共有されるため、タブ A でアンラップ
+した MK はタブ B でも即座に利用可能。MK 状態変化 (`mkChanged` / `mkCleared`)
+は全接続ポートに broadcast され、各タブが UI を同期する。
 
 idle カウントの仕様:
-- **タブ単位ではなく ServiceWorker 単位で 1 つのカウンタ** を持つ
-- いずれかのタブで Page Visibility が `visible` or ユーザー操作 (mouse/keyboard)
-  があればカウンタリセット
-- どのタブもアクティブでない状態が 30 分継続したら MK を消去
-- 消去後はどのタブからの操作も再認証要求
+- **タブ単位ではなく SharedWorker 単位で 1 つのカウンタ** を持つ
+- いずれかのタブで Page Visibility が `visible` or ユーザー操作 (mouse/keyboard
+  /touch/scroll) があれば SharedWorker に `touch` メッセージを送りカウンタ更新
+- どのタブからもアクティビティがない状態が 60 分継続したら MK を消去
+- 消去後はどのタブの操作も再認証要求
 
-これにより「タブ B を開いたまま放置してタブ A で操作中」のシナリオで誤って
-ロックが発火する事故を防ぐ。
+メインスレッド側の `touch` 発火は 1 分単位でスロットルし、SharedWorker への
+postMessage が大量に流れないようにする。
+
+#### 実装ファイル (E1 PR-G)
+
+- `app/static/js/crypto/shared-worker-core.js` — `MasterKeyState` 純粋クラス
+  (handle/checkIdle、Node テスト可能)
+- `app/static/js/crypto/shared-worker.js` — SharedWorker ラッパー
+  (onconnect、全ポート broadcast、setInterval idle 監視)
+- `app/static/js/crypto/shared-client.js` — `SharedCryptoClient`
+  (MessagePort 経由、`mkChanged`/`mkCleared` リスナー)
+- `app/static/js/crypto/idle-monitor.js` — `IdleMonitor` (アクティビティ
+  検知 + throttle 付き touch 発火)
 
 ### 10.8 監査アカウント (Lv1/Lv2/Lv3) と E1 鍵管理の関係
 
@@ -914,7 +942,7 @@ v4.x → v5.0 の UX 変更の必然的帰結。`wrapped_keys.method='audit_gran
 - [ ] BIP-39 24 単語のリカバリシード生成 + 表示 + 入力時チェックサム検証 UI (HKDF で derived_key 派生)
 - [ ] MK ローテーション (空データでフロー検証、`mk_rotation_state` を含む再開可能設計、E3 で本番投入)
 - [ ] 既存 webauthn_credentials との DB レベル CASCADE 連動 (FK to `webauthn_credentials.id`)
-- [ ] Q9/Q10 の実装 (Bearer + MK の併用、ServiceWorker セッション維持、マルチタブ idle カウンタ共有)
+- [ ] Q9/Q10 の実装 (Bearer + MK の併用、SharedWorker による MK 永続化、マルチタブ idle カウンタ共有)
 
 E2 (API キー E2EE 化) はこの基盤を最初に使う「最小スコープ検証」。
 
@@ -2155,7 +2183,7 @@ E1–E5 で確立した暗号化基盤を **全クライアント (Web / client-
 
 | 機能 | Web | client-py | client-tui | iikanji-mcp |
 |---|---|---|---|---|
-| Master Key 管理 (§10) | ✅ ServiceWorker + Web Worker | ✅ OS keyring | ✅ OS keyring | ❌ E2EE 非両立 |
+| Master Key 管理 (§10) | ✅ SharedWorker (リロード跨ぎ・全タブ共有・60 分 idle 自動ロック) | ✅ OS keyring | ✅ OS keyring | ❌ E2EE 非両立 |
 | Passkey PRF | ✅ WebAuthn | — (Bearer + パスフレーズ) | — | — |
 | API キー設定 (§11) | ✅ クライアント暗号化 | ✅ ローカル復号して直接 LLM | ✅ 同左 | ❌ 廃止 |
 | 仕訳 CRUD (§12) | ✅ JSON-then-encrypt | ✅ 同左 | ✅ 同左 | ❌ 廃止 |
