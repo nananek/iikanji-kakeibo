@@ -1,3 +1,4 @@
+import base64
 import logging
 from datetime import datetime, timezone
 from urllib.parse import urlparse
@@ -19,7 +20,7 @@ from webauthn.helpers.structs import (
     UserVerificationRequirement,
 )
 
-from app.extensions import db
+from app.extensions import db, limiter
 from app.models.user import User
 from app.models.webauthn import WebAuthnCredential
 from app.views.helpers import maybe_clear_pending_recovery
@@ -159,8 +160,6 @@ def authenticate_verify():
     raw_id = body.get("rawId", "")
 
     # credential_id をバイナリに変換して検索
-    import base64
-
     try:
         credential_id_bytes = base64.urlsafe_b64decode(raw_id + "==")
     except Exception:
@@ -213,6 +212,8 @@ def authenticate_verify():
 
 
 @bp.route("/key-derivation/options", methods=["POST"])
+# challenge 生成は計算負荷小だが、繰り返しブルートフォース防止として緩めに制限
+@limiter.limit("20 per minute")
 @login_required
 def key_derivation_options():
     """鍵派生用 WebAuthn 認証チャレンジを生成。
@@ -263,6 +264,8 @@ def key_derivation_options():
 
 
 @bp.route("/key-derivation/finalize", methods=["POST"])
+# 署名検証 + DB 書込あり。既存 authenticate_verify (未制限) よりは厳しめに
+@limiter.limit("10 per minute")
 @login_required
 def key_derivation_finalize():
     """鍵派生フローの所有権検証 + sign_count 更新。
@@ -281,7 +284,6 @@ def key_derivation_finalize():
 
     body = request.get_json()
     raw_id = body.get("rawId", "")
-    import base64
 
     try:
         credential_id_bytes = base64.urlsafe_b64decode(raw_id + "==")
