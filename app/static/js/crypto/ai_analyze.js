@@ -152,9 +152,14 @@ export async function analyzeReceiptClientSide({
   const suggestions = Array.isArray(llmRes.result)
     ? llmRes.result
     : [llmRes.result];
+  const usedModel = cfg.model_name || _defaultModelFor(cfg.provider);
   const saved = await _saveSuggestions(f, draft_id, {
     suggestions,
     usage: llmRes.usage,
+    // PR #150 review NG-2: provider/model も送ることで AIUsageLog
+    // 記録を可能にする (サーバ側 ai_receipt.py と等価の監査トレイル)。
+    provider: cfg.provider,
+    model: usedModel,
   });
 
   return {

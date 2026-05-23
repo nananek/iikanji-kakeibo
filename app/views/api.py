@@ -13,6 +13,7 @@ from app.models.api_key import APIKey
 from app.models.oauth import OAuthToken
 from app.models.ai_config import UserAIConfig
 from app.models.ai_draft import AIDraft
+from app.models.ai_usage_log import AIUsageLog
 from app.models.journal import JournalEntry
 from app.services.accounting import create_journal_entry
 from app.services.audit import get_submitted_account_codes, is_entry_locked_for_owner
@@ -30,6 +31,7 @@ from app.services.voucher import create_voucher_from_draft
 from app.models.user import User
 from app.models.voucher import Voucher
 from app.models.voucher_audit_log import VoucherAuditLog
+from app.services.api_auth import auth_required, rate_limit_key
 from app.views.helpers import safe_user_error
 
 bp = Blueprint("api", __name__, url_prefix="/api/v1")
@@ -553,14 +555,14 @@ def ai_draft_delete(draft_id):
     return jsonify({"ok": True})
 
 
-from app.services.api_auth import auth_required, rate_limit_key
-
 # E2 PR-C-2: クライアント側 LLM 呼出フロー用 endpoint。
 # サーバ側で LLM を呼ばないため /ai/analyze と異なり API キーが不要。
 # クライアントが画像をアップロード → 自分で LLM を呼ぶ → 結果を PATCH で保存。
 
-# AIDraft.suggestions_json のサイズ上限 (DB レコード巨大化防止)
-_MAX_SUGGESTIONS_JSON_SIZE = 200 * 1024  # 200KB
+# AIDraft.suggestions_json のサイズ上限 (DB レコード巨大化防止)。
+# json.dumps(..., ensure_ascii=False) で日本語は UTF-8 で 1 文字 = 3 バイトに
+# なるため、文字数でなく **UTF-8 バイト数** で判定する (PR #150 review NG-1)。
+_MAX_SUGGESTIONS_JSON_SIZE = 200 * 1024  # 200 KB (UTF-8 bytes)
 
 
 @bp.route("/ai/uploads", methods=["POST"])
@@ -689,13 +691,43 @@ def ai_draft_save_suggestions(draft_id):
     if not isinstance(suggestions, list):
         return jsonify({"error": "suggestions must be a list"}), 400
     suggestions_json = json.dumps(suggestions, ensure_ascii=False)
-    if len(suggestions_json) > _MAX_SUGGESTIONS_JSON_SIZE:
+    # UTF-8 byte size 判定 (PR #150 review NG-1 修正)
+    if len(suggestions_json.encode("utf-8")) > _MAX_SUGGESTIONS_JSON_SIZE:
         return jsonify({
             "error": f"suggestions too large (max {_MAX_SUGGESTIONS_JSON_SIZE} bytes)",
         }), 413
 
     draft.suggestions_json = suggestions_json
     draft.status = "analyzed"
+
+    # AIUsageLog 記録 (PR #150 review NG-2 修正)
+    # クライアント LLM の利用量をサーバ側でも記録する。サーバ側 ai_receipt.py
+    # フローと等価の監査トレイル + Phase 3 #68 Billing 連携に必要。
+    # provider / model / usage が揃っているリクエストのみ記録 (任意フィールド)。
+    provider = payload.get("provider")
+    model = payload.get("model")
+    usage = payload.get("usage") or {}
+    input_tokens = usage.get("input_tokens") if isinstance(usage, dict) else None
+    output_tokens = usage.get("output_tokens") if isinstance(usage, dict) else None
+    if (
+        isinstance(provider, str) and provider
+        and isinstance(model, str) and model
+    ):
+        total = None
+        if isinstance(input_tokens, int) and isinstance(output_tokens, int):
+            total = input_tokens + output_tokens
+        log = AIUsageLog(
+            user_id=user_id,
+            provider=provider[:20],
+            model=model[:100],
+            feature="receipt_client_side",
+            input_tokens=input_tokens if isinstance(input_tokens, int) else None,
+            output_tokens=output_tokens if isinstance(output_tokens, int) else None,
+            total_tokens=total,
+            status="ok",
+        )
+        db.session.add(log)
+
     db.session.commit()
 
     return jsonify({
