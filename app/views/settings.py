@@ -115,6 +115,22 @@ def passkeys():
     return render_template("settings/passkeys.html", credentials=credentials)
 
 
+@bp.route("/encryption-keys")
+@login_required
+def encryption_keys():
+    """E2EE 鍵管理ウィザード (v5.0 準備)。
+
+    クライアントサイドで MK 派生・wrap が完結するため、本 view は単にテンプレートを
+    返すだけ。実際の wrapped_keys CRUD は `/api/v1/wrapped-keys` (api_v1 blueprint) を
+    Alpine.js コンポーネントが叩く。
+    """
+    # 監査ユーザーは E2EE 機能の対象外 (Lv1/Lv2/Lv3 は本人 MK にアクセスしない)
+    if current_user.user_type == "auditor":
+        flash("監査アカウントは暗号鍵設定の対象外です。", "info")
+        return redirect(url_for("settings.index"))
+    return render_template("settings/encryption_keys.html")
+
+
 @bp.route("/passkeys/<int:credential_id>/delete", methods=["POST"])
 @login_required
 def delete_passkey(credential_id):
