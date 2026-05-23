@@ -586,3 +586,75 @@ def register_cli(app):
                 f"  user={d['user_id']}: measured={d['measured']} "
                 f"recorded={d['recorded']} delta={d['delta']:+d}"
             )
+
+    @app.cli.command("rotate-cleanup")
+    @click.option("--dry-run", is_flag=True, help="削除せず対象件数のみ表示")
+    def rotate_cleanup_command(dry_run):
+        """E2EE MK ローテーションの auto_abort_at 経過分を自動 abort する。
+
+        設計書 §10.5 / §16.4: ローテーション中にデバイス紛失等で commit/abort
+        いずれも飛んでこないケースを救済。cron / systemd timer で 1 時間ごとに
+        起動する想定。
+        """
+        from datetime import datetime, timezone
+
+        from app.models.user import User
+        from app.models.wrapped_key import WrappedKey
+
+        now = datetime.now(timezone.utc)
+        users = (
+            User.query
+            .filter(User.mk_rotation_state.isnot(None))
+            .all()
+        )
+        aborted = 0
+        deleted_total = 0
+        skipped = 0
+        errors = 0
+        for user in users:
+            state = user.mk_rotation_state or {}
+            if state.get("status") != "rotating":
+                continue
+            auto_abort_at = state.get("auto_abort_at")
+            if not auto_abort_at:
+                continue
+            try:
+                deadline = datetime.fromisoformat(auto_abort_at)
+            except ValueError:
+                deadline = None
+            if deadline is None or deadline > now:
+                skipped += 1
+                continue
+            # auto_abort をユーザー単位で実行・コミット (1 ユーザーの失敗を他に
+            # 巻き込まないよう独立トランザクション)
+            new_set = state.get("new_wrapped_keys_id_set", []) or []
+            if dry_run:
+                aborted += 1
+                deleted_total += len(new_set)
+                print(
+                    f"  [dry-run] user_id={user.id} "
+                    f"new_wrapped_keys={len(new_set)} "
+                    f"deadline={auto_abort_at}"
+                )
+                continue
+            try:
+                if new_set:
+                    deleted = (
+                        WrappedKey.query
+                        .filter_by(user_id=user.id)
+                        .filter(WrappedKey.id.in_(new_set))
+                        .delete(synchronize_session=False)
+                    )
+                    deleted_total += deleted
+                user.mk_rotation_state = None
+                db.session.commit()
+                aborted += 1
+            except Exception as exc:
+                db.session.rollback()
+                errors += 1
+                print(f"  skip: user_id={user.id} error={exc}")
+        print(
+            f"rotate-cleanup: aborted={aborted}, "
+            f"deleted_wrapped_keys={deleted_total}, "
+            f"still_in_window={skipped}, errors={errors}"
+        )

@@ -53,8 +53,13 @@ def _make_credential(db, user, credential_id=None):
 
 
 def _login(client, user):
-    """Flask-Login のテスト用ログイン補助。"""
+    """Flask-Login のテスト用ログイン補助。
+
+    既存セッションを完全クリアしてから上書き (前のテスト or 前のログインの
+    残骸を確実に除去)。
+    """
     with client.session_transaction() as sess:
+        sess.clear()
         sess["_user_id"] = str(user.id)
         sess["_fresh"] = True
 
@@ -653,3 +658,228 @@ def test_bearer_other_user_isolation(client, db):
     )
     assert resp.status_code == 200
     assert resp.get_json()["wrapped_keys"] == []  # 自分の鍵は 0 件
+
+
+# --- ローテーション (begin / commit / abort、設計書 §10.5) ---
+
+
+def _begin_rotation(client, user):
+    """rotation を開始して raw token を返すヘルパー (Session 認証)。"""
+    _login(client, user)
+    resp = client.post("/api/v1/wrapped-keys/rotate/begin")
+    assert resp.status_code == 201, resp.get_data(as_text=True)
+    return resp.get_json()["rotation_token"]
+
+
+def test_rotate_begin_returns_token(client, db):
+    user = _make_user(db)
+    _login(client, user)
+    resp = client.post("/api/v1/wrapped-keys/rotate/begin")
+    assert resp.status_code == 201
+    body = resp.get_json()
+    assert body["rotation_token"].startswith("rot_")
+    assert "auto_abort_at" in body
+    # state に保存されている
+    user_refreshed = db.session.get(User, user.id)
+    assert user_refreshed.mk_rotation_state["status"] == "rotating"
+
+
+def test_rotate_begin_conflict_when_already_rotating(client, db):
+    user = _make_user(db)
+    _login(client, user)
+    client.post("/api/v1/wrapped-keys/rotate/begin")
+    resp = client.post("/api/v1/wrapped-keys/rotate/begin")
+    assert resp.status_code == 409
+
+
+def test_create_during_rotation_records_id(client, db):
+    """ローテーション中の POST で X-Rotation-Id があれば state に id 記録。"""
+    user = _make_user(db)
+    token = _begin_rotation(client, user)
+
+    resp = client.post(
+        "/api/v1/wrapped-keys",
+        json=_passphrase_payload(),
+        headers={"X-Rotation-Id": token},
+    )
+    assert resp.status_code == 201
+    new_id = resp.get_json()["id"]
+
+    db.session.expire_all()
+    user_refreshed = db.session.get(User, user.id)
+    assert new_id in user_refreshed.mk_rotation_state["new_wrapped_keys_id_set"]
+
+
+def test_create_without_rotation_token_not_recorded(client, db):
+    """ローテーション中でも X-Rotation-Id がない POST は new_set に記録されない。"""
+    user = _make_user(db)
+    _begin_rotation(client, user)
+
+    resp = client.post("/api/v1/wrapped-keys", json=_passphrase_payload())
+    assert resp.status_code == 201
+    new_id = resp.get_json()["id"]
+
+    db.session.expire_all()
+    user_refreshed = db.session.get(User, user.id)
+    assert new_id not in user_refreshed.mk_rotation_state["new_wrapped_keys_id_set"]
+
+
+def test_rotate_commit_deletes_old_keys(client, db):
+    """commit で new_set 以外の wrapped_keys を削除。"""
+    user = _make_user(db)
+    # 旧 passphrase 鍵を 1 つ作成 (rotation 前)
+    _login(client, user)
+    client.post("/api/v1/wrapped-keys", json=_passphrase_payload())
+    # rotation 開始
+    token = _begin_rotation(client, user)
+    # 新 recovery_seed 鍵を作成 (X-Rotation-Id 付き)
+    resp = client.post(
+        "/api/v1/wrapped-keys",
+        json=_recovery_payload(),
+        headers={"X-Rotation-Id": token},
+    )
+    assert resp.status_code == 201
+
+    # commit
+    resp = client.post(
+        "/api/v1/wrapped-keys/rotate/commit",
+        headers={"X-Rotation-Id": token},
+    )
+    assert resp.status_code == 200
+    assert resp.get_json()["deleted"] == 1  # 旧 passphrase 1 件
+
+    # state はクリア、wrapped_keys は 1 件のみ
+    db.session.expire_all()
+    user_refreshed = db.session.get(User, user.id)
+    assert user_refreshed.mk_rotation_state is None
+    rows = WrappedKey.query.filter_by(user_id=user.id).all()
+    assert len(rows) == 1
+    assert rows[0].method == METHOD_RECOVERY_SEED
+
+
+def test_rotate_commit_without_token_returns_403(client, db):
+    user = _make_user(db)
+    _begin_rotation(client, user)
+    resp = client.post("/api/v1/wrapped-keys/rotate/commit")
+    assert resp.status_code == 403
+
+
+def test_rotate_commit_with_wrong_token_returns_403(client, db):
+    user = _make_user(db)
+    _begin_rotation(client, user)
+    resp = client.post(
+        "/api/v1/wrapped-keys/rotate/commit",
+        headers={"X-Rotation-Id": "rot_wrong"},
+    )
+    assert resp.status_code == 403
+
+
+def test_rotate_commit_when_not_rotating_returns_409(client, db):
+    user = _make_user(db)
+    _login(client, user)
+    resp = client.post(
+        "/api/v1/wrapped-keys/rotate/commit",
+        headers={"X-Rotation-Id": "rot_anything"},
+    )
+    # token 検証で 403 (state なしのため hash 比較失敗)
+    assert resp.status_code == 403
+
+
+def test_rotate_commit_empty_new_set_returns_409(client, db):
+    """ローテ開始したが POST 0 件 → commit 409。"""
+    user = _make_user(db)
+    token = _begin_rotation(client, user)
+    resp = client.post(
+        "/api/v1/wrapped-keys/rotate/commit",
+        headers={"X-Rotation-Id": token},
+    )
+    assert resp.status_code == 409
+
+
+def test_rotate_abort_deletes_new_keys(client, db):
+    """abort で new_set の wrapped_keys を削除、旧鍵は保持。"""
+    user = _make_user(db)
+    _login(client, user)
+    # 旧 passphrase
+    resp1 = client.post("/api/v1/wrapped-keys", json=_passphrase_payload())
+    old_id = resp1.get_json()["id"]
+    # rotation 開始
+    token = _begin_rotation(client, user)
+    # 新 recovery_seed
+    resp2 = client.post(
+        "/api/v1/wrapped-keys",
+        json=_recovery_payload(),
+        headers={"X-Rotation-Id": token},
+    )
+    new_id = resp2.get_json()["id"]
+
+    resp = client.post(
+        "/api/v1/wrapped-keys/rotate/abort",
+        headers={"X-Rotation-Id": token},
+    )
+    assert resp.status_code == 200
+    assert resp.get_json()["deleted"] == 1
+
+    # 旧鍵は残り、新鍵は消える
+    rows = WrappedKey.query.filter_by(user_id=user.id).all()
+    ids = sorted(r.id for r in rows)
+    assert ids == [old_id]
+    db.session.expire_all()
+    user_refreshed = db.session.get(User, user.id)
+    assert user_refreshed.mk_rotation_state is None
+
+
+def test_rotate_abort_without_token_returns_403(client, db):
+    """abort も token なしは 403。"""
+    user = _make_user(db)
+    _begin_rotation(client, user)
+    resp = client.post("/api/v1/wrapped-keys/rotate/abort")
+    assert resp.status_code == 403
+
+
+def test_rotate_abort_with_wrong_token_returns_403(client, db):
+    """abort も wrong token は 403。"""
+    user = _make_user(db)
+    _begin_rotation(client, user)
+    resp = client.post(
+        "/api/v1/wrapped-keys/rotate/abort",
+        headers={"X-Rotation-Id": "rot_wrong"},
+    )
+    assert resp.status_code == 403
+
+
+def test_rotate_abort_when_not_rotating_returns_403(client, db):
+    """rotation 未開始で abort も 403 (token 検証で state=None なら一律 403)。"""
+    user = _make_user(db)
+    _login(client, user)
+    resp = client.post(
+        "/api/v1/wrapped-keys/rotate/abort",
+        headers={"X-Rotation-Id": "rot_anything"},
+    )
+    assert resp.status_code == 403
+
+
+def test_rotate_other_user_cannot_use_token(client, db):
+    """他ユーザーの rotation_token では rotation 操作不可。
+
+    Bearer 認証経由でテスト (test client の session 切替は Flask-Login が
+    request-scoped にユーザーを cache するため、同じ client インスタンスで
+    複数ユーザーの切替えが反映されないことがある)。
+    """
+    other = _make_user(db, "other")
+    me = _make_user(db, "me")
+
+    # other が rotation 開始 (session 経由)
+    other_token = _begin_rotation(client, other)
+
+    # me の APIKey で commit を試みる (Bearer 経由なので session に依存しない)
+    me_api_key = _make_api_key(db, me)
+    resp = client.post(
+        "/api/v1/wrapped-keys/rotate/commit",
+        headers={
+            "Authorization": f"Bearer {me_api_key}",
+            "X-Rotation-Id": other_token,
+        },
+    )
+    # me の state は存在しないので 403
+    assert resp.status_code == 403
