@@ -17,7 +17,7 @@
 //     は worker 側で Transferable detach されてゼロ埋め保証
 
 import { SharedCryptoClient } from "./shared-client.js";
-import { utf8, fromUtf8 } from "./client.js";
+import { utf8 } from "./client.js";
 
 
 // 設定画面が単一インスタンスを使うように window グローバル
@@ -134,10 +134,14 @@ export function aiConfigForm(initial = {}) {
 
     // 内部
     _client: null,
+    // mkChanged listener の累積防止。init() が複数回呼ばれても 1 度だけ登録。
+    _mkChangedUnsub: null,
 
     async init() {
       try {
-        this._client = new SharedCryptoClient(getSharedWorkerUrl());
+        if (this._client === null) {
+          this._client = new SharedCryptoClient(getSharedWorkerUrl());
+        }
 
         const keyCount = await _getWrappedKeysCount();
         if (keyCount === 0) {
@@ -148,8 +152,12 @@ export function aiConfigForm(initial = {}) {
         const status = await this._client.status();
         if (!status.hasKey) {
           this.state = "locked";
-          // mkChanged を購読して解除されたら再初期化
-          this._client.on("mkChanged", () => this.init());
+          // mkChanged 解除時に再初期化。リスナー累積防止のため、初回のみ登録
+          // (on() の戻り値で unsubscribe 可能だが、本コンポーネントは
+          //  ページ寿命と一致するので flag ガードで十分)。
+          if (this._mkChangedUnsub === null) {
+            this._mkChangedUnsub = this._client.on("mkChanged", () => this.init());
+          }
           return;
         }
 
@@ -192,7 +200,13 @@ export function aiConfigForm(initial = {}) {
           customPrompt: legacy.custom_prompt || "",
           complianceCheck: !!legacy.compliance_check,
         });
+        // 3. フォーム状態を migrate 結果に同期 (古い initial 値を上書き)
+        this.provider = legacy.provider || this.provider;
+        this.modelName = legacy.model_name || "";
+        this.customPrompt = legacy.custom_prompt || "";
+        this.complianceCheck = !!legacy.compliance_check;
         this.notice = "暗号化形式を E2EE に移行しました。";
+        this.hasConfig = true;
         this.hasLegacyKey = false;
         this.isE2ee = true;
         this.state = "ready";
@@ -207,16 +221,31 @@ export function aiConfigForm(initial = {}) {
     async save() {
       this.error = "";
       this.notice = "";
-      if (this.provider !== "llama_cpp" && !this.apiKey && !this.isE2ee) {
-        // 新規設定は api_key 必須 (llama_cpp 以外)
+      const isLlamaCpp = this.provider === "llama_cpp";
+      // llama_cpp はサーバ管理者提供 API なので API キー不要。
+      // 新規登録時の API キー必須は llama_cpp 以外のみ。
+      if (!isLlamaCpp && !this.apiKey && !this.isE2ee) {
         this.error = "API キーを入力してください。";
         return;
       }
       this.saving = true;
       try {
-        if (!this.apiKey) {
-          // 既存設定の更新で api_key を変更しない場合は、現在の blob/iv を維持
-          // → PUT は api_key 非送信を許容しないため、GET → blob/iv を流用
+        if (isLlamaCpp) {
+          // llama_cpp は API キー文字列を持たないが、API スキーマは blob/iv
+          // 必須なので空文字列を暗号化して送る (= 復号して "" を得る)。
+          // クライアント (Web) が llama_cpp 呼出時は MK で復号 → 空文字列を
+          // 取得 → 「サーバ管理者提供 LLM を使う」フラグとして扱う。
+          await this._saveEncrypted({
+            apiKey: "",
+            provider: this.provider,
+            modelName: this.modelName,
+            customPrompt: this.customPrompt,
+            complianceCheck: this.complianceCheck,
+          });
+          this.notice = "設定を保存しました (llama_cpp、API キー不要)。";
+        } else if (!this.apiKey) {
+          // 既存設定の更新で api_key を変更しない場合は現在の blob/iv を維持
+          // → PUT は blob/iv 必須なため、GET で取得して流用する
           const cur = await _getAiConfig();
           if (!cur || !cur.api_key_blob || !cur.api_key_iv) {
             this.error = "API キーを入力してください (既存暗号文が見つかりません)";
