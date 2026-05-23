@@ -5,7 +5,12 @@
 // postMessage のメッセージは type ごとに型を検証し、不正型は
 // { ok: false, error } で返す (Q12 対応)。
 //
-// 暗号プリミティブは primitives.js から import (Node テスト共用)。
+// 並行性に注意:
+// - onmessage は async のため、wrap が `await` で yield 中に clearKey 等が
+//   割り込みうる。wrap は await 前に rawMasterKey.slice() でスナップショット
+//   を取って影響を遮断する
+//
+// エラーパスでも鍵素材は必ずゼロ埋め: 全 case で try/finally。
 
 import {
   aesGcmDecrypt,
@@ -41,13 +46,20 @@ async function handle(msg) {
   switch (msg.type) {
     case "generateKey": {
       const raw = crypto.getRandomValues(new Uint8Array(32));
-      await setMkFromRaw(raw);
-      raw.fill(0);
+      try {
+        await setMkFromRaw(raw);
+      } finally {
+        raw.fill(0);
+      }
       return { ok: true, keyBits: 256 };
     }
     case "setKey": {
-      await setMkFromRaw(msg.rawKey);
-      msg.rawKey.fill(0);
+      const raw = msg.rawKey;
+      try {
+        await setMkFromRaw(raw);
+      } finally {
+        if (isUint8(raw)) raw.fill(0);
+      }
       return { ok: true };
     }
     case "clearKey": {
@@ -70,17 +82,33 @@ async function handle(msg) {
     }
     case "wrap": {
       if (rawMasterKey === null) throw new Error("master key not set");
-      const r = await wrapMasterKey(rawMasterKey, msg.derivedKey);
-      msg.derivedKey.fill(0);
-      return { ok: true, iv: r.iv, wrapped: r.ciphertext };
+      // await 前にスナップショットを取る。await 中に clearKey が割り込むと
+      // rawMasterKey が all-zero になるため、wrap 対象を確定させておく。
+      const snapshot = rawMasterKey.slice();
+      try {
+        const r = await wrapMasterKey(snapshot, msg.derivedKey);
+        return { ok: true, iv: r.iv, wrapped: r.ciphertext };
+      } finally {
+        snapshot.fill(0);
+        if (isUint8(msg.derivedKey)) msg.derivedKey.fill(0);
+      }
     }
     case "unwrap": {
-      const rawMk = await unwrapMasterKey(
-        msg.wrapped, msg.iv, msg.derivedKey,
-      );
-      msg.derivedKey.fill(0);
-      await setMkFromRaw(rawMk);
-      rawMk.fill(0);
+      let rawMk;
+      try {
+        rawMk = await unwrapMasterKey(
+          msg.wrapped, msg.iv, msg.derivedKey,
+        );
+      } finally {
+        // unwrap 失敗 (タグ検証 NG = パスフレーズ誤り等) は通常パス。
+        // 失敗時でも derivedKey は確実にゼロ埋め。
+        if (isUint8(msg.derivedKey)) msg.derivedKey.fill(0);
+      }
+      try {
+        await setMkFromRaw(rawMk);
+      } finally {
+        rawMk.fill(0);
+      }
       return { ok: true, keyBits: 256 };
     }
     default:
