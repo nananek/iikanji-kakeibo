@@ -228,7 +228,13 @@ class TestMigrateKey:
         self, db, logged_in_client, user, accounts,
     ):
         """E2EE 形式で新規登録されたユーザー (api_key_encrypted が None) は
-        migrate 対象なし。再呼出防止のため migrated_at をセットして 404 返却。"""
+        migrate 対象なし。再呼出防止のため migrated_at をセットして 404 返却。
+
+        注: `api_key_blob != None かつ migrated_at == None` の状態は
+        通常 PUT が常に migrated_at をセットするため、通常 API フローでは
+        発生しない。直接 DB 操作 / 将来の API バグ / 旧データの手動修復で
+        作られる可能性のある状態に対する防御的テスト。
+        """
         cfg = _ai_config(user.id, with_legacy=False, with_e2ee=True)
         assert cfg.api_key_encrypted is None
         resp = logged_in_client.post("/api/v1/ai-config/migrate-key")
@@ -273,3 +279,32 @@ class TestCliMigrationStatus:
         assert "legacy_remaining=1" in result.output
         assert "e2ee_migrated=1" in result.output
         assert "migrate_key_called=1" in result.output
+
+
+class TestCliResetMigrateKey:
+    """flask ai-config-reset-migrate-key コマンド (管理者リカバリ用)。"""
+
+    def test_no_config(self, app, db):
+        runner = app.test_cli_runner()
+        result = runner.invoke(args=["ai-config-reset-migrate-key", "99999"])
+        assert result.exit_code == 0
+        assert "has no UserAIConfig" in result.output
+
+    def test_not_yet_migrated_is_noop(self, app, db, user, accounts):
+        _ai_config(user.id, with_legacy=True)
+        runner = app.test_cli_runner()
+        result = runner.invoke(args=["ai-config-reset-migrate-key", str(user.id)])
+        assert result.exit_code == 0
+        assert "No-op" in result.output
+
+    def test_resets_migrated_at(self, app, db, user, accounts):
+        cfg = _ai_config(user.id, with_legacy=False, with_e2ee=True, migrated=True)
+        assert cfg.migrated_at is not None
+        runner = app.test_cli_runner()
+        result = runner.invoke(args=["ai-config-reset-migrate-key", str(user.id)])
+        assert result.exit_code == 0
+        assert "reset migrated_at" in result.output
+        db.session.refresh(cfg)
+        assert cfg.migrated_at is None
+        # api_key_encrypted は既に NULL なので注意メッセージが出る
+        assert "再入力を促してください" in result.output

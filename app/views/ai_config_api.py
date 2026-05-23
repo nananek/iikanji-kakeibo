@@ -18,11 +18,15 @@
 from base64 import b64decode, b64encode
 from datetime import datetime, timezone
 
-from flask import Blueprint, g, jsonify, request
+import logging
+
+from flask import Blueprint, current_app, g, jsonify, request
 
 from app.extensions import db, limiter
 from app.models.ai_config import UserAIConfig
 from app.services.api_auth import auth_required, rate_limit_key
+
+logger = logging.getLogger(__name__)
 
 
 bp = Blueprint("ai_config_api", __name__, url_prefix="/api/v1/ai-config")
@@ -183,6 +187,16 @@ def migrate_key():
 
     ⚠️ この endpoint は v5.0 公開後 (全ユーザー移行完了後) に必ず削除すること。
     残存させると全ユーザーの API キーをサーバ側で取得可能になる。
+
+    🛟 リカバリ手順 (commit 後にネットワーク障害でクライアントが平文を受け取
+    れずに 410 Gone で詰む稀なケース):
+        1. ユーザーが既に旧 Fernet 暗号鍵を別途バックアップしているなら設定
+           画面で再入力 → PUT で E2EE 形式に保存し直す
+        2. バックアップがない場合は API キー紛失扱い → ユーザーが LLM
+           プロバイダ管理画面で新規 API キーを発行 → 設定画面で再入力
+        3. 管理者が `flask ai-config-reset-migrate-key <user_id>` で migrate-key
+           を再呼出可能にするオプションはあるが、旧 Fernet データは即時 NULL
+           クリアされているため再呼出しても 404 になる。実用上は (1)(2) のみ
     """
     config = UserAIConfig.query.filter_by(user_id=g.auth_user.id).first()
     if config is None:
@@ -207,7 +221,12 @@ def migrate_key():
     try:
         plaintext = decrypt_api_key(config.api_key_encrypted)
     except Exception:
-        # Fernet 復号失敗は SECRET_KEY 変更等の運用ミス
+        # Fernet 復号失敗は SECRET_KEY 変更等の運用ミス。スタックトレースを
+        # サーバログに残し原因追跡を可能にする (ユーザーには汎用メッセージ)。
+        current_app.logger.exception(
+            "migrate_key: Fernet decryption failed for user_id=%s",
+            config.user_id,
+        )
         return jsonify(error="failed to decrypt legacy key (server-side issue)"), 500
 
     # 即座に旧カラムを NULL クリア + migrated_at セット

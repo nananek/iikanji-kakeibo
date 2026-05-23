@@ -46,13 +46,17 @@ def upgrade():
 
 
 def downgrade():
-    with op.batch_alter_table("user_ai_configs") as batch_op:
-        # NULL の値を持つ行があると NOT NULL 復帰時に失敗するため、
-        # 復帰時はダミーバイト 1 を埋める (E2-b 経由してない状態への戻り)。
-        batch_op.execute(
-            "UPDATE user_ai_configs SET api_key_encrypted = X'00' "
+    # NULL の値を持つ行があると NOT NULL 復帰時に失敗するため、
+    # 復帰時はダミーバイト 1 を埋める (E2-b 経由してない状態への戻り)。
+    # `X'00'` は SQLite hex リテラル構文で PostgreSQL では非互換のため、
+    # パラメタライズ済 SQL で DB 非依存にする (op.execute 経由)。
+    op.execute(
+        sa.text(
+            "UPDATE user_ai_configs SET api_key_encrypted = :dummy "
             "WHERE api_key_encrypted IS NULL"
-        )
+        ).bindparams(sa.bindparam("dummy", b"\x00"))
+    )
+    with op.batch_alter_table("user_ai_configs") as batch_op:
         batch_op.alter_column("api_key_encrypted", nullable=False)
 
     op.drop_column("user_ai_configs", "migrated_at")

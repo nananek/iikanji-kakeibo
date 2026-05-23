@@ -696,3 +696,44 @@ def register_cli(app):
                 "  → 全ユーザー移行完了。Phase E2-b (旧カラム DROP + "
                 "migrate-key endpoint 削除) に進めます。"
             )
+
+    @app.cli.command("ai-config-reset-migrate-key")
+    @click.argument("user_id", type=int)
+    def ai_config_reset_migrate_key_command(user_id):
+        """指定ユーザーの migrate-key 1 回限り制約を解除する (管理者リカバリ用)。
+
+        通常 migrate-key は per-user 1 回限り (`migrated_at` で判定) だが、
+        コミット成功後にネットワーク障害でクライアントが平文を受け取れず
+        詰むケース等で再呼出を許可するための管理コマンド。
+
+        ⚠️ 注意: 旧 `api_key_encrypted` は migrate-key 呼出成功時に即時
+        NULL クリアされているため、本コマンドで `migrated_at` を NULL に
+        戻しても、再呼出すると 404 (no legacy api_key_encrypted to migrate)
+        になる。実用上はユーザーに「設定画面で API キー再入力」を促すのが
+        本来の対処。本コマンドは主に「クライアント側で平文を受け取れた
+        が migrate-key 経路を再現したい」開発者向けデバッグ用途。
+        """
+        from app.models.ai_config import UserAIConfig
+
+        config = UserAIConfig.query.filter_by(user_id=user_id).first()
+        if config is None:
+            print(f"user_id={user_id} has no UserAIConfig.")
+            return
+        if config.migrated_at is None:
+            print(
+                f"user_id={user_id} not yet migrated "
+                f"(migrated_at is already NULL). No-op."
+            )
+            return
+        old = config.migrated_at
+        config.migrated_at = None
+        db.session.commit()
+        print(
+            f"reset migrated_at for user_id={user_id} "
+            f"(was {old.isoformat() if old else 'NULL'})."
+        )
+        if config.api_key_encrypted is None:
+            print(
+                "  注: api_key_encrypted は既に NULL クリア済みのため、"
+                "再呼出しても 404 になります。設定画面で API キー再入力を促してください。"
+            )
