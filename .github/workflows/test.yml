@@ -58,7 +58,7 @@ jobs:
         # 1 回のコマンドで gate と lcov 出力を同時に行い CI 実行時間を節約。
         run: |
           node --experimental-test-coverage \
-            --test-coverage-include='app/static/js/crypto/*.js' \
+            --test-coverage-include='app/static/js/crypto/**/*.js' \
             --test-coverage-lines=95 \
             --test-reporter=spec \
             --test-reporter-destination=stdout \
