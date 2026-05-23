@@ -59,6 +59,62 @@ function makeClient(decryptFn) {
 }
 
 
+test("PATCH /suggestions に provider/model が含まれる (AIUsageLog 記録のため)", async () => {
+  let savePayload = null;
+  const fetchImpl = makeFetch([
+    ["/api/v1/ai/uploads", () => jsonResp({ ok: true, draft_id: 1 })],
+    ["/api/v1/ai-config", () => jsonResp({
+      provider: "google", model_name: "gemini-1.5-pro",
+      api_key_blob: "AA==", api_key_iv: "AA==", is_e2ee: true,
+    })],
+    [/\/suggestions$/, (init) => {
+      savePayload = JSON.parse(init.body);
+      return jsonResp({ ok: true });
+    }],
+  ]);
+  const client = makeClient(async () => ({
+    plaintext: new TextEncoder().encode("k"),
+  }));
+  const callLLMImpl = async () => ({
+    result: {}, usage: { input_tokens: 50, output_tokens: 10 },
+  });
+  await analyzeReceiptClientSide({
+    file: fakeFile(new Uint8Array(1)), prompt: "p",
+    client, callLLMImpl, fetchImpl,
+  });
+  // PR #150 review NG-2 修正: provider / model / usage を送信
+  assert.equal(savePayload.provider, "google");
+  assert.equal(savePayload.model, "gemini-1.5-pro");
+  assert.deepEqual(savePayload.usage, { input_tokens: 50, output_tokens: 10 });
+});
+
+
+test("provider/model がサーバから取れない場合はデフォルトモデルが送信される", async () => {
+  let savePayload = null;
+  const fetchImpl = makeFetch([
+    ["/api/v1/ai/uploads", () => jsonResp({ ok: true, draft_id: 2 })],
+    ["/api/v1/ai-config", () => jsonResp({
+      provider: "anthropic", model_name: "",  // 空 → デフォルトに置換
+      api_key_blob: "AA==", api_key_iv: "AA==", is_e2ee: true,
+    })],
+    [/\/suggestions$/, (init) => {
+      savePayload = JSON.parse(init.body);
+      return jsonResp({ ok: true });
+    }],
+  ]);
+  const client = makeClient(async () => ({
+    plaintext: new TextEncoder().encode("k"),
+  }));
+  await analyzeReceiptClientSide({
+    file: fakeFile(new Uint8Array(1)), prompt: "p",
+    client, callLLMImpl: async () => ({ result: {}, usage: {} }), fetchImpl,
+  });
+  assert.equal(savePayload.provider, "anthropic");
+  // _defaultModelFor("anthropic") = "claude-3-5-sonnet-20241022"
+  assert.equal(savePayload.model, "claude-3-5-sonnet-20241022");
+});
+
+
 test("正常フロー: upload → ai-config → decrypt → callLLM → save suggestions", async () => {
   const apiKeyPlain = "sk-test-key";
   const fetchImpl = makeFetch([

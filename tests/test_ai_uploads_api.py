@@ -183,6 +183,67 @@ class TestAiSaveSuggestions:
         )
         assert resp.status_code == 400
 
+    def test_suggestions_byte_size_check_utf8(
+        self, db, logged_in_client, user, accounts,
+    ):
+        """日本語 (3 byte/char) で文字数は上限内でもバイト数で reject されること。
+
+        旧コード (len(str)) では日本語 200K 文字 = 600K bytes 通過していた。
+        修正後は UTF-8 バイト数で判定する (PR #150 review NG-1)。
+        """
+        draft = self._make_pending_draft(db, user.id)
+        # 全角 100K 文字 ≒ 300K bytes (UTF-8) → 200KB 超過で 413 となる
+        big_jp = [{"description": "あ" * 100000}]
+        resp = logged_in_client.patch(
+            f"/api/v1/ai/drafts/{draft.id}/suggestions",
+            json={"suggestions": big_jp},
+        )
+        assert resp.status_code == 413
+        assert "too large" in resp.get_json()["error"]
+
+    def test_logs_usage_when_provider_and_model_provided(
+        self, db, logged_in_client, user, accounts,
+    ):
+        """provider/model/usage を受け取った場合に AIUsageLog レコードを作成する。
+
+        PR #150 review NG-2: クライアント LLM の利用量がサーバ側で記録されて
+        いなかった問題を解消。
+        """
+        from app.models.ai_usage_log import AIUsageLog
+        draft = self._make_pending_draft(db, user.id)
+        resp = logged_in_client.patch(
+            f"/api/v1/ai/drafts/{draft.id}/suggestions",
+            json={
+                "suggestions": [{"title": "x"}],
+                "provider": "openai",
+                "model": "gpt-4o-mini",
+                "usage": {"input_tokens": 100, "output_tokens": 30},
+            },
+        )
+        assert resp.status_code == 200
+        log = AIUsageLog.query.filter_by(user_id=user.id).first()
+        assert log is not None
+        assert log.provider == "openai"
+        assert log.model == "gpt-4o-mini"
+        assert log.input_tokens == 100
+        assert log.output_tokens == 30
+        assert log.total_tokens == 130
+        assert log.feature == "receipt_client_side"
+        assert log.status == "ok"
+
+    def test_no_usage_log_without_provider(
+        self, db, logged_in_client, user, accounts,
+    ):
+        """provider/model 未指定なら AIUsageLog 記録しない (後方互換)。"""
+        from app.models.ai_usage_log import AIUsageLog
+        draft = self._make_pending_draft(db, user.id)
+        resp = logged_in_client.patch(
+            f"/api/v1/ai/drafts/{draft.id}/suggestions",
+            json={"suggestions": [{"x": 1}]},
+        )
+        assert resp.status_code == 200
+        assert AIUsageLog.query.filter_by(user_id=user.id).count() == 0
+
     def test_can_overwrite_analyzed(
         self, db, logged_in_client, user, accounts,
     ):
