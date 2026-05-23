@@ -13,6 +13,15 @@
 //   await client.setKey(rawMk);  // 全タブで同期される
 //   const { ciphertext, iv } = await client.encrypt(utf8("hello"));
 
+// #send タイムアウト (PR-F3b 申し送り対応)。SharedWorker がクラッシュ
+// または応答不能になった場合、#pending に積まれた Promise が永久に
+// resolve/reject されないと UI がハングする。30 秒で AbortSignal 相当の
+// 動作で reject することで失敗を伝搬する。
+//
+// 通常時の処理は数 ms 〜 数百 ms (Argon2id 派生でも 1-2 秒) なので、
+// 30 秒は余裕のあるデフォルト。設定可能。
+const DEFAULT_TIMEOUT_MS = 30 * 1000;
+
 export class SharedCryptoClient {
   #port;
   #nextId = 1;
@@ -23,12 +32,19 @@ export class SharedCryptoClient {
   // (constructor 直後に SharedWorker から初期状態 broadcast が届くため、
   //  on(...) を constructor の外で登録すると取りこぼす可能性がある)。
   #lastEvent = null;
+  #timeoutMs;
 
   /**
    * @param {string} workerUrl  SharedWorker スクリプト URL
-   * @param {string} name       SharedWorker 名 (同名なら同一インスタンスに接続)
+   * @param {Object|string} [opts]  name (string) または options object
+   * @param {string} [opts.name]    SharedWorker 名 (同名なら同一インスタンスに接続)
+   * @param {number} [opts.timeoutMs]  #send タイムアウト ms (デフォルト 30000)
    */
-  constructor(workerUrl, name = "iikanji-mk") {
+  constructor(workerUrl, opts = {}) {
+    // 後方互換: string が渡されたら name として扱う
+    const config = typeof opts === "string" ? { name: opts } : opts;
+    const name = config.name ?? "iikanji-mk";
+    this.#timeoutMs = config.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     const sw = new SharedWorker(workerUrl, { type: "module", name });
     this.#port = sw.port;
     this.#port.onmessage = (ev) => {
@@ -102,7 +118,25 @@ export class SharedCryptoClient {
       if (val instanceof Uint8Array) transferables.push(val.buffer);
     }
     return new Promise((resolve, reject) => {
-      this.#pending.set(id, { resolve, reject });
+      // タイムアウトハンドル: 期限超過で Worker からの応答を諦めて reject。
+      // resolve/reject 時にクリアする。
+      const timeoutId = setTimeout(() => {
+        if (this.#pending.has(id)) {
+          this.#pending.delete(id);
+          reject(new Error(
+            `shared worker request timed out after ${this.#timeoutMs}ms (type=${payload?.type})`,
+          ));
+        }
+      }, this.#timeoutMs);
+      const wrappedResolve = (val) => {
+        clearTimeout(timeoutId);
+        resolve(val);
+      };
+      const wrappedReject = (err) => {
+        clearTimeout(timeoutId);
+        reject(err);
+      };
+      this.#pending.set(id, { resolve: wrappedResolve, reject: wrappedReject });
       this.#port.postMessage({ id, ...payload }, transferables);
     });
   }
