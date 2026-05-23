@@ -128,7 +128,7 @@
               </div>
             </div>
 
-            <div class="mb-3">
+            <div class="mb-3" x-show="provider !== 'llama_cpp'" x-cloak>
               <label class="form-label">
                 API キー
                 <span class="text-muted" x-show="isE2ee">(設定済み・変更する場合のみ入力)</span>
@@ -185,7 +185,13 @@
     </div>
 
     <script type="module">
-      import "{{ url_for('static', filename='js/crypto/ai_config_form.js') }}";
+      // プロジェクトの標準パターン (alpine-components.js と一致) に従い、
+      // Alpine.data('aiConfigForm', factory) で登録する。globalThis 代入は
+      // 読込順 (defer な Alpine が後ロード) に依存して脆いため避ける。
+      import { aiConfigForm } from "{{ url_for('static', filename='js/crypto/ai_config_form.js') }}";
+      document.addEventListener('alpine:init', () => {
+        Alpine.data('aiConfigForm', aiConfigForm);
+      });
     </script>
   </div>
 

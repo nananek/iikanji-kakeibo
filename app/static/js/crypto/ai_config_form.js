@@ -120,7 +120,6 @@ export function aiConfigForm(initial = {}) {
     // フォーム入力
     provider: initial.provider || "openai",
     apiKey: "",
-    apiKeyPlaceholder: "(設定済み・変更する場合のみ入力)",
     modelName: initial.model_name || "",
     customPrompt: initial.custom_prompt || "",
     complianceCheck: !!initial.compliance_check,
@@ -325,6 +324,6 @@ export function aiConfigForm(initial = {}) {
   };
 }
 
-if (typeof globalThis !== "undefined") {
-  globalThis.aiConfigForm = aiConfigForm;
-}
+// Alpine.data('aiConfigForm', aiConfigForm) はテンプレート側で
+// `alpine:init` イベントに登録する (プロジェクトの標準パターン)。
+// globalThis 代入は読込順依存で脆いため使わない。
