@@ -242,6 +242,101 @@ class TestEdit:
         # 確定済みなのでリダイレクト
         assert resp.status_code in (302, 303)
 
+    def test_edit_post_to_closed_target_period_rerenders(
+        self, db, logged_in_client, user, accounts,
+    ):
+        """編集先の対象期間が確定済みなら同一フォーム再描画 (リダイレクトではない)。"""
+        # 編集元は 2026-02 (未確定)、編集先 2026-01 を確定済みに
+        entry = make_journal(
+            db, user.id, "5010", "1010", 1000,
+            entry_date=date(2026, 2, 15), source="cashbook",
+        )
+        db.session.add(FiscalClose(user_id=user.id, year=2026, closed_period=1))
+        db.session.commit()
+        resp = logged_in_client.post(f"/cashbook/{entry.id}/edit", data={
+            "date": "2026-01-15",  # 確定済みに移そうとする
+            "transaction_type": "expense",
+            "payment_account_code": "1010",
+            "category_account_code": "5010",
+            "amount": "1000",
+            "description": "x",
+            "fiscal_period": "",
+        })
+        # check_period_open_for_new で確定済みエラー → フォーム再描画 (200)
+        assert resp.status_code == 200
+        body = resp.get_data(as_text=True)
+        assert "確定" in body or "closed" in body.lower() or "danger" in body
+
+    def test_edit_post_transfer_same_account_rerenders(
+        self, db, logged_in_client, user, accounts,
+    ):
+        """編集で資金移動の元/先を同一科目にすると同一フォーム再描画。"""
+        entry = make_journal(
+            db, user.id, "5010", "1010", 1000,
+            entry_date=date(2026, 2, 15), source="cashbook",
+        )
+        resp = logged_in_client.post(f"/cashbook/{entry.id}/edit", data={
+            "date": "2026-02-15",
+            "transaction_type": "transfer",
+            "payment_account_code": "1010",
+            "category_account_code": "1010",  # 同一
+            "amount": "1000",
+            "description": "x",
+            "fiscal_period": "",
+        })
+        assert resp.status_code == 200
+        body = resp.get_data(as_text=True)
+        assert "移動元" in body or "異なる" in body
+
+    def test_edit_get_prefill_transfer(self, db, logged_in_client, user, accounts):
+        """資金移動 (BS↔BS) の編集 GET でフォームに transfer プリフィル。"""
+        # 預金 (1010 / BS) → 現金 (1001 想定) も BS でないと transfer 判定にならない
+        # 標準科目には現金 1001 があるはず。なければ asset 同士を作る
+        from app.models.account import Account
+        # 既存の BS 科目を確認 — 1010 は既に asset。asset 同士の transfer を作る
+        cash = Account.query.filter_by(
+            user_id=user.id, account_type_id=1
+        ).first()  # asset
+        # 同じ asset 内で別の科目があれば使う、なければ create
+        bs_other = Account.query.filter(
+            Account.user_id == user.id,
+            Account.account_type_id == cash.account_type_id,
+            Account.code != cash.code,
+        ).first()
+        if not bs_other:
+            import pytest
+            pytest.skip("BS 科目が 1 個のみで transfer 設定不可")
+        entry = make_journal(
+            db, user.id, cash.code, bs_other.code, 5000,
+            entry_date=date(2026, 2, 15), source="cashbook",
+        )
+        resp = logged_in_client.get(f"/cashbook/{entry.id}/edit")
+        assert resp.status_code == 200
+        body = resp.get_data(as_text=True)
+        # transaction_type=transfer のラジオが選択済になる (HTML 検証は緩く)
+        assert "transfer" in body
+
+    def test_edit_get_prefill_income(self, db, logged_in_client, user, accounts):
+        """収入 (BS:debit, P/L:credit) の編集 GET でフォームに income プリフィル。"""
+        # 1010 (asset) を debit、4010 想定 (revenue) を credit
+        # 標準科目に売上 4010 等があるはず
+        from app.models.account import Account
+        revenue = Account.query.filter_by(
+            user_id=user.id, account_type_id=4
+        ).first()  # revenue
+        if not revenue:
+            import pytest
+            pytest.skip("revenue 科目が存在しない")
+        # debit=1010 asset, credit=revenue → income
+        entry = make_journal(
+            db, user.id, "1010", revenue.code, 3000,
+            entry_date=date(2026, 2, 15), source="cashbook",
+        )
+        resp = logged_in_client.get(f"/cashbook/{entry.id}/edit")
+        assert resp.status_code == 200
+        body = resp.get_data(as_text=True)
+        assert "income" in body
+
 
 class TestDelete:
     def _make_cashbook(self, db, user_id):

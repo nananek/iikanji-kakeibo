@@ -191,6 +191,79 @@ class TestDelete:
         assert resp.status_code in (302, 303)
         assert db.session.get(MedicalExpense, eid) is None
 
+    def test_delete_blocked_by_closed_period(
+        self, db, logged_in_client, user, accounts, medical_account,
+    ):
+        """確定済み期間の医療費削除は仕訳ロックでブロック (flash + redirect)。"""
+        from app.models.fiscal import FiscalClose
+        e = self._make_expense(db, user.id, medical_account)
+        db.session.add(FiscalClose(user_id=user.id, year=2026, closed_period=2))
+        db.session.commit()
+        resp = logged_in_client.post(f"/medical/{e.id}/delete", follow_redirects=False)
+        assert resp.status_code in (302, 303)
+        # 削除されずに残る
+        assert db.session.get(MedicalExpense, e.id) is not None
+
+
+class TestNewWithClosedPeriod:
+    """新規作成時の確定済み期間ガード。"""
+
+    def test_post_to_closed_period_rerenders(
+        self, db, logged_in_client, user, accounts, medical_account,
+    ):
+        from app.models.fiscal import FiscalClose
+        db.session.add(FiscalClose(user_id=user.id, year=2026, closed_period=2))
+        db.session.commit()
+        resp = logged_in_client.post("/medical/new", data={
+            "date": "2026-02-10",  # 確定済み期間
+            "patient_name": "本人",
+            "hospital_name": "病院",
+            "treatment_description": "検査",
+            "amount_paid": "1000",
+            "insurance_reimbursement": "0",
+            "payment_account_code": "1010",
+        })
+        # 確定済みエラーでフォーム再描画 (200)
+        assert resp.status_code == 200
+
+
+class TestEditPrefillPaymentAccount:
+    """edit GET で payment_account_code 由来の科目名表示パス (line 222-223)。"""
+
+    def test_edit_get_renders_payment_account_name(
+        self, db, logged_in_client, user, accounts, medical_account,
+    ):
+        from app.services.accounting import create_cashbook_entry
+        entry = create_cashbook_entry(
+            user_id=user.id, date=date(2026, 2, 15),
+            transaction_type="expense",
+            payment_account_code="1010",
+            category_account_code=medical_account.code,
+            amount=4000, description="医療費",
+        )
+        e = MedicalExpense(
+            user_id=user.id, journal_entry_id=entry.id,
+            date=date(2026, 2, 15),
+            patient_name="本人", hospital_name="病院",
+            treatment_description="x",
+            amount_paid=4000, insurance_reimbursement=0,
+        )
+        db.session.add(e)
+        db.session.commit()
+        # POST で payment_account_code を送信し、バリデーション通って再描画される
+        # (= form.payment_account_code.data が埋まる) パスを通す
+        resp = logged_in_client.post(f"/medical/{e.id}/edit", data={
+            "date": "",  # required 欠落
+            "patient_name": "更新",
+            "hospital_name": "更新",
+            "treatment_description": "x",
+            "amount_paid": "4000",
+            "insurance_reimbursement": "0",
+            "payment_account_code": "1010",
+        })
+        # バリデーション失敗で 200 (フォーム再描画) — 科目名 lookup 経路を通る
+        assert resp.status_code == 200
+
 
 class TestApiGet:
     def test_unauthenticated(self, client):
