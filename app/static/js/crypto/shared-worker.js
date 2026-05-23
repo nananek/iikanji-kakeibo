@@ -53,7 +53,8 @@ self.onconnect = (ev) => {
     const id =
       msg && typeof msg.id === "number" ? msg.id : -1;
     try {
-      const { result, broadcast: bcast } = await state.handle(msg);
+      // now を明示的に渡してテスタビリティと checkIdle との一貫性を確保
+      const { result, broadcast: bcast } = await state.handle(msg, Date.now());
       port.postMessage({ id, ...result });
       if (bcast) broadcast(bcast);
     } catch (e) {

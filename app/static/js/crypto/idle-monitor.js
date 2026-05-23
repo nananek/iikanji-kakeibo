@@ -32,6 +32,8 @@ export class IdleMonitor {
   #lastTouch = 0;
   #stopped = false;
   #started = false;
+  #events;
+  #throttleMs;
 
   /**
    * @param {CryptoClientLike} client          touch() を持つ SharedCryptoClient 等
@@ -52,8 +54,10 @@ export class IdleMonitor {
     this.#docTarget =
       opts.docTarget ?? (typeof document !== "undefined" ? document : null);
     this.#now = opts.now ?? (() => Date.now());
-    this.events = opts.events ?? DEFAULT_EVENTS;
-    this.throttleMs = opts.throttleMs ?? DEFAULT_THROTTLE_MS;
+    // private: XSS で `idleMonitor.throttleMs = Infinity` のような書換による
+    // idle ロック無効化を防ぐ。テスト DI は constructor 引数経由でのみ可能。
+    this.#events = opts.events ?? DEFAULT_EVENTS;
+    this.#throttleMs = opts.throttleMs ?? DEFAULT_THROTTLE_MS;
   }
 
   /**
@@ -68,7 +72,7 @@ export class IdleMonitor {
     if (this.#target) {
       const opts = { passive: true, capture: true };
       const onActivity = () => this.touch();
-      for (const ev of this.events) {
+      for (const ev of this.#events) {
         this.#target.addEventListener(ev, onActivity, opts);
         this.#handlers.push({
           target: this.#target,
@@ -103,7 +107,7 @@ export class IdleMonitor {
   touch(force = false) {
     if (this.#stopped) return;
     const now = this.#now();
-    if (!force && now - this.#lastTouch < this.throttleMs) return;
+    if (!force && now - this.#lastTouch < this.#throttleMs) return;
     this.#lastTouch = now;
     Promise.resolve(this.#client.touch()).catch(() => {
       // touch 失敗 (Worker 切断等) は IdleMonitor の責務外
