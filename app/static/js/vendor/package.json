@@ -1,0 +1,5 @@
+{
+  "type": "module",
+  "private": true,
+  "description": "Vendored third-party JS modules. ESM. type=module で Node が .js を ESM として import 可能 (テスト用)。ブラウザでは <script type=\"module\"> で読み込まれるため本ファイルは不要だが、Node 統合テスト (test_hash_wasm_integration.mjs) のために必要。"
+}

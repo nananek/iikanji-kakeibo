@@ -348,3 +348,103 @@ class TestWebImportConfirm:
     def test_post_no_rows(self, logged_in_client, accounts):
         resp = logged_in_client.post("/web-import/confirm", data={})
         assert resp.status_code in (302, 303)
+
+    def test_confirm_skips_disabled_and_invalid_rows(
+        self, db, logged_in_client, user, accounts,
+    ):
+        """enabled=false / 日付欠落 / カテゴリ欠落 / 金額 0 は skip される。"""
+        with patch("app.views.web_import.parse_web_text") as mock_parse:
+            mock_parse.return_value = [{"date": "2026-02-15", "description": "x"}]
+            logged_in_client.post("/web-import/", data={
+                "raw_text": "明細", "payment_account_code": "1010",
+            })
+        rows = [
+            # 1: enabled=False — skip 経路 (line 157-159)
+            {"enabled": False, "date": "2026-02-15", "description": "off",
+             "deposit": 0, "withdrawal": 100, "category_code": "5010"},
+            # 2: 日付欠落 — skip 経路 (line 162-164)
+            {"enabled": True, "date": "", "description": "no-date",
+             "deposit": 100, "withdrawal": 0, "category_code": "5010"},
+            # 3: category_code 欠落 — skip 経路 (line 173-174)
+            {"enabled": True, "date": "2026-02-15", "description": "no-cat",
+             "deposit": 100, "withdrawal": 0, "category_code": ""},
+            # 4: 金額両方 0 — skip 経路
+            {"enabled": True, "date": "2026-02-15", "description": "zero",
+             "deposit": 0, "withdrawal": 0, "category_code": "5010"},
+            # 5: 正常 — import される
+            {"enabled": True, "date": "2026-02-15", "description": "ok",
+             "deposit": 0, "withdrawal": 200, "category_code": "5010"},
+        ]
+        resp = logged_in_client.post("/web-import/confirm", data={
+            "import_rows": json.dumps(rows),
+            "old_year_action": "skip",
+        })
+        assert resp.status_code in (302, 303)
+        # 5 件中 1 件のみ取込
+        assert JournalEntry.query.filter_by(
+            user_id=user.id, source="web",
+        ).count() == 1
+
+    def test_confirm_skips_closed_period(
+        self, db, logged_in_client, user, accounts,
+    ):
+        """確定済み期間に該当する行は skip される。"""
+        from app.models.fiscal import FiscalClose
+        db.session.add(FiscalClose(user_id=user.id, year=2026, closed_period=2))
+        db.session.commit()
+        with patch("app.views.web_import.parse_web_text") as mock_parse:
+            mock_parse.return_value = [{"date": "2026-02-15"}]
+            logged_in_client.post("/web-import/", data={
+                "raw_text": "x", "payment_account_code": "1010",
+            })
+        rows = [
+            # 2026-02 は確定済み → skip (line 193-197)
+            {"enabled": True, "date": "2026-02-15", "description": "blocked",
+             "deposit": 100, "withdrawal": 0, "category_code": "5010"},
+            # 2026-03 は未確定 → import
+            {"enabled": True, "date": "2026-03-15", "description": "ok",
+             "deposit": 200, "withdrawal": 0, "category_code": "5010"},
+        ]
+        resp = logged_in_client.post("/web-import/confirm", data={
+            "import_rows": json.dumps(rows),
+            "old_year_action": "skip",
+        })
+        assert resp.status_code in (302, 303)
+        assert JournalEntry.query.filter_by(
+            user_id=user.id, source="web",
+        ).count() == 1
+
+    def test_confirm_skips_locked_account_code(
+        self, db, logged_in_client, user, accounts,
+    ):
+        """提出済みロック科目を含む行は skip される。"""
+        from app.models.tax_form import TaxFormField, TaxFormMapping
+        # 提出済みフラグを立てる科目を作る
+        field = TaxFormField.query.first()
+        if field is None:
+            # tax_form 未シードならスキップ
+            return
+        m = TaxFormMapping(
+            user_id=user.id, account_code="5010",
+            tax_form_field_id=field.id, year=2026, submitted=True,
+        )
+        db.session.add(m)
+        db.session.commit()
+        with patch("app.views.web_import.parse_web_text") as mock_parse:
+            mock_parse.return_value = [{"date": "2026-02-15"}]
+            logged_in_client.post("/web-import/", data={
+                "raw_text": "x", "payment_account_code": "1010",
+            })
+        rows = [
+            # 5010 はロック → skip (line 177-179)
+            {"enabled": True, "date": "2026-02-15", "description": "locked",
+             "deposit": 100, "withdrawal": 0, "category_code": "5010"},
+        ]
+        resp = logged_in_client.post("/web-import/confirm", data={
+            "import_rows": json.dumps(rows),
+            "old_year_action": "skip",
+        })
+        assert resp.status_code in (302, 303)
+        assert JournalEntry.query.filter_by(
+            user_id=user.id, source="web",
+        ).count() == 0

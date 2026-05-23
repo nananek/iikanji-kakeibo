@@ -29,10 +29,17 @@ jobs:
       - name: Install dependencies
         run: |
           pip install -r requirements.txt
-          pip install pytest
+          pip install pytest pytest-cov
 
-      - name: Run tests
-        run: python -m pytest tests/ -v --tb=short
+      - name: Run tests with coverage gate
+        # `--cov-fail-under` で 93% を下回ると CI fail。E2EE 関連 PR (#140 以降)
+        # で新規コードが必ずテストを伴うように運用する。
+        # 既存基準は 94% だが、view 層 (cashbook/medical/web_import 等の
+        # 旧コード) の改善は別計画。本ゲートは新規コードでの劣化検出が目的。
+        run: |
+          python -m pytest tests/ --tb=short \
+            --cov=app --cov-report=term \
+            --cov-fail-under=93
 
   js-crypto:
     name: JS crypto primitives (Node)
@@ -42,10 +49,35 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: "22"
-      - name: Run primitives unit tests
+      - name: Run primitives unit tests with coverage
         # Node 22+ の WebCrypto API + node --test を使う ESM テスト。
-        # primitives.js は worker.js が import する純粋関数 (E2EE 暗号プリミティブ)。
-        run: node --test tests/static/js/*.mjs
+        # `--experimental-test-coverage` は Node 22 で安定。include で
+        # app/static/js/crypto 配下のみカバー対象に絞る (vendor は除外)。
+        # 出力: TAP + テキストカバレッジ表 + lcov ファイル (CI artifact 用)。
+        run: |
+          node --experimental-test-coverage \
+            --test-coverage-include='app/static/js/crypto/*.js' \
+            --test-reporter=spec \
+            --test-reporter-destination=stdout \
+            --test-reporter=lcov \
+            --test-reporter-destination=js-coverage.lcov \
+            --test tests/static/js/*.mjs
+      - name: Coverage gate (line >= 95% target)
+        # JS カバレッジが大幅に下がったら fail させる。Python 側の 94% 目標と
+        # 揃え、E2EE 関連の新規コードに必ずテストを伴わせる運用に。
+        # 1 ファイル単独カバーが下がっても全体平均が 95% を維持していれば通す。
+        run: |
+          node --experimental-test-coverage \
+            --test-coverage-include='app/static/js/crypto/*.js' \
+            --test-coverage-lines=95 \
+            --test tests/static/js/*.mjs
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: js-crypto-coverage
+          path: js-coverage.lcov
+          retention-days: 7
 
   e2e:
     runs-on: ubuntu-latest

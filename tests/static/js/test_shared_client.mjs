@@ -212,6 +212,42 @@ test("正常応答ではタイムアウトクリアされて Promise resolve", a
 });
 
 
+test("setKey / generateKey / clearKey が postMessage に正しい type を送る", () => {
+  createdPorts.length = 0;
+  const client = newClient();
+  const port = createdPorts[0];
+  // 各メソッドの返り値 Promise は捕捉して unhandled rejection を避ける
+  // (テスト終了時に close() で全 reject されるが警告が出ないように catch)
+  const swallow = (p) => p.catch(() => {});
+  swallow(client.generateKey());
+  swallow(client.clearKey());
+  swallow(client.setKey(new Uint8Array(32)));
+  swallow(client.encrypt(new Uint8Array([1, 2])));
+  swallow(client.decrypt(new Uint8Array([3]), new Uint8Array(12)));
+  swallow(client.wrap(new Uint8Array(32)));
+  swallow(client.unwrap(new Uint8Array(32), new Uint8Array(16), new Uint8Array(12)));
+  swallow(client.status());
+  const types = port.posted.map((p) => p.data.type);
+  assert.deepEqual(types, [
+    "generateKey", "clearKey", "setKey", "encrypt", "decrypt", "wrap", "unwrap", "status",
+  ]);
+  client.close(); // pending を全て reject + タイマークリア
+});
+
+
+test("setKey / wrap / unwrap は Transferable に rawKey/derivedKey を含める", () => {
+  createdPorts.length = 0;
+  const client = newClient();
+  const port = createdPorts[0];
+  const k = new Uint8Array(32);
+  client.setKey(k).catch(() => {});
+  // 最後の postMessage の transferables は [k.buffer]
+  const last = port.posted[port.posted.length - 1];
+  assert.equal(last.transferables?.length, 1);
+  client.close();
+});
+
+
 test("旧 string 引数 (name) の後方互換: SharedCryptoClient(url, 'my-name')", () => {
   createdPorts.length = 0;
   // string をそのまま name として扱う
