@@ -110,19 +110,31 @@ def _serialize(row: WrappedKey) -> dict:
     }
 
 
-def _b64_or_400(payload: dict, key: str, *, required: bool = True) -> bytes | None:
-    """payload[key] を base64 デコード。エラー時は 400 を発生させるための例外送出。"""
+def _b64_or_400(
+    payload: dict, key: str, *, required: bool = True
+) -> tuple[bytes | None, str | None]:
+    """payload[key] を base64 デコード。
+
+    成功時: (bytes, None)
+    失敗時: (None, "<key> is required" 等の固定エラーメッセージ)
+    未指定 + required=False: (None, None)
+
+    例外チェーン (`raise ... from exc`) を使わずタプル返却にすることで CodeQL の
+    py/stack-trace-exposure 誤検出を回避する。返却するエラーメッセージはすべて
+    固定文字列で、外部例外の repr 等は一切含まない。
+    """
     val = payload.get(key)
     if val is None:
         if required:
-            raise ValueError(f"{key} is required")
-        return None
+            return None, f"{key} is required"
+        return None, None
     if not isinstance(val, str):
-        raise ValueError(f"{key} must be a base64 string")
+        return None, f"{key} must be a base64 string"
     try:
-        return b64decode(val, validate=True)
-    except Exception as exc:
-        raise ValueError(f"{key} is not valid base64") from exc
+        return b64decode(val, validate=True), None
+    except Exception:
+        # 元例外の詳細は捨て、固定文字列のみ返す
+        return None, f"{key} is not valid base64"
 
 
 @bp.get("")
@@ -169,12 +181,15 @@ def create_wrapped_key():
     if method not in ALLOWED_METHODS:
         return jsonify(error=f"method must be one of {list(ALLOWED_METHODS)}"), 400
 
-    try:
-        wrapped = _b64_or_400(payload, "wrapped_master_key")
-        wrap_iv = _b64_or_400(payload, "wrap_iv")
-        salt = _b64_or_400(payload, "salt", required=False)
-    except ValueError as exc:
-        return jsonify(error=str(exc)), 400
+    wrapped, err = _b64_or_400(payload, "wrapped_master_key")
+    if err is not None:
+        return jsonify(error=err), 400
+    wrap_iv, err = _b64_or_400(payload, "wrap_iv")
+    if err is not None:
+        return jsonify(error=err), 400
+    salt, err = _b64_or_400(payload, "salt", required=False)
+    if err is not None:
+        return jsonify(error=err), 400
 
     if not wrap_iv or len(wrap_iv) != 12:
         return jsonify(error="IV length must be 12 bytes"), 400

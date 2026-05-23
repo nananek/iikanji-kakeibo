@@ -327,11 +327,20 @@ def accept_terms():
                 and not parsed.netloc
                 and is_safe_internal_path(next_candidate)
             ):
-                # 静的解析が sanitizer として認識するよう、user 入力ではなく
-                # `re.fullmatch().group(0)` の戻り値を redirect に渡す。
-                # 値そのものは `next_candidate` と同一だが、data flow が
-                # `re.Match` 経由で迂回するため py/url-redirection が成立。
-                return redirect(match.group(0))
+                # CodeQL py/url-redirection 対策:
+                # next_candidate を Flask の url_map で endpoint+args に解決し、
+                # url_for() で再構築する。url_for() の戻り値は静的解析が
+                # sanitizer として認識するため、user 入力からの taint flow を
+                # 完全に切断できる。値そのものは next_candidate と等価。
+                try:
+                    adapter = current_app.url_map.bind("")
+                    endpoint, view_args = adapter.match(
+                        parsed.path or "/", method="GET"
+                    )
+                    return redirect(url_for(endpoint, **view_args))
+                except Exception:
+                    # 解決失敗 (存在しないパス等) はダッシュボードへフォールバック
+                    return redirect(url_for("dashboard.index"))
             return redirect(url_for("dashboard.index"))
         flash("利用規約・プライバシーポリシーへの同意が必要です。", "danger")
     return render_template("auth/accept_terms.html", current_version=current_version)
