@@ -235,7 +235,7 @@ test("setKey / generateKey / clearKey が postMessage に正しい type を送�
 });
 
 
-test("setKey / wrap / unwrap は Transferable に rawKey/derivedKey を含める", () => {
+test("setKey は Transferable に rawKey を含める (wrap / unwrap も同パターン)", () => {
   createdPorts.length = 0;
   const client = newClient();
   const port = createdPorts[0];
@@ -244,6 +244,13 @@ test("setKey / wrap / unwrap は Transferable に rawKey/derivedKey を含める
   // 最後の postMessage の transferables は [k.buffer]
   const last = port.posted[port.posted.length - 1];
   assert.equal(last.transferables?.length, 1);
+  // wrap / unwrap の Transferable 動作も確認
+  const dk1 = new Uint8Array(32);
+  const dk2 = new Uint8Array(32);
+  client.wrap(dk1).catch(() => {});
+  assert.equal(port.posted[port.posted.length - 1].transferables?.length, 1);
+  client.unwrap(dk2, new Uint8Array(16), new Uint8Array(12)).catch(() => {});
+  assert.equal(port.posted[port.posted.length - 1].transferables?.length, 1);
   client.close();
 });
 

@@ -359,19 +359,19 @@ class TestWebImportConfirm:
                 "raw_text": "明細", "payment_account_code": "1010",
             })
         rows = [
-            # 1: enabled=False — skip 経路 (line 157-159)
+            # enabled=False は skip
             {"enabled": False, "date": "2026-02-15", "description": "off",
              "deposit": 0, "withdrawal": 100, "category_code": "5010"},
-            # 2: 日付欠落 — skip 経路 (line 162-164)
+            # 日付欠落は skip
             {"enabled": True, "date": "", "description": "no-date",
              "deposit": 100, "withdrawal": 0, "category_code": "5010"},
-            # 3: category_code 欠落 — skip 経路 (line 173-174)
+            # category_code 欠落は skip
             {"enabled": True, "date": "2026-02-15", "description": "no-cat",
              "deposit": 100, "withdrawal": 0, "category_code": ""},
-            # 4: 金額両方 0 — skip 経路
+            # 金額両方 0 は skip
             {"enabled": True, "date": "2026-02-15", "description": "zero",
              "deposit": 0, "withdrawal": 0, "category_code": "5010"},
-            # 5: 正常 — import される
+            # 正常 — import される
             {"enabled": True, "date": "2026-02-15", "description": "ok",
              "deposit": 0, "withdrawal": 200, "category_code": "5010"},
         ]
@@ -398,7 +398,7 @@ class TestWebImportConfirm:
                 "raw_text": "x", "payment_account_code": "1010",
             })
         rows = [
-            # 2026-02 は確定済み → skip (line 193-197)
+            # 2026-02 は確定済み → skip
             {"enabled": True, "date": "2026-02-15", "description": "blocked",
              "deposit": 100, "withdrawal": 0, "category_code": "5010"},
             # 2026-03 は未確定 → import
@@ -422,8 +422,8 @@ class TestWebImportConfirm:
         # 提出済みフラグを立てる科目を作る
         field = TaxFormField.query.first()
         if field is None:
-            # tax_form 未シードならスキップ
-            return
+            import pytest
+            pytest.skip("tax_form 未シード")
         m = TaxFormMapping(
             user_id=user.id, account_code="5010",
             tax_form_field_id=field.id, year=2026, submitted=True,
@@ -436,7 +436,7 @@ class TestWebImportConfirm:
                 "raw_text": "x", "payment_account_code": "1010",
             })
         rows = [
-            # 5010 はロック → skip (line 177-179)
+            # 5010 はロック → skip
             {"enabled": True, "date": "2026-02-15", "description": "locked",
              "deposit": 100, "withdrawal": 0, "category_code": "5010"},
         ]

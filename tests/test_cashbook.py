@@ -304,8 +304,8 @@ class TestEdit:
             Account.code != cash.code,
         ).first()
         if not bs_other:
-            # スキップ可能なケース (BS 科目が 1 個しかない場合)
-            return
+            import pytest
+            pytest.skip("BS 科目が 1 個のみで transfer 設定不可")
         entry = make_journal(
             db, user.id, cash.code, bs_other.code, 5000,
             entry_date=date(2026, 2, 15), source="cashbook",
@@ -325,7 +325,8 @@ class TestEdit:
             user_id=user.id, account_type_id=4
         ).first()  # revenue
         if not revenue:
-            return
+            import pytest
+            pytest.skip("revenue 科目が存在しない")
         # debit=1010 asset, credit=revenue → income
         entry = make_journal(
             db, user.id, "1010", revenue.code, 3000,

@@ -32,10 +32,10 @@ jobs:
           pip install pytest pytest-cov
 
       - name: Run tests with coverage gate
-        # `--cov-fail-under` で 93% を下回ると CI fail。E2EE 関連 PR (#140 以降)
-        # で新規コードが必ずテストを伴うように運用する。
-        # 既存基準は 94% だが、view 層 (cashbook/medical/web_import 等の
-        # 旧コード) の改善は別計画。本ゲートは新規コードでの劣化検出が目的。
+        # `--cov-fail-under=93` で 93% を下回ると CI fail (劣化検出ゲート)。
+        # 努力目標は 94% 維持 (feedback_test_coverage.md) だが、ゲート値は
+        # 1 ポイントのバッファを残して 93% とし、軽微な変動で CI が頻繁に
+        # 落ちないようにする。新規コードは引き続き 94% 維持を目指す運用。
         run: |
           python -m pytest tests/ --tb=short \
             --cov=app --cov-report=term \
@@ -49,27 +49,21 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: "22"
-      - name: Run primitives unit tests with coverage
+      - name: Run primitives unit tests with coverage + gate
         # Node 22+ の WebCrypto API + node --test を使う ESM テスト。
         # `--experimental-test-coverage` は Node 22 で安定。include で
         # app/static/js/crypto 配下のみカバー対象に絞る (vendor は除外)。
-        # 出力: TAP + テキストカバレッジ表 + lcov ファイル (CI artifact 用)。
-        run: |
-          node --experimental-test-coverage \
-            --test-coverage-include='app/static/js/crypto/*.js' \
-            --test-reporter=spec \
-            --test-reporter-destination=stdout \
-            --test-reporter=lcov \
-            --test-reporter-destination=js-coverage.lcov \
-            --test tests/static/js/*.mjs
-      - name: Coverage gate (line >= 95% target)
-        # JS カバレッジが大幅に下がったら fail させる。Python 側の 94% 目標と
-        # 揃え、E2EE 関連の新規コードに必ずテストを伴わせる運用に。
-        # 1 ファイル単独カバーが下がっても全体平均が 95% を維持していれば通す。
+        # `--test-coverage-lines=95` で line カバレッジ 95% 未満なら CI fail。
+        # 出力: spec レポート (stdout) + lcov ファイル (CI artifact)。
+        # 1 回のコマンドで gate と lcov 出力を同時に行い CI 実行時間を節約。
         run: |
           node --experimental-test-coverage \
             --test-coverage-include='app/static/js/crypto/*.js' \
             --test-coverage-lines=95 \
+            --test-reporter=spec \
+            --test-reporter-destination=stdout \
+            --test-reporter=lcov \
+            --test-reporter-destination=js-coverage.lcov \
             --test tests/static/js/*.mjs
       - name: Upload coverage report
         if: always()

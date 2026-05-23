@@ -69,13 +69,24 @@ test("実 Argon2id は NFKD 正規化と組み合わせて期待通り動く", a
   // 合成済み é (U+00E9) と分解 é (e + U+0301) で同じ derived_key
   // → vendor の argon2id が UTF-8 入力を受け付け、normalizePassphraseBytes
   //   の出力 (NFKD UTF-8 bytes) が正しく処理されることを確認
+  //
+  // 重要: 文字列リテラルを直接書くとエディタ/Editツールが NFC に正規化
+  // してしまい両変数が同じ NFC バイト列になる tautology (PR #146 review 1
+  // 指摘)。Unicode escape を使って実バイトが NFC / NFD で異なることを保証。
   setArgon2idImpl(null);
   const salt = new Uint8Array(16).fill(0x33);
   const params = { memorySize: 4096, iterations: 1, parallelism: 1, hashLength: 32 };
-  const composed = "café";       // é = U+00E9
-  const decomposed = "café";    // e + U+0301
+  const composed = "café";       // NFC: c a f é (U+00E9 単一)
+  const decomposed = "café";    // NFD: c a f e + 合成アクセント (U+0301)
+  // バイト列が異なることを実行時にも確認 (将来の変更で再 tautology を防ぐ)
+  assert.notDeepEqual(
+    [...new TextEncoder().encode(composed)],
+    [...new TextEncoder().encode(decomposed)],
+    "NFC composed と NFD decomposed の UTF-8 バイト列は異なるはず",
+  );
   const k1 = await deriveKeyFromPassphrase(composed, salt, { params });
   const k2 = await deriveKeyFromPassphrase(decomposed, salt, { params });
+  // NFKD 正規化により最終的に同じ derived_key になる
   assert.deepEqual([...k1], [...k2]);
 });
 
