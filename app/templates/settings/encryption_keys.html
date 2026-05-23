@@ -20,36 +20,142 @@
     <!-- ステップ 1: 開始画面 -->
     <template x-if="step === 'start'">
       <div>
-        <h5 class="mb-3"><i class="bi bi-list-check"></i> 登録済みの鍵</h5>
+        <h5 class="mb-3">
+          <i class="bi bi-list-check"></i> 登録済みの鍵
+          <template x-if="existingKeys.length > 0">
+            <span class="ms-2">
+              <template x-if="hasKey">
+                <span class="badge bg-success">解除済み</span>
+              </template>
+              <template x-if="!hasKey">
+                <span class="badge bg-warning text-dark">ロック中</span>
+              </template>
+            </span>
+          </template>
+        </h5>
+
         <template x-if="existingKeys.length === 0">
           <p class="text-muted small">まだ暗号鍵が登録されていません。下のボタンから初回設定を開始してください。</p>
         </template>
+
         <template x-if="existingKeys.length > 0">
-          <ul class="list-group mb-3">
-            <template x-for="k in existingKeys" :key="k.id">
-              <li class="list-group-item d-flex justify-content-between align-items-center">
-                <div>
-                  <span class="badge bg-secondary me-2" x-text="k.method"></span>
-                  <span x-text="k.label || '(ラベルなし)'"></span>
-                </div>
-                <small class="text-muted" x-text="k.created_at"></small>
-              </li>
-            </template>
-          </ul>
+          <div>
+            <p class="text-muted small mb-2" x-show="!hasKey" x-cloak>
+              ロック中です。下のいずれかの鍵を選んで解除してください。
+            </p>
+            <p class="text-muted small mb-2" x-show="hasKey" x-cloak>
+              暗号鍵は SharedWorker にロードされています (60 分操作なしで自動ロック)。
+            </p>
+            <ul class="list-group mb-3">
+              <template x-for="k in existingKeys" :key="k.id">
+                <li class="list-group-item d-flex justify-content-between align-items-center flex-wrap gap-2">
+                  <div>
+                    <span class="badge bg-secondary me-2" x-text="k.method"></span>
+                    <span x-text="k.label || '(ラベルなし)'"></span>
+                  </div>
+                  <div class="d-flex gap-2 align-items-center">
+                    <small class="text-muted" x-text="k.created_at"></small>
+                    <template x-if="!hasKey">
+                      <button class="btn btn-sm btn-outline-primary" @click="goToUnlock(k)">
+                        <i class="bi bi-unlock"></i> この鍵で解除
+                      </button>
+                    </template>
+                  </div>
+                </li>
+              </template>
+            </ul>
+          </div>
         </template>
 
-        <div class="d-flex gap-2 mt-4">
+        <div class="d-flex gap-2 mt-4 flex-wrap">
           <template x-if="existingKeys.length === 0">
             <button class="btn btn-primary" @click="proceedChoose()">
               <i class="bi bi-key"></i> 初回設定を開始
             </button>
           </template>
+          <template x-if="existingKeys.length > 0 && hasKey">
+            <button class="btn btn-outline-secondary btn-sm" @click="lockKey()" :disabled="loading">
+              <i class="bi bi-lock"></i> 今すぐロックする
+            </button>
+          </template>
           <template x-if="existingKeys.length > 0">
-            <span class="text-muted small">
-              鍵の追加 (Passkey 連携・新しいパスフレーズ) は次期 PR で対応予定です。
+            <span class="text-muted small ms-2 align-self-center">
+              鍵の追加・削除 UI は次期 PR で対応予定です。
             </span>
           </template>
         </div>
+      </div>
+    </template>
+
+    <!-- ステップ 1.5: ロック解除画面 -->
+    <template x-if="step === 'unlock'">
+      <div>
+        <h5 class="mb-3"><i class="bi bi-unlock"></i> ロック解除</h5>
+        <p class="text-muted small">
+          選択した鍵: <span class="badge bg-secondary" x-text="unlockingKey?.method"></span>
+          <span x-text="unlockingKey?.label || '(ラベルなし)'"></span>
+        </p>
+
+        <!-- パスフレーズ方式 -->
+        <template x-if="unlockingKey?.method === 'passphrase'">
+          <div>
+            <div class="mb-3">
+              <label class="form-label">パスフレーズ</label>
+              <input type="password" class="form-control" x-model="unlockPassphrase"
+                     :disabled="loading" autocomplete="current-password"
+                     @keydown.enter.prevent="unlockWithPassphrase()">
+            </div>
+            <div class="d-flex gap-2">
+              <button class="btn btn-primary" @click="unlockWithPassphrase()" :disabled="loading">
+                <span x-show="loading" class="spinner-border spinner-border-sm me-2"></span>
+                <span x-text="loading ? '派生中...' : '解除する'"></span>
+              </button>
+              <button class="btn btn-outline-secondary" @click="step = 'start'" :disabled="loading">
+                戻る
+              </button>
+            </div>
+          </div>
+        </template>
+
+        <!-- リカバリシード方式 -->
+        <template x-if="unlockingKey?.method === 'recovery_seed'">
+          <div>
+            <div class="mb-3">
+              <label class="form-label">24 単語のリカバリシード (半角スペース区切り)</label>
+              <textarea class="form-control font-monospace" rows="3" x-model="unlockMnemonic"
+                        :disabled="loading" autocomplete="off" spellcheck="false"
+                        placeholder="abandon abandon ... art"></textarea>
+            </div>
+            <div class="d-flex gap-2">
+              <button class="btn btn-primary" @click="unlockWithRecovery()" :disabled="loading">
+                <span x-show="loading" class="spinner-border spinner-border-sm me-2"></span>
+                <span x-text="loading ? '検証中...' : '解除する'"></span>
+              </button>
+              <button class="btn btn-outline-secondary" @click="step = 'start'" :disabled="loading">
+                戻る
+              </button>
+            </div>
+          </div>
+        </template>
+
+        <!-- Passkey 方式 -->
+        <template x-if="unlockingKey?.method === 'passkey_prf'">
+          <div>
+            <p class="text-muted small">
+              ボタンを押すと Passkey 認証 (指紋・Face ID 等) が起動します。
+            </p>
+            <div class="d-flex gap-2">
+              <button class="btn btn-primary" @click="unlockWithPasskey()" :disabled="loading">
+                <span x-show="loading" class="spinner-border spinner-border-sm me-2"></span>
+                <i class="bi bi-fingerprint me-1"></i>
+                <span x-text="loading ? '認証中...' : 'Passkey で解除する'"></span>
+              </button>
+              <button class="btn btn-outline-secondary" @click="step = 'start'" :disabled="loading">
+                戻る
+              </button>
+            </div>
+          </div>
+        </template>
       </div>
     </template>
 

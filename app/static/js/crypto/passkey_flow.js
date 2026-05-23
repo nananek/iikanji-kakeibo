@@ -91,9 +91,23 @@ async function _fetchOptions(credentialDbId) {
 /**
  * navigator.credentials.get のレスポンスを finalize エンドポイント
  * 用の JSON に整形する。
+ *
+ * 重要: PRF 出力 (results.first) はサーバに送信しない。`ArrayBuffer` は
+ * `JSON.stringify` で `{}` になる暗黙挙動に依存するのは危険なので、
+ * 明示的に `prf.results` キー全体を削除して "PRF 拡張が有効化されている"
+ * という事実のみを伝える。
  */
 function _credentialToJson(credential) {
   const resp = credential.response;
+  const rawExt = credential.getClientExtensionResults
+    ? credential.getClientExtensionResults()
+    : {};
+  // PRF 出力をサーバに漏らさないよう明示的にコピー + 削除
+  const safeExt = { ...rawExt };
+  if (safeExt.prf && typeof safeExt.prf === "object") {
+    // results.first / results.second 等を一切送らない
+    safeExt.prf = { enabled: true };
+  }
   return {
     id: credential.id,
     rawId: bytesToB64url(new Uint8Array(credential.rawId)),
@@ -106,9 +120,7 @@ function _credentialToJson(credential) {
         ? bytesToB64url(new Uint8Array(resp.userHandle))
         : null,
     },
-    clientExtensionResults: credential.getClientExtensionResults
-      ? credential.getClientExtensionResults()
-      : {},
+    clientExtensionResults: safeExt,
   };
 }
 

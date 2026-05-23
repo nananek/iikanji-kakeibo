@@ -173,6 +173,54 @@ test("レスポンス (ok=false) は Promise を reject する", async () => {
 });
 
 
+test("#send のタイムアウトでエラー reject される", async () => {
+  createdPorts.length = 0;
+  // 100ms タイムアウト (テスト時短)
+  const client = new SharedCryptoClient("dummy.js", { timeoutMs: 100 });
+  // touch を呼んで、stub port は応答を返さない (worker クラッシュ等の模擬)
+  const p = client.touch();
+  await assert.rejects(
+    () => p,
+    /timed out after 100ms.*type=touch/,
+  );
+});
+
+
+test("タイムアウト後に遅れて来た応答は無視される (resolve しない)", async () => {
+  createdPorts.length = 0;
+  const client = new SharedCryptoClient("dummy.js", { timeoutMs: 50 });
+  const port = createdPorts[0];
+  const p = client.touch();
+  const last = port.posted[port.posted.length - 1];
+  // タイムアウト発火を待つ
+  await assert.rejects(() => p, /timed out/);
+  // 遅れて来た応答 (もう pending に存在しない) → 静かに無視される
+  port._deliver({ id: last.data.id, ok: true, hasKey: false });
+  // 例外が起きないこと (これ自体が assertion)
+});
+
+
+test("正常応答ではタイムアウトクリアされて Promise resolve", async () => {
+  createdPorts.length = 0;
+  const client = new SharedCryptoClient("dummy.js", { timeoutMs: 2000 });
+  const port = createdPorts[0];
+  const p = client.touch();
+  const last = port.posted[port.posted.length - 1];
+  port._deliver({ id: last.data.id, ok: true, hasKey: true });
+  const r = await p;
+  assert.equal(r.hasKey, true);
+});
+
+
+test("旧 string 引数 (name) の後方互換: SharedCryptoClient(url, 'my-name')", () => {
+  createdPorts.length = 0;
+  // string をそのまま name として扱う
+  const client = new SharedCryptoClient("dummy.js", "my-name");
+  assert.equal(createdPorts.length, 1);
+  // タイムアウトはデフォルト値 (30 秒) になる
+});
+
+
 test("close() は #pending Promise を全て reject する", async () => {
   createdPorts.length = 0;
   const client = newClient();

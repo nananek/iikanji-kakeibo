@@ -16,6 +16,7 @@ import { SharedCryptoClient } from "./shared-client.js";
 import {
   createWrappedKey,
   listWrappedKeys,
+  touchWrappedKey,
 } from "./api.js";
 import {
   ARGON2ID_DEFAULTS,
@@ -67,12 +68,23 @@ export function encryptionKeyWizard() {
     mnemonic: "",
     mnemonicAcked: false,
     doneMethod: "",
+    // ロック解除 (unlock) 用ステート
+    unlockingKey: null,        // 解除対象の wrapped_key オブジェクト
+    unlockPassphrase: "",      // パスフレーズ方式の入力
+    unlockMnemonic: "",        // リカバリシード方式の入力
     // 内部ハンドル (非リアクティブ)
     _client: null,
 
     async init() {
       try {
         this._client = new SharedCryptoClient(getSharedWorkerUrl());
+        // MK 状態変化を購読 (他タブの解除 / 60 分 idle ロック等)
+        this._client.on("mkChanged", () => { this.hasKey = true; });
+        this._client.on("mkCleared", () => {
+          this.hasKey = false;
+          // 解除フォーム表示中に他タブで unlock されたら閉じる
+          if (this.step === "unlock") this.step = "start";
+        });
         const [status, keys] = await Promise.all([
           this._client.status(),
           listWrappedKeys(),
@@ -81,6 +93,147 @@ export function encryptionKeyWizard() {
         this.existingKeys = keys;
       } catch (e) {
         this.error = `初期化エラー: ${e?.message || e}`;
+      }
+    },
+
+    /**
+     * 解除画面に遷移。ユーザーが任意の登録済 wrapped_key を選んで解除する。
+     */
+    goToUnlock(wrappedKey) {
+      this.error = "";
+      this.unlockingKey = wrappedKey;
+      this.unlockPassphrase = "";
+      this.unlockMnemonic = "";
+      this.step = "unlock";
+    },
+
+    /** ロック (SharedWorker から MK 消去)。テスト/手動ロック用。 */
+    async lockKey() {
+      this.error = "";
+      try {
+        await this._client.clearKey();
+        // mkCleared event ハンドラが hasKey=false を反映する
+      } catch (e) {
+        this.error = `ロック失敗: ${e?.message || e}`;
+      }
+    },
+
+    /**
+     * unwrap 後の共通処理: touchWrappedKey で last_used_at 更新、
+     * step を "start" に戻す、入力をクリア。
+     */
+    async _onUnlockSuccess() {
+      try {
+        await touchWrappedKey(this.unlockingKey.id);
+      } catch (_e) {
+        // touch 失敗は致命的でない (UI 表示は古いまま)
+      }
+      this.unlockPassphrase = "";
+      this.unlockMnemonic = "";
+      this.unlockingKey = null;
+      // hasKey は mkChanged ハンドラ経由で更新済み
+      this.step = "start";
+      // 一覧の last_used_at を最新化するため再取得
+      try {
+        this.existingKeys = await listWrappedKeys();
+      } catch (_e) { /* ignore */ }
+    },
+
+    /** パスフレーズ方式でロック解除。 */
+    async unlockWithPassphrase() {
+      this.error = "";
+      if (!this.unlockingKey || this.unlockingKey.method !== "passphrase") {
+        this.error = "不正な状態 (パスフレーズ方式ではない鍵)";
+        return;
+      }
+      if (!this.unlockPassphrase) {
+        this.error = "パスフレーズを入力してください";
+        return;
+      }
+      this.loading = true;
+      let derived = null;
+      try {
+        await loadHashWasm();
+        const wk = this.unlockingKey;
+        derived = await deriveKeyFromPassphrase(
+          this.unlockPassphrase,
+          wk.salt,
+          { params: wk.kdf_params ?? undefined },
+        );
+        await this._client.unwrap(derived, wk.wrapped_master_key, wk.wrap_iv);
+        await this._onUnlockSuccess();
+      } catch (e) {
+        // unwrap 失敗 = パスフレーズ誤り (タグ検証 NG) が大半
+        this.error = "解除に失敗しました。パスフレーズが正しいか確認してください。";
+      } finally {
+        if (derived && derived.byteLength > 0) {
+          try { derived.fill(0); } catch (_e) { /* detached */ }
+        }
+        this.loading = false;
+      }
+    },
+
+    /** リカバリシード方式でロック解除。 */
+    async unlockWithRecovery() {
+      this.error = "";
+      if (!this.unlockingKey || this.unlockingKey.method !== "recovery_seed") {
+        this.error = "不正な状態 (リカバリシード方式ではない鍵)";
+        return;
+      }
+      if (!this.unlockMnemonic.trim()) {
+        this.error = "24 単語を入力してください";
+        return;
+      }
+      this.loading = true;
+      let derived = null;
+      try {
+        const wk = this.unlockingKey;
+        derived = await deriveKeyFromMnemonic(this.unlockMnemonic);
+        await this._client.unwrap(derived, wk.wrapped_master_key, wk.wrap_iv);
+        await this._onUnlockSuccess();
+      } catch (e) {
+        // mnemonic checksum 不一致 or unwrap タグ NG
+        this.error = "解除に失敗しました。24 単語が正しいか確認してください。";
+      } finally {
+        if (derived && derived.byteLength > 0) {
+          try { derived.fill(0); } catch (_e) { /* detached */ }
+        }
+        this.loading = false;
+      }
+    },
+
+    /** Passkey 方式でロック解除。 */
+    async unlockWithPasskey() {
+      this.error = "";
+      if (!this.unlockingKey || this.unlockingKey.method !== "passkey_prf") {
+        this.error = "不正な状態 (Passkey 方式ではない鍵)";
+        return;
+      }
+      this.loading = true;
+      let derived = null;
+      try {
+        const wk = this.unlockingKey;
+        const result = await beginPasskeyKeyDerivation({
+          credentialId: wk.webauthn_credential_id,
+        });
+        derived = result.derivedKey;
+        await this._client.unwrap(derived, wk.wrapped_master_key, wk.wrap_iv);
+        await this._onUnlockSuccess();
+      } catch (e) {
+        // 情報漏洩防止: 内部メッセージ (Worker タイムアウト・AES-GCM タグ NG
+        // 等) はそのまま UI に出さず、汎用メッセージに統一する。
+        // WebAuthn キャンセル (NotAllowedError) のみユーザー操作の意図が
+        // 明確なので区別可能にする。
+        if (e?.name === "NotAllowedError") {
+          this.error = "Passkey 認証がキャンセルされました。";
+        } else {
+          this.error = "解除に失敗しました。正しい Passkey を使用しているか確認してください。";
+        }
+      } finally {
+        if (derived && derived.byteLength > 0) {
+          try { derived.fill(0); } catch (_e) { /* detached */ }
+        }
+        this.loading = false;
       }
     },
 
@@ -144,31 +297,30 @@ export function encryptionKeyWizard() {
       this.error = "";
       this.loading = true;
       let workerKeyGenerated = false;
+      // derivedKey を外側 try のスコープに引き上げて、generateKey 等で
+      // 失敗した場合でも必ずゼロ埋めできるようにする (PR #143 申し送り対応)
+      let derivedKey = null;
       try {
         await this._ensureNewKeySafe();
         // 1. Passkey PRF 認証 → derived_key + credential DB PK
-        const { derivedKey, credentialDbId } = await beginPasskeyKeyDerivation();
+        const result = await beginPasskeyKeyDerivation();
+        derivedKey = result.derivedKey;
+        const credentialDbId = result.credentialDbId;
         // 2. SharedWorker で新規 MK 生成
         await this._client.generateKey();
         workerKeyGenerated = true;
-        try {
-          // 3. derived_key で MK を wrap
-          const { wrapped, iv } = await this._client.wrap(derivedKey);
-          // 4. wrapped_keys に登録 (method=passkey_prf + webauthn_credential_id)
-          await createWrappedKey({
-            method: "passkey_prf",
-            wrapped_master_key: wrapped,
-            wrap_iv: iv,
-            salt: null,
-            kdf_params: null,
-            webauthn_credential_id: credentialDbId,
-            label: "Passkey (初回)",
-          });
-        } finally {
-          if (derivedKey && derivedKey.byteLength > 0) {
-            try { derivedKey.fill(0); } catch (_e) { /* detached */ }
-          }
-        }
+        // 3. derived_key で MK を wrap (Transferable で detach される)
+        const { wrapped, iv } = await this._client.wrap(derivedKey);
+        // 4. wrapped_keys に登録 (method=passkey_prf + webauthn_credential_id)
+        await createWrappedKey({
+          method: "passkey_prf",
+          wrapped_master_key: wrapped,
+          wrap_iv: iv,
+          salt: null,
+          kdf_params: null,
+          webauthn_credential_id: credentialDbId,
+          label: "Passkey (初回)",
+        });
         workerKeyGenerated = false;
         this.doneMethod = "passkey_prf";
         this.step = "done";
@@ -180,6 +332,11 @@ export function encryptionKeyWizard() {
           this.hasKey = false;
         }
       } finally {
+        // derivedKey は wrap で Transferable detach される想定だが、
+        // generateKey 失敗等で wrap 到達前なら GC まで残るためゼロ埋め
+        if (derivedKey && derivedKey.byteLength > 0) {
+          try { derivedKey.fill(0); } catch (_e) { /* detached */ }
+        }
         this.loading = false;
       }
     },
