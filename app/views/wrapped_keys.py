@@ -13,8 +13,7 @@
 from base64 import b64decode, b64encode
 from datetime import datetime, timezone
 
-from flask import Blueprint, jsonify, request
-from flask_login import current_user, login_required
+from flask import Blueprint, g, jsonify, request
 from sqlalchemy.exc import IntegrityError
 
 from app.extensions import db, limiter
@@ -26,6 +25,7 @@ from app.models.wrapped_key import (
     METHOD_RECOVERY_SEED,
     WrappedKey,
 )
+from app.services.api_auth import auth_required, rate_limit_key
 
 
 bp = Blueprint("wrapped_keys", __name__, url_prefix="/api/v1/wrapped-keys")
@@ -81,13 +81,13 @@ def _b64_or_400(payload: dict, key: str, *, required: bool = True) -> bytes | No
 
 
 @bp.get("")
-@login_required
-@limiter.limit("120 per hour", key_func=lambda: f"user:{current_user.id}")
+@auth_required(write=False)
+@limiter.limit("120 per hour", key_func=rate_limit_key)
 def list_wrapped_keys():
     """自身の wrapped_keys 一覧を返す。"""
     rows = (
         WrappedKey.query
-        .filter_by(user_id=current_user.id)
+        .filter_by(user_id=g.auth_user.id)
         .order_by(WrappedKey.id.asc())
         .all()
     )
@@ -114,8 +114,8 @@ def _validate_kdf_params(kdf_params: dict) -> str | None:
 
 
 @bp.post("")
-@login_required
-@limiter.limit("20 per hour", key_func=lambda: f"user:{current_user.id}")
+@auth_required(write=True)
+@limiter.limit("20 per hour", key_func=rate_limit_key)
 def create_wrapped_key():
     """新規 wrapped MK を登録。サーバは復号しない。"""
     payload = request.get_json(silent=True) or {}
@@ -161,7 +161,7 @@ def create_wrapped_key():
             return jsonify(error="passkey_prf requires webauthn_credential_id"), 400
         # 他ユーザーの credential を指定できないように所有確認
         cred = db.session.get(WebAuthnCredential, webauthn_credential_id)
-        if cred is None or cred.user_id != current_user.id:
+        if cred is None or cred.user_id != g.auth_user.id:
             return jsonify(error="webauthn_credential not found"), 404
     elif method == METHOD_PASSPHRASE:
         if webauthn_credential_id is not None:
@@ -187,7 +187,7 @@ def create_wrapped_key():
             ), 400
 
     row = WrappedKey(
-        user_id=current_user.id,
+        user_id=g.auth_user.id,
         method=method,
         webauthn_credential_id=webauthn_credential_id,
         wrapped_master_key=wrapped,
@@ -209,9 +209,9 @@ def create_wrapped_key():
 
 
 @bp.put("/<int:wrapped_key_id>/touch")
-@login_required
+@auth_required(write=True)
 # per-user で 60 req/hour、per-IP で 5000 req/hour (設計書 §10.9)
-@limiter.limit("60 per hour", key_func=lambda: f"user:{current_user.id}")
+@limiter.limit("60 per hour", key_func=rate_limit_key)
 @limiter.limit("5000 per hour")
 def touch_wrapped_key(wrapped_key_id: int):
     """アンラップ成功時に last_used_at を更新する。
@@ -221,7 +221,7 @@ def touch_wrapped_key(wrapped_key_id: int):
     """
     row = (
         WrappedKey.query
-        .filter_by(id=wrapped_key_id, user_id=current_user.id)
+        .filter_by(id=wrapped_key_id, user_id=g.auth_user.id)
         .first()
     )
     if row is None:
@@ -233,8 +233,8 @@ def touch_wrapped_key(wrapped_key_id: int):
 
 
 @bp.delete("/<int:wrapped_key_id>")
-@login_required
-@limiter.limit("20 per hour", key_func=lambda: f"user:{current_user.id}")
+@auth_required(write=True)
+@limiter.limit("20 per hour", key_func=rate_limit_key)
 def delete_wrapped_key(wrapped_key_id: int):
     """wrapped_key を削除。削除後の件数が 0 になる場合は 409 Conflict。
 
@@ -244,7 +244,7 @@ def delete_wrapped_key(wrapped_key_id: int):
     """
     row = (
         WrappedKey.query
-        .filter_by(id=wrapped_key_id, user_id=current_user.id)
+        .filter_by(id=wrapped_key_id, user_id=g.auth_user.id)
         .first()
     )
     if row is None:
@@ -260,7 +260,7 @@ def delete_wrapped_key(wrapped_key_id: int):
     db.session.flush()
     remaining_count = (
         WrappedKey.query
-        .filter_by(user_id=current_user.id)
+        .filter_by(user_id=g.auth_user.id)
         .count()
     )
     if remaining_count == 0:
