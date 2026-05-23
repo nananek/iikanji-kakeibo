@@ -553,6 +553,157 @@ def ai_draft_delete(draft_id):
     return jsonify({"ok": True})
 
 
+from app.services.api_auth import auth_required, rate_limit_key
+
+# E2 PR-C-2: クライアント側 LLM 呼出フロー用 endpoint。
+# サーバ側で LLM を呼ばないため /ai/analyze と異なり API キーが不要。
+# クライアントが画像をアップロード → 自分で LLM を呼ぶ → 結果を PATCH で保存。
+
+# AIDraft.suggestions_json のサイズ上限 (DB レコード巨大化防止)
+_MAX_SUGGESTIONS_JSON_SIZE = 200 * 1024  # 200KB
+
+
+@bp.route("/ai/uploads", methods=["POST"])
+@auth_required(write=True)
+@limiter.limit("30 per hour", key_func=rate_limit_key)
+def ai_upload():
+    """E2EE 移行用: 画像のみアップロードし、AIDraft を pending 状態で作成する。
+
+    クライアントは戻り値の draft_id を使って自分で LLM を呼び、
+    PATCH /api/v1/ai/drafts/<id>/suggestions で結果を保存する。
+
+    multipart/form-data:
+      image: 画像ファイル (必須)
+      comment: メモ (任意、最大 500 文字)
+    """
+    user_id = g.auth_user.id
+
+    image_file = request.files.get("image")
+    if not image_file or not image_file.filename:
+        return jsonify({"error": "image is required"}), 400
+
+    image_bytes = image_file.read()
+    if len(image_bytes) > _MAX_IMAGE_SIZE:
+        return jsonify({"error": "ファイルサイズが大きすぎます (上限 10MB)"}), 400
+
+    mime_type = image_file.content_type
+    if mime_type not in _ALLOWED_MIME_TYPES:
+        return jsonify({
+            "error": "対応していないファイル形式です (JPEG/PNG/WebP/GIF)",
+        }), 400
+
+    size = len(image_bytes)
+    owner = db.session.get(User, user_id)
+    if owner is None:
+        return jsonify({"error": "user not found"}), 400
+    try:
+        check_quota(owner, size)
+    except QuotaExceededError as exc:
+        return jsonify({"error": exc.user_message}), 413
+
+    file_hash = hashlib.sha256(image_bytes).hexdigest()
+    comment = (request.form.get("comment") or "").strip()[:500]
+
+    # status="pending": クライアントが LLM 呼出を完了するまでの中間状態
+    # (suggestions_json は空配列で初期化)
+    draft = AIDraft(
+        user_id=user_id,
+        image_key="",
+        image_mime=mime_type,
+        file_hash=file_hash,
+        file_size=size,
+        comment=comment or None,
+        suggestions_json="[]",
+        status="pending",
+    )
+    db.session.add(draft)
+    db.session.flush()
+    key = make_storage_key(draft.user_id, draft.id, mime_type)
+    store_image_with_thumbnail(key, image_bytes, mime_type)
+    draft.image_key = key
+    db.session.commit()
+
+    # quota 加算 + TOCTOU 楽観検証 (/ai/analyze と同じパターン)
+    record_upload_succeeded = False
+    try:
+        record_upload(owner, size)
+        record_upload_succeeded = True
+    except Exception as e:
+        from flask import current_app
+        current_app.logger.exception(
+            "api ai/uploads: record_upload failed (user=%d size=%d): %s",
+            owner.id, size, e,
+        )
+    if record_upload_succeeded and get_used_bytes(owner) > get_quota_bytes(owner):
+        from flask import current_app
+        storage = get_storage_backend()
+        for k in (key, make_thumbnail_key(key)):
+            try:
+                storage.delete(k)
+            except Exception as e:
+                current_app.logger.warning(
+                    "api ai/uploads rollback: storage delete failed %s: %s", k, e,
+                )
+        db.session.delete(draft)
+        db.session.commit()
+        try:
+            record_delete(owner, size)
+        except Exception as e:
+            current_app.logger.exception(
+                "api ai/uploads rollback: record_delete failed: %s", e,
+            )
+        return jsonify({
+            "error": "並行アップロードにより容量上限を超えました。",
+        }), 413
+
+    maybe_send_quota_warning(owner)
+
+    return jsonify({
+        "ok": True,
+        "draft_id": draft.id,
+        "status": draft.status,
+    }), 201
+
+
+@bp.route("/ai/drafts/<int:draft_id>/suggestions", methods=["PATCH"])
+@auth_required(write=True)
+@limiter.limit("60 per hour", key_func=rate_limit_key)
+def ai_draft_save_suggestions(draft_id):
+    """E2EE 移行用: クライアント側 LLM の解析結果を AIDraft に保存。
+
+    Body (JSON):
+      suggestions: list — クライアント LLM が返した仕訳候補 (AI 形式)
+      usage: dict (任意) — input_tokens / output_tokens
+    """
+    user_id = g.auth_user.id
+    draft = AIDraft.query.filter_by(id=draft_id, user_id=user_id).first()
+    if not draft:
+        return jsonify({"error": "下書きが見つかりません"}), 404
+    # pending → analyzed / 既に analyzed の場合の再上書きも許容
+    # (LLM 再実行 / suggestions 編集ケース)
+    if draft.status not in ("pending", "analyzed", "temp"):
+        return jsonify({"error": "current status cannot accept suggestions"}), 400
+
+    payload = request.get_json(silent=True) or {}
+    suggestions = payload.get("suggestions")
+    if not isinstance(suggestions, list):
+        return jsonify({"error": "suggestions must be a list"}), 400
+    suggestions_json = json.dumps(suggestions, ensure_ascii=False)
+    if len(suggestions_json) > _MAX_SUGGESTIONS_JSON_SIZE:
+        return jsonify({
+            "error": f"suggestions too large (max {_MAX_SUGGESTIONS_JSON_SIZE} bytes)",
+        }), 413
+
+    draft.suggestions_json = suggestions_json
+    draft.status = "analyzed"
+    db.session.commit()
+
+    return jsonify({
+        "ok": True,
+        "draft": _draft_to_dict(draft, include_suggestions=True),
+    })
+
+
 @bp.route("/vouchers", methods=["GET"])
 @api_key_required(scope="journals:read")
 def list_vouchers():
