@@ -285,3 +285,74 @@ class TestAiSaveSuggestions:
         assert resp.status_code == 200
         db.session.refresh(draft)
         assert json.loads(draft.suggestions_json) == [{"new": 2}]
+
+
+class TestAiPromptContext:
+    """E2 PR-C-4a: GET /api/v1/ai/prompt-context."""
+
+    def test_unauthenticated(self, client):
+        resp = client.get("/api/v1/ai/prompt-context")
+        assert resp.status_code in (302, 401)
+
+    def test_returns_round1_round2_and_metadata(
+        self, db, logged_in_client, user, accounts,
+    ):
+        from app.models.ai_config import UserAIConfig
+        from app.extensions import db as _db
+        cfg = UserAIConfig(
+            user_id=user.id, provider="openai",
+            api_key_blob=b"\xAA" * 48, api_key_iv=b"\xBB" * 12,
+            model_name="", custom_prompt="QUICPayはJCB CARD W",
+            compliance_check=True,
+        )
+        _db.session.add(cfg)
+        _db.session.commit()
+        resp = logged_in_client.get("/api/v1/ai/prompt-context")
+        assert resp.status_code == 200
+        body = resp.get_json()
+        # Round 1
+        assert "round1_prompt" in body
+        assert "DOCUMENT" in body["round1_prompt"] or "領収書" in body["round1_prompt"]
+        assert body["compliance_check_enabled"] is True
+        assert "compliance_prompt" in body
+        # Round 2 テンプレートは 2 種類 (needs_ledger 切替用)
+        assert "round2_prompt_template_no_ledger" in body
+        assert "round2_prompt_template_with_ledger" in body
+        # no_ledger には元帳ヘッダがない (= 「以下は関連する勘定科目の元帳」が現れない)
+        assert "元帳" not in body["round2_prompt_template_no_ledger"]
+        assert "__LEDGER_TEXT__" not in body["round2_prompt_template_no_ledger"]
+        # with_ledger には元帳ヘッダと __LEDGER_TEXT__ プレースホルダの両方が含まれる
+        assert "元帳" in body["round2_prompt_template_with_ledger"]
+        assert "__LEDGER_TEXT__" in body["round2_prompt_template_with_ledger"]
+        # 両テンプレートで __ACCOUNT_LIST_TEXT__ プレースホルダ
+        assert "__ACCOUNT_LIST_TEXT__" in body["round2_prompt_template_no_ledger"]
+        assert "__ACCOUNT_LIST_TEXT__" in body["round2_prompt_template_with_ledger"]
+        # custom_prompt は両方で埋め込み済 (再置換不要)
+        assert "QUICPayはJCB CARD W" in body["round2_prompt_template_no_ledger"]
+        assert "QUICPayはJCB CARD W" in body["round2_prompt_template_with_ledger"]
+        # account_list_text は別途返却
+        assert "account_list_text" in body
+        # custom_prompt
+        assert body["custom_prompt"] == "QUICPayはJCB CARD W"
+        # provider 別デフォルト: サーバ側 PROVIDER_DEFAULTS と一致
+        from app.services.ai_receipt import PROVIDER_DEFAULTS
+        for k in ("openai", "anthropic", "google"):
+            assert body["default_model_by_provider"][k] == PROVIDER_DEFAULTS[k]
+        # llama_cpp は除外
+        assert "llama_cpp" not in body["default_model_by_provider"]
+        # ★ セキュリティ重要: api_key 関連は一切返却しない
+        assert "api_key_blob" not in body
+        assert "api_key_iv" not in body
+        assert "api_key_encrypted" not in body
+        # ai_config 全体も含まない (provider 名は別経路 default_model_by_provider のみ)
+        assert "ai_config" not in body
+
+    def test_no_ai_config_still_returns_context(
+        self, db, logged_in_client, user, accounts,
+    ):
+        """AI 設定が未登録でも prompt-context は返却される (UI で先に確認できる)。"""
+        resp = logged_in_client.get("/api/v1/ai/prompt-context")
+        assert resp.status_code == 200
+        body = resp.get_json()
+        assert body["compliance_check_enabled"] is False
+        assert body["custom_prompt"] == ""

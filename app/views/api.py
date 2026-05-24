@@ -555,6 +555,97 @@ def ai_draft_delete(draft_id):
     return jsonify({"ok": True})
 
 
+@bp.route("/ai/prompt-context", methods=["GET"])
+@auth_required(write=False)
+@limiter.limit("60 per hour", key_func=rate_limit_key)
+def ai_prompt_context():
+    """E2 PR-C-4a: クライアント側で Round 1+2 プロンプトを組み立てるための
+    材料をサーバから一括取得する endpoint。
+
+    クライアントは:
+      1. 画像 + round1_prompt + (compliance/custom_prompt 追記) で LLM 呼出
+      2. Round 1 結果から needs_ledger=true なら ledger 取得 endpoint (別 PR)
+      3. needs_ledger に応じてテンプレートを選択し、プレースホルダ置換:
+         - needs_ledger=false → round2_prompt_template_no_ledger を使用、
+           __ACCOUNT_LIST_TEXT__ のみ置換 (元帳ヘッダは含まれない)
+         - needs_ledger=true  → round2_prompt_template_with_ledger を使用、
+           __ACCOUNT_LIST_TEXT__ と __LEDGER_TEXT__ を置換
+         で Round 2 プロンプト構築 → 2 度目の LLM 呼出
+      4. PATCH /api/v1/ai/drafts/<id>/suggestions で結果保存
+
+    本 endpoint はサーバ側 ai_receipt.py の DOCUMENT_PROMPT / COMPLIANCE_CHECK_PROMPT /
+    _get_account_list_text / _build_suggestion_prompt と等価のメタデータを返却。
+    Round 2 は no_ledger / with_ledger の 2 種類のテンプレートを返却して
+    needs_ledger=false 時に「以下は関連する元帳...」ヘッダのみ残るバグを防ぐ
+    (custom_prompt はサーバで埋込済)。
+    """
+    user_id = g.auth_user.id
+    from app.services.ai_receipt import (
+        COMPLIANCE_CHECK_PROMPT,
+        DOCUMENT_PROMPT,
+        PROVIDER_DEFAULTS,
+        _build_suggestion_prompt,
+        _get_account_list_text,
+    )
+
+    # AI 設定 (provider 別デフォルトモデル + custom_prompt + compliance_check)
+    config = UserAIConfig.query.filter_by(user_id=user_id).first()
+    custom_prompt = config.custom_prompt if config else ""
+    compliance_check = bool(config and config.compliance_check)
+
+    # 勘定科目一覧 (サーバで既に計算しているもの)
+    account_list_text = _get_account_list_text(user_id)
+
+    # Round 2 プロンプトテンプレートを 2 種類生成する。
+    # _build_suggestion_prompt は ledger_text が空かどうかで「以下は関連する
+    # 勘定科目の元帳データ...」ヘッダの有無を切り替えるため、ヘッダのみ
+    # 残って中身が空になるバグ (PR #154 review 3) を防ぐには、needs_ledger
+    # で 2 テンプレートを切り替える方が安全。
+    # クライアントは needs_ledger に応じてどちらか 1 つを選び、
+    # __ACCOUNT_LIST_TEXT__ を置換する (with_ledger 版はさらに __LEDGER_TEXT__
+    # も置換)。custom_prompt はサーバで埋め込み済 (再置換不要)。
+    round2_template_no_ledger = _build_suggestion_prompt(
+        account_list_text="__ACCOUNT_LIST_TEXT__",
+        ledger_text="",
+        custom_prompt=custom_prompt,
+    )
+    round2_template_with_ledger = _build_suggestion_prompt(
+        account_list_text="__ACCOUNT_LIST_TEXT__",
+        ledger_text="__LEDGER_TEXT__",
+        custom_prompt=custom_prompt,
+    )
+
+    return jsonify({
+        "ok": True,
+        # Round 1 プロンプト (compliance/custom_prompt はクライアント側で append)
+        "round1_prompt": DOCUMENT_PROMPT,
+        "compliance_prompt": COMPLIANCE_CHECK_PROMPT,
+        "compliance_check_enabled": compliance_check,
+        # Round 2 プロンプトテンプレート 2 種類。クライアントは Round 1 結果の
+        # needs_ledger に応じてどちらか選び、__ACCOUNT_LIST_TEXT__ を置換する
+        # (with_ledger 版はさらに __LEDGER_TEXT__ も置換):
+        #   needs_ledger=false → round2_prompt_template_no_ledger
+        #                        (元帳ヘッダなし)
+        #   needs_ledger=true  → round2_prompt_template_with_ledger
+        #                        (__LEDGER_TEXT__ を実 ledger で置換)
+        # custom_prompt はサーバ側で既に埋め込み済み (再置換不要)。
+        "round2_prompt_template_no_ledger": round2_template_no_ledger,
+        "round2_prompt_template_with_ledger": round2_template_with_ledger,
+        # __ACCOUNT_LIST_TEXT__ プレースホルダ置換用に別途返却。
+        # クライアント側 account_code バリデーション (実在チェック) にも使用。
+        "account_list_text": account_list_text,
+        # クライアント Round 1 にユーザー custom_prompt を append する場合に使う
+        "custom_prompt": custom_prompt,
+        # デフォルトモデル (UserAIConfig.model_name 未指定時)。
+        # サーバ側 ai_receipt.PROVIDER_DEFAULTS と一致させ、E2EE クライアントと
+        # 既存サーバ解析 (/ai/analyze) が同じモデルを使うことを保証する。
+        # llama_cpp はサーバ管理者提供前提 + v5.0 で廃止のため除外。
+        "default_model_by_provider": {
+            k: v for k, v in PROVIDER_DEFAULTS.items() if k != "llama_cpp"
+        },
+    })
+
+
 # E2 PR-C-2: クライアント側 LLM 呼出フロー用 endpoint。
 # サーバ側で LLM を呼ばないため /ai/analyze と異なり API キーが不要。
 # クライアントが画像をアップロード → 自分で LLM を呼ぶ → 結果を PATCH で保存。
