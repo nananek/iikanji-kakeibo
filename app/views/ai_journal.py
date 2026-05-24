@@ -69,9 +69,16 @@ def upload():
         if owner is not None:
             record_delete(owner, sizes_to_release)
     session.pop("ai_journal_draft_id", None)
+    # E2EE 形式の AI 設定が登録済みかをテンプレートに渡す。
+    # クライアント側で MK が解除されていれば JS が orchestrator を使う分岐に
+    # 入る (`config_is_e2ee=True` でかつ MK 解除済が前提)。
+    config_is_e2ee = bool(
+        config and config.api_key_blob and config.api_key_iv,
+    )
     return render_template(
         "ai_journal/upload.html",
         has_config=bool(config),
+        config_is_e2ee=config_is_e2ee,
         draft_count=draft_count,
     )
 

@@ -10,7 +10,7 @@ const MOD = new URL(
   "../../../app/static/js/crypto/ai_analyze.js",
   import.meta.url,
 );
-const { analyzeReceiptClientSide } = await import(MOD.href);
+const { analyzeReceiptClientSide, defaultModelFor } = await import(MOD.href);
 
 
 /** simple File 互換: arrayBuffer + type を持つ最小オブジェクト */
@@ -110,8 +110,9 @@ test("provider/model がサーバから取れない場合はデフォルトモ�
     client, callLLMImpl: async () => ({ result: {}, usage: {} }), fetchImpl,
   });
   assert.equal(savePayload.provider, "anthropic");
-  // _defaultModelFor("anthropic") = "claude-3-5-sonnet-20241022"
-  assert.equal(savePayload.model, "claude-3-5-sonnet-20241022");
+  // モデル名のハードコードを避け、defaultModelFor の戻り値で比較する
+  // (モデル名変更時に本テストが壊れる経路を防ぐ)
+  assert.equal(savePayload.model, defaultModelFor("anthropic"));
 });
 
 

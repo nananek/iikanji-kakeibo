@@ -561,7 +561,7 @@ def ai_draft_delete(draft_id):
 
 # AIDraft.suggestions_json のサイズ上限 (DB レコード巨大化防止)。
 # json.dumps(..., ensure_ascii=False) で日本語は UTF-8 で 1 文字 = 3 バイトに
-# なるため、文字数でなく **UTF-8 バイト数** で判定する (PR #150 review NG-1)。
+# なるため、文字数でなく **UTF-8 バイト数** で判定する。
 _MAX_SUGGESTIONS_JSON_SIZE = 200 * 1024  # 200 KB (UTF-8 bytes)
 
 
@@ -691,7 +691,6 @@ def ai_draft_save_suggestions(draft_id):
     if not isinstance(suggestions, list):
         return jsonify({"error": "suggestions must be a list"}), 400
     suggestions_json = json.dumps(suggestions, ensure_ascii=False)
-    # UTF-8 byte size 判定 (PR #150 review NG-1 修正)
     if len(suggestions_json.encode("utf-8")) > _MAX_SUGGESTIONS_JSON_SIZE:
         return jsonify({
             "error": f"suggestions too large (max {_MAX_SUGGESTIONS_JSON_SIZE} bytes)",
@@ -700,29 +699,35 @@ def ai_draft_save_suggestions(draft_id):
     draft.suggestions_json = suggestions_json
     draft.status = "analyzed"
 
-    # AIUsageLog 記録 (PR #150 review NG-2 修正)
     # クライアント LLM の利用量をサーバ側でも記録する。サーバ側 ai_receipt.py
-    # フローと等価の監査トレイル + Phase 3 #68 Billing 連携に必要。
+    # フローと等価の監査トレイル + Phase 3 Billing 連携に必要。
     # provider / model / usage が揃っているリクエストのみ記録 (任意フィールド)。
+    # 負値は誤送信・不正クライアント対策で弾く (Billing 連携の前提)。
     provider = payload.get("provider")
     model = payload.get("model")
     usage = payload.get("usage") or {}
-    input_tokens = usage.get("input_tokens") if isinstance(usage, dict) else None
-    output_tokens = usage.get("output_tokens") if isinstance(usage, dict) else None
+    raw_input = usage.get("input_tokens") if isinstance(usage, dict) else None
+    raw_output = usage.get("output_tokens") if isinstance(usage, dict) else None
+
+    def _non_negative_int(v):
+        return v if isinstance(v, int) and not isinstance(v, bool) and v >= 0 else None
+
+    input_tokens = _non_negative_int(raw_input)
+    output_tokens = _non_negative_int(raw_output)
     if (
         isinstance(provider, str) and provider
         and isinstance(model, str) and model
     ):
         total = None
-        if isinstance(input_tokens, int) and isinstance(output_tokens, int):
+        if input_tokens is not None and output_tokens is not None:
             total = input_tokens + output_tokens
         log = AIUsageLog(
             user_id=user_id,
             provider=provider[:20],
             model=model[:100],
             feature="receipt_client_side",
-            input_tokens=input_tokens if isinstance(input_tokens, int) else None,
-            output_tokens=output_tokens if isinstance(output_tokens, int) else None,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
             total_tokens=total,
             status="ok",
         )

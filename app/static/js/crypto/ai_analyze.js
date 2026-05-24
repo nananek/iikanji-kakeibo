@@ -136,28 +136,27 @@ export async function analyzeReceiptClientSide({
   try { plaintextBytes.fill(0); } catch (_e) { /* detached / immutable */ }
 
   // 4. LLM 呼出 (E2-C-1 module)
+  const usedModel = cfg.model_name || _defaultModelFor(cfg.provider);
   const imageBytes = new Uint8Array(await file.arrayBuffer());
   const llmRes = await callLLMImpl({
     provider: cfg.provider,
     apiKey,
-    model: cfg.model_name || _defaultModelFor(cfg.provider),
+    model: usedModel,
     imageBytes,
     mimeType: file.type || "image/jpeg",
     prompt,
     fetchImpl: f,
   });
 
-  // 5. suggestions をサーバに保存
-  // LLM は単一 JSON or 配列を返す可能性があるので配列化
+  // 5. suggestions をサーバに保存。provider/model も送ることで AIUsageLog
+  // (サーバ側 ai_receipt.py と等価の監査トレイル) を記録可能にする。
+  // LLM は単一 JSON or 配列を返す可能性があるので配列化。
   const suggestions = Array.isArray(llmRes.result)
     ? llmRes.result
     : [llmRes.result];
-  const usedModel = cfg.model_name || _defaultModelFor(cfg.provider);
   const saved = await _saveSuggestions(f, draft_id, {
     suggestions,
     usage: llmRes.usage,
-    // PR #150 review NG-2: provider/model も送ることで AIUsageLog
-    // 記録を可能にする (サーバ側 ai_receipt.py と等価の監査トレイル)。
     provider: cfg.provider,
     model: usedModel,
   });
@@ -172,8 +171,11 @@ export async function analyzeReceiptClientSide({
 }
 
 
-/** provider 別のデフォルトモデル (設定で model_name 未指定の場合)。 */
-function _defaultModelFor(provider) {
+/**
+ * provider 別のデフォルトモデル (設定で model_name 未指定の場合)。
+ * テストからも参照できるよう export する。
+ */
+export function defaultModelFor(provider) {
   switch (provider) {
     case "openai":    return "gpt-4o-mini";
     case "anthropic": return "claude-3-5-sonnet-20241022";
@@ -181,3 +183,6 @@ function _defaultModelFor(provider) {
     default:          return "";
   }
 }
+
+// 後方互換: 既存呼出名
+const _defaultModelFor = defaultModelFor;
