@@ -1,42 +1,31 @@
 """AI証憑仕訳ビュー"""
 
-import hashlib
 import json
-from dataclasses import asdict
 from datetime import date as date_type
 
 from flask import (
     Blueprint, render_template, redirect, url_for, flash, request, session,
     jsonify, make_response,
 )
-from flask_login import login_required, current_user
+from flask_login import login_required
 
 from app.extensions import db
 from app.models.ai_config import UserAIConfig
 from app.models.ai_draft import AIDraft
 from app.models.user import User
 from app.services.audit import get_effective_user_id, get_submitted_account_codes
-from app.services.ai_receipt import analyze_and_suggest
 from app.services.accounting import create_journal_entry
 from app.services.fiscal import check_period_open_for_new, get_closed_periods_map, get_restricted_before_year
 from app.services.image import serve_image
 from app.services.storage import (
-    get_storage_backend, make_storage_key, make_thumbnail_key,
-    store_image_with_thumbnail,
+    get_storage_backend, make_thumbnail_key,
 )
-from app.services.storage_quota import (
-    QuotaExceededError, check_quota, get_quota_bytes, get_used_bytes,
-    maybe_send_quota_warning, record_delete, record_upload,
-)
-from app.views.helpers import safe_user_error
+from app.services.storage_quota import record_delete
 from app.services.voucher import create_voucher_from_draft
 from app.models.voucher import Voucher
 from app.views.helpers import get_grouped_accounts, check_deadline
 
 bp = Blueprint("ai_journal", __name__, url_prefix="/ai-journal")
-
-MAX_IMAGE_SIZE = 10 * 1024 * 1024  # 10MB
-ALLOWED_MIME_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
 
 
 @bp.route("/", methods=["GET"])
@@ -74,143 +63,12 @@ def upload():
     # api_key_encrypted=NULL になり、サーバ側 ai_receipt.py の解析が失敗する
     # ため、文言を「移行期間中=サーバ解析可」と「移行完了=解析不可」で分岐。
     config_is_e2ee = bool(config and config.is_e2ee)
-    has_legacy_key = bool(config and config.api_key_encrypted)
     return render_template(
         "ai_journal/upload.html",
         has_config=bool(config),
         config_is_e2ee=config_is_e2ee,
-        has_legacy_key=has_legacy_key,
         draft_count=draft_count,
     )
-
-
-@bp.route("/analyze", methods=["POST"])
-@login_required
-def analyze():
-    """AJAX: 証憑画像を解析して仕訳案を返す"""
-    config = UserAIConfig.query.filter_by(user_id=get_effective_user_id()).first()
-    if not config:
-        return jsonify({"error": "AI API設定が登録されていません。先に設定してください。"}), 400
-    # E2EE 移行完了済 (migrate-key 実行後で api_key_encrypted=NULL) では
-    # サーバ側 ai_receipt.py が Fernet 復号できないため、サーバ経由解析は不可。
-    # 通常 UI からは E2EE モードのフロー (POST /api/v1/ai/uploads など) に
-    # 切り替わるためここに到達しない。直接 POST に対する安全網。
-    if config.is_e2ee and not config.api_key_encrypted:
-        return jsonify({
-            "error": "E2EE 移行完了済のためサーバ経由解析は無効です。"
-                     "UI から E2EE モードで解析するか、設定画面で API キーを"
-                     "再登録してください。",
-        }), 400
-
-    image_file = request.files.get("image_file")
-    if not image_file or not image_file.filename:
-        return jsonify({"error": "画像ファイルを選択してください。"}), 400
-
-    image_bytes = image_file.read()
-    if len(image_bytes) > MAX_IMAGE_SIZE:
-        return jsonify({"error": "ファイルサイズが大きすぎます（上限10MB）。"}), 400
-
-    mime_type = image_file.content_type
-    if mime_type not in ALLOWED_MIME_TYPES:
-        return jsonify({
-            "error": "対応していないファイル形式です。JPEG/PNG/WebP/GIF を使用してください。"
-        }), 400
-
-    # Phase 5 #70: AIDraft 段階で StorageUsage に計上する。Voucher 化時は
-    # 所有権移転で計上不変、reject/期限切れ削除時に record_delete で減算。
-    size = len(image_bytes)
-    user_id = get_effective_user_id()
-    owner = db.session.get(User, user_id)
-    if owner is None:
-        return jsonify({"error": "ユーザーが見つかりません。"}), 400
-    try:
-        check_quota(owner, size)
-    except QuotaExceededError as exc:
-        # CodeQL py/stack-trace-exposure 対策で `exc.user_message` 経由 (PR #92)
-        return jsonify({"error": exc.user_message}), 413
-
-    file_hash = hashlib.sha256(image_bytes).hexdigest()
-    comment = request.form.get("comment", "").strip()
-
-    try:
-        suggestions = analyze_and_suggest(
-            user_id, image_bytes, mime_type, comment=comment
-        )
-    except (ValueError, RuntimeError) as e:
-        from flask import current_app
-        current_app.logger.exception("analyze_and_suggest failed")
-        return jsonify({"error": safe_user_error(e)}), 400
-
-    suggestions_data = [asdict(s) for s in suggestions]
-    suggestions_json = json.dumps(suggestions_data, ensure_ascii=False)
-
-    # 画像・解析結果を保存（セッションには小さなIDのみ）
-    draft = AIDraft(
-        user_id=user_id,
-        image_key="",
-        image_mime=mime_type,
-        file_hash=file_hash,
-        file_size=size,
-        comment=comment,
-        suggestions_json=suggestions_json,
-        status="temp",
-    )
-    db.session.add(draft)
-    db.session.flush()
-    key = make_storage_key(draft.user_id, draft.id, mime_type)
-    store_image_with_thumbnail(key, image_bytes, mime_type)
-    draft.image_key = key
-    db.session.commit()
-
-    # 容量加算 (ON CONFLICT upsert) + TOCTOU 楽観的再検証。
-    # create_voucher_from_upload と同じパターン: 並行アップロードで合算が
-    # 上限超過なら巻き戻し (ストレージ削除 + draft 削除 + record_delete)。
-    # Draft は既に commit 済のため、record_upload の例外で 500 を返すと
-    # 「Draft は永続化されたのに容量計上されない」quota リークが発生する。
-    # 明示的に握ってログに残し、整合性監査バッチで補完する設計とする。
-    record_upload_succeeded = False
-    try:
-        record_upload(owner, size)
-        record_upload_succeeded = True
-    except Exception as e:
-        from flask import current_app
-        current_app.logger.exception(
-            "ai_journal: record_upload failed (user=%d size=%d): %s",
-            owner.id, size, e,
-        )
-    # record_upload が失敗した場合、StorageUsage には加算されていないため
-    # TOCTOU 検証をスキップする。これをやらないと、別ユーザーが先に上限近く
-    # まで埋めた状態で当該リクエストが超過判定 → record_delete で他ユーザー
-    # の計上を誤減算する経路ができてしまう。
-    if record_upload_succeeded and get_used_bytes(owner) > get_quota_bytes(owner):
-        from flask import current_app
-        storage = get_storage_backend()
-        for k in (key, make_thumbnail_key(key)):
-            try:
-                storage.delete(k)
-            except Exception as e:
-                current_app.logger.warning(
-                    "ai_journal rollback: storage delete failed %s: %s", k, e,
-                )
-        db.session.delete(draft)
-        db.session.commit()
-        try:
-            record_delete(owner, size)
-        except Exception as e:
-            current_app.logger.exception(
-                "ai_journal rollback: record_delete failed (user=%d size=%d): %s",
-                owner.id, size, e,
-            )
-        return jsonify({
-            "error": "並行アップロードにより容量上限を超えました。再試行してください。",
-        }), 413
-
-    session["ai_journal_draft_id"] = draft.id
-
-    # 容量警告メール送信 (Phase 6 #71)。閾値超過時のみ、失敗は best-effort
-    maybe_send_quota_warning(owner)
-
-    return jsonify({"suggestions": suggestions_data})
 
 
 # --- 一時保存 ---

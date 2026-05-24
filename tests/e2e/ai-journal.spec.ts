@@ -48,7 +48,12 @@ test.describe("AI証憑仕訳 — アップロード〜レビュー", () => {
     await expect(page.locator("h2")).toContainText("AI証憑仕訳");
   });
 
-  test("画像アップロード〜AI解析〜レビュー画面遷移", async ({ page }) => {
+  // E2 PR-C-4e: サーバ AI 解析経路 (/ai-journal/analyze) を廃止し、E2EE
+  // クライアント完結フローのみに統一。E2E 用 mock-ai-server は llama_cpp
+  // 互換だが、クライアント側 LLM クライアント (round1.js/round2.js) は
+  // OpenAI/Anthropic/Google のみ対応。E2-D で client-py / E2E 用クライアント
+  // クライアント対応後に再有効化する。
+  test.skip("画像アップロード〜AI解析〜レビュー画面遷移", async ({ page }) => {
     await page.goto(`${BASE_URL}/ai-journal/`);
 
     // ファイルアップロード
@@ -275,7 +280,8 @@ test.describe("AI証憑仕訳 — 仕訳モードからの登録", () => {
     await login(page);
   });
 
-  test("仕訳モードで仕訳を登録できる", async ({ page }) => {
+  // E2 PR-C-4e: サーバ AI 解析経路廃止に伴い skip (E2-D で再有効化)
+  test.skip("仕訳モードで仕訳を登録できる", async ({ page }) => {
     // アップロード → 解析（mock AI）
     await page.goto(`${BASE_URL}/ai-journal/`);
     const fileInput = page.locator('input[type="file"]');
@@ -312,7 +318,8 @@ test.describe("AI証憑仕訳 — かんたんモードからの登録", () => {
     await login(page);
   });
 
-  test("かんたんモードで仕訳を登録でき日付が正しく入る", async ({ page }) => {
+  // E2 PR-C-4e: サーバ AI 解析経路廃止に伴い skip (E2-D で再有効化)
+  test.skip("かんたんモードで仕訳を登録でき日付が正しく入る", async ({ page }) => {
     // アップロード → 解析（mock AI）
     await page.goto(`${BASE_URL}/ai-journal/`);
     const fileInput = page.locator('input[type="file"]');
@@ -353,7 +360,8 @@ test.describe("AI証憑仕訳 — 仕訳モード登録後の日付確認", () =
     await login(page);
   });
 
-  test("仕訳モードで登録した仕訳に日付が正しく入る", async ({ page }) => {
+  // E2 PR-C-4e: サーバ AI 解析経路廃止に伴い skip (E2-D で再有効化)
+  test.skip("仕訳モードで登録した仕訳に日付が正しく入る", async ({ page }) => {
     // アップロード → 解析（mock AI）
     await page.goto(`${BASE_URL}/ai-journal/`);
     const fileInput = page.locator('input[type="file"]');
@@ -398,7 +406,8 @@ test.describe("AI証憑仕訳 — 下書き保存・やり直し確認", () => {
     await login(page);
   });
 
-  test("temp ドラフトに下書き保存ボタンが表示される", async ({ page }) => {
+  // E2 PR-C-4e: サーバ AI 解析経路廃止に伴い skip (E2-D で再有効化)
+  test.skip("temp ドラフトに下書き保存ボタンが表示される", async ({ page }) => {
     // アップロード → 解析
     await page.goto(`${BASE_URL}/ai-journal/`);
     const fileInput = page.locator('input[type="file"]');
@@ -449,7 +458,8 @@ test.describe("仕訳編集画面 — tojson属性バグ", () => {
     await login(page);
   });
 
-  test("証憑から開いた仕訳編集画面で日付・明細が表示される", async ({ page }) => {
+  // E2 PR-C-4e: サーバ AI 解析経路廃止に伴い skip (E2-D で再有効化)
+  test.skip("証憑から開いた仕訳編集画面で日付・明細が表示される", async ({ page }) => {
     // まず仕訳を登録（AI証憑仕訳経由）
     await page.goto(`${BASE_URL}/ai-journal/`);
     const fileInput = page.locator('input[type="file"]');

@@ -1,6 +1,6 @@
 """AI 証憑仕訳ビュー (ai_journal.py) の追加テスト
 
-未到達範囲: analyze エンドポイント、image 配信、quick_accept 各エラーパス、
+未到達範囲: image 配信、quick_accept 各エラーパス、
 review POST (simple/advanced モード)、_update_discord_done など。
 """
 
@@ -63,78 +63,13 @@ def _draft(db, user_id, *, status="analyzed", suggestions=None):
     return d
 
 
-class TestAnalyzeEndpoint:
-    def test_unauthenticated(self, client):
-        resp = client.post("/ai-journal/analyze")
-        assert resp.status_code in (302, 401)
+class TestAnalyzeEndpointRemoved:
+    """E2 PR-C-4e: /ai-journal/analyze (サーバ Fernet 経路) は廃止。
+    POST すると 404 (ルート未定義) を返すことを担保。"""
 
-    def test_no_ai_config(self, logged_in_client, accounts):
-        resp = logged_in_client.post("/ai-journal/analyze",
-                                       data={}, content_type="multipart/form-data")
-        assert resp.status_code == 400
-
-    def test_no_image(self, db, logged_in_client, user, accounts):
-        _ai_config(db, user.id)
-        resp = logged_in_client.post("/ai-journal/analyze",
-                                       data={}, content_type="multipart/form-data")
-        assert resp.status_code == 400
-
-    def test_oversized(self, db, logged_in_client, user, accounts):
-        _ai_config(db, user.id)
-        big = b"\x89PNG" + b"\x00" * (11 * 1024 * 1024)
-        resp = logged_in_client.post(
-            "/ai-journal/analyze",
-            data={"image_file": (io.BytesIO(big), "big.png", "image/png")},
-            content_type="multipart/form-data",
-        )
-        assert resp.status_code == 400
-
-    def test_unsupported_mime(self, db, logged_in_client, user, accounts):
-        _ai_config(db, user.id)
-        resp = logged_in_client.post(
-            "/ai-journal/analyze",
-            data={"image_file": (io.BytesIO(b"x"), "x.txt", "text/plain")},
-            content_type="multipart/form-data",
-        )
-        assert resp.status_code == 400
-
-    def test_success(self, db, logged_in_client, user, accounts):
-        _ai_config(db, user.id)
-        with patch("app.views.ai_journal.analyze_and_suggest") as mock_a, \
-             patch("app.views.ai_journal.store_image_with_thumbnail"):
-            from app.services.ai_receipt import JournalSuggestion
-            mock_a.return_value = [
-                JournalSuggestion(
-                    title="t", description="x",
-                    date="2026-02-15",
-                    entry_description="x",
-                    lines=[
-                        {"account_code": "5010", "debit_amount": 100,
-                         "credit_amount": 0, "description": ""},
-                        {"account_code": "1010", "debit_amount": 0,
-                         "credit_amount": 100, "description": ""},
-                    ],
-                ),
-            ]
-            resp = logged_in_client.post(
-                "/ai-journal/analyze",
-                data={"image_file": (io.BytesIO(_png_bytes()), "x.png", "image/png")},
-                content_type="multipart/form-data",
-            )
-        assert resp.status_code == 200
-        body = resp.get_json()
-        assert "suggestions" in body
-
-    def test_analyze_value_error(self, db, logged_in_client, user, accounts):
-        _ai_config(db, user.id)
-        with patch("app.views.ai_journal.analyze_and_suggest") as mock_a:
-            mock_a.side_effect = ValueError("AI解析失敗")
-            resp = logged_in_client.post(
-                "/ai-journal/analyze",
-                data={"image_file": (io.BytesIO(_png_bytes()), "x.png", "image/png")},
-                content_type="multipart/form-data",
-            )
-        assert resp.status_code == 400
+    def test_analyze_endpoint_is_gone(self, logged_in_client, accounts):
+        resp = logged_in_client.post("/ai-journal/analyze")
+        assert resp.status_code == 404
 
 
 class TestDraftsSave:
@@ -468,17 +403,17 @@ class TestUpdateDiscordDone:
 
 
 class TestAiJournalE2EEBanner:
-    """E2-C-3c: /ai-journal upload 画面の E2EE 形式バナー表示分岐。
+    """E2 PR-C-4e: /ai-journal upload 画面のバナー分岐 (Fernet 経路廃止後)。
 
-    - legacy Fernet のみ → バナー非表示
-    - api_key_blob+iv あり + 旧キー残存 (migrate-key 未実行) → 移行中バナー (info)
-    - api_key_blob+iv あり + 旧キー NULL (migrate-key 実行済) → 移行完了バナー (warning)
-    - 設定なし → バナー非表示
+    - 設定なし → 「外部AI設定が登録されていません」warning
+    - has_config=true, !is_e2ee (legacy Fernet のみ) → 「E2EE モードに移行」warning
+    - has_config=true, is_e2ee (移行期間混在含む) → 「E2EE モードで解析します」success
     """
 
-    def test_no_banner_when_legacy_only(
+    def test_legacy_only_shows_migration_required_banner(
         self, db, logged_in_client, user, accounts,
     ):
+        """Fernet 形式のみ登録のユーザー → 再登録を促す warning が出てフォームは無効化。"""
         from app.models.ai_config import UserAIConfig
         from app.services.ai_receipt import encrypt_api_key
         cfg = UserAIConfig(
@@ -492,36 +427,15 @@ class TestAiJournalE2EEBanner:
         resp = logged_in_client.get("/ai-journal/")
         assert resp.status_code == 200
         html = resp.data.decode()
-        assert "E2EE 形式で API キー登録済み" not in html
-        assert "E2EE 移行完了" not in html
+        assert "クライアント完結の E2EE モードに移行しました" in html
+        assert "E2EE 形式で再登録" in html
+        # success バナーは出ない
+        assert "E2EE モードで解析します" not in html
 
-    def test_info_banner_when_e2ee_and_legacy_coexist(
+    def test_e2ee_success_banner_when_blob_iv_present(
         self, db, logged_in_client, user, accounts,
     ):
-        """旧キー未削除 (migrate-key 未呼出) — サーバ解析可で移行期間中。"""
-        from app.models.ai_config import UserAIConfig
-        from app.services.ai_receipt import encrypt_api_key
-        cfg = UserAIConfig(
-            user_id=user.id, provider="openai",
-            api_key_encrypted=encrypt_api_key("sk-legacy"),
-            api_key_blob=b"\xAA" * 48, api_key_iv=b"\xBB" * 12,
-            model_name="gpt-4o-mini",
-        )
-        from app.extensions import db as _db
-        _db.session.add(cfg)
-        _db.session.commit()
-        resp = logged_in_client.get("/ai-journal/")
-        html = resp.data.decode()
-        assert "E2EE 形式で API キー登録済み" in html
-        assert "移行期間として" in html
-        # 移行完了バナーは出ない
-        assert "E2EE 移行完了" not in html
-
-    def test_e2ee_full_client_mode_banner_when_e2ee_only_no_legacy(
-        self, db, logged_in_client, user, accounts,
-    ):
-        """旧キー削除済 (migrate-key 実行後) — クライアント完全 E2EE モード
-        が有効、success バナーが表示される (E2 PR-C-4d で warning → success に変更)。"""
+        """api_key_blob/iv 登録済 (Fernet 残存有無を問わず) → success バナー + フォーム有効。"""
         from app.models.ai_config import UserAIConfig
         cfg = UserAIConfig(
             user_id=user.id, provider="openai",
@@ -534,58 +448,17 @@ class TestAiJournalE2EEBanner:
         _db.session.commit()
         resp = logged_in_client.get("/ai-journal/")
         html = resp.data.decode()
-        # 新 success バナー
         assert "E2EE モードで解析します" in html
         assert "ブラウザから LLM に直接送信" in html
-        # 旧 「解析利用不可」警告は出ない (クライアント側で解析可能になった)
-        assert "解析は利用できません" not in html
-        # 移行中バナーも出ない
-        assert "移行期間として" not in html
-        # JS フラグが渡される
-        assert "e2eeFullClientMode = true" in html
+        # legacy 用 warning は出ない
+        assert "クライアント完結の E2EE モードに移行しました" not in html
 
     def test_no_banner_when_no_config_at_all(
         self, db, logged_in_client, user, accounts,
     ):
         resp = logged_in_client.get("/ai-journal/")
         html = resp.data.decode()
-        assert "E2EE 形式で API キー登録済み" not in html
         assert "E2EE モードで解析します" not in html
-        # 旧 「移行完了」も出ない
-        assert "E2EE 移行完了" not in html
-
-
-class TestAnalyzeE2EEMigratedGuard:
-    """E2-C-3c PR #153 review 2: 移行完了 (api_key_encrypted=NULL) のユーザーが
-    /analyze に POST した時、ai_receipt.py の Fernet 復号失敗で SECRET_KEY
-    不一致風の無関係エラーになるのを防ぐガード。"""
-
-    def test_e2ee_only_post_returns_400_with_clear_message(
-        self, db, logged_in_client, user, accounts,
-    ):
-        from app.models.ai_config import UserAIConfig
-        from app.extensions import db as _db
-        cfg = UserAIConfig(
-            user_id=user.id, provider="openai",
-            api_key_encrypted=None,
-            api_key_blob=b"\xAA" * 48, api_key_iv=b"\xBB" * 12,
-            model_name="gpt-4o-mini",
-        )
-        _db.session.add(cfg)
-        _db.session.commit()
-        png_sig = b"\x89PNG\r\n\x1a\n" + b"\x00" * 56
-        resp = logged_in_client.post(
-            "/ai-journal/analyze",
-            data={
-                "image_file": (io.BytesIO(png_sig), "r.png", "image/png"),
-            },
-            content_type="multipart/form-data",
-        )
-        assert resp.status_code == 400
-        body = resp.get_json()
-        # 「E2EE 移行完了」を含むユーザーフレンドリーなメッセージ
-        assert "E2EE 移行完了" in body["error"]
-        # 旧い無関係エラーは出ない
-        assert "SECRET_KEY" not in body["error"]
-        # 新メッセージは E2EE モードへの誘導を含む
-        assert "E2EE モード" in body["error"] or "再登録" in body["error"]
+        assert "クライアント完結の E2EE モードに移行しました" not in html
+        # 「外部AI設定が登録されていません」は出る
+        assert "外部AI設定が登録されていません" in html
