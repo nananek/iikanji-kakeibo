@@ -41,26 +41,15 @@ def upload():
     E2 PR-C-4h: POST は「機能一時停止」エラーを返す (E2EE 化未完了)。
     """
     grouped_accounts = get_grouped_accounts(get_effective_user_id())
-    has_config = UserAIConfig.query.filter_by(user_id=get_effective_user_id()).first() is not None
 
-    if request.method == "POST":
-        flash(
-            "Web貼り付け取込は E2EE 移行に伴い一時的に利用できません。"
-            "AI証憑仕訳 (画像アップロード) は E2EE クライアント完結モードで"
-            "ご利用いただけます。",
-            "warning",
-        )
-        return render_template(
-            "web_import/upload.html",
-            grouped_accounts=grouped_accounts,
-            has_config=has_config,
-            feature_disabled=True,
-        )
-
+    # E2 PR-C-4i: feature_disabled=True なので has_config はテンプレで
+    # 参照されない (warning 分岐が先勝ち) ため DB クエリを省略。
+    # 旧版で POST 時に flash を出すと feature_disabled バナーと二重表示に
+    # なっていたため flash も削除。テンプレ側 warning に一元化。
     return render_template(
         "web_import/upload.html",
         grouped_accounts=grouped_accounts,
-        has_config=has_config,
+        has_config=False,
         feature_disabled=True,
     )
 

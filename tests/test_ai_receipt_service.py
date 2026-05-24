@@ -1,9 +1,11 @@
 """AI 解析サービス (services/ai_receipt.py) のテスト
 
 外部 API への httpx 呼出しはモック化。プロバイダー別ハンドラー、
-JSON抽出、設定取得、メイン関数 (analyze_receipt / analyze_and_suggest /
-parse_web_text / suggest_categories_by_ai / match_account /
+JSON抽出、設定取得、メイン関数 (suggest_categories_by_ai / match_account /
 analyze_voucher_for_attachment) をカバー。
+
+E2 PR-C-4i: analyze_receipt / analyze_and_suggest / parse_web_text 関連は
+caller を全廃済のため削除。残った機能のみテスト。
 """
 
 import json
@@ -19,7 +21,6 @@ from app.services.ai_receipt import (
     DocumentAnalysis,
     JournalSuggestion,
     PROVIDER_DEFAULTS,
-    ReceiptData,
     _build_suggestion_prompt,
     _call_ai,
     _call_anthropic,
@@ -35,13 +36,10 @@ from app.services.ai_receipt import (
     _get_ai_config,
     _get_ledger_context,
     _get_payment_ledger_context,
-    analyze_receipt,
-    analyze_and_suggest,
     analyze_voucher_for_attachment,
     decrypt_api_key,
     encrypt_api_key,
     match_account,
-    parse_web_text,
     suggest_categories_by_ai,
 )
 
@@ -306,187 +304,10 @@ class TestCallAi:
             _call_ai(handler, "k", "m", b"x", "image/png", "p", 100, user.id)
 
 
-class TestAnalyzeReceipt:
-    def test_success(self, db, user, accounts):
-        _ai_config(db, user.id)
-        mock_call = MagicMock(); _patches_openai = patch.dict("app.services.ai_receipt._PROVIDER_HANDLERS", {"openai": mock_call})
-        with _patches_openai:
-            mock_call.return_value = _h({
-                "date": "2026-02-15",
-                "description": "セブン",
-                "amount": 500,
-                "category": "食費",
-            })
-            r = analyze_receipt(user.id, b"img", "image/jpeg")
-            assert isinstance(r, ReceiptData)
-            assert r.amount == 500
-            assert r.suggested_category == "食費"
-
-
-class TestAnalyzeAndSuggest:
-    def test_success_simple(self, db, user, accounts):
-        _ai_config(db, user.id)
-        mock_call = MagicMock(); _patches_openai = patch.dict("app.services.ai_receipt._PROVIDER_HANDLERS", {"openai": mock_call})
-        with _patches_openai:
-            # 第1ラウンドと第2ラウンドの結果
-            mock_call.side_effect = [
-                _h({  # round 1
-                    "date": "2026-02-15", "description": "セブン",
-                    "amount": 500, "document_type": "receipt",
-                    "items": [], "needs_ledger": False, "requested_accounts": [],
-                }),
-                _h({  # round 2
-                    "suggestions": [
-                        {
-                            "title": "食費として計上",
-                            "description": "...",
-                            "date": "2026-02-15",
-                            "entry_description": "セブン",
-                            "lines": [
-                                {"account_code": "5010", "account_name": "食費",
-                                 "debit_amount": 500, "credit_amount": 0},
-                                {"account_code": "1010", "account_name": "現金",
-                                 "debit_amount": 0, "credit_amount": 500},
-                            ],
-                        },
-                    ],
-                }),
-            ]
-            results = analyze_and_suggest(user.id, b"img", "image/jpeg")
-            assert len(results) == 1
-            assert results[0].title == "食費として計上"
-
-    def test_invalid_account_codes_filtered(self, db, user, accounts):
-        _ai_config(db, user.id)
-        mock_call = MagicMock(); _patches_openai = patch.dict("app.services.ai_receipt._PROVIDER_HANDLERS", {"openai": mock_call})
-        with _patches_openai:
-            mock_call.side_effect = [
-                _h({"document_type": "receipt", "items": [],
-                 "needs_ledger": False, "requested_accounts": [],
-                 "amount": 100, "description": "x", "date": "2026-02-15"}),
-                _h({"suggestions": [{
-                    "title": "x", "description": "y",
-                    "date": "2026-02-15", "entry_description": "x",
-                    "lines": [
-                        {"account_code": "9999", "debit_amount": 100,
-                         "credit_amount": 0},  # 存在しない
-                        {"account_code": "8888", "debit_amount": 0,
-                         "credit_amount": 100},  # 存在しない
-                    ],
-                }]}),
-            ]
-            with pytest.raises(RuntimeError):
-                analyze_and_suggest(user.id, b"img", "image/jpeg")
-
-    def test_ledger_fetch_when_needed(self, db, user, accounts):
-        _ai_config(db, user.id)
-        mock_call = MagicMock()
-        with patch.dict("app.services.ai_receipt._PROVIDER_HANDLERS", {"openai": mock_call}), \
-             patch("app.services.ai_receipt._get_ledger_context") as mock_ledger:
-            mock_ledger.return_value = "(元帳サンプル)"
-            mock_call.side_effect = [
-                _h({"document_type": "payslip", "items": [],
-                 "needs_ledger": True, "requested_accounts": ["給料手当"],
-                 "amount": 250000, "description": "給与", "date": "2026-02-25"}),
-                _h({"suggestions": [{
-                    "title": "x", "description": "y",
-                    "date": "2026-02-25", "entry_description": "給与",
-                    "lines": [
-                        {"account_code": "5010", "debit_amount": 250000,
-                         "credit_amount": 0},
-                        {"account_code": "1010", "debit_amount": 0,
-                         "credit_amount": 250000},
-                    ],
-                }]}),
-            ]
-            analyze_and_suggest(user.id, b"img", "image/jpeg")
-            mock_ledger.assert_called_once()
-
-    def test_with_compliance_check(self, db, user, accounts):
-        cfg = UserAIConfig(
-            user_id=user.id, provider="openai",
-            api_key_encrypted=encrypt_api_key("k"),
-            model_name="gpt-4o",
-            compliance_check=True,
-        )
-        db.session.add(cfg)
-        db.session.commit()
-
-        mock_call = MagicMock(); _patches_openai = patch.dict("app.services.ai_receipt._PROVIDER_HANDLERS", {"openai": mock_call})
-        with _patches_openai:
-            mock_call.side_effect = [
-                _h({"document_type": "receipt", "items": [],
-                 "needs_ledger": False, "requested_accounts": [],
-                 "amount": 100, "description": "x", "date": "2026-02-15",
-                 "compliance": {
-                     "status": "warn",
-                     "warnings": ["切れ"],
-                     "details": ["影あり"],
-                 }}),
-                _h({"suggestions": [{
-                    "title": "x", "description": "y",
-                    "date": "2026-02-15", "entry_description": "x",
-                    "lines": [
-                        {"account_code": "5010", "debit_amount": 100,
-                         "credit_amount": 0},
-                        {"account_code": "1010", "debit_amount": 0,
-                         "credit_amount": 100},
-                    ],
-                }]}),
-            ]
-            results = analyze_and_suggest(user.id, b"img", "image/jpeg")
-            assert results[0].compliance is not None
-            assert results[0].compliance["status"] == "warn"
-
-
-class TestParseWebText:
-    def test_unknown_provider(self, db, user, accounts):
-        cfg = UserAIConfig(
-            user_id=user.id, provider="bad",
-            api_key_encrypted=encrypt_api_key("k"),
-            model_name="x",
-        )
-        db.session.add(cfg)
-        db.session.commit()
-        with pytest.raises(ValueError):
-            parse_web_text(user.id, "txt", "口座")
-
-    def test_success(self, db, user, accounts):
-        _ai_config(db, user.id)
-        mock_call = MagicMock(); _patches_text = patch.dict("app.services.ai_receipt._TEXT_PROVIDER_HANDLERS", {"openai": mock_call})
-        with _patches_text:
-            mock_call.return_value = _h({
-                "transactions": [
-                    {"date": "2026-02-15", "description": "ATM",
-                     "deposit": 0, "withdrawal": 5000},
-                    {"date": "2026-02-16", "description": "給与",
-                     "deposit": 250000, "withdrawal": 0},
-                ],
-            })
-            result = parse_web_text(user.id, "明細テキスト", "三井住友")
-            assert len(result) == 2
-            assert result[0]["row_num"] == 1
-            assert result[0]["withdrawal"] == 5000
-
-    def test_http_error(self, db, user, accounts):
-        _ai_config(db, user.id)
-        mock_call = MagicMock(); _patches_text = patch.dict("app.services.ai_receipt._TEXT_PROVIDER_HANDLERS", {"openai": mock_call})
-        with _patches_text:
-            request = MagicMock()
-            response = MagicMock(status_code=500)
-            mock_call.side_effect = httpx.HTTPStatusError(
-                "500", request=request, response=response,
-            )
-            with pytest.raises(RuntimeError):
-                parse_web_text(user.id, "x", "y")
-
-    def test_general_error(self, db, user, accounts):
-        _ai_config(db, user.id)
-        mock_call = MagicMock(); _patches_text = patch.dict("app.services.ai_receipt._TEXT_PROVIDER_HANDLERS", {"openai": mock_call})
-        with _patches_text:
-            mock_call.side_effect = ValueError("bad")
-            with pytest.raises(RuntimeError):
-                parse_web_text(user.id, "x", "y")
+# E2 PR-C-4i: TestAnalyzeReceipt / TestAnalyzeAndSuggest / TestParseWebText は
+# 対応関数の削除に伴い削除。元帳取得 / プロンプト構築 / バリデーション等の
+# E2EE クライアント完結フロー側の動作は tests/test_ai_uploads_api.py +
+# tests/static/js/test_ai_journal_orchestrator.mjs で担保されている。
 
 
 class TestSuggestCategoriesByAi:
