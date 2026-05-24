@@ -521,6 +521,29 @@ def ai_prompt_context():
     })
 
 
+@bp.route("/web-import/prompt-context", methods=["GET"])
+@auth_required(write=False)
+@limiter.limit("60 per hour", key_func=rate_limit_key)
+def web_import_prompt_context():
+    """E2EE web-import: クライアント側 LLM 呼出しのためのプロンプト材料を返す。"""
+    user_id = g.auth_user.id
+    from app.services.ai_receipt import PROVIDER_DEFAULTS, WEB_IMPORT_PROMPT
+
+    config = UserAIConfig.query.filter_by(user_id=user_id).first()
+    custom_prompt = config.custom_prompt if config else ""
+
+    return jsonify({
+        "ok": True,
+        # __PAYMENT_ACCOUNT_NAME__ と __RAW_TEXT__ をクライアントで置換する
+        "prompt_template": WEB_IMPORT_PROMPT,
+        "custom_prompt": custom_prompt,
+        # llama_cpp はサーバ管理者提供前提 + v5.0 で廃止予定のため除外
+        "default_model_by_provider": {
+            k: v for k, v in PROVIDER_DEFAULTS.items() if k != "llama_cpp"
+        },
+    })
+
+
 @bp.route("/ai/ledger-context", methods=["POST"])
 @auth_required(write=False)
 @limiter.limit("60 per hour", key_func=rate_limit_key)

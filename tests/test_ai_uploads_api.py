@@ -415,3 +415,54 @@ class TestAiPromptContext:
         body = resp.get_json()
         assert body["compliance_check_enabled"] is False
         assert body["custom_prompt"] == ""
+
+
+class TestWebImportPromptContext:
+    """E2 PR-C-5a: GET /api/v1/web-import/prompt-context."""
+
+    def test_unauthenticated(self, client):
+        resp = client.get("/api/v1/web-import/prompt-context")
+        assert resp.status_code in (302, 401)
+
+    def test_returns_template_and_metadata(
+        self, db, logged_in_client, user, accounts,
+    ):
+        from app.models.ai_config import UserAIConfig
+        from app.extensions import db as _db
+        cfg = UserAIConfig(
+            user_id=user.id, provider="openai",
+            api_key_blob=b"\xAA" * 48, api_key_iv=b"\xBB" * 12,
+            model_name="", custom_prompt="三井住友は普通預金",
+        )
+        _db.session.add(cfg)
+        _db.session.commit()
+        resp = logged_in_client.get("/api/v1/web-import/prompt-context")
+        assert resp.status_code == 200
+        body = resp.get_json()
+        # プレースホルダ 2 種類
+        assert "__PAYMENT_ACCOUNT_NAME__" in body["prompt_template"]
+        assert "__RAW_TEXT__" in body["prompt_template"]
+        # transactions JSON の形式説明が含まれる
+        assert "transactions" in body["prompt_template"]
+        assert "deposit" in body["prompt_template"]
+        assert "withdrawal" in body["prompt_template"]
+        # custom_prompt
+        assert body["custom_prompt"] == "三井住友は普通預金"
+        # provider 別デフォルト: ai-prompt-context と同じ
+        from app.services.ai_receipt import PROVIDER_DEFAULTS
+        for k in ("openai", "anthropic", "google"):
+            assert body["default_model_by_provider"][k] == PROVIDER_DEFAULTS[k]
+        assert "llama_cpp" not in body["default_model_by_provider"]
+        # api_key 関連は一切返却しない
+        assert "api_key_blob" not in body
+        assert "api_key_iv" not in body
+        assert "api_key_encrypted" not in body
+
+    def test_no_ai_config_still_returns_context(
+        self, db, logged_in_client, user, accounts,
+    ):
+        resp = logged_in_client.get("/api/v1/web-import/prompt-context")
+        assert resp.status_code == 200
+        body = resp.get_json()
+        assert body["custom_prompt"] == ""
+        assert "__PAYMENT_ACCOUNT_NAME__" in body["prompt_template"]
