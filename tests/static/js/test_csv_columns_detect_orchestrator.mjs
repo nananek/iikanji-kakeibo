@@ -46,6 +46,7 @@ const PROMPT_CTX = {
   sample_text: "2026/01/01, テスト, 1000, ",
   sample_count: 1,
   num_cols: 4,
+  custom_prompt: "",
   default_model_by_provider: {
     openai: "gpt-4o",
     anthropic: "claude-sonnet-4-20250514",
@@ -83,6 +84,24 @@ test("buildDetectPrompt: 値中の __XXX__ は再展開されない (二重展�
     sampleCount: 1,
   });
   assert.equal(p, "[H:__SAMPLE_TEXT__][S:REAL]");
+});
+
+test("buildDetectPrompt: customPrompt を末尾に追加", () => {
+  const p = buildDetectPrompt({
+    promptTemplate: "BASE",
+    headersText: "", sampleText: "", sampleCount: 0,
+    customPrompt: "○○銀行はマイナスがキャッシュバック",
+  });
+  assert.equal(p, "BASE\n\n## ユーザー定型情報\n○○銀行はマイナスがキャッシュバック");
+});
+
+test("buildDetectPrompt: customPrompt 空文字なら追加しない", () => {
+  const p = buildDetectPrompt({
+    promptTemplate: "BASE",
+    headersText: "", sampleText: "", sampleCount: 0,
+    customPrompt: "",
+  });
+  assert.equal(p, "BASE");
 });
 
 

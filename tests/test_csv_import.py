@@ -732,6 +732,8 @@ class TestColumnsDetectContext:
         for k in ("openai", "anthropic", "google"):
             assert body["default_model_by_provider"][k] == PROVIDER_DEFAULTS[k]
         assert "llama_cpp" not in body["default_model_by_provider"]
+        # custom_prompt (UserAIConfig 未設定なら空文字)
+        assert body["custom_prompt"] == ""
         # api_key 関連は一切返却しない
         assert "api_key_blob" not in body
 
@@ -770,4 +772,20 @@ class TestColumnsDetectContext:
             json={"headers": [123, "ok"], "sample_rows": []},
         )
         assert resp.status_code == 400
+
+    def test_long_cell_truncated_to_max_cell_len(
+        self, logged_in_client, accounts,
+    ):
+        long_cell = "x" * 5000
+        resp = logged_in_client.post(
+            "/csv-import/api/columns-detect-context",
+            json={
+                "headers": ["a", "b"],
+                "sample_rows": [[long_cell, "ok"]],
+            },
+        )
+        assert resp.status_code == 200
+        # MAX_CELL_LEN=1000 で切り詰められ、5000 x が残らない
+        assert "x" * 2000 not in resp.get_json()["sample_text"]
+        assert "x" * 1000 in resp.get_json()["sample_text"]
 

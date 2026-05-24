@@ -4,7 +4,7 @@
 // フロー:
 //   1. POST /csv-import/api/columns-detect-context (headers + sample_rows)
 //      → {prompt_template, headers_text, sample_text, sample_count,
-//         num_cols, default_model_by_provider}
+//         num_cols, custom_prompt, default_model_by_provider}
 //   2. GET /api/v1/ai-config + decrypt → api_key 平文
 //   3. プレースホルダ (__HEADERS_TEXT__ / __SAMPLE_TEXT__ / __SAMPLE_COUNT__)
 //      を置換 → callLLMText (maxTokens=500)
@@ -56,7 +56,7 @@ async function _fetchAiConfig(fetchImpl) {
 
 
 export function buildDetectPrompt({
-  promptTemplate, headersText, sampleText, sampleCount,
+  promptTemplate, headersText, sampleText, sampleCount, customPrompt = "",
 }) {
   if (typeof promptTemplate !== "string" || !promptTemplate) {
     throw new Error("promptTemplate is required");
@@ -69,9 +69,15 @@ export function buildDetectPrompt({
     __SAMPLE_COUNT__: String(sampleCount ?? 0),
   };
   const re = /(__HEADERS_TEXT__|__SAMPLE_TEXT__|__SAMPLE_COUNT__)/g;
-  return promptTemplate.split(re).map(
+  let out = promptTemplate.split(re).map(
     (chunk) => Object.prototype.hasOwnProperty.call(subs, chunk) ? subs[chunk] : chunk,
   ).join("");
+  // ユーザー定型情報 (UserAIConfig.custom_prompt) を末尾に注入。
+  // round1.js の AI 証憑仕訳と同じパターン。
+  if (customPrompt) {
+    out += `\n\n## ユーザー定型情報\n${customPrompt}`;
+  }
+  return out;
 }
 
 
@@ -166,6 +172,7 @@ export async function runColumnsDetect({
     headersText: promptContext.headers_text,
     sampleText: promptContext.sample_text,
     sampleCount: promptContext.sample_count,
+    customPrompt: promptContext.custom_prompt || "",
   });
 
   const llmRes = await callLLMTextImpl({

@@ -124,11 +124,14 @@ def mapping():
             saved_mapping = profile
             mapping_source = "saved"
 
-    # AI 列推定 UI を出すかは E2EE 形式の AI 設定があるかで判定
-    # (旧 Fernet のみのユーザーには出さない、ai_journal.py 等の既存パターン
-    # と統一)。
+    # AI 列推定 UI を出すかは E2EE 形式の AI 設定があるかで判定。
+    # llama_cpp はサーバ管理者向けで client-side LLM 呼出に対応していないため
+    # ボタン自体を出さない (orchestrator のエラーを生で見せないため)。
     _cfg = UserAIConfig.query.filter_by(user_id=user_id).first()
-    has_ai_config = bool(_cfg and _cfg.is_e2ee)
+    _client_side_providers = {"openai", "anthropic", "google"}
+    has_ai_config = bool(
+        _cfg and _cfg.is_e2ee and _cfg.provider in _client_side_providers
+    )
 
     if request.method == "POST":
         date_col = request.form.get("date_col", type=int)
@@ -225,6 +228,7 @@ def columns_detect_context():
 
     MAX_HEADERS = 50
     MAX_HEADER_LEN = 200
+    MAX_CELL_LEN = 1000
 
     payload = request.get_json(silent=True) or {}
     headers = payload.get("headers")
@@ -242,8 +246,12 @@ def columns_detect_context():
     sample_lines = []
     for row in sample_rows[:5]:
         if isinstance(row, list):
-            sample_lines.append(", ".join(str(c) for c in row))
+            sample_lines.append(", ".join(str(c)[:MAX_CELL_LEN] for c in row))
     sample_text = "\n".join(sample_lines)
+
+    user_id = get_effective_user_id()
+    config = UserAIConfig.query.filter_by(user_id=user_id).first()
+    custom_prompt = config.custom_prompt if config else ""
 
     return jsonify({
         "ok": True,
@@ -252,6 +260,7 @@ def columns_detect_context():
         "sample_text": sample_text,
         "sample_count": len(sample_lines),
         "num_cols": len(headers),
+        "custom_prompt": custom_prompt,
         "default_model_by_provider": {
             k: v for k, v in PROVIDER_DEFAULTS.items() if k != "llama_cpp"
         },
