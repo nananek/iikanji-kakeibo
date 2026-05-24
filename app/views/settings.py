@@ -14,7 +14,7 @@ from app.models.api_key import APIKey, ALL_SCOPES, SCOPE_LABELS, SCOPE_DEPENDENC
 from app.models.oauth import OAuthToken
 from app.models.audit import AuditGrant, AuditGrantAccount
 from app.services.ai_receipt import (
-    encrypt_api_key, PROVIDER_DEFAULTS, PROVIDER_LABELS,
+    PROVIDER_DEFAULTS, PROVIDER_LABELS,
     get_available_provider_labels, is_llama_cpp_available,
 )
 from app.views.accounts import TAX_CATEGORIES
@@ -274,54 +274,9 @@ def ai_config():
     )
 
 
-@bp.route("/ai/save", methods=["POST"])
-@login_required
-def ai_config_save():
-    """AI API設定の保存"""
-    provider = request.form.get("provider", "openai")
-    api_key = request.form.get("api_key", "").strip()
-    model_name = request.form.get("model_name", "").strip()
-    custom_prompt = request.form.get("custom_prompt", "").strip()
-    compliance_check = request.form.get("compliance_check") == "on"
-
-    available_labels = get_available_provider_labels()
-    if provider not in available_labels:
-        flash("無効なプロバイダーです。", "danger")
-        return redirect(url_for("settings.ai_config"))
-
-    # llama.cpp は API キー不要、それ以外は新規時に必須
-    is_local = provider == "llama_cpp"
-    effective_key = api_key or ("_" if is_local else "")
-
-    config = UserAIConfig.query.filter_by(user_id=current_user.id).first()
-
-    if config:
-        config.provider = provider
-        config.model_name = model_name
-        config.custom_prompt = custom_prompt
-        config.compliance_check = compliance_check
-        if api_key:
-            config.api_key_encrypted = encrypt_api_key(api_key)
-        elif is_local and not api_key:
-            # llama.cpp でキー未入力なら既存キーがなければダミーを保存
-            config.api_key_encrypted = encrypt_api_key("_")
-    else:
-        if not effective_key:
-            flash("APIキーを入力してください。", "danger")
-            return redirect(url_for("settings.ai_config"))
-        config = UserAIConfig(
-            user_id=current_user.id,
-            provider=provider,
-            api_key_encrypted=encrypt_api_key(effective_key),
-            model_name=model_name,
-            custom_prompt=custom_prompt,
-            compliance_check=compliance_check,
-        )
-        db.session.add(config)
-
-    db.session.commit()
-    flash("AI API設定を保存しました。", "success")
-    return redirect(url_for("settings.ai_config"))
+# 旧 form POST /ai/save エンドポイント (Fernet 暗号化保存) は E2EE 化により
+# 廃止。AI 設定の保存は ai_config.html の Alpine + JS から PUT /api/v1/ai-config
+# (E2EE blob/iv 形式) に統一されている。
 
 
 @bp.route("/ai/delete", methods=["POST"])

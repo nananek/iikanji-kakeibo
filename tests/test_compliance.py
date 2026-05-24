@@ -57,22 +57,22 @@ class TestComplianceCheckConfig:
     """UserAIConfig.compliance_check のテスト"""
 
     def test_default_is_false(self, db, user):
-        from app.services.ai_receipt import encrypt_api_key
         config = UserAIConfig(
             user_id=user.id,
             provider="openai",
-            api_key_encrypted=encrypt_api_key("sk-test"),
+            api_key_blob=b"\xAA" * 48,
+            api_key_iv=b"\xBB" * 12,
         )
         db.session.add(config)
         db.session.commit()
         assert config.compliance_check is False
 
     def test_can_enable(self, db, user):
-        from app.services.ai_receipt import encrypt_api_key
         config = UserAIConfig(
             user_id=user.id,
             provider="openai",
-            api_key_encrypted=encrypt_api_key("sk-test"),
+            api_key_blob=b"\xAA" * 48,
+            api_key_iv=b"\xBB" * 12,
             compliance_check=True,
         )
         db.session.add(config)
@@ -88,53 +88,9 @@ class TestComplianceCheckConfig:
 # TestAiPromptContext と tests/static/js/test_round1.mjs でカバー済。
 
 
-class TestSettingsComplianceToggle:
-    """設定画面のコンプライアンスチェックトグル"""
-
-    def test_save_compliance_on(self, db, logged_in_client, user):
-        from app.services.ai_receipt import encrypt_api_key
-        config = UserAIConfig(
-            user_id=user.id,
-            provider="openai",
-            api_key_encrypted=encrypt_api_key("sk-test"),
-        )
-        db.session.add(config)
-        db.session.commit()
-
-        resp = logged_in_client.post("/settings/ai/save", data={
-            "provider": "openai",
-            "model_name": "gpt-4o",
-            "custom_prompt": "",
-            "base_url": "",
-            "compliance_check": "on",
-        }, follow_redirects=True)
-        assert resp.status_code == 200
-
-        updated = UserAIConfig.query.filter_by(user_id=user.id).first()
-        assert updated.compliance_check is True
-
-    def test_save_compliance_off(self, db, logged_in_client, user):
-        from app.services.ai_receipt import encrypt_api_key
-        config = UserAIConfig(
-            user_id=user.id,
-            provider="openai",
-            api_key_encrypted=encrypt_api_key("sk-test"),
-            compliance_check=True,
-        )
-        db.session.add(config)
-        db.session.commit()
-
-        resp = logged_in_client.post("/settings/ai/save", data={
-            "provider": "openai",
-            "model_name": "gpt-4o",
-            "custom_prompt": "",
-            "base_url": "",
-            # compliance_check は送信しない → False
-        }, follow_redirects=True)
-        assert resp.status_code == 200
-
-        updated = UserAIConfig.query.filter_by(user_id=user.id).first()
-        assert updated.compliance_check is False
+# 旧 form POST /settings/ai/save 経由の compliance_check トグルテストは
+# E2EE 化に伴いエンドポイント廃止のため削除。PUT /api/v1/ai-config 経由の
+# compliance_check 保存テストは tests/test_ai_config_api.py で代替済。
 
 
 class TestReviewComplianceDisplay:

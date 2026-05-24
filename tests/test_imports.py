@@ -266,11 +266,10 @@ def _setup_web_import_session(logged_in_client, parsed_rows,
 
 
 def _make_e2ee_ai_config(db, user_id):
-    """E2 PR-C-5c: 新フロー (E2EE モード) 用 AI 設定をセットアップ。"""
+    """E2EE モード用 AI 設定をセットアップ。"""
     from app.models.ai_config import UserAIConfig
     cfg = UserAIConfig(
         user_id=user_id, provider="openai",
-        api_key_encrypted=None,
         api_key_blob=b"\xAA" * 48, api_key_iv=b"\xBB" * 12,
         model_name="gpt-4o-mini",
     )
@@ -279,13 +278,13 @@ def _make_e2ee_ai_config(db, user_id):
     return cfg
 
 
-def _make_legacy_ai_config(db, user_id):
-    """Fernet のみ (E2EE 未移行) の旧設定。"""
+def _make_non_e2ee_ai_config(db, user_id):
+    """blob/iv 未保存 (is_e2ee=False) の AI 設定。Fernet 廃止後は
+    旧 Fernet ユーザーや手動 DB 操作で発生し得る状態。"""
     from app.models.ai_config import UserAIConfig
-    from app.services.ai_receipt import encrypt_api_key
     cfg = UserAIConfig(
         user_id=user_id, provider="openai",
-        api_key_encrypted=encrypt_api_key("sk-legacy"),
+        api_key_blob=None, api_key_iv=None,
         model_name="gpt-4o-mini",
     )
     db.session.add(cfg)
@@ -307,11 +306,11 @@ class TestWebImportUpload:
         assert resp.status_code == 200
         assert "外部AI設定が登録されていません" in resp.data.decode()
 
-    def test_get_legacy_only_shows_migration_required_banner(
+    def test_get_non_e2ee_shows_migration_required_banner(
         self, db, logged_in_client, user, accounts,
     ):
-        """Fernet 形式のみ → 「E2EE モードに移行」warning + フォーム disabled。"""
-        _make_legacy_ai_config(db, user.id)
+        """blob/iv 未保存 → 「E2EE モードに移行」warning + フォーム disabled。"""
+        _make_non_e2ee_ai_config(db, user.id)
         resp = logged_in_client.get("/web-import/")
         html = resp.data.decode()
         assert "クライアント完結の E2EE モードに移行しました" in html

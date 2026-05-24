@@ -207,7 +207,6 @@ class TestMarkDraftDone:
 
     def test_with_discord_message_id(self, db, user, auth_header, accounts, client):
         from app.models.ai_draft import AIDraft
-        from app.services.ai_receipt import encrypt_api_key
         from unittest.mock import patch
         import json as json_lib
 

@@ -90,22 +90,6 @@
           </div>
         </template>
 
-        <template x-if="state === 'need_migration'">
-          <div class="alert alert-warning small">
-            <i class="bi bi-arrow-repeat"></i>
-            <strong>旧形式 (Fernet サーバ暗号化) の API キーが残っています。</strong>
-            E2EE 形式 (クライアント暗号化) に移行してください。移行は 1 度きりで、
-            サーバ側の旧暗号データは消去されます。
-            <div class="mt-2">
-              <button class="btn btn-sm btn-warning" @click="migrate()" :disabled="migrating">
-                <span x-show="migrating" class="spinner-border spinner-border-sm me-1"></span>
-                <i class="bi bi-arrow-repeat"></i>
-                <span x-text="migrating ? '移行中...' : 'E2EE 形式に移行する'"></span>
-              </button>
-            </div>
-          </div>
-        </template>
-
         <div x-show="error" x-cloak class="alert alert-danger small" x-text="error"></div>
         <div x-show="notice" x-cloak class="alert alert-success small" x-text="notice"></div>
 

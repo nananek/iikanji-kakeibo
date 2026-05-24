@@ -28,10 +28,10 @@ def _png_bytes() -> bytes:
 
 
 def _ai_config(db, user_id):
-    from app.services.ai_receipt import encrypt_api_key
     cfg = UserAIConfig(
         user_id=user_id, provider="openai",
-        api_key_encrypted=encrypt_api_key("k"), model_name="gpt-4",
+        api_key_blob=b"\xAA" * 48, api_key_iv=b"\xBB" * 12,
+        model_name="gpt-4",
     )
     db.session.add(cfg)
     db.session.commit()
@@ -403,22 +403,21 @@ class TestUpdateDiscordDone:
 
 
 class TestAiJournalE2EEBanner:
-    """E2 PR-C-4e: /ai-journal upload 画面のバナー分岐 (Fernet 経路廃止後)。
+    """/ai-journal upload 画面のバナー分岐 (Fernet 経路廃止後)。
 
     - 設定なし → 「外部AI設定が登録されていません」warning
-    - has_config=true, !is_e2ee (legacy Fernet のみ) → 「E2EE モードに移行」warning
-    - has_config=true, is_e2ee (移行期間混在含む) → 「E2EE モードで解析します」success
+    - has_config=true, !is_e2ee (blob/iv 未保存) → 「E2EE モードに移行」warning
+    - has_config=true, is_e2ee → 「E2EE モードで解析します」success
     """
 
-    def test_legacy_only_shows_migration_required_banner(
+    def test_non_e2ee_shows_migration_required_banner(
         self, db, logged_in_client, user, accounts,
     ):
-        """Fernet 形式のみ登録のユーザー → 再登録を促す warning が出てフォームは無効化。"""
+        """api_key_blob/iv が未保存のユーザー → 再登録 warning + フォーム無効化。"""
         from app.models.ai_config import UserAIConfig
-        from app.services.ai_receipt import encrypt_api_key
         cfg = UserAIConfig(
             user_id=user.id, provider="openai",
-            api_key_encrypted=encrypt_api_key("sk-legacy"),
+            api_key_blob=None, api_key_iv=None,
             model_name="gpt-4o-mini",
         )
         from app.extensions import db as _db
@@ -435,11 +434,10 @@ class TestAiJournalE2EEBanner:
     def test_e2ee_success_banner_when_blob_iv_present(
         self, db, logged_in_client, user, accounts,
     ):
-        """api_key_blob/iv 登録済 (Fernet 残存有無を問わず) → success バナー + フォーム有効。"""
+        """api_key_blob/iv 登録済 → success バナー + フォーム有効。"""
         from app.models.ai_config import UserAIConfig
         cfg = UserAIConfig(
             user_id=user.id, provider="openai",
-            api_key_encrypted=None,
             api_key_blob=b"\xAA" * 48, api_key_iv=b"\xBB" * 12,
             model_name="gpt-4o-mini",
         )
@@ -450,7 +448,7 @@ class TestAiJournalE2EEBanner:
         html = resp.data.decode()
         assert "E2EE モードで解析します" in html
         assert "ブラウザから LLM に直接送信" in html
-        # legacy 用 warning は出ない
+        # 非 E2EE 用 warning は出ない
         assert "クライアント完結の E2EE モードに移行しました" not in html
 
     def test_no_banner_when_no_config_at_all(

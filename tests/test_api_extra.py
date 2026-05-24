@@ -28,11 +28,10 @@ def _png_bytes() -> bytes:
 
 
 def _setup_ai_config(db, user_id):
-    """AI 設定を雛形で作る"""
-    from app.services.ai_receipt import encrypt_api_key
+    """AI 設定を雛形で作る (E2EE 形式)"""
     cfg = UserAIConfig(
         user_id=user_id, provider="openai",
-        api_key_encrypted=encrypt_api_key("k"),
+        api_key_blob=b"\xAA" * 48, api_key_iv=b"\xBB" * 12,
         model_name="gpt-4",
     )
     db.session.add(cfg)

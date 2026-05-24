@@ -11,7 +11,6 @@ from app.models.account import Account
 from app.models.ai_draft import AIDraft
 from app.models.ai_config import UserAIConfig
 from app.services.seed import seed_accounts_for_user
-from app.services.ai_receipt import encrypt_api_key
 
 app = create_app()
 with app.app_context():
@@ -29,20 +28,23 @@ with app.app_context():
     # 標準科目シード
     seed_accounts_for_user(u.id)
 
-    # AI 設定（llama.cpp → mock サーバー。URL は環境変数 LLAMA_CPP_URL 経由）
+    # AI 設定: E2EE 形式 (api_key_blob/iv は dummy)。E2EE 化以降サーバ側
+    # LLM 呼出は無いので Web 上で is_e2ee=True と判定されれば十分。
     config = UserAIConfig.query.filter_by(user_id=u.id).first()
     if not config:
         config = UserAIConfig(
             user_id=u.id,
-            provider='llama_cpp',
-            model_name='mock',
-            api_key_encrypted=encrypt_api_key('_'),
+            provider='openai',
+            model_name='gpt-4o',
+            api_key_blob=b'\\xAA' * 48,
+            api_key_iv=b'\\xBB' * 12,
         )
         db.session.add(config)
     else:
-        config.provider = 'llama_cpp'
-        config.model_name = 'mock'
-        config.api_key_encrypted = encrypt_api_key('_')
+        config.provider = 'openai'
+        config.model_name = 'gpt-4o'
+        config.api_key_blob = b'\\xAA' * 48
+        config.api_key_iv = b'\\xBB' * 12
     db.session.commit()
 
     # アカウントコード取得

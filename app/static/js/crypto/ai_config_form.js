@@ -1,18 +1,15 @@
-// AI 設定画面の E2EE 化フォーム (E2 Phase E2-b)。
+// AI 設定画面の E2EE 化フォーム。
 //
-// 旧 HTML フォーム POST → settings.ai_config_save (Fernet サーバ暗号化) を
-// クライアント側 AES-256-GCM 暗号化 + PUT /api/v1/ai-config に置換する。
+// クライアント側 AES-256-GCM で API キーを暗号化 → PUT /api/v1/ai-config。
+// サーバは復号できない (api_key_blob + api_key_iv のみ受け取る)。
 //
 // ユーザー状態の分岐:
 //   1. wrapped_keys なし → 鍵設定誘導
-//   2. wrapped_keys あり + MK ロード済み + legacy key あり → 移行ボタン表示
-//   3. wrapped_keys あり + MK ロード済み + legacy key なし → 通常入力 + 保存
-//   4. wrapped_keys あり + MK 未ロード → ロック解除誘導
+//   2. wrapped_keys あり + MK ロード済み → 通常入力 + 保存
+//   3. wrapped_keys あり + MK 未ロード → ロック解除誘導
 //
 // セキュリティ:
 //   - api_key 平文は SharedWorker.encrypt() で MK 暗号化されてから PUT
-//   - サーバは復号できない (api_key_blob + api_key_iv のみ受け取る)
-//   - 旧 Fernet データは migrate-key 経由で 1 回限り取得 → 再暗号化 → PUT
 //   - 入力中 api_key は string で JS GC に委ねるが、encrypt 後の Uint8Array
 //     は worker 側で Transferable detach されてゼロ埋め保証
 
@@ -69,24 +66,6 @@ async function _putAiConfig(body) {
 }
 
 
-/** POST /api/v1/ai-config/migrate-key で legacy 平文取得。 */
-async function _callMigrateKey() {
-  const r = await fetch("/api/v1/ai-config/migrate-key", {
-    method: "POST",
-    credentials: "include",
-    headers: {
-      "Content-Type": "application/json",
-      "X-CSRFToken": csrfToken(),
-    },
-  });
-  if (!r.ok) {
-    const err = await r.json().catch(() => ({}));
-    throw new Error(err.error || `HTTP ${r.status}`);
-  }
-  return r.json();
-}
-
-
 /** GET /api/v1/ai-config (404 は null 返却に正規化)。 */
 async function _getAiConfig() {
   const r = await fetch("/api/v1/ai-config", { credentials: "include" });
@@ -113,7 +92,7 @@ async function _getWrappedKeysCount() {
 export function aiConfigForm(initial = {}) {
   return {
     // ユーザー状態
-    state: "loading",  // "loading"|"no_keys"|"locked"|"need_migration"|"ready"
+    state: "loading",  // "loading"|"no_keys"|"locked"|"ready"
     error: "",
     notice: "",
 
@@ -127,11 +106,9 @@ export function aiConfigForm(initial = {}) {
     customPrompt: initial.custom_prompt || "",
     complianceCheck: !!initial.compliance_check,
     saving: false,
-    migrating: false,
 
     // サーバ状態
     hasConfig: false,
-    hasLegacyKey: false,
     isE2ee: false,
 
     // 内部
@@ -167,17 +144,12 @@ export function aiConfigForm(initial = {}) {
         const cfg = await _getAiConfig();
         if (cfg) {
           this.hasConfig = true;
-          this.hasLegacyKey = !!cfg.has_legacy_key;
           this.isE2ee = !!cfg.is_e2ee;
           this.provider = cfg.provider || this.provider;
           this._savedProvider = cfg.provider || null;
           this.modelName = cfg.model_name || "";
           this.customPrompt = cfg.custom_prompt || "";
           this.complianceCheck = !!cfg.compliance_check;
-          if (this.hasLegacyKey && !this.isE2ee) {
-            this.state = "need_migration";
-            return;
-          }
         }
         this.state = "ready";
       } catch (e) {
@@ -186,40 +158,6 @@ export function aiConfigForm(initial = {}) {
         // loading のままに留めてフォーム非表示にする。ユーザーは error バナーを
         // 見て再読込する。
         this.state = "loading";
-      }
-    },
-
-    /** 既存 legacy Fernet 形式から E2EE 形式へ移行する。 */
-    async migrate() {
-      this.error = "";
-      this.notice = "";
-      this.migrating = true;
-      try {
-        // 1. migrate-key 互換 endpoint で平文取得 (per-user 1 回限り)
-        const legacy = await _callMigrateKey();
-        const plaintextApiKey = legacy.api_key;
-        // 2. MK で再暗号化 + PUT
-        await this._saveEncrypted({
-          apiKey: plaintextApiKey,
-          provider: legacy.provider,
-          modelName: legacy.model_name || "",
-          customPrompt: legacy.custom_prompt || "",
-          complianceCheck: !!legacy.compliance_check,
-        });
-        // 3. フォーム状態を migrate 結果に同期 (古い initial 値を上書き)
-        this.provider = legacy.provider || this.provider;
-        this.modelName = legacy.model_name || "";
-        this.customPrompt = legacy.custom_prompt || "";
-        this.complianceCheck = !!legacy.compliance_check;
-        this.notice = "暗号化形式を E2EE に移行しました。";
-        this.hasConfig = true;
-        this.hasLegacyKey = false;
-        this.isE2ee = true;
-        this.state = "ready";
-      } catch (e) {
-        this.error = `移行に失敗しました: ${e?.message || e}`;
-      } finally {
-        this.migrating = false;
       }
     },
 
@@ -291,7 +229,6 @@ export function aiConfigForm(initial = {}) {
         this.apiKey = "";
         this.hasConfig = true;
         this.isE2ee = true;
-        this.hasLegacyKey = false;
         // 保存に成功した provider をスナップショット (次回の切替検出用)
         this._savedProvider = this.provider;
       } catch (e) {
@@ -332,7 +269,6 @@ export function aiConfigForm(initial = {}) {
         }
         this.notice = "設定を削除しました。";
         this.hasConfig = false;
-        this.hasLegacyKey = false;
         this.isE2ee = false;
         this.provider = "openai";
         this.modelName = "";

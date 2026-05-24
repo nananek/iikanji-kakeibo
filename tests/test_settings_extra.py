@@ -69,70 +69,14 @@ class TestAiConfig:
         resp = logged_in_client.get("/settings/ai")
         assert resp.status_code == 200
 
-    def test_save_new_openai(self, db, logged_in_client, user, accounts):
-        resp = logged_in_client.post("/settings/ai/save", data={
-            "provider": "openai",
-            "api_key": "sk-test",
-            "model_name": "gpt-4",
-            "custom_prompt": "",
-            "base_url": "",
-        })
-        assert resp.status_code in (302, 303)
-        cfg = UserAIConfig.query.filter_by(user_id=user.id).first()
-        assert cfg is not None
-        assert cfg.provider == "openai"
-
-    def test_save_update_existing_keeps_key(self, db, logged_in_client, user, accounts):
-        from app.services.ai_receipt import encrypt_api_key
-        cfg = UserAIConfig(
-            user_id=user.id, provider="openai",
-            api_key_encrypted=encrypt_api_key("orig"), model_name="g3",
-        )
-        db.session.add(cfg)
-        db.session.commit()
-        original_key = cfg.api_key_encrypted
-        resp = logged_in_client.post("/settings/ai/save", data={
-            "provider": "anthropic",
-            "api_key": "",  # 空のときは既存キー保持
-            "model_name": "claude",
-            "custom_prompt": "",
-            "base_url": "",
-        })
-        assert resp.status_code in (302, 303)
-        db.session.refresh(cfg)
-        assert cfg.provider == "anthropic"
-        assert cfg.api_key_encrypted == original_key
-
-    def test_save_invalid_provider(self, logged_in_client, accounts):
-        resp = logged_in_client.post("/settings/ai/save", data={
-            "provider": "INVALID", "api_key": "k",
-        })
-        assert resp.status_code in (302, 303)
-
-    def test_save_llama_cpp_no_key(self, db, logged_in_client, user, accounts):
-        """llama.cpp は API キー不要で保存できる (サーバー側 URL 提供前提)"""
-        resp = logged_in_client.post("/settings/ai/save", data={
-            "provider": "llama_cpp",
-            "api_key": "",
-            "model_name": "default",
-        })
-        assert resp.status_code in (302, 303)
-        cfg = UserAIConfig.query.filter_by(user_id=user.id).first()
-        assert cfg is not None
-        assert cfg.provider == "llama_cpp"
-
-    def test_save_no_key_for_openai_blocked(self, db, logged_in_client, user, accounts):
-        resp = logged_in_client.post("/settings/ai/save", data={
-            "provider": "openai", "api_key": "",
-        })
-        assert resp.status_code in (302, 303)
-        assert UserAIConfig.query.filter_by(user_id=user.id).first() is None
+    # 旧 form POST /settings/ai/save テスト群は E2EE 化に伴いエンドポイント
+    # 廃止のため削除。PUT /api/v1/ai-config テストは test_ai_config_api.py で代替。
 
     def test_delete(self, db, logged_in_client, user, accounts):
-        from app.services.ai_receipt import encrypt_api_key
         cfg = UserAIConfig(
             user_id=user.id, provider="openai",
-            api_key_encrypted=encrypt_api_key("k"), model_name="x",
+            api_key_blob=b"\xAA" * 48, api_key_iv=b"\xBB" * 12,
+            model_name="x",
         )
         db.session.add(cfg)
         db.session.commit()
@@ -165,10 +109,9 @@ class TestAiConfig:
         確認する (`<option value="anthropic">` 等の provider_labels 出力
         と区別するため)。
         """
-        from app.services.ai_receipt import encrypt_api_key
         cfg = UserAIConfig(
             user_id=user.id, provider="anthropic",
-            api_key_encrypted=encrypt_api_key("sk-existing"),
+            api_key_blob=b"\xAA" * 48, api_key_iv=b"\xBB" * 12,
             model_name="claude-3-5-sonnet", custom_prompt="my prompt",
         )
         db.session.add(cfg)
