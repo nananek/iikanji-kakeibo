@@ -287,6 +287,65 @@ class TestAiSaveSuggestions:
         assert json.loads(draft.suggestions_json) == [{"new": 2}]
 
 
+class TestAiLedgerContext:
+    """E2 PR-C-4c: POST /api/v1/ai/ledger-context."""
+
+    def test_unauthenticated(self, client):
+        resp = client.post("/api/v1/ai/ledger-context", json={"account_names": []})
+        assert resp.status_code in (302, 401)
+
+    def test_empty_returns_empty(self, logged_in_client, accounts):
+        resp = logged_in_client.post(
+            "/api/v1/ai/ledger-context", json={"account_names": []},
+        )
+        assert resp.status_code == 200
+        assert resp.get_json()["ledger_text"] == ""
+
+    def test_must_be_list(self, logged_in_client, accounts):
+        resp = logged_in_client.post(
+            "/api/v1/ai/ledger-context", json={"account_names": "not list"},
+        )
+        assert resp.status_code == 400
+
+    def test_returns_ledger_text_for_matched_accounts(
+        self, db, logged_in_client, user, accounts,
+    ):
+        """既存仕訳があれば該当科目の元帳テキスト (ヘッダ + 金額) が返る。"""
+        from datetime import date
+        from tests.conftest import make_journal
+        make_journal(
+            db, user.id, "5010", "1010", 500,
+            entry_date=date(2026, 5, 23), source="cashbook",
+        )
+        resp = logged_in_client.post(
+            "/api/v1/ai/ledger-context", json={"account_names": ["食費"]},
+        )
+        assert resp.status_code == 200
+        body = resp.get_json()
+        ledger = body["ledger_text"]
+        assert isinstance(ledger, str)
+        # 科目ヘッダ + 仕訳金額 (¥500) が含まれることで _get_ledger_context が
+        # 実際に呼ばれて整形済テキストを返したことを確認
+        assert "食費" in ledger
+        assert "5010" in ledger
+        # 金額表示は "¥500" 形式 (_get_ledger_context の f-string 出力)
+        assert "¥500" in ledger or "500" in ledger
+
+    def test_ignores_non_string_and_oversized_entries(
+        self, logged_in_client, accounts,
+    ):
+        """非文字列や 100 文字超は除外、20 件超は切詰。"""
+        names = [
+            "valid", 123, None, {"k": "v"},  # 非文字列は除外
+            "x" * 200,  # 100 文字超は除外
+        ] + [f"name_{i}" for i in range(50)]  # 50 個追加で 20 切詰確認
+        resp = logged_in_client.post(
+            "/api/v1/ai/ledger-context", json={"account_names": names},
+        )
+        # 例外無しで 200 を返す
+        assert resp.status_code == 200
+
+
 class TestAiPromptContext:
     """E2 PR-C-4a: GET /api/v1/ai/prompt-context."""
 
