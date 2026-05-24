@@ -93,12 +93,13 @@ def analyze():
         return jsonify({"error": "AI API設定が登録されていません。先に設定してください。"}), 400
     # E2EE 移行完了済 (migrate-key 実行後で api_key_encrypted=NULL) では
     # サーバ側 ai_receipt.py が Fernet 復号できないため、サーバ経由解析は不可。
-    # decrypt_api_key(None) が無関係なエラー (SECRET_KEY 不一致風) を返す
-    # 経路を塞ぎ、ユーザーに正しい説明を返す。
+    # 通常 UI からは E2EE モードのフロー (POST /api/v1/ai/uploads など) に
+    # 切り替わるためここに到達しない。直接 POST に対する安全網。
     if config.is_e2ee and not config.api_key_encrypted:
         return jsonify({
-            "error": "E2EE 移行完了のため、現在サーバ経由の AI 証憑解析は利用できません。"
-                     "クライアント側完全 E2EE 解析の v5.0 公開をお待ちください。",
+            "error": "E2EE 移行完了済のためサーバ経由解析は無効です。"
+                     "UI から E2EE モードで解析するか、設定画面で API キーを"
+                     "再登録してください。",
         }), 400
 
     image_file = request.files.get("image_file")

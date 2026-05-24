@@ -31,13 +31,15 @@
         </div>
         {% elif config_is_e2ee %}
         {# migrate-key 呼出後で旧 Fernet データが NULL クリア済み →
-           サーバは API キー復号不可、現状は解析機能を使えない #}
-        <div class="alert alert-warning small mb-3">
+           サーバ非介在の完全 E2EE 解析モードで動作する #}
+        <div class="alert alert-success small mb-3">
           <i class="bi bi-shield-lock-fill"></i>
-          <strong>E2EE 移行完了</strong>。サーバ側で API キーを復号できない
-          状態のため、現在 AI 証憑解析は利用できません。クライアント側
-          完全 E2EE 解析 (Round 2 仕訳案生成の JS 移植) が v5.0 公開時に
-          有効になり次第ご利用いただけます。
+          <strong>E2EE モードで解析します</strong>。API キーは MK で復号され、
+          画像と一緒にあなたのブラウザから LLM に直接送信されます (サーバには
+          画像のメタデータ・暗号文 API キーのみが届きます)。MK が SharedWorker
+          にロードされている必要があります — 未ロードの場合は
+          <a href="{{ url_for('settings.encryption_keys') }}">暗号鍵管理</a>
+          で先に解除してください。
         </div>
         {% endif %}
 
@@ -48,7 +50,7 @@
             <label class="form-label" for="image_file">証憑画像（領収書・給与明細・請求書など）</label>
             <input type="file" class="form-control" name="image_file" id="image_file"
                    accept="image/jpeg,image/png,image/webp,image/gif" required
-                   {% if not has_config or (config_is_e2ee and not has_legacy_key) %}disabled{% endif %}>
+                   {% if not has_config %}disabled{% endif %}>
             <div class="form-text">JPEG / PNG / WebP / GIF（上限10MB）</div>
           </div>
 
@@ -62,14 +64,14 @@
             <textarea class="form-control" name="comment" id="comment" rows="2"
                       maxlength="500"
                       placeholder="会社の懇親会、出張のタクシー代 など"
-                      {% if not has_config or (config_is_e2ee and not has_legacy_key) %}disabled{% endif %}></textarea>
+                      {% if not has_config %}disabled{% endif %}></textarea>
             <div class="form-text">AIの解析精度を上げるヒントになります</div>
           </div>
 
           <div id="errorAlert" class="alert alert-danger d-none"></div>
 
           <button type="submit" class="btn btn-primary" id="submitBtn"
-                  {% if not has_config or (config_is_e2ee and not has_legacy_key) %}disabled{% endif %}>
+                  {% if not has_config %}disabled{% endif %}>
             <i class="bi bi-robot"></i> AIで解析する
           </button>
           <a href="{{ url_for('journal.index') }}" class="btn btn-outline-secondary">
@@ -173,6 +175,10 @@
   var saveDraftUrl = "{{ url_for('ai_journal.drafts_save') }}";
   var draftsUrl = "{{ url_for('ai_journal.drafts') }}";
   var csrfToken = "{{ csrf_token() }}";
+  // E2EE 完全クライアント解析モードか (E2 PR-C-4d)。
+  // config_is_e2ee && !has_legacy_key の状態でサーバ Fernet 復号不可、かつ
+  // クライアント側 LLM 呼出が利用可能。
+  var e2eeFullClientMode = {{ (config_is_e2ee and not has_legacy_key) | tojson }};
 
   // 画像プレビュー
   fileInput.addEventListener('change', function(e) {
@@ -235,49 +241,89 @@
     stepTimers = [];
   }
 
-  // フォーム送信（AJAX）
+  // フォーム送信 (AJAX)
   form.addEventListener('submit', function(e) {
     e.preventDefault();
     errorAlert.classList.add('d-none');
     suggestionsArea.classList.add('d-none');
-
-    var formData = new FormData(form);
 
     // ローディング表示
     loadingOverlay.classList.remove('d-none');
     submitBtn.disabled = true;
     startLoadingSteps();
 
-    fetch(analyzeUrl, {
-      method: 'POST',
-      body: formData,
-    })
-    .then(function(resp) {
-      return resp.json().then(function(data) {
-        return { ok: resp.ok, data: data };
-      });
-    })
-    .then(function(result) {
+    var finished = function(err, suggestions) {
       stopLoadingSteps();
       loadingOverlay.classList.add('d-none');
       submitBtn.disabled = false;
-
-      if (!result.ok || result.data.error) {
-        errorAlert.textContent = result.data.error || 'エラーが発生しました。';
+      if (err) {
+        errorAlert.textContent = err.message || String(err);
         errorAlert.classList.remove('d-none');
         return;
       }
+      renderSuggestions(suggestions);
+    };
 
-      renderSuggestions(result.data.suggestions);
-    })
-    .catch(function(err) {
-      stopLoadingSteps();
-      loadingOverlay.classList.add('d-none');
-      submitBtn.disabled = false;
-      errorAlert.textContent = '通信エラーが発生しました。もう一度お試しください。';
-      errorAlert.classList.remove('d-none');
-    });
+    if (e2eeFullClientMode) {
+      // E2 PR-C-4d: クライアント完全 E2EE 解析モード
+      runE2EEFullClientFlow(fileInput.files[0],
+        document.getElementById('comment').value)
+        .then(function(result) { finished(null, result.suggestions); })
+        .catch(function(err) { finished(err, null); });
+    } else {
+      // 旧フロー: サーバ経由 (Fernet 復号 + 二段解析)
+      var formData = new FormData(form);
+      fetch(analyzeUrl, { method: 'POST', body: formData })
+        .then(function(resp) {
+          return resp.json().then(function(data) {
+            return { ok: resp.ok, data: data };
+          });
+        })
+        .then(function(result) {
+          if (!result.ok || result.data.error) {
+            finished(new Error(result.data.error || 'エラーが発生しました。'),
+              null);
+            return;
+          }
+          finished(null, result.data.suggestions);
+        })
+        .catch(function() {
+          finished(
+            new Error('通信エラーが発生しました。もう一度お試しください。'),
+            null);
+        });
+    }
   });
+
+  // E2EE 完全クライアントモード用のフロー (dynamic import で遅延ロード)。
+  async function runE2EEFullClientFlow(file, comment) {
+    if (!file) throw new Error('画像ファイルを選択してください。');
+    // 動的 import (ブラウザ <script type="module"> 経由)。
+    // 既存の vanilla JS と混在させるため、type=module でない外側スクリプト
+    // からは import() expression を使う。
+    var orchestratorMod = await import(
+      "{{ url_for('static', filename='js/crypto/ai_journal_orchestrator.js') }}"
+    );
+    var sharedClientMod = await import(
+      "{{ url_for('static', filename='js/crypto/shared-client.js') }}"
+    );
+    var workerUrl =
+      "{{ url_for('static', filename='js/crypto/shared-worker.js') }}";
+    var client = new sharedClientMod.SharedCryptoClient(workerUrl);
+    try {
+      // MK 解除状態を確認 (未解除ならユーザーに明示エラー)
+      var status = await client.status();
+      if (!status.hasKey) {
+        throw new Error(
+          'MK がロック中です。設定 → 暗号鍵管理 で解除してから再試行してください。');
+      }
+      return await orchestratorMod.analyzeReceiptFull({
+        file: file, comment: comment, client: client,
+      });
+    } finally {
+      try { client.close(); } catch (_e) { /* ignore */ }
+    }
+  }
 
   // 仕訳案カードを描画
   function renderSuggestions(suggestions) {
