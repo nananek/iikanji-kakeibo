@@ -223,11 +223,18 @@ def columns_detect_context():
     from app.services.ai_receipt import PROVIDER_DEFAULTS
     from app.services.csv_import import CSV_COLUMN_DETECT_PROMPT_TEMPLATE
 
+    MAX_HEADERS = 50
+    MAX_HEADER_LEN = 200
+
     payload = request.get_json(silent=True) or {}
     headers = payload.get("headers")
     sample_rows = payload.get("sample_rows", [])
     if not isinstance(headers, list) or not headers:
         return jsonify({"error": "headers must be a non-empty list"}), 400
+    if len(headers) > MAX_HEADERS:
+        return jsonify({"error": f"headers exceeds maximum ({MAX_HEADERS})"}), 400
+    if any(not isinstance(h, str) or len(h) > MAX_HEADER_LEN for h in headers):
+        return jsonify({"error": "each header must be a string under 200 chars"}), 400
     if not isinstance(sample_rows, list):
         return jsonify({"error": "sample_rows must be a list"}), 400
 
@@ -238,10 +245,6 @@ def columns_detect_context():
             sample_lines.append(", ".join(str(c) for c in row))
     sample_text = "\n".join(sample_lines)
 
-    user_id = get_effective_user_id()
-    config = UserAIConfig.query.filter_by(user_id=user_id).first()
-    custom_prompt = config.custom_prompt if config else ""
-
     return jsonify({
         "ok": True,
         "prompt_template": CSV_COLUMN_DETECT_PROMPT_TEMPLATE,
@@ -249,7 +252,6 @@ def columns_detect_context():
         "sample_text": sample_text,
         "sample_count": len(sample_lines),
         "num_cols": len(headers),
-        "custom_prompt": custom_prompt,
         "default_model_by_provider": {
             k: v for k, v in PROVIDER_DEFAULTS.items() if k != "llama_cpp"
         },

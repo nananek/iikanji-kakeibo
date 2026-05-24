@@ -749,3 +749,25 @@ class TestColumnsDetectContext:
         )
         assert resp.status_code == 400
 
+    def test_too_many_headers_returns_400(self, logged_in_client, accounts):
+        resp = logged_in_client.post(
+            "/csv-import/api/columns-detect-context",
+            json={"headers": [f"col{i}" for i in range(51)], "sample_rows": []},
+        )
+        assert resp.status_code == 400
+        assert "exceeds maximum" in resp.get_json()["error"]
+
+    def test_header_too_long_returns_400(self, logged_in_client, accounts):
+        resp = logged_in_client.post(
+            "/csv-import/api/columns-detect-context",
+            json={"headers": ["x" * 201], "sample_rows": []},
+        )
+        assert resp.status_code == 400
+
+    def test_non_string_header_returns_400(self, logged_in_client, accounts):
+        resp = logged_in_client.post(
+            "/csv-import/api/columns-detect-context",
+            json={"headers": [123, "ok"], "sample_rows": []},
+        )
+        assert resp.status_code == 400
+

@@ -4,7 +4,7 @@
 // フロー:
 //   1. POST /csv-import/api/columns-detect-context (headers + sample_rows)
 //      → {prompt_template, headers_text, sample_text, sample_count,
-//         num_cols, custom_prompt, default_model_by_provider}
+//         num_cols, default_model_by_provider}
 //   2. GET /api/v1/ai-config + decrypt → api_key 平文
 //   3. プレースホルダ (__HEADERS_TEXT__ / __SAMPLE_TEXT__ / __SAMPLE_COUNT__)
 //      を置換 → callLLMText (maxTokens=500)
@@ -61,10 +61,17 @@ export function buildDetectPrompt({
   if (typeof promptTemplate !== "string" || !promptTemplate) {
     throw new Error("promptTemplate is required");
   }
-  return promptTemplate
-    .replaceAll("__HEADERS_TEXT__", String(headersText ?? ""))
-    .replaceAll("__SAMPLE_TEXT__", String(sampleText ?? ""))
-    .replaceAll("__SAMPLE_COUNT__", String(sampleCount ?? 0));
+  // 置換値に含まれる __XXX__ が後段の replaceAll で二重展開されないよう
+  // 一括 split/join で行う (順序非依存・値由来の placeholder 文字列は残す)。
+  const subs = {
+    __HEADERS_TEXT__: String(headersText ?? ""),
+    __SAMPLE_TEXT__: String(sampleText ?? ""),
+    __SAMPLE_COUNT__: String(sampleCount ?? 0),
+  };
+  const re = /(__HEADERS_TEXT__|__SAMPLE_TEXT__|__SAMPLE_COUNT__)/g;
+  return promptTemplate.split(re).map(
+    (chunk) => Object.prototype.hasOwnProperty.call(subs, chunk) ? subs[chunk] : chunk,
+  ).join("");
 }
 
 
@@ -141,11 +148,17 @@ export async function runColumnsDetect({
   try { plaintextBytes.fill(0); } catch (_e) { /* ignore */ }
 
   const provider = cfg.provider;
-  const model = cfg.model_name
-    || promptContext.default_model_by_provider?.[provider]
-    || "";
+  const defaults = promptContext.default_model_by_provider || {};
+  if (!Object.prototype.hasOwnProperty.call(defaults, provider)) {
+    throw new Error(
+      `unsupported provider for client-side analysis: ${provider}`,
+    );
+  }
+  const model = cfg.model_name || defaults[provider] || "";
   if (!model) {
-    throw new Error(`unsupported provider for client-side analysis: ${provider}`);
+    throw new Error(
+      `AI設定にモデル名が指定されていません (provider: ${provider})`,
+    );
   }
 
   const prompt = buildDetectPrompt({

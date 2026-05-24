@@ -46,7 +46,6 @@ const PROMPT_CTX = {
   sample_text: "2026/01/01, テスト, 1000, ",
   sample_count: 1,
   num_cols: 4,
-  custom_prompt: "",
   default_model_by_provider: {
     openai: "gpt-4o",
     anthropic: "claude-sonnet-4-20250514",
@@ -73,6 +72,19 @@ test("buildDetectPrompt: promptTemplate 必須", () => {
     /promptTemplate is required/,
   );
 });
+
+test("buildDetectPrompt: 値中の __XXX__ は再展開されない (二重展開防止)", () => {
+  // headersText に SAMPLE_TEXT プレースホルダ文字列が混入しても
+  // 後段の置換で展開されてはならない (プロンプトインジェクション対策)
+  const p = buildDetectPrompt({
+    promptTemplate: "[H:__HEADERS_TEXT__][S:__SAMPLE_TEXT__]",
+    headersText: "__SAMPLE_TEXT__",
+    sampleText: "REAL",
+    sampleCount: 1,
+  });
+  assert.equal(p, "[H:__SAMPLE_TEXT__][S:REAL]");
+});
+
 
 
 // ============ validateMapping ============
@@ -180,7 +192,7 @@ test("非 E2EE config で throw", async () => {
   );
 });
 
-test("未対応 provider で throw", async () => {
+test("未対応 provider (default_model_by_provider に無い) で throw", async () => {
   const fetchImpl = makeFetch([
     ["/csv-import/api/columns-detect-context", () => jsonResp(PROMPT_CTX)],
     ["/api/v1/ai-config", () => jsonResp({
@@ -198,6 +210,32 @@ test("未対応 provider で throw", async () => {
       callLLMTextImpl: async () => ({}),
     }),
     /unsupported provider/,
+  );
+});
+
+test("model_name 空 + default も空ならモデル名未設定エラー", async () => {
+  // 対応プロバイダだが default_model_by_provider[provider] が空文字
+  const ctx = {
+    ...PROMPT_CTX,
+    default_model_by_provider: { openai: "" },
+  };
+  const fetchImpl = makeFetch([
+    ["/csv-import/api/columns-detect-context", () => jsonResp(ctx)],
+    ["/api/v1/ai-config", () => jsonResp({
+      provider: "openai", model_name: "",
+      api_key_blob: "AA==", api_key_iv: "AA==", is_e2ee: true,
+    })],
+  ]);
+  const client = makeClient(async () => ({
+    plaintext: new TextEncoder().encode("k"),
+  }));
+  await assert.rejects(
+    () => runColumnsDetect({
+      headers: ["a"], sampleRows: [],
+      client, fetchImpl,
+      callLLMTextImpl: async () => ({}),
+    }),
+    /モデル名が指定されていません/,
   );
 });
 
