@@ -517,10 +517,11 @@ class TestAiJournalE2EEBanner:
         # 移行完了バナーは出ない
         assert "E2EE 移行完了" not in html
 
-    def test_warning_banner_when_e2ee_only_no_legacy(
+    def test_e2ee_full_client_mode_banner_when_e2ee_only_no_legacy(
         self, db, logged_in_client, user, accounts,
     ):
-        """旧キー削除済 (migrate-key 実行後) — サーバ解析不可、警告バナー。"""
+        """旧キー削除済 (migrate-key 実行後) — クライアント完全 E2EE モード
+        が有効、success バナーが表示される (E2 PR-C-4d で warning → success に変更)。"""
         from app.models.ai_config import UserAIConfig
         cfg = UserAIConfig(
             user_id=user.id, provider="openai",
@@ -533,10 +534,15 @@ class TestAiJournalE2EEBanner:
         _db.session.commit()
         resp = logged_in_client.get("/ai-journal/")
         html = resp.data.decode()
-        assert "E2EE 移行完了" in html
-        assert "解析は利用できません" in html
-        # 移行中バナーは出ない
+        # 新 success バナー
+        assert "E2EE モードで解析します" in html
+        assert "ブラウザから LLM に直接送信" in html
+        # 旧 「解析利用不可」警告は出ない (クライアント側で解析可能になった)
+        assert "解析は利用できません" not in html
+        # 移行中バナーも出ない
         assert "移行期間として" not in html
+        # JS フラグが渡される
+        assert "e2eeFullClientMode = true" in html
 
     def test_no_banner_when_no_config_at_all(
         self, db, logged_in_client, user, accounts,
@@ -544,6 +550,8 @@ class TestAiJournalE2EEBanner:
         resp = logged_in_client.get("/ai-journal/")
         html = resp.data.decode()
         assert "E2EE 形式で API キー登録済み" not in html
+        assert "E2EE モードで解析します" not in html
+        # 旧 「移行完了」も出ない
         assert "E2EE 移行完了" not in html
 
 
@@ -579,3 +587,5 @@ class TestAnalyzeE2EEMigratedGuard:
         assert "E2EE 移行完了" in body["error"]
         # 旧い無関係エラーは出ない
         assert "SECRET_KEY" not in body["error"]
+        # 新メッセージは E2EE モードへの誘導を含む
+        assert "E2EE モード" in body["error"] or "再登録" in body["error"]
