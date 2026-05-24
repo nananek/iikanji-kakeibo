@@ -1,4 +1,12 @@
-"""Webページ貼り付け→AI明細取込ビュー"""
+"""Webページ貼り付け→AI明細取込ビュー
+
+E2 PR-C-4h: parse_web_text (サーバ側 Fernet 復号 + LLM 呼出し) 依存を削除。
+Web 明細抽出のクライアント完結 E2EE 化は別 PR (E2-C-5 系) で対応するため、
+本 PR では新規 POST を「機能一時停止」エラーで停止する。
+
+session 経由で既に解析済みのデータ (web_data_key) を持つユーザーの
+confirm 画面 → 一括取込フローは引き続き動作する (二重停止しない)。
+"""
 
 import json
 import uuid
@@ -11,7 +19,6 @@ from app.extensions import db
 from app.models.account import Account, AccountType
 from app.services.audit import get_effective_user_id, get_submitted_account_codes
 from app.models.ai_config import UserAIConfig
-from app.services.ai_receipt import parse_web_text
 from app.services.accounting import create_cashbook_entry, create_transfer_entry
 from app.services.fiscal import (
     check_period_open_for_new, get_restricted_before_year, is_year_open,
@@ -29,76 +36,32 @@ MAX_TEXT_LENGTH = 200_000
 @bp.route("/", methods=["GET", "POST"])
 @login_required
 def upload():
-    """Step 1: テキスト入力 + 口座選択 → AI解析"""
+    """Step 1: テキスト入力 + 口座選択 → AI解析
+
+    E2 PR-C-4h: POST は「機能一時停止」エラーを返す (E2EE 化未完了)。
+    """
     grouped_accounts = get_grouped_accounts(get_effective_user_id())
     has_config = UserAIConfig.query.filter_by(user_id=get_effective_user_id()).first() is not None
 
     if request.method == "POST":
-        raw_text = request.form.get("raw_text", "").strip()
-        payment_account_code = request.form.get("payment_account_code")
-
-        if not raw_text:
-            flash("テキストを入力してください。", "danger")
-            return render_template(
-                "web_import/upload.html",
-                grouped_accounts=grouped_accounts,
-                has_config=has_config,
-            )
-
-        if len(raw_text) > MAX_TEXT_LENGTH:
-            flash("テキストが長すぎます（上限20万文字）。", "danger")
-            return render_template(
-                "web_import/upload.html",
-                grouped_accounts=grouped_accounts,
-                has_config=has_config,
-            )
-
-        if not payment_account_code:
-            flash("取込先の口座を選択してください。", "danger")
-            return render_template(
-                "web_import/upload.html",
-                grouped_accounts=grouped_accounts,
-                has_config=has_config,
-            )
-
-        payment_account = Account.query.filter_by(user_id=get_effective_user_id(), code=payment_account_code).first()
-
-        try:
-            parsed = parse_web_text(
-                get_effective_user_id(), raw_text, payment_account.name
-            )
-        except (ValueError, RuntimeError) as e:
-            flash(str(e), "danger")
-            return render_template(
-                "web_import/upload.html",
-                grouped_accounts=grouped_accounts,
-                has_config=has_config,
-                raw_text=raw_text,
-                payment_account_code=payment_account_code,
-                payment_account_name=payment_account.name,
-            )
-
-        if not parsed:
-            flash("明細データを読み取れませんでした。テキストを確認してください。", "danger")
-            return render_template(
-                "web_import/upload.html",
-                grouped_accounts=grouped_accounts,
-                has_config=has_config,
-                raw_text=raw_text,
-                payment_account_code=payment_account_code,
-                payment_account_name=payment_account.name,
-            )
-
-        key = save_import_data(parsed)
-        session["web_data_key"] = key
-        session["web_payment_account_code"] = payment_account_code
-
-        return redirect(url_for("web_import.confirm"))
+        flash(
+            "Web貼り付け取込は E2EE 移行に伴い一時的に利用できません。"
+            "AI証憑仕訳 (画像アップロード) は E2EE クライアント完結モードで"
+            "ご利用いただけます。",
+            "warning",
+        )
+        return render_template(
+            "web_import/upload.html",
+            grouped_accounts=grouped_accounts,
+            has_config=has_config,
+            feature_disabled=True,
+        )
 
     return render_template(
         "web_import/upload.html",
         grouped_accounts=grouped_accounts,
         has_config=has_config,
+        feature_disabled=True,
     )
 
 

@@ -202,15 +202,22 @@ class TestOfxTransferAndOldYear:
 
 
 class TestWebTransferAndOldYear:
+    """E2 PR-C-4h: POST /web-import/ は機能停止。session を直接仕込んで
+    confirm フロー (仕訳生成) のみをテスト。"""
+
+    @staticmethod
+    def _seed(logged_in_client, parsed_rows):
+        from app.views.helpers import save_import_data
+        key = save_import_data(parsed_rows)
+        with logged_in_client.session_transaction() as sess:
+            sess["web_data_key"] = key
+            sess["web_payment_account_code"] = "1010"
+
     def test_transfer_withdrawal(self, db, logged_in_client, user, accounts):
-        with patch("app.views.web_import.parse_web_text") as mock_p:
-            mock_p.return_value = [{
-                "date": "2026-02-15", "description": "口座移動",
-                "deposit": 0, "withdrawal": 5000,
-            }]
-            logged_in_client.post("/web-import/", data={
-                "raw_text": "明細", "payment_account_code": "1010",
-            })
+        self._seed(logged_in_client, [{
+            "date": "2026-02-15", "description": "口座移動",
+            "deposit": 0, "withdrawal": 5000,
+        }])
         rows = [
             {"enabled": True, "date": "2026-02-15", "description": "口座移動",
              "deposit": 0, "withdrawal": 5000, "category_code": "1020"},
@@ -225,14 +232,10 @@ class TestWebTransferAndOldYear:
         ).count() == 1
 
     def test_transfer_deposit(self, db, logged_in_client, user, accounts):
-        with patch("app.views.web_import.parse_web_text") as mock_p:
-            mock_p.return_value = [{
-                "date": "2026-02-15", "description": "入金",
-                "deposit": 5000, "withdrawal": 0,
-            }]
-            logged_in_client.post("/web-import/", data={
-                "raw_text": "明細", "payment_account_code": "1010",
-            })
+        self._seed(logged_in_client, [{
+            "date": "2026-02-15", "description": "入金",
+            "deposit": 5000, "withdrawal": 0,
+        }])
         rows = [
             {"enabled": True, "date": "2026-02-15", "description": "入金",
              "deposit": 5000, "withdrawal": 0, "category_code": "1020"},
@@ -247,14 +250,10 @@ class TestWebTransferAndOldYear:
         ).count() == 1
 
     def test_old_year_capital(self, db, logged_in_client, user, accounts):
-        with patch("app.views.web_import.parse_web_text") as mock_p:
-            mock_p.return_value = [{
-                "date": "2023-05-15", "description": "古い",
-                "deposit": 0, "withdrawal": 1000,
-            }]
-            logged_in_client.post("/web-import/", data={
-                "raw_text": "明細", "payment_account_code": "1010",
-            })
+        self._seed(logged_in_client, [{
+            "date": "2023-05-15", "description": "古い",
+            "deposit": 0, "withdrawal": 1000,
+        }])
         rows = [
             {"enabled": True, "date": "2023-05-15", "description": "古い",
              "deposit": 0, "withdrawal": 1000, "category_code": "5010"},
@@ -273,14 +272,10 @@ class TestWebTransferAndOldYear:
     def test_locked_period_skipped(self, db, logged_in_client, user, accounts):
         db.session.add(FiscalClose(user_id=user.id, year=2026, closed_period=2))
         db.session.commit()
-        with patch("app.views.web_import.parse_web_text") as mock_p:
-            mock_p.return_value = [{
-                "date": "2026-02-15", "description": "x",
-                "deposit": 0, "withdrawal": 100,
-            }]
-            logged_in_client.post("/web-import/", data={
-                "raw_text": "明細", "payment_account_code": "1010",
-            })
+        self._seed(logged_in_client, [{
+            "date": "2026-02-15", "description": "x",
+            "deposit": 0, "withdrawal": 100,
+        }])
         rows = [
             {"enabled": True, "date": "2026-02-15", "description": "x",
              "deposit": 0, "withdrawal": 100, "category_code": "5010"},

@@ -11,7 +11,16 @@
         <strong>Step 1:</strong> Webページの内容を貼り付け
       </div>
       <div class="card-body">
-        {% if not has_config %}
+        {% if feature_disabled %}
+        {# E2 PR-C-4h: parse_web_text (サーバ Fernet 経路) 廃止に伴い一時停止 #}
+        <div class="alert alert-warning">
+          <i class="bi bi-shield-exclamation"></i>
+          <strong>Web貼り付け取込は E2EE 移行に伴い一時的に利用できません</strong>。
+          <a href="{{ url_for('ai_journal.upload') }}">AI証憑仕訳</a>
+          (画像アップロード) は E2EE クライアント完結モードでご利用いただけます。
+          Web 明細抽出のクライアント側対応は後続 PR で追加予定です。
+        </div>
+        {% elif not has_config %}
         <div class="alert alert-warning">
           <i class="bi bi-exclamation-triangle"></i>
           外部AI設定が登録されていません。
@@ -30,7 +39,7 @@
                    value="{{ payment_account_code if payment_account_code is defined else '' }}">
             <button type="button" class="form-control text-start" id="paymentAccountBtn"
                     onclick="openAccountSelector(onPaymentSelected, {filter: 'payment', currentCode: document.getElementById('paymentAccountCode').value})"
-                    {% if not has_config %}disabled{% endif %}>
+                    {% if not has_config or feature_disabled %}disabled{% endif %}>
               <span id="paymentAccountName" class="{% if not (payment_account_code is defined and payment_account_code) %}text-muted{% endif %}">
                 {%- if payment_account_code is defined and payment_account_code -%}
                   {{ payment_account_name }}
@@ -48,7 +57,7 @@
             <label class="form-label" for="raw_text">明細テキスト</label>
             <textarea class="form-control" name="raw_text" id="raw_text"
                       rows="15" required placeholder="銀行・クレカ等のWebページの明細部分をコピー＆ペーストしてください"
-                      {% if not has_config %}disabled{% endif %}
+                      {% if not has_config or feature_disabled %}disabled{% endif %}
                       @input="textEntered = ($event.target.value.trim().length > 0)">{{ raw_text if raw_text is defined else '' }}</textarea>
             <div class="form-text">
               Webページの明細部分を選択してコピー＆ペーストしてください。AIが自動で解析します。
@@ -57,7 +66,7 @@
 
           <button type="submit" class="btn btn-primary" id="submitBtn"
                   x-show="textEntered" x-transition
-                  {% if not has_config %}disabled{% endif %}>
+                  {% if not has_config or feature_disabled %}disabled{% endif %}>
             <i class="bi bi-robot"></i> AIで解析して次へ
           </button>
         </form>
