@@ -565,14 +565,16 @@ def ai_prompt_context():
     クライアントは:
       1. 画像 + round1_prompt + (compliance/custom_prompt 追記) で LLM 呼出
       2. Round 1 結果から needs_ledger=true なら ledger 取得 endpoint (別 PR)
-      3. account_list_text + ledger + custom_prompt + round2_prompt_template で
-         Round 2 プロンプト構築 → 2 度目の LLM 呼出
+      3. round2_prompt_template の 2 プレースホルダを実行時に置換:
+         - __ACCOUNT_LIST_TEXT__ → account_list_text (本 endpoint 戻り値)
+         - __LEDGER_TEXT__       → Round 1 後取得した ledger (なければ "")
+         で Round 2 プロンプト構築 → 2 度目の LLM 呼出
       4. PATCH /api/v1/ai/drafts/<id>/suggestions で結果保存
 
     本 endpoint はサーバ側 ai_receipt.py の DOCUMENT_PROMPT / COMPLIANCE_CHECK_PROMPT /
-    _get_account_list_text / _build_suggestion_prompt と等価のメタデータを返却し、
-    Round 2 プロンプト構築テンプレートは {account_list_text} / {ledger_section} /
-    {custom_section} のプレースホルダ付きで返す。
+    _get_account_list_text / _build_suggestion_prompt と等価のメタデータを返却。
+    Round 2 プロンプトテンプレートは __ACCOUNT_LIST_TEXT__ / __LEDGER_TEXT__
+    の 2 プレースホルダ付きで返却 (custom_prompt はサーバで埋込済)。
     """
     user_id = g.auth_user.id
     from app.services.ai_receipt import (
@@ -609,11 +611,15 @@ def ai_prompt_context():
         "round1_prompt": DOCUMENT_PROMPT,
         "compliance_prompt": COMPLIANCE_CHECK_PROMPT,
         "compliance_check_enabled": compliance_check,
-        # Round 2 プロンプト (account_list_text / ledger_text 埋め込み済テンプレート)
-        # クライアントは __LEDGER_TEXT__ プレースホルダを実 ledger で置換するだけで完成
+        # Round 2 プロンプトテンプレート。
+        # クライアントは 2 つのプレースホルダを実行時に置換する:
+        #   __ACCOUNT_LIST_TEXT__ → 下記 account_list_text の値で置換
+        #   __LEDGER_TEXT__       → Round 1 後に取得した ledger 文字列で置換
+        #                           (needs_ledger=false なら空文字列 "")
+        # custom_prompt はサーバ側で既に埋め込み済み (再置換不要)。
         "round2_prompt_template": round2_prompt_template,
-        # account_list_text は今回 round2_prompt_template に既に埋め込み済みだが、
-        # クライアント側でバリデーション (account_code が存在するか) 用に別途返却
+        # __ACCOUNT_LIST_TEXT__ プレースホルダ置換用に別途返却。
+        # クライアント側 account_code バリデーション (実在チェック) にも使用。
         "account_list_text": account_list_text,
         # クライアント Round 1 にユーザー custom_prompt を append する場合に使う
         "custom_prompt": custom_prompt,
