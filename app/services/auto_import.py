@@ -9,6 +9,7 @@ WebDAV 認証情報の Fernet 暗号化 (encrypt_credentials/decrypt_credentials
 所在を整理する。
 """
 
+import hashlib
 import json
 import logging
 from datetime import datetime, timezone
@@ -180,7 +181,6 @@ def _process_file(source, provider, file_info, user_id, mime_type, dry_run, stat
             stats["drafts_created"] += 1
             return
 
-        import hashlib
         file_hash = hashlib.sha256(image_bytes).hexdigest()
         draft = AIDraft(
             user_id=user_id,
