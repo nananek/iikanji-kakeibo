@@ -36,7 +36,6 @@ from app.services.ai_receipt import (
     _get_ai_config,
     _get_ledger_context,
     _get_payment_ledger_context,
-    analyze_voucher_for_attachment,
     decrypt_api_key,
     encrypt_api_key,
     match_account,
@@ -452,71 +451,6 @@ class TestBuildSuggestionPrompt:
         assert "CUSTOM" in result
 
 
-class TestAnalyzeVoucherForAttachment:
-    def test_success(self, db, user, accounts):
-        _ai_config(db, user.id)
-        mock_call = MagicMock(); _patches_openai = patch.dict("app.services.ai_receipt._PROVIDER_HANDLERS", {"openai": mock_call})
-        with _patches_openai:
-            mock_call.return_value = _h({
-                "date": "2026-02-15", "description": "x",
-                "amount": 100, "document_type": "receipt",
-                "consistency": {
-                    "status": "pass",
-                    "date_match": True,
-                    "amount_match": True,
-                    "description_match": True,
-                    "warnings": [],
-                },
-            })
-            result = analyze_voucher_for_attachment(
-                user.id, b"img", "image/jpeg",
-                journal_date="2026-02-15", journal_amount=100,
-                journal_description="x",
-            )
-            assert result["consistency"]["status"] == "pass"
-
-    def test_consistency_missing_defaults(self, db, user, accounts):
-        _ai_config(db, user.id)
-        mock_call = MagicMock(); _patches_openai = patch.dict("app.services.ai_receipt._PROVIDER_HANDLERS", {"openai": mock_call})
-        with _patches_openai:
-            mock_call.return_value = _h({
-                "date": "2026-02-15", "description": "x",
-                "amount": 100, "document_type": "receipt",
-                # consistency missing
-            })
-            result = analyze_voucher_for_attachment(
-                user.id, b"img", "image/jpeg",
-                journal_date="2026-02-15", journal_amount=100,
-                journal_description="x",
-            )
-            assert result["consistency"]["status"] == "warn"
-            assert result["consistency"]["date_match"] is False
-
-    def test_with_compliance_check(self, db, user, accounts):
-        cfg = UserAIConfig(
-            user_id=user.id, provider="openai",
-            api_key_encrypted=encrypt_api_key("k"),
-            model_name="gpt-4o", compliance_check=True,
-        )
-        db.session.add(cfg)
-        db.session.commit()
-        mock_call = MagicMock(); _patches_openai = patch.dict("app.services.ai_receipt._PROVIDER_HANDLERS", {"openai": mock_call})
-        with _patches_openai:
-            mock_call.return_value = _h({
-                "date": "2026-02-15", "description": "x",
-                "amount": 100, "document_type": "receipt",
-                "compliance": {
-                    "status": "pass", "warnings": [], "details": [],
-                },
-                "consistency": {
-                    "status": "pass",
-                    "date_match": True, "amount_match": True,
-                    "description_match": True, "warnings": [],
-                },
-            })
-            result = analyze_voucher_for_attachment(
-                user.id, b"img", "image/jpeg",
-                journal_date="2026-02-15", journal_amount=100,
-                journal_description="x",
-            )
-            assert result["compliance"]["status"] == "pass"
+# E2 PR-C-6a: TestAnalyzeVoucherForAttachment は対応関数の削除に伴い削除。
+# 同等のクライアント側ロジック (compliance/consistency 整形) は
+# tests/static/js/test_voucher_attach_orchestrator.mjs でカバー。

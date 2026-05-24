@@ -417,6 +417,61 @@ class TestAiPromptContext:
         assert body["custom_prompt"] == ""
 
 
+class TestVoucherAttachPromptContext:
+    """E2 PR-C-6a: GET /api/v1/voucher-attach/prompt-context."""
+
+    def test_unauthenticated(self, client):
+        resp = client.get("/api/v1/voucher-attach/prompt-context")
+        assert resp.status_code in (302, 401)
+
+    def test_returns_template_with_placeholders(
+        self, db, logged_in_client, user, accounts,
+    ):
+        from app.models.ai_config import UserAIConfig
+        from app.extensions import db as _db
+        cfg = UserAIConfig(
+            user_id=user.id, provider="openai",
+            api_key_blob=b"\xAA" * 48, api_key_iv=b"\xBB" * 12,
+            model_name="", compliance_check=True,
+        )
+        _db.session.add(cfg)
+        _db.session.commit()
+        resp = logged_in_client.get("/api/v1/voucher-attach/prompt-context")
+        assert resp.status_code == 200
+        body = resp.get_json()
+        # DOCUMENT_PROMPT + COMPLIANCE_CHECK_PROMPT + CONSISTENCY_CHECK_PROMPT_TEMPLATE
+        assert "__JOURNAL_DATE__" in body["prompt_template"]
+        assert "__JOURNAL_AMOUNT__" in body["prompt_template"]
+        assert "__JOURNAL_DESCRIPTION__" in body["prompt_template"]
+        assert "電帳法コンプライアンスチェック" in body["prompt_template"]
+        assert body["compliance_check_enabled"] is True
+        from app.services.ai_receipt import PROVIDER_DEFAULTS
+        for k in ("openai", "anthropic", "google"):
+            assert body["default_model_by_provider"][k] == PROVIDER_DEFAULTS[k]
+        assert "llama_cpp" not in body["default_model_by_provider"]
+        # api_key 一切返却しない
+        assert "api_key_blob" not in body
+
+    def test_no_compliance_when_disabled(
+        self, db, logged_in_client, user, accounts,
+    ):
+        from app.models.ai_config import UserAIConfig
+        from app.extensions import db as _db
+        cfg = UserAIConfig(
+            user_id=user.id, provider="openai",
+            api_key_blob=b"\xAA" * 48, api_key_iv=b"\xBB" * 12,
+            compliance_check=False,
+        )
+        _db.session.add(cfg)
+        _db.session.commit()
+        resp = logged_in_client.get("/api/v1/voucher-attach/prompt-context")
+        body = resp.get_json()
+        assert body["compliance_check_enabled"] is False
+        # COMPLIANCE_CHECK_PROMPT は含まれない (consistency のみ)
+        assert "電帳法コンプライアンスチェック" not in body["prompt_template"]
+        assert "__JOURNAL_DATE__" in body["prompt_template"]
+
+
 class TestWebImportPromptContext:
     """E2 PR-C-5a: GET /api/v1/web-import/prompt-context."""
 
