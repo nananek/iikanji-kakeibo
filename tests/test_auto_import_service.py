@@ -94,8 +94,7 @@ class TestRunAutoImport:
     def test_full_dry_run(self, db, user, accounts):
         _ai_config(db, user.id)
         s = _source(db, user.id)
-        with patch("app.services.auto_import._build_provider") as mock_b, \
-             patch("app.services.auto_import.analyze_and_suggest") as mock_a:
+        with patch("app.services.auto_import._build_provider") as mock_b:
             provider = MagicMock()
             provider.list_files.return_value = [
                 SourceFile(path="/a.jpg", etag="e1", size=1024,
@@ -103,7 +102,6 @@ class TestRunAutoImport:
             ]
             provider.download_file.return_value = b"image-bytes"
             mock_b.return_value = provider
-            mock_a.return_value = []  # 空の suggestions
 
             stats = run_auto_import(user.id, dry_run=True)
         assert stats["sources_processed"] == 1
@@ -112,11 +110,11 @@ class TestRunAutoImport:
         # dry run なので drafts_created もカウントされるが DB には書かない
         assert AIDraft.query.filter_by(user_id=user.id).count() == 0
 
-    def test_real_run_creates_draft(self, db, user, accounts):
+    def test_real_run_creates_pending_draft(self, db, user, accounts):
+        """E2 PR-C-4g: サーバ側 AI 解析を行わず、pending ドラフトを作成。"""
         _ai_config(db, user.id)
         s = _source(db, user.id)
         with patch("app.services.auto_import._build_provider") as mock_b, \
-             patch("app.services.auto_import.analyze_and_suggest") as mock_a, \
              patch("app.services.auto_import.store_image_with_thumbnail"):
             provider = MagicMock()
             provider.list_files.return_value = [
@@ -126,15 +124,13 @@ class TestRunAutoImport:
             provider.download_file.return_value = b"image-bytes"
             mock_b.return_value = provider
 
-            from app.services.ai_receipt import JournalSuggestion
-            mock_a.return_value = [JournalSuggestion(
-                title="x", description="y", date="2026-02-15",
-                entry_description="x", lines=[],
-            )]
-
             stats = run_auto_import(user.id, dry_run=False)
         assert stats["drafts_created"] == 1
-        assert AIDraft.query.filter_by(user_id=user.id).count() == 1
+        drafts = AIDraft.query.filter_by(user_id=user.id).all()
+        assert len(drafts) == 1
+        # E2 PR-C-4g: status='pending' で suggestions は空
+        assert drafts[0].status == "pending"
+        assert drafts[0].suggestions_json == "[]"
         assert ProcessedFile.query.filter_by(source_id=s.id).count() == 1
 
     def test_skip_already_processed(self, db, user, accounts):
@@ -147,8 +143,7 @@ class TestRunAutoImport:
         ))
         db.session.commit()
 
-        with patch("app.services.auto_import._build_provider") as mock_b, \
-             patch("app.services.auto_import.analyze_and_suggest") as mock_a:
+        with patch("app.services.auto_import._build_provider") as mock_b:
             provider = MagicMock()
             provider.list_files.return_value = [
                 SourceFile(path="/a.jpg", etag="e1", size=1024,
@@ -159,7 +154,8 @@ class TestRunAutoImport:
             stats = run_auto_import(user.id, dry_run=True)
         assert stats["files_found"] == 1
         assert stats["files_new"] == 0
-        mock_a.assert_not_called()
+        # download も走らない (skip 判定で早期 continue)
+        provider.download_file.assert_not_called()
 
     def test_reprocess_when_etag_changed(self, db, user, accounts):
         _ai_config(db, user.id)
@@ -170,8 +166,7 @@ class TestRunAutoImport:
         ))
         db.session.commit()
 
-        with patch("app.services.auto_import._build_provider") as mock_b, \
-             patch("app.services.auto_import.analyze_and_suggest") as mock_a:
+        with patch("app.services.auto_import._build_provider") as mock_b:
             provider = MagicMock()
             provider.list_files.return_value = [
                 SourceFile(path="/a.jpg", etag="NEW", size=1024,
@@ -179,7 +174,6 @@ class TestRunAutoImport:
             ]
             provider.download_file.return_value = b"x"
             mock_b.return_value = provider
-            mock_a.return_value = []
 
             stats = run_auto_import(user.id, dry_run=True)
         assert stats["files_new"] == 1
@@ -226,8 +220,7 @@ class TestRunAutoImport:
     def test_too_many_files_truncated(self, db, user, accounts):
         _ai_config(db, user.id)
         s = _source(db, user.id)
-        with patch("app.services.auto_import._build_provider") as mock_b, \
-             patch("app.services.auto_import.analyze_and_suggest") as mock_a:
+        with patch("app.services.auto_import._build_provider") as mock_b:
             provider = MagicMock()
             # 150 files
             provider.list_files.return_value = [
@@ -237,30 +230,27 @@ class TestRunAutoImport:
             ]
             provider.download_file.return_value = b"x"
             mock_b.return_value = provider
-            mock_a.return_value = []
 
             stats = run_auto_import(user.id, dry_run=True)
         # MAX_FILES_PER_SOURCE = 100 で打ち切られる
         assert stats["files_found"] == 100
 
-    def test_analyze_failure_records_error(self, db, user, accounts):
+    def test_download_failure_records_error(self, db, user, accounts):
+        """E2 PR-C-4g: AI 解析を行わないため失敗源は download/storage のみ。
+        旧 test_analyze_failure_records_error の置換。"""
         _ai_config(db, user.id)
         s = _source(db, user.id)
-        with patch("app.services.auto_import._build_provider") as mock_b, \
-             patch("app.services.auto_import.analyze_and_suggest") as mock_a:
+        with patch("app.services.auto_import._build_provider") as mock_b:
             provider = MagicMock()
             provider.list_files.return_value = [
                 SourceFile(path="/a.jpg", etag="e1", size=100,
                            mime_type="image/jpeg"),
             ]
-            provider.download_file.return_value = b"x"
+            provider.download_file.side_effect = RuntimeError("WebDAV down")
             mock_b.return_value = provider
-            mock_a.side_effect = ValueError("AI down")
 
             stats = run_auto_import(user.id, dry_run=False)
-        # エラーが記録される
-        assert any("AI down" in e for e in stats["errors"])
-        # ProcessedFile に error 状態で記録
+        assert any("WebDAV down" in e for e in stats["errors"])
         pf = ProcessedFile.query.filter_by(source_id=s.id).first()
         assert pf is not None
         assert pf.status == "error"
@@ -280,7 +270,6 @@ class TestNotifyUser:
         db.session.commit()
 
         with patch("app.services.auto_import._build_provider") as mock_b, \
-             patch("app.services.auto_import.analyze_and_suggest") as mock_a, \
              patch("app.services.auto_import.store_image_with_thumbnail"), \
              patch("app.services.auto_import.send_webhook") as mock_send:
             provider = MagicMock()
@@ -290,12 +279,6 @@ class TestNotifyUser:
             ]
             provider.download_file.return_value = b"x"
             mock_b.return_value = provider
-
-            from app.services.ai_receipt import JournalSuggestion
-            mock_a.return_value = [JournalSuggestion(
-                title="x", description="y", date="2026-02-15",
-                entry_description="x", lines=[],
-            )]
 
             run_auto_import(user.id, dry_run=False)
             mock_send.assert_called()
