@@ -19,6 +19,16 @@
         </div>
         {% endif %}
 
+        {% if config_is_e2ee %}
+        <div class="alert alert-info small mb-3">
+          <i class="bi bi-shield-lock"></i>
+          <strong>E2EE 形式で API キー登録済み</strong>。現在は移行期間として
+          サーバ経由で解析しています。v5.0 公開時にクライアント側での
+          完全 E2EE 解析 (画像とプロンプトをサーバに送らない方式) に切り替える
+          予定です (Round 2 仕訳案生成の JS 移植が完了次第)。
+        </div>
+        {% endif %}
+
         <form id="uploadForm" enctype="multipart/form-data">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 

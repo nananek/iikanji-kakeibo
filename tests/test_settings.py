@@ -70,6 +70,53 @@ class TestSettingsIndex:
         assert "監査アクセス管理" not in html
 
 
+class TestAiJournalEnE2EEBanner:
+    """E2-C-3c: /ai-journal upload 画面で config_is_e2ee=true の時に
+    「E2EE 形式で API キー登録済み」バナーが表示される。"""
+
+    def test_no_banner_when_no_e2ee_config(
+        self, db, logged_in_client, user, accounts,
+    ):
+        from app.models.ai_config import UserAIConfig
+        from app.services.ai_receipt import encrypt_api_key
+        # legacy Fernet 形式のみ
+        cfg = UserAIConfig(
+            user_id=user.id, provider="openai",
+            api_key_encrypted=encrypt_api_key("sk-legacy"),
+            model_name="gpt-4o-mini",
+        )
+        db.session.add(cfg)
+        db.session.commit()
+        resp = logged_in_client.get("/ai-journal/")
+        assert resp.status_code == 200
+        html = resp.data.decode()
+        assert "E2EE 形式で API キー登録済み" not in html
+
+    def test_banner_when_e2ee_config_present(
+        self, db, logged_in_client, user, accounts,
+    ):
+        from app.models.ai_config import UserAIConfig
+        cfg = UserAIConfig(
+            user_id=user.id, provider="openai",
+            api_key_blob=b"\xAA" * 48, api_key_iv=b"\xBB" * 12,
+            model_name="gpt-4o-mini",
+        )
+        db.session.add(cfg)
+        db.session.commit()
+        resp = logged_in_client.get("/ai-journal/")
+        assert resp.status_code == 200
+        html = resp.data.decode()
+        assert "E2EE 形式で API キー登録済み" in html
+
+    def test_no_banner_when_no_config_at_all(
+        self, db, logged_in_client, user, accounts,
+    ):
+        resp = logged_in_client.get("/ai-journal/")
+        assert resp.status_code == 200
+        html = resp.data.decode()
+        assert "E2EE 形式で API キー登録済み" not in html
+
+
 class TestEncryptionKeysView:
     """GET /settings/encryption-keys — E2EE 鍵管理ウィザード (v5.0 準備)"""
 
