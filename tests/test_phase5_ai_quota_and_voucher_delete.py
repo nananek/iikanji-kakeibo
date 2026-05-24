@@ -60,8 +60,6 @@ def mock_storage(monkeypatch):
 
     monkeypatch.setattr(storage_module, "store_image_with_thumbnail",
                         fake_store_image_with_thumbnail)
-    monkeypatch.setattr(ai_journal_module, "store_image_with_thumbnail",
-                        fake_store_image_with_thumbnail)
     monkeypatch.setattr(api_module, "store_image_with_thumbnail",
                         fake_store_image_with_thumbnail)
     monkeypatch.setattr(storage_module, "get_storage_backend",
@@ -170,67 +168,46 @@ class TestCreateVoucherFromDraft:
 
 
 class TestAIJournalAnalyzeQuota:
-    """ai_journal.analyze で AIDraft 生成時に容量計上."""
+    """E2 PR-C-4e: /ai-journal/analyze 廃止に伴い、quota 計上は
+    /api/v1/ai/uploads (クライアント完結 E2EE フローのアップロード受口) で
+    同等に行われる。本クラスは新エンドポイントの quota 動作を担保する。"""
 
-    def test_analyze_records_usage(
+    def test_upload_records_usage(
         self, logged_in_client, db, user, app, mock_storage, reset_limiter,
     ):
-        # AIConfig 必須
-        db.session.add(UserAIConfig(
-            user_id=user.id, provider="openai",
-            api_key_encrypted=b"dummy", model_name="gpt-4o",
-        ))
-        db.session.commit()
-
-        from app.services.ai_receipt import JournalSuggestion
-
-        fake_sugg = JournalSuggestion(
-            title="テスト", description="", date="2026-05-01",
-            entry_description="テスト", lines=[], compliance=None,
+        resp = logged_in_client.post(
+            "/api/v1/ai/uploads",
+            data={
+                "image": (BytesIO(b"x" * 100), "test.jpg", "image/jpeg"),
+                "comment": "テストコメント",
+            },
+            content_type="multipart/form-data",
         )
-        with patch("app.views.ai_journal.analyze_and_suggest",
-                   return_value=[fake_sugg]):
-            resp = logged_in_client.post(
-                "/ai-journal/analyze",
-                data={
-                    "image_file": (BytesIO(b"x" * 100), "test.jpg", "image/jpeg"),
-                    "comment": "テストコメント",
-                },
-                content_type="multipart/form-data",
-            )
 
-        assert resp.status_code == 200
-        # AIDraft が file_size 付きで作成されている
+        assert resp.status_code == 201
         drafts = AIDraft.query.filter_by(user_id=user.id).all()
         assert len(drafts) == 1
         assert drafts[0].file_size == 100
-        # StorageUsage に 100 bytes 計上されている
         usage = db.session.get(StorageUsage, user.id)
         assert usage.used_bytes == 100
 
-    def test_analyze_quota_exceeded_returns_413(
+    def test_upload_quota_exceeded_returns_413(
         self, logged_in_client, db, user, app, mock_storage, reset_limiter,
     ):
         """quota 上限直前まで使った状態で大きなアップロードを拒否."""
-        db.session.add(UserAIConfig(
-            user_id=user.id, provider="openai",
-            api_key_encrypted=b"dummy", model_name="gpt-4o",
-        ))
-        # quota 500MB のうち 499MB 使用済 → +2MB は超過
         db.session.add(StorageUsage(user_id=user.id, used_bytes=499 * MB))
         db.session.commit()
 
         big = b"x" * (2 * MB)
         resp = logged_in_client.post(
-            "/ai-journal/analyze",
+            "/api/v1/ai/uploads",
             data={
-                "image_file": (BytesIO(big), "test.jpg", "image/jpeg"),
+                "image": (BytesIO(big), "test.jpg", "image/jpeg"),
             },
             content_type="multipart/form-data",
         )
 
         assert resp.status_code == 413
-        # AIDraft は作られない、StorageUsage も変動なし
         assert AIDraft.query.filter_by(user_id=user.id).count() == 0
         usage = db.session.get(StorageUsage, user.id)
         assert usage.used_bytes == 499 * MB
@@ -241,24 +218,12 @@ class TestAIJournalAnalyzeQuota:
     ):
         """record_upload が例外を投げた場合、TOCTOU 再検証スキップで
         record_delete が呼ばれない (PR #93 review Finding 1 — 別ユーザー
-        計上分の誤減算を防ぐ)."""
-        db.session.add(UserAIConfig(
-            user_id=user.id, provider="openai",
-            api_key_encrypted=b"dummy", model_name="gpt-4o",
-        ))
-        # 既に上限近くまで埋まっている状態 (495MB) を作る
+        計上分の誤減算を防ぐ)。/api/v1/ai/uploads 側に同等のガードがある。"""
         db.session.add(StorageUsage(user_id=user.id, used_bytes=495 * MB))
         db.session.commit()
 
-        from app.services.ai_receipt import JournalSuggestion
-        from app.views import ai_journal as ai_journal_module
+        from app.views import api as api_module
 
-        fake_sugg = JournalSuggestion(
-            title="テスト", description="", date="2026-05-01",
-            entry_description="テスト", lines=[], compliance=None,
-        )
-
-        # record_upload を必ず失敗させる
         def fake_record_upload(*args, **kwargs):
             raise RuntimeError("DB connection lost")
 
@@ -267,25 +232,18 @@ class TestAIJournalAnalyzeQuota:
         def fake_record_delete(*args, **kwargs):
             record_delete_called.append(args)
 
-        monkeypatch.setattr(ai_journal_module, "record_upload",
-                            fake_record_upload)
-        monkeypatch.setattr(ai_journal_module, "record_delete",
-                            fake_record_delete)
+        monkeypatch.setattr(api_module, "record_upload", fake_record_upload)
+        monkeypatch.setattr(api_module, "record_delete", fake_record_delete)
 
-        with patch("app.views.ai_journal.analyze_and_suggest",
-                   return_value=[fake_sugg]):
-            resp = logged_in_client.post(
-                "/ai-journal/analyze",
-                data={
-                    "image_file": (BytesIO(b"x" * 1000), "test.jpg",
-                                   "image/jpeg"),
-                },
-                content_type="multipart/form-data",
-            )
+        resp = logged_in_client.post(
+            "/api/v1/ai/uploads",
+            data={
+                "image": (BytesIO(b"x" * 1000), "test.jpg", "image/jpeg"),
+            },
+            content_type="multipart/form-data",
+        )
 
-        # 通常レスポンス (200) で TOCTOU の超過判定もスキップ
-        assert resp.status_code == 200
-        # record_delete は呼ばれていない (誤減算なし)
+        assert resp.status_code == 201
         assert record_delete_called == []
         # StorageUsage は別途加算されていない (record_upload 失敗のため) が、
         # 既存の他ユーザー分相当 495MB はそのまま残る
