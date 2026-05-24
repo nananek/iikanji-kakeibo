@@ -76,3 +76,54 @@ export async function callGoogle({
     },
   };
 }
+
+
+/** Google Gemini generateContent の text-only 版 (E2 PR-C-5b)。Web 明細抽出用。 */
+export async function callGoogleText({
+  apiKey, model, prompt, maxTokens = 16000, signal, fetchImpl,
+}) {
+  if (!apiKey || typeof apiKey !== "string") {
+    throw new Error("apiKey is required");
+  }
+  if (!model || typeof model !== "string") {
+    throw new Error("model is required");
+  }
+  if (typeof prompt !== "string" || !prompt) {
+    throw new Error("prompt is required");
+  }
+  const f = fetchImpl ?? globalThis.fetch;
+  const url = `${GOOGLE_URL}/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`;
+  const body = {
+    contents: [{
+      parts: [{ text: prompt }],
+    }],
+    generationConfig: {
+      responseMimeType: "application/json",
+      maxOutputTokens: maxTokens,
+    },
+  };
+  const r = await f(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+    signal,
+  });
+  if (!r.ok) {
+    const text = await r.text().catch(() => "");
+    throw new Error(
+      `Google API error: HTTP ${r.status} ${text.slice(0, 200)}`,
+    );
+  }
+  const data = await r.json();
+  const content = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+  if (typeof content !== "string") {
+    throw new Error("Google response missing content");
+  }
+  return {
+    result: extractJson(content),
+    usage: {
+      input_tokens: data?.usageMetadata?.promptTokenCount ?? null,
+      output_tokens: data?.usageMetadata?.candidatesTokenCount ?? null,
+    },
+  };
+}
