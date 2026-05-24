@@ -285,3 +285,54 @@ class TestAiSaveSuggestions:
         assert resp.status_code == 200
         db.session.refresh(draft)
         assert json.loads(draft.suggestions_json) == [{"new": 2}]
+
+
+class TestAiPromptContext:
+    """E2 PR-C-4a: GET /api/v1/ai/prompt-context."""
+
+    def test_unauthenticated(self, client):
+        resp = client.get("/api/v1/ai/prompt-context")
+        assert resp.status_code in (302, 401)
+
+    def test_returns_round1_round2_and_metadata(
+        self, db, logged_in_client, user, accounts,
+    ):
+        from app.models.ai_config import UserAIConfig
+        from app.extensions import db as _db
+        cfg = UserAIConfig(
+            user_id=user.id, provider="openai",
+            api_key_blob=b"\xAA" * 48, api_key_iv=b"\xBB" * 12,
+            model_name="", custom_prompt="QUICPayはJCB CARD W",
+            compliance_check=True,
+        )
+        _db.session.add(cfg)
+        _db.session.commit()
+        resp = logged_in_client.get("/api/v1/ai/prompt-context")
+        assert resp.status_code == 200
+        body = resp.get_json()
+        # Round 1
+        assert "round1_prompt" in body
+        assert "DOCUMENT" in body["round1_prompt"] or "領収書" in body["round1_prompt"]
+        assert body["compliance_check_enabled"] is True
+        assert "compliance_prompt" in body
+        # Round 2 template (account_list_text 埋め込み済 + __LEDGER_TEXT__ placeholder)
+        assert "round2_prompt_template" in body
+        assert "__LEDGER_TEXT__" in body["round2_prompt_template"]
+        # account_list_text は別途返却
+        assert "account_list_text" in body
+        # custom_prompt
+        assert body["custom_prompt"] == "QUICPayはJCB CARD W"
+        # provider 別デフォルト
+        assert body["default_model_by_provider"]["openai"] == "gpt-4o-mini"
+        assert body["default_model_by_provider"]["anthropic"].startswith("claude-")
+        assert body["default_model_by_provider"]["google"].startswith("gemini-")
+
+    def test_no_ai_config_still_returns_context(
+        self, db, logged_in_client, user, accounts,
+    ):
+        """AI 設定が未登録でも prompt-context は返却される (UI で先に確認できる)。"""
+        resp = logged_in_client.get("/api/v1/ai/prompt-context")
+        assert resp.status_code == 200
+        body = resp.get_json()
+        assert body["compliance_check_enabled"] is False
+        assert body["custom_prompt"] == ""

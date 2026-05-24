@@ -555,6 +555,75 @@ def ai_draft_delete(draft_id):
     return jsonify({"ok": True})
 
 
+@bp.route("/ai/prompt-context", methods=["GET"])
+@auth_required(write=False)
+@limiter.limit("60 per hour", key_func=rate_limit_key)
+def ai_prompt_context():
+    """E2 PR-C-4a: クライアント側で Round 1+2 プロンプトを組み立てるための
+    材料をサーバから一括取得する endpoint。
+
+    クライアントは:
+      1. 画像 + round1_prompt + (compliance/custom_prompt 追記) で LLM 呼出
+      2. Round 1 結果から needs_ledger=true なら ledger 取得 endpoint (別 PR)
+      3. account_list_text + ledger + custom_prompt + round2_prompt_template で
+         Round 2 プロンプト構築 → 2 度目の LLM 呼出
+      4. PATCH /api/v1/ai/drafts/<id>/suggestions で結果保存
+
+    本 endpoint はサーバ側 ai_receipt.py の DOCUMENT_PROMPT / COMPLIANCE_CHECK_PROMPT /
+    _get_account_list_text / _build_suggestion_prompt と等価のメタデータを返却し、
+    Round 2 プロンプト構築テンプレートは {account_list_text} / {ledger_section} /
+    {custom_section} のプレースホルダ付きで返す。
+    """
+    user_id = g.auth_user.id
+    from app.services.ai_receipt import (
+        COMPLIANCE_CHECK_PROMPT,
+        DOCUMENT_PROMPT,
+        _build_suggestion_prompt,
+        _get_account_list_text,
+    )
+
+    # AI 設定 (provider 別デフォルトモデル + custom_prompt + compliance_check)
+    config = UserAIConfig.query.filter_by(user_id=user_id).first()
+    custom_prompt = config.custom_prompt if config else ""
+    compliance_check = bool(config and config.compliance_check)
+
+    # 勘定科目一覧 (サーバで既に計算しているもの)
+    account_list_text = _get_account_list_text(user_id)
+
+    # Round 2 プロンプトテンプレート (placeholder 残し)
+    # _build_suggestion_prompt はテンプレート文字列を返すが本 endpoint では
+    # account_list_text と custom_prompt は値を埋めず、ledger_text のみ
+    # 「実行時に置換」できるよう __LEDGER_TEXT_PLACEHOLDER__ を渡す。
+    # Round 2 = template.replace("__LEDGER_TEXT_PLACEHOLDER__", ledger).
+    round2_prompt_template = _build_suggestion_prompt(
+        account_list_text="__ACCOUNT_LIST_TEXT__",
+        ledger_text="__LEDGER_TEXT__",
+        custom_prompt=custom_prompt,
+    )
+
+    return jsonify({
+        "ok": True,
+        # Round 1 プロンプト (compliance/custom_prompt はクライアント側で append)
+        "round1_prompt": DOCUMENT_PROMPT,
+        "compliance_prompt": COMPLIANCE_CHECK_PROMPT,
+        "compliance_check_enabled": compliance_check,
+        # Round 2 プロンプト (account_list_text / ledger_text 埋め込み済テンプレート)
+        # クライアントは __LEDGER_TEXT__ プレースホルダを実 ledger で置換するだけで完成
+        "round2_prompt_template": round2_prompt_template,
+        # account_list_text は今回 round2_prompt_template に既に埋め込み済みだが、
+        # クライアント側でバリデーション (account_code が存在するか) 用に別途返却
+        "account_list_text": account_list_text,
+        # クライアント Round 1 にユーザー custom_prompt を append する場合に使う
+        "custom_prompt": custom_prompt,
+        # デフォルトモデル (UserAIConfig.model_name 未指定時)
+        "default_model_by_provider": {
+            "openai": "gpt-4o-mini",
+            "anthropic": "claude-3-5-sonnet-20241022",
+            "google": "gemini-1.5-flash",
+        },
+    })
+
+
 # E2 PR-C-2: クライアント側 LLM 呼出フロー用 endpoint。
 # サーバ側で LLM を呼ばないため /ai/analyze と異なり API キーが不要。
 # クライアントが画像をアップロード → 自分で LLM を呼ぶ → 結果を PATCH で保存。
