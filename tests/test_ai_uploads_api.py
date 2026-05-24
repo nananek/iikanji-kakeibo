@@ -315,17 +315,23 @@ class TestAiPromptContext:
         assert "DOCUMENT" in body["round1_prompt"] or "領収書" in body["round1_prompt"]
         assert body["compliance_check_enabled"] is True
         assert "compliance_prompt" in body
-        # Round 2 template (account_list_text 埋め込み済 + __LEDGER_TEXT__ placeholder)
+        # Round 2 template: __ACCOUNT_LIST_TEXT__ と __LEDGER_TEXT__ 両方が
+        # プレースホルダとして残る (クライアントが置換する)
         assert "round2_prompt_template" in body
         assert "__LEDGER_TEXT__" in body["round2_prompt_template"]
+        assert "__ACCOUNT_LIST_TEXT__" in body["round2_prompt_template"]
+        # custom_prompt はサーバで既に埋め込み済 (再置換不要)
+        assert "QUICPayはJCB CARD W" in body["round2_prompt_template"]
         # account_list_text は別途返却
         assert "account_list_text" in body
         # custom_prompt
         assert body["custom_prompt"] == "QUICPayはJCB CARD W"
-        # provider 別デフォルト
-        assert body["default_model_by_provider"]["openai"] == "gpt-4o-mini"
-        assert body["default_model_by_provider"]["anthropic"].startswith("claude-")
-        assert body["default_model_by_provider"]["google"].startswith("gemini-")
+        # provider 別デフォルト: サーバ側 PROVIDER_DEFAULTS と一致
+        from app.services.ai_receipt import PROVIDER_DEFAULTS
+        for k in ("openai", "anthropic", "google"):
+            assert body["default_model_by_provider"][k] == PROVIDER_DEFAULTS[k]
+        # llama_cpp は除外
+        assert "llama_cpp" not in body["default_model_by_provider"]
 
     def test_no_ai_config_still_returns_context(
         self, db, logged_in_client, user, accounts,

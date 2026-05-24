@@ -578,6 +578,7 @@ def ai_prompt_context():
     from app.services.ai_receipt import (
         COMPLIANCE_CHECK_PROMPT,
         DOCUMENT_PROMPT,
+        PROVIDER_DEFAULTS,
         _build_suggestion_prompt,
         _get_account_list_text,
     )
@@ -590,11 +591,12 @@ def ai_prompt_context():
     # 勘定科目一覧 (サーバで既に計算しているもの)
     account_list_text = _get_account_list_text(user_id)
 
-    # Round 2 プロンプトテンプレート (placeholder 残し)
-    # _build_suggestion_prompt はテンプレート文字列を返すが本 endpoint では
-    # account_list_text と custom_prompt は値を埋めず、ledger_text のみ
-    # 「実行時に置換」できるよう __LEDGER_TEXT_PLACEHOLDER__ を渡す。
-    # Round 2 = template.replace("__LEDGER_TEXT_PLACEHOLDER__", ledger).
+    # Round 2 プロンプトテンプレート。
+    # _build_suggestion_prompt にプレースホルダ文字列を渡してテンプレート
+    # 生成する。クライアントは以下 2 つのプレースホルダを実行時に置換:
+    #   __ACCOUNT_LIST_TEXT__ → 別途返却する account_list_text で置換
+    #   __LEDGER_TEXT__       → Round 1 後に取得した ledger 文字列で置換
+    # custom_prompt はサーバ側で既に埋め込み済み (再置換不要)。
     round2_prompt_template = _build_suggestion_prompt(
         account_list_text="__ACCOUNT_LIST_TEXT__",
         ledger_text="__LEDGER_TEXT__",
@@ -615,11 +617,12 @@ def ai_prompt_context():
         "account_list_text": account_list_text,
         # クライアント Round 1 にユーザー custom_prompt を append する場合に使う
         "custom_prompt": custom_prompt,
-        # デフォルトモデル (UserAIConfig.model_name 未指定時)
+        # デフォルトモデル (UserAIConfig.model_name 未指定時)。
+        # サーバ側 ai_receipt.PROVIDER_DEFAULTS と一致させ、E2EE クライアントと
+        # 既存サーバ解析 (/ai/analyze) が同じモデルを使うことを保証する。
+        # llama_cpp はサーバ管理者提供前提 + v5.0 で廃止のため除外。
         "default_model_by_provider": {
-            "openai": "gpt-4o-mini",
-            "anthropic": "claude-3-5-sonnet-20241022",
-            "google": "gemini-1.5-flash",
+            k: v for k, v in PROVIDER_DEFAULTS.items() if k != "llama_cpp"
         },
     })
 
