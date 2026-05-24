@@ -1,18 +1,16 @@
 """Webページ貼り付け→AI明細取込ビュー
 
-E2 PR-C-4h: parse_web_text (サーバ側 Fernet 復号 + LLM 呼出し) 依存を削除。
-Web 明細抽出のクライアント完結 E2EE 化は別 PR (E2-C-5 系) で対応するため、
-本 PR では新規 POST を「機能一時停止」エラーで停止する。
-
-session 経由で既に解析済みのデータ (web_data_key) を持つユーザーの
-confirm 画面 → 一括取込フローは引き続き動作する (二重停止しない)。
+E2 PR-C-5c: クライアント完結 E2EE モードに統合。POST は AJAX JSON ボディで
+parsed_transactions[] + payment_account_code を受け取り、session に保存して
+/web-import/confirm への遷移用 URL を返す。LLM 呼出はクライアント側 (E2-C-5b
+の web_extract.js) が完了している前提。
 """
 
 import json
 import uuid
 from datetime import date as date_type
 
-from flask import Blueprint, render_template, redirect, url_for, flash, request, session
+from flask import Blueprint, render_template, redirect, url_for, flash, request, session, jsonify
 from flask_login import login_required, current_user
 
 from app.extensions import db
@@ -31,6 +29,15 @@ from app.views.helpers import (
 bp = Blueprint("web_import", __name__, url_prefix="/web-import")
 
 MAX_TEXT_LENGTH = 200_000
+MAX_PARSED_ROWS = 1000
+
+
+def _save_parsed_to_session(parsed_rows, payment_account_code):
+    """共通: parsed_rows と payment_account_code を session に保存する。"""
+    key = save_import_data(parsed_rows)
+    session["web_data_key"] = key
+    session["web_payment_account_code"] = payment_account_code
+    return key
 
 
 @bp.route("/", methods=["GET", "POST"])
@@ -38,19 +45,54 @@ MAX_TEXT_LENGTH = 200_000
 def upload():
     """Step 1: テキスト入力 + 口座選択 → AI解析
 
-    E2 PR-C-4h: POST は「機能一時停止」エラーを返す (E2EE 化未完了)。
+    GET: アップロード画面を表示 (E2EE モード対応)
+    POST (JSON): クライアント側で抽出済みの parsed_transactions[] を受け取り
+                 session に保存する (E2 PR-C-5c)
     """
-    grouped_accounts = get_grouped_accounts(get_effective_user_id())
+    user_id = get_effective_user_id()
+    config = UserAIConfig.query.filter_by(user_id=user_id).first()
+    has_config = config is not None
+    config_is_e2ee = bool(config and config.is_e2ee)
+    grouped_accounts = get_grouped_accounts(user_id)
 
-    # E2 PR-C-4i: feature_disabled=True なので has_config はテンプレで
-    # 参照されない (warning 分岐が先勝ち) ため DB クエリを省略。
-    # 旧版で POST 時に flash を出すと feature_disabled バナーと二重表示に
-    # なっていたため flash も削除。テンプレ側 warning に一元化。
+    if request.method == "POST":
+        if not request.is_json:
+            return jsonify({
+                "error": "JSON ボディが必要です。",
+            }), 400
+
+        payload = request.get_json(silent=True) or {}
+        parsed = payload.get("parsed_transactions")
+        payment_account_code = payload.get("payment_account_code")
+
+        if not isinstance(parsed, list) or not parsed:
+            return jsonify({"error": "parsed_transactions が空です。"}), 400
+        if len(parsed) > MAX_PARSED_ROWS:
+            return jsonify({
+                "error": f"行数が多すぎます (上限 {MAX_PARSED_ROWS})。",
+            }), 400
+        if not payment_account_code:
+            return jsonify({
+                "error": "payment_account_code が必要です。",
+            }), 400
+
+        owner_account = Account.query.filter_by(
+            user_id=user_id, code=payment_account_code,
+        ).first()
+        if not owner_account:
+            return jsonify({"error": "指定された口座が存在しません。"}), 400
+
+        _save_parsed_to_session(parsed, payment_account_code)
+        return jsonify({
+            "ok": True,
+            "redirect_url": url_for("web_import.confirm"),
+        })
+
     return render_template(
         "web_import/upload.html",
         grouped_accounts=grouped_accounts,
-        has_config=False,
-        feature_disabled=True,
+        has_config=has_config,
+        config_is_e2ee=config_is_e2ee,
     )
 
 

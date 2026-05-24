@@ -265,29 +265,148 @@ def _setup_web_import_session(logged_in_client, parsed_rows,
     return key
 
 
+def _make_e2ee_ai_config(db, user_id):
+    """E2 PR-C-5c: 新フロー (E2EE モード) 用 AI 設定をセットアップ。"""
+    from app.models.ai_config import UserAIConfig
+    cfg = UserAIConfig(
+        user_id=user_id, provider="openai",
+        api_key_encrypted=None,
+        api_key_blob=b"\xAA" * 48, api_key_iv=b"\xBB" * 12,
+        model_name="gpt-4o-mini",
+    )
+    db.session.add(cfg)
+    db.session.commit()
+    return cfg
+
+
+def _make_legacy_ai_config(db, user_id):
+    """Fernet のみ (E2EE 未移行) の旧設定。"""
+    from app.models.ai_config import UserAIConfig
+    from app.services.ai_receipt import encrypt_api_key
+    cfg = UserAIConfig(
+        user_id=user_id, provider="openai",
+        api_key_encrypted=encrypt_api_key("sk-legacy"),
+        model_name="gpt-4o-mini",
+    )
+    db.session.add(cfg)
+    db.session.commit()
+    return cfg
+
+
 class TestWebImportUpload:
+    """E2 PR-C-5c: クライアント完結 E2EE モード対応後の GET/POST 挙動。"""
+
     def test_unauthenticated(self, client):
         resp = client.get("/web-import/")
         assert resp.status_code in (302, 401)
 
-    def test_get_renders_form_with_disabled_banner(
-        self, logged_in_client, accounts,
+    def test_get_no_config_shows_registration_warning(
+        self, db, logged_in_client, user, accounts,
     ):
-        """E2 PR-C-4h: 機能停止 warning バナーが表示される。"""
         resp = logged_in_client.get("/web-import/")
         assert resp.status_code == 200
-        assert "E2EE 移行に伴い一時的に利用できません" in resp.data.decode()
+        assert "外部AI設定が登録されていません" in resp.data.decode()
 
-    def test_post_returns_disabled_banner(self, logged_in_client, accounts):
-        """E2 PR-C-4h: POST しても解析されず、機能停止 warning を返す。"""
-        resp = logged_in_client.post("/web-import/", data={
-            "raw_text": "明細テキスト",
-            "payment_account_code": "1010",
-        })
+    def test_get_legacy_only_shows_migration_required_banner(
+        self, db, logged_in_client, user, accounts,
+    ):
+        """Fernet 形式のみ → 「E2EE モードに移行」warning + フォーム disabled。"""
+        _make_legacy_ai_config(db, user.id)
+        resp = logged_in_client.get("/web-import/")
+        html = resp.data.decode()
+        assert "クライアント完結の E2EE モードに移行しました" in html
+        assert "E2EE 形式で再登録" in html
+        assert "E2EE モードで抽出します" not in html
+
+    def test_get_e2ee_shows_success_banner_and_enabled_form(
+        self, db, logged_in_client, user, accounts,
+    ):
+        _make_e2ee_ai_config(db, user.id)
+        resp = logged_in_client.get("/web-import/")
+        html = resp.data.decode()
+        assert "E2EE モードで抽出します" in html
+        assert "ブラウザから LLM に直接送信" in html
+        assert "e2eeFullClientMode = true" in html
+
+    def test_post_json_saves_session_and_returns_redirect(
+        self, db, logged_in_client, user, accounts,
+    ):
+        """新 JSON フロー: parsed_transactions を受けて session 保存 + URL 返却。"""
+        _make_e2ee_ai_config(db, user.id)
+        resp = logged_in_client.post(
+            "/web-import/",
+            json={
+                "parsed_transactions": [
+                    {"date": "2026-02-15", "description": "ATM",
+                     "deposit": 0, "withdrawal": 5000},
+                ],
+                "payment_account_code": "1010",
+            },
+        )
         assert resp.status_code == 200
-        assert "E2EE 移行に伴い一時的に利用できません" in resp.data.decode()
-        # confirm へのリダイレクトはしない
-        assert "Location" not in resp.headers
+        body = resp.get_json()
+        assert body["ok"] is True
+        assert "/web-import/confirm" in body["redirect_url"]
+        # 後続 GET で confirm に進めることを確認
+        confirm_resp = logged_in_client.get("/web-import/confirm")
+        assert confirm_resp.status_code == 200
+
+    def test_post_json_rejects_empty(self, db, logged_in_client, user, accounts):
+        _make_e2ee_ai_config(db, user.id)
+        resp = logged_in_client.post(
+            "/web-import/",
+            json={"parsed_transactions": [], "payment_account_code": "1010"},
+        )
+        assert resp.status_code == 400
+        assert "parsed_transactions" in resp.get_json()["error"]
+
+    def test_post_json_rejects_too_many_rows(
+        self, db, logged_in_client, user, accounts,
+    ):
+        _make_e2ee_ai_config(db, user.id)
+        resp = logged_in_client.post(
+            "/web-import/",
+            json={
+                "parsed_transactions": [{"date": "2026-02-15"}] * 1001,
+                "payment_account_code": "1010",
+            },
+        )
+        assert resp.status_code == 400
+        assert "行数" in resp.get_json()["error"]
+
+    def test_post_json_rejects_missing_payment_account(
+        self, db, logged_in_client, user, accounts,
+    ):
+        _make_e2ee_ai_config(db, user.id)
+        resp = logged_in_client.post(
+            "/web-import/",
+            json={
+                "parsed_transactions": [{"date": "2026-02-15"}],
+            },
+        )
+        assert resp.status_code == 400
+
+    def test_post_json_rejects_invalid_payment_account(
+        self, db, logged_in_client, user, accounts,
+    ):
+        _make_e2ee_ai_config(db, user.id)
+        resp = logged_in_client.post(
+            "/web-import/",
+            json={
+                "parsed_transactions": [{"date": "2026-02-15"}],
+                "payment_account_code": "9999",
+            },
+        )
+        assert resp.status_code == 400
+        assert "口座" in resp.get_json()["error"]
+
+    def test_post_non_json_returns_400(
+        self, db, logged_in_client, user, accounts,
+    ):
+        _make_e2ee_ai_config(db, user.id)
+        resp = logged_in_client.post("/web-import/", data={"raw_text": "x"})
+        assert resp.status_code == 400
+        assert "JSON" in resp.get_json()["error"]
 
 
 class TestWebImportConfirm:

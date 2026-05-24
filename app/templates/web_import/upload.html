@@ -11,20 +11,30 @@
         <strong>Step 1:</strong> Webページの内容を貼り付け
       </div>
       <div class="card-body">
-        {% if feature_disabled %}
-        {# E2 PR-C-4h: parse_web_text (サーバ Fernet 経路) 廃止に伴い一時停止 #}
-        <div class="alert alert-warning">
-          <i class="bi bi-shield-exclamation"></i>
-          <strong>Web貼り付け取込は E2EE 移行に伴い一時的に利用できません</strong>。
-          <a href="{{ url_for('ai_journal.upload') }}">AI証憑仕訳</a>
-          (画像アップロード) は E2EE クライアント完結モードでご利用いただけます。
-          Web 明細抽出のクライアント側対応は後続 PR で追加予定です。
-        </div>
-        {% elif not has_config %}
+        {% if not has_config %}
         <div class="alert alert-warning">
           <i class="bi bi-exclamation-triangle"></i>
           外部AI設定が登録されていません。
           <a href="{{ url_for('settings.ai_config') }}">外部AI設定</a>でAPIキーを登録してください。
+        </div>
+        {% elif not config_is_e2ee %}
+        {# E2 PR-C-5c: サーバ側 parse_web_text は廃止済、E2EE モードのみ対応 #}
+        <div class="alert alert-warning">
+          <i class="bi bi-shield-exclamation"></i>
+          <strong>Web貼り付け取込はクライアント完結の E2EE モードに移行しました</strong>。
+          現在の API キー設定は旧形式のため利用できません。
+          <a href="{{ url_for('settings.ai_config') }}">外部AI設定</a>から
+          API キーを E2EE 形式で再登録してください。
+        </div>
+        {% else %}
+        <div class="alert alert-success small mb-3">
+          <i class="bi bi-shield-lock-fill"></i>
+          <strong>E2EE モードで抽出します</strong>。API キーは MK で復号され、
+          明細テキストと一緒にあなたのブラウザから LLM に直接送信されます
+          (サーバには抽出済の取引明細のみが届きます)。MK が SharedWorker に
+          ロードされている必要があります — 未ロードの場合は
+          <a href="{{ url_for('settings.encryption_keys') }}">暗号鍵管理</a>
+          で先に解除してください。
         </div>
         {% endif %}
 
@@ -39,7 +49,7 @@
                    value="{{ payment_account_code if payment_account_code is defined else '' }}">
             <button type="button" class="form-control text-start" id="paymentAccountBtn"
                     onclick="openAccountSelector(onPaymentSelected, {filter: 'payment', currentCode: document.getElementById('paymentAccountCode').value})"
-                    {% if not has_config or feature_disabled %}disabled{% endif %}>
+                    {% if not has_config or not config_is_e2ee %}disabled{% endif %}>
               <span id="paymentAccountName" class="{% if not (payment_account_code is defined and payment_account_code) %}text-muted{% endif %}">
                 {%- if payment_account_code is defined and payment_account_code -%}
                   {{ payment_account_name }}
@@ -57,16 +67,18 @@
             <label class="form-label" for="raw_text">明細テキスト</label>
             <textarea class="form-control" name="raw_text" id="raw_text"
                       rows="15" required placeholder="銀行・クレカ等のWebページの明細部分をコピー＆ペーストしてください"
-                      {% if not has_config or feature_disabled %}disabled{% endif %}
+                      {% if not has_config or not config_is_e2ee %}disabled{% endif %}
                       @input="textEntered = ($event.target.value.trim().length > 0)">{{ raw_text if raw_text is defined else '' }}</textarea>
             <div class="form-text">
               Webページの明細部分を選択してコピー＆ペーストしてください。AIが自動で解析します。
             </div>
           </div>
 
+          <div id="errorAlert" class="alert alert-danger d-none"></div>
+
           <button type="submit" class="btn btn-primary" id="submitBtn"
                   x-show="textEntered" x-transition
-                  {% if not has_config or feature_disabled %}disabled{% endif %}>
+                  {% if not has_config or not config_is_e2ee %}disabled{% endif %}>
             <i class="bi bi-robot"></i> AIで解析して次へ
           </button>
         </form>
@@ -128,11 +140,73 @@ function onPaymentSelected(code, name) {
 (function() {
   var form = document.getElementById('uploadForm');
   var submitBtn = document.getElementById('submitBtn');
+  var errorAlert = document.getElementById('errorAlert');
+  // E2 PR-C-5c: クライアント完結 E2EE モード判定 (フォーム有効化条件と同じ)
+  var e2eeFullClientMode = {{ (has_config and config_is_e2ee) | tojson }};
 
   form.addEventListener('submit', function(e) {
+    if (!e2eeFullClientMode) return; // フォームは disabled なので来ないはず
+    e.preventDefault();
+    errorAlert.classList.add('d-none');
+
+    var rawText = document.getElementById('raw_text').value.trim();
+    var paymentAccountCode = document.getElementById('paymentAccountCode').value;
+    var paymentAccountName =
+      document.getElementById('paymentAccountName').textContent.trim();
+
+    if (!rawText || !paymentAccountCode) {
+      errorAlert.textContent =
+        '明細テキストと取込先口座を入力してください。';
+      errorAlert.classList.remove('d-none');
+      return;
+    }
+
+    var originalLabel = submitBtn.innerHTML;
     submitBtn.disabled = true;
-    submitBtn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status"></span> AIで解析中...';
+    submitBtn.innerHTML =
+      '<span class="spinner-border spinner-border-sm" role="status"></span> ' +
+      'AIで解析中...';
+
+    runE2EEFullClientFlow(rawText, paymentAccountCode, paymentAccountName)
+      .then(function(result) {
+        window.location.href = result.redirect_url;
+      })
+      .catch(function(err) {
+        submitBtn.disabled = false;
+        submitBtn.innerHTML = originalLabel;
+        errorAlert.textContent = err.message || String(err);
+        errorAlert.classList.remove('d-none');
+      });
   });
+
+  async function runE2EEFullClientFlow(
+    rawText, paymentAccountCode, paymentAccountName,
+  ) {
+    var orchestratorMod = await import(
+      "{{ url_for('static', filename='js/crypto/web_import_orchestrator.js') }}"
+    );
+    var sharedClientMod = await import(
+      "{{ url_for('static', filename='js/crypto/shared-client.js') }}"
+    );
+    var workerUrl =
+      "{{ url_for('static', filename='js/crypto/shared-worker.js') }}";
+    var client = new sharedClientMod.SharedCryptoClient(workerUrl);
+    try {
+      var status = await client.status();
+      if (!status.hasKey) {
+        throw new Error(
+          'MK がロック中です。設定 → 暗号鍵管理 で解除してから再試行してください。');
+      }
+      return await orchestratorMod.extractAndSaveWebText({
+        rawText: rawText,
+        paymentAccountCode: paymentAccountCode,
+        paymentAccountName: paymentAccountName,
+        client: client,
+      });
+    } finally {
+      try { client.close(); } catch (_e) { /* ignore */ }
+    }
+  }
 })();
 </script>
 {% endblock %}
