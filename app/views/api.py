@@ -525,18 +525,7 @@ def ai_prompt_context():
 @auth_required(write=False)
 @limiter.limit("60 per hour", key_func=rate_limit_key)
 def web_import_prompt_context():
-    """E2 PR-C-5a: Web 明細抽出をクライアント完結で行うためのプロンプト材料を返却。
-
-    クライアントは:
-      1. ユーザーが入力した raw_text + payment_account_name と本 endpoint の
-         prompt_template の __PAYMENT_ACCOUNT_NAME__ / __RAW_TEXT__ を置換
-      2. provider/model に応じた text-LLM クライアント (E2-C-5b で追加予定) を
-         呼出して transactions[] を取得
-      3. /web-import/confirm の session を仕込んで一括取込画面へ遷移
-
-    サーバ側 ai_receipt.parse_web_text (E2-C-4i で削除済) と等価の
-    プロンプト + デフォルトモデル情報を配信する。
-    """
+    """E2EE web-import: クライアント側 LLM 呼出しのためのプロンプト材料を返す。"""
     user_id = g.auth_user.id
     from app.services.ai_receipt import PROVIDER_DEFAULTS, WEB_IMPORT_PROMPT
 
