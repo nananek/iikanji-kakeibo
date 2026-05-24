@@ -375,47 +375,9 @@ def register_cli(app):
                     failed += 1
         print(f"送信完了: 成功 {sent} 件 / 失敗 {failed} 件")
 
-    @app.cli.command("auto-import")
-    @click.option("--user-id", type=int, default=None, help="指定ユーザーのみ実行")
-    @click.option("--dry-run", is_flag=True, help="DB変更なしで動作確認")
-    def auto_import_command(user_id, dry_run):
-        """外部ソースからレシート画像を自動取込してAI仕訳下書きを作成する"""
-        from app.models.user import User
-        from app.models.auto_import import AutoImportSource
-        from app.services.auto_import import run_auto_import
-
-        if user_id:
-            user = User.query.get(user_id)
-            if not user:
-                print(f"ユーザー ID {user_id} が見つかりません。")
-                return
-            users = [user]
-        else:
-            user_ids = (
-                db.session.query(AutoImportSource.user_id)
-                .filter_by(is_active=True)
-                .distinct()
-                .all()
-            )
-            users = [User.query.get(uid[0]) for uid in user_ids]
-
-        if not users:
-            print("自動取込が設定されているユーザーがいません。")
-            return
-
-        prefix = "[DRY RUN] " if dry_run else ""
-        for user in users:
-            print(f"{prefix}自動取込: {user.username}")
-            stats = run_auto_import(user.id, dry_run=dry_run)
-            print(
-                f"  ソース: {stats['sources_processed']}, "
-                f"ファイル: {stats['files_found']}, "
-                f"新規: {stats['files_new']}, "
-                f"下書き: {stats['drafts_created']}, "
-                f"エラー: {len(stats['errors'])}"
-            )
-            for err in stats["errors"][:5]:
-                print(f"    ERROR: {err}")
+    # E2 PR-E-a: auto-import CLI コマンドは廃止
+    # (auto_import 機能丸ごと廃止に伴い、AutoImportSource / WebDAV provider /
+    # run_auto_import を全削除)
 
     @app.cli.command("generate-thumbnails")
     @click.option("--dry-run", is_flag=True, help="サムネイル生成をスキップして対象件数のみ表示")

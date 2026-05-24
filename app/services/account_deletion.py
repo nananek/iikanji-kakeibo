@@ -17,9 +17,9 @@ from app.models.ai_draft import AIDraft
 from app.models.ai_usage_log import AIUsageLog
 from app.models.api_key import APIKey
 from app.models.audit import AuditGrant, AuditGrantAccount
-# ProcessedFile は AutoImportSource 削除時に DB 側 ondelete=CASCADE で
+# E2 PR-E-a: AutoImportSource / ProcessedFile は廃止。WebhookConfig は維持。
 # 自動削除されるため明示削除不要 (未使用 import 整理、PR #97 Nit)。
-from app.models.auto_import import AutoImportSource, WebhookConfig
+from app.models.auto_import import WebhookConfig
 from app.models.balance_cache import BalanceCache
 from app.models.csv_column_profile import CsvColumnProfile
 from app.models.fiscal import FiscalClose
@@ -123,19 +123,16 @@ def delete_user_account(user_id: int) -> None:
     db.session.flush()
 
     # 5. user_id を持つ各テーブルを削除
+    # E2 PR-E-a: AutoImportSource は廃止 (テーブルごと削除)
     for model in (
         UserAIConfig, AIUsageLog, APIKey,
-        AutoImportSource, BalanceCache, CsvColumnProfile,
+        BalanceCache, CsvColumnProfile,
         FiscalClose, MedicalExpense,
         OAuthDevice, OAuthToken,
         StorageUsage, Account, WebAuthnCredential,
         WebhookConfig,
     ):
         model.query.filter_by(user_id=user_id).delete()
-
-    # ProcessedFile は AutoImportSource 経由で間接的に紐づく → AutoImportSource
-    # 削除後の cascade で消える設計だが、念のため source_id IS NULL の
-    # 孤立 row も削除しない (他ユーザーの影響を避けるため触らない)
 
     # TaxFormMapping (user_id は ForeignKey なし、独立カラム)
     db.session.execute(

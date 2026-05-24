@@ -119,14 +119,8 @@
       </div>
     </a>
   </div>
-  <div class="col">
-    <a href="{{ url_for('settings.auto_import') }}" class="card h-100 text-decoration-none shadow-sm">
-      <div class="card-body">
-        <h6 class="card-title"><i class="bi bi-bell text-primary"></i> 通知</h6>
-        <p class="card-text text-muted small mb-0">Discord等のWebhook通知</p>
-      </div>
-    </a>
-  </div>
+  {# E2 PR-E-a: 通知 (auto_import / Webhook) 設定 UI は廃止。
+     Webhook 通知設定の再構築は別 PR で対応予定。 #}
   <div class="col">
     <a href="{{ url_for('settings.api_keys') }}" class="card h-100 text-decoration-none shadow-sm">
       <div class="card-body">

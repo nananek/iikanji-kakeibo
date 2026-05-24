@@ -498,10 +498,12 @@ class TestTaxForm:
         assert resp.status_code == 200
 
 
-class TestAutoImport:
-    def test_get(self, logged_in_client, accounts):
+class TestAutoImportRemoved:
+    """E2 PR-E-a: /settings/auto-import は廃止 (404)。"""
+
+    def test_endpoint_removed(self, logged_in_client, accounts):
         resp = logged_in_client.get("/settings/auto-import")
-        assert resp.status_code == 200
+        assert resp.status_code == 404
 
 
 class TestOAuthTokens:

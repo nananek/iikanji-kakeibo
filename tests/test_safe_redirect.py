@@ -7,7 +7,7 @@ from app.views.helpers import is_safe_internal_path
 
 class TestIsSafeInternalPath:
     @pytest.mark.parametrize("p", [
-        "/journal/", "/cashbook/edit/1", "/settings/auto-import/",
+        "/journal/", "/cashbook/edit/1", "/settings/ai/",
         "/a/b?x=1", "/a/b#frag",
     ])
     def test_internal_paths_allowed(self, p):
