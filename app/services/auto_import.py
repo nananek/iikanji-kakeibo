@@ -1,4 +1,13 @@
-"""自動取込オーケストレーター"""
+"""自動取込オーケストレーター
+
+E2 PR-C-4g: サーバ側 AI 解析 (analyze_and_suggest) 依存を削除。WebDAV から
+取り込んだ画像は AIDraft (status='pending') として保存され、ユーザーが
+/ai-journal の E2EE クライアント解析モードで後から解析する流れに変更。
+
+WebDAV 認証情報の Fernet 暗号化 (encrypt_credentials/decrypt_credentials)
+は API キーとは別概念のため本 PR では維持。E2-C-4i 以降で _get_fernet の
+所在を整理する。
+"""
 
 import json
 import logging
@@ -9,7 +18,7 @@ from app.models.auto_import import AutoImportSource, ProcessedFile, WebhookConfi
 from app.models.ai_draft import AIDraft
 from app.models.ai_config import UserAIConfig
 from app.models.user import User
-from app.services.ai_receipt import _get_fernet, analyze_and_suggest
+from app.services.ai_receipt import _get_fernet
 from app.services.sources.webdav import WebDAVProvider
 from app.services.notify import send_webhook
 from app.services.storage import make_storage_key, store_image_with_thumbnail
@@ -143,7 +152,11 @@ def _process_source(
 
 
 def _process_file(source, provider, file_info, user_id, mime_type, dry_run, stats):
-    """1つのファイルを処理する"""
+    """1つのファイルを処理する
+
+    E2 PR-C-4g: サーバ側 AI 解析は行わない。画像を AIDraft (status='pending')
+    として保存し、ユーザーが /ai-journal の E2EE モードで後から解析する。
+    """
     try:
         image_bytes = provider.download_file(file_info.path)
 
@@ -163,28 +176,9 @@ def _process_file(source, provider, file_info, user_id, mime_type, dry_run, stat
             logger.warning("Quota exceeded for %s: %s", file_info.path, exc)
             return
 
-        suggestions = analyze_and_suggest(
-            user_id, image_bytes, mime_type,
-            comment=f"自動取込: {source.name}",
-        )
-
         if dry_run:
             stats["drafts_created"] += 1
             return
-
-        suggestions_json = json.dumps(
-            [
-                {
-                    "title": s.title,
-                    "description": s.description,
-                    "date": s.date,
-                    "entry_description": s.entry_description,
-                    "lines": s.lines,
-                }
-                for s in suggestions
-            ],
-            ensure_ascii=False,
-        )
 
         import hashlib
         file_hash = hashlib.sha256(image_bytes).hexdigest()
@@ -195,8 +189,8 @@ def _process_file(source, provider, file_info, user_id, mime_type, dry_run, stat
             file_hash=file_hash,
             file_size=size,
             comment=f"自動取込: {source.name}",
-            suggestions_json=suggestions_json,
-            status="analyzed",
+            suggestions_json="[]",
+            status="pending",
         )
         db.session.add(draft)
         db.session.flush()
