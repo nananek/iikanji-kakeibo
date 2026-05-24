@@ -310,7 +310,7 @@ class TestAiLedgerContext:
     def test_returns_ledger_text_for_matched_accounts(
         self, db, logged_in_client, user, accounts,
     ):
-        """既存仕訳があれば該当科目の元帳テキストが返る。"""
+        """既存仕訳があれば該当科目の元帳テキスト (ヘッダ + 金額) が返る。"""
         from datetime import date
         from tests.conftest import make_journal
         make_journal(
@@ -322,8 +322,14 @@ class TestAiLedgerContext:
         )
         assert resp.status_code == 200
         body = resp.get_json()
-        # 「【食費】」のヘッダか何らかのテキスト
-        assert isinstance(body["ledger_text"], str)
+        ledger = body["ledger_text"]
+        assert isinstance(ledger, str)
+        # 科目ヘッダ + 仕訳金額 (¥500) が含まれることで _get_ledger_context が
+        # 実際に呼ばれて整形済テキストを返したことを確認
+        assert "食費" in ledger
+        assert "5010" in ledger
+        # 金額表示は "¥500" 形式 (_get_ledger_context の f-string 出力)
+        assert "¥500" in ledger or "500" in ledger
 
     def test_ignores_non_string_and_oversized_entries(
         self, logged_in_client, accounts,

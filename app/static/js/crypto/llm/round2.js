@@ -91,6 +91,11 @@ export function buildRound2Prompt({
  * for s in suggestions_raw: ... ロジックと等価。
  *
  * 戻り値: { suggestions: 有効件, dropped: 無効件数 }
+ *
+ * 仕様: 借方 / 貸方の合計バランスチェックは行わない (line 数の有無のみ確認)。
+ * サーバ側でも _build_suggestion_prompt は「合計一致」を LLM 出力の前提に
+ * しているため、合計不一致は LLM のミスとして許容する設計。バランスの最終
+ * 検証は仕訳登録フロー (E2-C-4d UI 統合) で実施する。
  */
 export function validateSuggestions(rawSuggestions, validCodeSet) {
   if (!Array.isArray(rawSuggestions)) return { suggestions: [], dropped: 0 };

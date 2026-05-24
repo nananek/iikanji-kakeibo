@@ -667,6 +667,11 @@ def ai_ledger_context():
     自分でテキスト構築する設計に変更が必要 (本 endpoint は廃止予定)。
     """
     user_id = g.auth_user.id
+    # `_get_ledger_context` は ai_receipt.py の内部関数 (`_` プレフィックス)
+    # だが、本 endpoint は移行期間の互換層であり、E2-C-4e で ai_receipt.py
+    # 全体を削除する際に本 endpoint も同時に削除予定 (E3 では仕訳暗号化で
+    # クライアント側 ledger 構築に変わる)。短命なので意図的に内部関数を直接
+    # 流用している。
     from app.services.ai_receipt import _get_ledger_context
 
     payload = request.get_json(silent=True) or {}
