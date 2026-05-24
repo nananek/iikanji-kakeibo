@@ -45,12 +45,12 @@ test.describe("設定トップページ", () => {
 
   test("全設定カードが表示される", async ({ page }) => {
     await page.goto(`${BASE_URL}/settings/`);
+    // 「通知」カードは auto_import 廃止 (PR #170) に伴い削除
     for (const label of [
       "勘定科目",
       "月次確定",
       "表示設定",
       "外部AI",
-      "通知",
       "APIキー管理",
       "Passkey管理",
     ]) {
