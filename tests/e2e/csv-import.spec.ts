@@ -129,23 +129,17 @@ test.describe("CSV明細取込 — フルフロー", () => {
     await login(page);
   });
 
-  test("CSVアップロード → 列マッピング(AI自動検出) → 確認 → 取込完了", async ({ page }) => {
+  test("CSVアップロード → 列マッピング(手動) → 確認 → 取込完了", async ({ page }) => {
     // Step 1: アップロード
     await navigateToMapping(page);
 
-    // Step 2: 列マッピング — AI自動検出バッジが表示される
-    await expect(page.locator(".badge.bg-info")).toContainText("AI自動検出");
-
-    // ドロップダウンがAI検出結果で自動選択されている
-    await expect(page.locator('select[name="date_col"]')).toHaveValue("0");
-    await expect(page.locator('select[name="desc_col"]')).toHaveValue("1");
-    await expect(page.locator('select[name="deposit_col"]')).toHaveValue("2");
-    await expect(page.locator('select[name="withdrawal_col"]')).toHaveValue("3");
-
+    // Step 2: 列マッピング — 初回はプロファイルも AI 自動検出も無いので未選択。
+    // (E2-C-6d 以降、AI 列推定はユーザーがボタンを押した時のみクライアント
+    // 完結で走る。サーバ自動検出は廃止されたためテストでは手動選択する。)
     // プレビューテーブルが表示されている
     await expect(page.locator("#previewTable")).toBeVisible();
 
-    // 送信 → 確認ページ
+    // 送信 → 確認ページ (submitMappingAndGoToConfirm 内で手動選択)
     await submitMappingAndGoToConfirm(page);
 
     // Step 3: 確認ページ — Alpine.js テーブルの行を待つ

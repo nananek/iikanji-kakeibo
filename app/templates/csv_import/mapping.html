@@ -10,9 +10,10 @@
     <span class="text-muted ms-2">取込先: {{ payment_account.name }} / 全{{ total_rows }}件</span>
     {% if mapping_source == "saved" %}
     <span class="badge bg-success ms-2"><i class="bi bi-check-circle"></i> 保存済みプロファイル</span>
-    {% elif mapping_source == "ai" %}
-    <span class="badge bg-info ms-2"><i class="bi bi-stars"></i> AI自動検出</span>
     {% endif %}
+    <span class="badge bg-info ms-2 d-none" id="aiBadge">
+      <i class="bi bi-stars"></i> AI 推定済み
+    </span>
   </div>
   <div class="card-body">
     <form method="POST">
@@ -74,8 +75,14 @@
         <button type="submit" class="btn btn-primary">
           <i class="bi bi-arrow-right"></i> プレビューして次へ
         </button>
+        {% if has_ai_config %}
+        <button type="button" class="btn btn-outline-info" id="aiDetectBtn">
+          <i class="bi bi-stars"></i> AI で列を推定
+        </button>
+        {% endif %}
         <a href="{{ url_for('csv_import.upload') }}" class="btn btn-outline-secondary">戻る</a>
       </div>
+      <div id="aiDetectError" class="alert alert-danger d-none"></div>
     </form>
 
     <h5 class="mt-4">CSVプレビュー（先頭{{ preview_rows|length }}行）</h5>
@@ -139,5 +146,86 @@ function highlightColumns() {
 }
 
 document.addEventListener('DOMContentLoaded', highlightColumns);
+
+// --- AI 列推定 (クライアント完結 E2EE フロー) ---
+{% if has_ai_config %}
+(function () {
+  const btn = document.getElementById('aiDetectBtn');
+  if (!btn) return;
+  const errBox = document.getElementById('aiDetectError');
+  const headersData = {{ headers | tojson }};
+  const sampleRowsData = {{ preview_rows | tojson }};
+
+  function showErr(msg) {
+    errBox.textContent = msg;
+    errBox.classList.remove('d-none');
+  }
+  function clearErr() {
+    errBox.classList.add('d-none');
+    errBox.textContent = '';
+  }
+
+  function applyMapping(m) {
+    if (!m) return;
+    const setSel = (id, val) => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.value = val === null || val === undefined ? '' : String(val);
+    };
+    setSel('dateCol', m.date_col);
+    setSel('descCol', m.desc_col);
+    setSel('depositCol', m.deposit_col);
+    setSel('withdrawalCol', m.withdrawal_col);
+    // date_format select (name="date_format")
+    if (m.date_format) {
+      const fmt = document.querySelector('select[name="date_format"]');
+      if (fmt) {
+        for (const opt of fmt.options) {
+          if (opt.value === m.date_format) { fmt.value = m.date_format; break; }
+        }
+      }
+    }
+    highlightColumns();
+  }
+
+  btn.addEventListener('click', async () => {
+    clearErr();
+    btn.disabled = true;
+    const origLabel = btn.innerHTML;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> AI 推定中...';
+    try {
+      const orch = await import("{{ url_for('static', filename='js/crypto/csv_columns_detect_orchestrator.js') }}");
+      const cl = await import("{{ url_for('static', filename='js/crypto/shared-client.js') }}");
+      const workerUrl = "{{ url_for('static', filename='js/crypto/shared-worker.js') }}";
+      const client = new cl.SharedCryptoClient(workerUrl);
+      try {
+        const status = await client.status();
+        if (!status.hasKey) {
+          throw new Error('MK ロック中です (設定 → 暗号鍵管理 で解除)');
+        }
+        const mapping = await orch.runColumnsDetect({
+          headers: headersData,
+          sampleRows: sampleRowsData,
+          client,
+        });
+        if (!mapping) {
+          showErr('AI が有効な列マッピングを返せませんでした。');
+        } else {
+          applyMapping(mapping);
+          const badge = document.getElementById('aiBadge');
+          if (badge) badge.classList.remove('d-none');
+        }
+      } finally {
+        try { client.close(); } catch (_e) { /* ignore */ }
+      }
+    } catch (err) {
+      showErr('AI 推定に失敗しました: ' + (err.message || err));
+    } finally {
+      btn.disabled = false;
+      btn.innerHTML = origLabel;
+    }
+  });
+})();
+{% endif %}
 </script>
 {% endblock %}

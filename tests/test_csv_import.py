@@ -13,7 +13,7 @@ from app.services.csv_import import (
     parse_date,
     save_column_profile,
     load_column_profile,
-    detect_columns_by_ai,
+    validate_ai_column_mapping,
 )
 
 
@@ -460,109 +460,52 @@ class TestCsvColumnProfileModel:
 
 
 # ============================================================
-# detect_columns_by_ai
+# validate_ai_column_mapping
 # ============================================================
 
-class TestDetectColumnsByAi:
-    _HEADERS = ["日付", "摘要", "入金", "出金"]
-    _ROWS = [["2026/01/01", "テスト", "1000", ""]]
 
-    def test_no_ai_config_returns_none(self, app, db, user):
-        result = detect_columns_by_ai(user.id, self._HEADERS, self._ROWS)
-        assert result is None
+class TestValidateAiColumnMapping:
+    """LLM 出力の検証ロジック。LLM 呼出自体はクライアント側
+    csv_columns_detect_orchestrator.js が行う (E2EE)。"""
 
-    @patch("app.services.ai_receipt._TEXT_PROVIDER_HANDLERS")
-    @patch("app.services.ai_receipt._get_ai_config")
-    @patch("app.models.ai_config.UserAIConfig")
-    def test_successful_detection(self, mock_model, mock_config,
-                                  mock_handlers, app, db, user):
-        mock_model.query.filter_by.return_value.first.return_value = MagicMock()
-        mock_config.return_value = (
-            "key", "openai", "gpt-4o", None, "", {}, False
-        )
-        mock_handler = MagicMock(return_value=({
+    def test_normal(self):
+        m = validate_ai_column_mapping({
             "date_col": 0, "desc_col": 1,
             "deposit_col": 2, "withdrawal_col": 3,
             "date_format": "%Y/%m/%d",
-        }, {"input_tokens": None, "output_tokens": None}))
-        mock_handlers.get.return_value = mock_handler
+        }, num_cols=4)
+        assert m == {
+            "date_col": 0, "desc_col": 1,
+            "deposit_col": 2, "withdrawal_col": 3,
+            "date_format": "%Y/%m/%d",
+        }
 
-        result = detect_columns_by_ai(user.id, self._HEADERS, self._ROWS)
-
-        assert result is not None
-        assert result["date_col"] == 0
-        assert result["desc_col"] == 1
-        assert result["deposit_col"] == 2
-        assert result["withdrawal_col"] == 3
-        assert result["date_format"] == "%Y/%m/%d"
-
-    @patch("app.services.ai_receipt._TEXT_PROVIDER_HANDLERS")
-    @patch("app.services.ai_receipt._get_ai_config")
-    @patch("app.models.ai_config.UserAIConfig")
-    def test_withdrawal_only_detection(self, mock_model, mock_config,
-                                       mock_handlers, app, db, user):
-        """クレカCSVなど入金列なしの検出"""
-        mock_model.query.filter_by.return_value.first.return_value = MagicMock()
-        mock_config.return_value = (
-            "key", "openai", "gpt-4o", None, "", {}, False
-        )
-        mock_handler = MagicMock(return_value=({
+    def test_withdrawal_only(self):
+        m = validate_ai_column_mapping({
             "date_col": 0, "desc_col": 1,
             "deposit_col": None, "withdrawal_col": 2,
             "date_format": "%Y/%m/%d",
-        }, {"input_tokens": None, "output_tokens": None}))
-        mock_handlers.get.return_value = mock_handler
+        }, num_cols=3)
+        assert m["deposit_col"] is None
+        assert m["withdrawal_col"] == 2
 
-        result = detect_columns_by_ai(
-            user.id, ["日付", "摘要", "金額"],
-            [["2026/01/01", "テスト", "1000"]],
-        )
-        assert result is not None
-        assert result["deposit_col"] is None
-        assert result["withdrawal_col"] == 2
+    def test_out_of_range_returns_none(self):
+        assert validate_ai_column_mapping({
+            "date_col": 99, "desc_col": 1, "date_format": "%Y/%m/%d",
+        }, num_cols=4) is None
 
-    @patch("app.services.ai_receipt._TEXT_PROVIDER_HANDLERS")
-    @patch("app.services.ai_receipt._get_ai_config")
-    @patch("app.models.ai_config.UserAIConfig")
-    def test_ai_error_returns_none(self, mock_model, mock_config,
-                                   mock_handlers, app, db, user):
-        mock_model.query.filter_by.return_value.first.return_value = MagicMock()
-        mock_config.return_value = (
-            "key", "openai", "gpt-4o", None, "", {}, False
-        )
-        mock_handler = MagicMock(side_effect=RuntimeError("API error"))
-        mock_handlers.get.return_value = mock_handler
+    def test_missing_required_returns_none(self):
+        assert validate_ai_column_mapping({"date_col": 0}, num_cols=4) is None
 
-        result = detect_columns_by_ai(user.id, self._HEADERS, self._ROWS)
-        assert result is None
+    def test_non_dict_returns_none(self):
+        assert validate_ai_column_mapping(None, num_cols=4) is None
+        assert validate_ai_column_mapping("x", num_cols=4) is None
 
-    @patch("app.services.ai_receipt._TEXT_PROVIDER_HANDLERS")
-    @patch("app.services.ai_receipt._get_ai_config")
-    @patch("app.models.ai_config.UserAIConfig")
-    def test_invalid_column_index_returns_none(self, mock_model, mock_config,
-                                               mock_handlers, app, db, user):
-        mock_model.query.filter_by.return_value.first.return_value = MagicMock()
-        mock_config.return_value = (
-            "key", "openai", "gpt-4o", None, "", {}, False
-        )
-        mock_handler = MagicMock(return_value={
-            "date_col": 99, "desc_col": 1,
-            "date_format": "%Y/%m/%d",
-        })
-        mock_handlers.get.return_value = mock_handler
-
-        result = detect_columns_by_ai(user.id, self._HEADERS, self._ROWS)
-        assert result is None
-
-    @patch("app.services.ai_receipt._get_ai_config")
-    @patch("app.models.ai_config.UserAIConfig")
-    def test_config_error_returns_none(self, mock_model, mock_config,
-                                       app, db, user):
-        mock_model.query.filter_by.return_value.first.return_value = MagicMock()
-        mock_config.side_effect = ValueError("API設定エラー")
-
-        result = detect_columns_by_ai(user.id, self._HEADERS, self._ROWS)
-        assert result is None
+    def test_default_date_format(self):
+        m = validate_ai_column_mapping({
+            "date_col": 0, "desc_col": 1,
+        }, num_cols=2)
+        assert m["date_format"] == "%Y/%m/%d"
 
 
 # ============================================================
@@ -747,3 +690,102 @@ class TestSnapMatchDate:
         resp = client.post("/csv-import/match/snap-date",
                            json={"entry_id": 1, "csv_date": "2026-05-01"})
         assert resp.status_code in (302, 401)
+
+
+# ============================================================
+# POST /csv-import/api/columns-detect-context
+# ============================================================
+
+
+class TestColumnsDetectContext:
+    """クライアント側 LLM 呼出のためのプロンプト材料配信エンドポイント。"""
+
+    def test_unauthenticated(self, client):
+        resp = client.post("/csv-import/api/columns-detect-context",
+                           json={"headers": ["a"], "sample_rows": []})
+        assert resp.status_code in (302, 401)
+
+    def test_returns_template_and_metadata(
+        self, logged_in_client, accounts,
+    ):
+        resp = logged_in_client.post(
+            "/csv-import/api/columns-detect-context",
+            json={
+                "headers": ["日付", "摘要", "入金", "出金"],
+                "sample_rows": [["2026/01/01", "テスト", "1000", ""]],
+            },
+        )
+        assert resp.status_code == 200
+        body = resp.get_json()
+        # placeholder 3 種
+        assert "__HEADERS_TEXT__" in body["prompt_template"]
+        assert "__SAMPLE_TEXT__" in body["prompt_template"]
+        assert "__SAMPLE_COUNT__" in body["prompt_template"]
+        # サーバ側で構築済の headers_text / sample_text
+        assert "[0] 日付" in body["headers_text"]
+        assert "[1] 摘要" in body["headers_text"]
+        assert "テスト" in body["sample_text"]
+        assert body["sample_count"] == 1
+        assert body["num_cols"] == 4
+        # default_model_by_provider
+        from app.services.ai_receipt import PROVIDER_DEFAULTS
+        for k in ("openai", "anthropic", "google"):
+            assert body["default_model_by_provider"][k] == PROVIDER_DEFAULTS[k]
+        assert "llama_cpp" not in body["default_model_by_provider"]
+        # custom_prompt (UserAIConfig 未設定なら空文字)
+        assert body["custom_prompt"] == ""
+        # api_key 関連は一切返却しない
+        assert "api_key_blob" not in body
+
+    def test_invalid_headers_returns_400(self, logged_in_client, accounts):
+        resp = logged_in_client.post(
+            "/csv-import/api/columns-detect-context",
+            json={"headers": [], "sample_rows": []},
+        )
+        assert resp.status_code == 400
+
+    def test_non_list_sample_rows_returns_400(self, logged_in_client, accounts):
+        resp = logged_in_client.post(
+            "/csv-import/api/columns-detect-context",
+            json={"headers": ["a"], "sample_rows": "not-list"},
+        )
+        assert resp.status_code == 400
+
+    def test_too_many_headers_returns_400(self, logged_in_client, accounts):
+        resp = logged_in_client.post(
+            "/csv-import/api/columns-detect-context",
+            json={"headers": [f"col{i}" for i in range(51)], "sample_rows": []},
+        )
+        assert resp.status_code == 400
+        assert "exceeds maximum" in resp.get_json()["error"]
+
+    def test_header_too_long_returns_400(self, logged_in_client, accounts):
+        resp = logged_in_client.post(
+            "/csv-import/api/columns-detect-context",
+            json={"headers": ["x" * 201], "sample_rows": []},
+        )
+        assert resp.status_code == 400
+
+    def test_non_string_header_returns_400(self, logged_in_client, accounts):
+        resp = logged_in_client.post(
+            "/csv-import/api/columns-detect-context",
+            json={"headers": [123, "ok"], "sample_rows": []},
+        )
+        assert resp.status_code == 400
+
+    def test_long_cell_truncated_to_max_cell_len(
+        self, logged_in_client, accounts,
+    ):
+        long_cell = "x" * 5000
+        resp = logged_in_client.post(
+            "/csv-import/api/columns-detect-context",
+            json={
+                "headers": ["a", "b"],
+                "sample_rows": [[long_cell, "ok"]],
+            },
+        )
+        assert resp.status_code == 200
+        # MAX_CELL_LEN=1000 で切り詰められ、5000 x が残らない
+        assert "x" * 2000 not in resp.get_json()["sample_text"]
+        assert "x" * 1000 in resp.get_json()["sample_text"]
+

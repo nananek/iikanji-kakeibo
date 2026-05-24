@@ -6,7 +6,7 @@ import uuid
 from flask import Blueprint, render_template, redirect, url_for, flash, request, session, jsonify
 from flask_login import login_required, current_user
 
-from app.extensions import db
+from app.extensions import db, limiter
 from app.models.account import Account, AccountType
 from app.models.ai_config import UserAIConfig
 from app.models.journal import JournalEntry
@@ -17,7 +17,6 @@ from app.services.csv_import import (
     DATE_FORMATS,
     load_column_profile,
     save_column_profile,
-    detect_columns_by_ai,
 )
 from app.services.accounting import create_cashbook_entry, create_transfer_entry
 from app.services.fiscal import (
@@ -125,11 +124,14 @@ def mapping():
             saved_mapping = profile
             mapping_source = "saved"
 
-    if not saved_mapping:
-        ai_result = detect_columns_by_ai(user_id, headers, preview["rows"])
-        if ai_result:
-            saved_mapping = ai_result
-            mapping_source = "ai"
+    # AI 列推定 UI を出すかは E2EE 形式の AI 設定があるかで判定。
+    # llama_cpp はサーバ管理者向けで client-side LLM 呼出に対応していないため
+    # ボタン自体を出さない (orchestrator のエラーを生で見せないため)。
+    _cfg = UserAIConfig.query.filter_by(user_id=user_id).first()
+    _client_side_providers = {"openai", "anthropic", "google"}
+    has_ai_config = bool(
+        _cfg and _cfg.is_e2ee and _cfg.provider in _client_side_providers
+    )
 
     if request.method == "POST":
         date_col = request.form.get("date_col", type=int)
@@ -207,7 +209,62 @@ def mapping():
         payment_account=payment_account,
         saved_mapping=saved_mapping,
         mapping_source=mapping_source,
+        has_ai_config=has_ai_config,
     )
+
+
+@bp.route("/api/columns-detect-context", methods=["POST"])
+@login_required
+@limiter.limit("60 per hour")
+def columns_detect_context():
+    """CSV 列推定 AI のクライアント完結用エンドポイント。
+
+    クライアントが headers + sample_rows を POST し、サーバは prompt 構築用
+    の placeholder テンプレ + default_model_by_provider を返す。LLM 呼出は
+    クライアント側 csv_columns_detect_orchestrator.js が実行する。
+    """
+    from app.services.ai_receipt import PROVIDER_DEFAULTS
+    from app.services.csv_import import CSV_COLUMN_DETECT_PROMPT_TEMPLATE
+
+    MAX_HEADERS = 50
+    MAX_HEADER_LEN = 200
+    MAX_CELL_LEN = 1000
+
+    payload = request.get_json(silent=True) or {}
+    headers = payload.get("headers")
+    sample_rows = payload.get("sample_rows", [])
+    if not isinstance(headers, list) or not headers:
+        return jsonify({"error": "headers must be a non-empty list"}), 400
+    if len(headers) > MAX_HEADERS:
+        return jsonify({"error": f"headers exceeds maximum ({MAX_HEADERS})"}), 400
+    if any(not isinstance(h, str) or len(h) > MAX_HEADER_LEN for h in headers):
+        return jsonify({"error": "each header must be a string under 200 chars"}), 400
+    if not isinstance(sample_rows, list):
+        return jsonify({"error": "sample_rows must be a list"}), 400
+
+    headers_text = ", ".join(f"[{i}] {h}" for i, h in enumerate(headers))
+    sample_lines = []
+    for row in sample_rows[:5]:
+        if isinstance(row, list):
+            sample_lines.append(", ".join(str(c)[:MAX_CELL_LEN] for c in row))
+    sample_text = "\n".join(sample_lines)
+
+    user_id = get_effective_user_id()
+    config = UserAIConfig.query.filter_by(user_id=user_id).first()
+    custom_prompt = config.custom_prompt if config else ""
+
+    return jsonify({
+        "ok": True,
+        "prompt_template": CSV_COLUMN_DETECT_PROMPT_TEMPLATE,
+        "headers_text": headers_text,
+        "sample_text": sample_text,
+        "sample_count": len(sample_lines),
+        "num_cols": len(headers),
+        "custom_prompt": custom_prompt,
+        "default_model_by_provider": {
+            k: v for k, v in PROVIDER_DEFAULTS.items() if k != "llama_cpp"
+        },
+    })
 
 
 @bp.route("/confirm", methods=["GET", "POST"])
