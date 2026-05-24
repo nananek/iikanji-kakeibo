@@ -244,24 +244,26 @@ def load_column_profile(user_id, account_code):
 
 # --- AI列自動検出 ---
 
-CSV_COLUMN_DETECT_PROMPT = """あなたは日本の家計簿アプリのアシスタントです。
+# E2 PR-C-6d: クライアント完結用 placeholder 版テンプレート。
+# `__HEADERS_TEXT__` / `__SAMPLE_TEXT__` / `__SAMPLE_COUNT__` を JS 側で置換。
+CSV_COLUMN_DETECT_PROMPT_TEMPLATE = """あなたは日本の家計簿アプリのアシスタントです。
 以下はCSVファイルのヘッダーとサンプルデータです。列マッピングを推定してください。
 
 ヘッダー:
-{headers_text}
+__HEADERS_TEXT__
 
-サンプルデータ（先頭{sample_count}行）:
-{sample_text}
+サンプルデータ（先頭__SAMPLE_COUNT__行）:
+__SAMPLE_TEXT__
 
 以下のJSON形式のみを返してください。余計なテキストは不要です。
 
-{{
+{
   "date_col": 日付列のインデックス（0始まり）,
   "desc_col": 摘要・説明列のインデックス（0始まり）,
   "deposit_col": 入金（預入・収入）列のインデックス（0始まり、なければ null）,
   "withdrawal_col": 出金（引出・支払）列のインデックス（0始まり、なければ null）,
   "date_format": 日付のstrftime形式（例: "%Y/%m/%d", "%Y-%m-%d"）
-}}
+}
 
 注意:
 - インデックスは0始まりの整数です
@@ -274,57 +276,16 @@ CSV_COLUMN_DETECT_PROMPT = """あなたは日本の家計簿アプリのアシ�
 - 日付形式は実際のデータに合わせてください"""
 
 
-def detect_columns_by_ai(user_id, headers, sample_rows):
-    """AIを使ってCSVの列マッピングを推定する
+def validate_ai_column_mapping(result: dict, num_cols: int) -> dict | None:
+    """LLM 出力 (date_col / desc_col / etc) を mapping dict に整形 + バリデーション。
 
     Returns:
-        dict or None: マッピング結果。失敗時は None。
+        dict (date_col / desc_col / date_format / deposit_col / withdrawal_col)
+        or None (検証失敗)
     """
-    from app.models.ai_config import UserAIConfig
-    from app.services.ai_receipt import (
-        _get_ai_config, _TEXT_PROVIDER_HANDLERS, _extract_json, _call_ai_text,
-    )
-
-    config = UserAIConfig.query.filter_by(user_id=user_id).first()
-    if not config:
+    if not isinstance(result, dict):
         return None
-
-    try:
-        api_key, provider, model, _, __, extra_kw, ___ = _get_ai_config(
-            user_id
-        )
-    except (ValueError, RuntimeError):
-        return None
-
-    text_handler = _TEXT_PROVIDER_HANDLERS.get(provider)
-    if not text_handler:
-        return None
-
-    headers_text = ", ".join(f"[{i}] {h}" for i, h in enumerate(headers))
-    sample_lines = []
-    for row in sample_rows[:5]:
-        sample_lines.append(", ".join(row))
-    sample_text = "\n".join(sample_lines)
-
-    prompt = CSV_COLUMN_DETECT_PROMPT.format(
-        headers_text=headers_text,
-        sample_count=len(sample_lines),
-        sample_text=sample_text,
-    )
-
-    try:
-        result = _call_ai_text(
-            text_handler, api_key, model, prompt, 500, user_id, extra_kw,
-            provider=provider, feature="csv_columns_detect",
-        )
-    except Exception:
-        logger.warning(
-            "AI column detection failed for user %s", user_id, exc_info=True,
-        )
-        return None
-
-    # バリデーション
-    num_cols = len(headers)
+    num_cols = max(num_cols, 0)
     try:
         date_col = int(result["date_col"])
         desc_col = int(result["desc_col"])
@@ -354,8 +315,4 @@ def detect_columns_by_ai(user_id, headers, sample_rows):
 
         return mapping
     except (KeyError, TypeError, ValueError):
-        logger.warning(
-            "AI column detection returned invalid data for user %s",
-            user_id, exc_info=True,
-        )
         return None

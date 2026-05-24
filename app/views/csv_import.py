@@ -17,7 +17,6 @@ from app.services.csv_import import (
     DATE_FORMATS,
     load_column_profile,
     save_column_profile,
-    detect_columns_by_ai,
 )
 from app.services.accounting import create_cashbook_entry, create_transfer_entry
 from app.services.fiscal import (
@@ -125,11 +124,11 @@ def mapping():
             saved_mapping = profile
             mapping_source = "saved"
 
-    if not saved_mapping:
-        ai_result = detect_columns_by_ai(user_id, headers, preview["rows"])
-        if ai_result:
-            saved_mapping = ai_result
-            mapping_source = "ai"
+    # E2 PR-C-6d: AI 列推定はクライアント完結フローに移行。mapping ページ
+    # 描画時はサーバ側で推定せず、ユーザーが UI 上の「AI で推定」ボタンを
+    # 押した時に /api/v1/csv-import/columns-detect-context + クライアント
+    # 側 LLM 呼出で推定する。
+    has_ai_config = UserAIConfig.query.filter_by(user_id=user_id).first() is not None
 
     if request.method == "POST":
         date_col = request.form.get("date_col", type=int)
@@ -207,7 +206,53 @@ def mapping():
         payment_account=payment_account,
         saved_mapping=saved_mapping,
         mapping_source=mapping_source,
+        has_ai_config=has_ai_config,
     )
+
+
+@bp.route("/api/columns-detect-context", methods=["POST"])
+@login_required
+def columns_detect_context():
+    """E2 PR-C-6d: CSV 列推定 AI のクライアント完結用エンドポイント。
+
+    クライアントが headers + sample_rows を POST し、サーバは prompt 構築用
+    の placeholder テンプレ + default_model_by_provider を返す。LLM 呼出は
+    クライアント側 csv_columns_detect_orchestrator.js が実行する。
+    """
+    from app.services.ai_receipt import PROVIDER_DEFAULTS
+    from app.services.csv_import import CSV_COLUMN_DETECT_PROMPT_TEMPLATE
+
+    payload = request.get_json(silent=True) or {}
+    headers = payload.get("headers")
+    sample_rows = payload.get("sample_rows", [])
+    if not isinstance(headers, list) or not headers:
+        return jsonify({"error": "headers must be a non-empty list"}), 400
+    if not isinstance(sample_rows, list):
+        return jsonify({"error": "sample_rows must be a list"}), 400
+
+    headers_text = ", ".join(f"[{i}] {h}" for i, h in enumerate(headers))
+    sample_lines = []
+    for row in sample_rows[:5]:
+        if isinstance(row, list):
+            sample_lines.append(", ".join(str(c) for c in row))
+    sample_text = "\n".join(sample_lines)
+
+    user_id = get_effective_user_id()
+    config = UserAIConfig.query.filter_by(user_id=user_id).first()
+    custom_prompt = config.custom_prompt if config else ""
+
+    return jsonify({
+        "ok": True,
+        "prompt_template": CSV_COLUMN_DETECT_PROMPT_TEMPLATE,
+        "headers_text": headers_text,
+        "sample_text": sample_text,
+        "sample_count": len(sample_lines),
+        "num_cols": len(headers),
+        "custom_prompt": custom_prompt,
+        "default_model_by_provider": {
+            k: v for k, v in PROVIDER_DEFAULTS.items() if k != "llama_cpp"
+        },
+    })
 
 
 @bp.route("/confirm", methods=["GET", "POST"])
