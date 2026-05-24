@@ -26,7 +26,8 @@ class TestSettingsIndex:
         resp = logged_in_client.get("/settings/")
         html = resp.data.decode()
         assert "外部AI" in html
-        assert "通知" in html
+        # 通知 (auto_import / Webhook) UI は廃止
+        assert "通知" not in html
         # 旧名称が使われていないこと
         assert "AI API設定" not in html
         assert "自動取込" not in html
@@ -37,7 +38,8 @@ class TestSettingsIndex:
         assert "/accounts/" in html
         assert "/settings/fiscal" in html
         assert "/settings/ai" in html
-        assert "/settings/auto-import" in html
+        # auto-import / Webhook 通知 UI は廃止
+        assert "/settings/auto-import" not in html
         assert "/settings/api-keys" in html
         assert "/settings/passkeys" in html
         assert "/settings/encryption-keys" in html
