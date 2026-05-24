@@ -1008,34 +1008,7 @@ def suggest_categories():
     return jsonify(result)
 
 
-@bp.route("/api/ai-suggest-categories", methods=["POST"])
-@login_required
-def ai_suggest_categories():
-    """元帳データをAIに渡して科目を推定する
-
-    POST: {"payment_account_code": "1010", "rows": [{"description": "...", "deposit": 0, "withdrawal": 5000}, ...]}
-    Response: {"摘要1": {"account_code": "5010", "account_name": "食費"}, ...}
-    """
-    from app.services.ai_receipt import suggest_categories_by_ai
-
-    data = request.get_json()
-    if not data:
-        return jsonify({"error": "リクエストが不正です。"}), 400
-
-    payment_account_code = data.get("payment_account_code")
-    rows = data.get("rows", [])
-    if not payment_account_code or not rows:
-        return jsonify({"error": "取込先口座と取引データが必要です。"}), 400
-
-    user_id = get_effective_user_id()
-    try:
-        result = suggest_categories_by_ai(user_id, payment_account_code, rows)
-        return jsonify(result)
-    except ValueError as e:
-        from flask import current_app
-        current_app.logger.exception("suggest_categories_by_ai validation failed")
-        return jsonify({"error": safe_user_error(e)}), 400
-    except RuntimeError as e:
-        from flask import current_app
-        current_app.logger.exception("suggest_categories_by_ai runtime error")
-        return jsonify({"error": safe_user_error(e)}), 500
+# E2 PR-C-6b: /journal/api/ai-suggest-categories は廃止。
+# クライアントが直接 /api/v1/suggest-categories/prompt-context + ai-config +
+# クライアント側 LLM 呼出 (suggest_categories_orchestrator.js) で科目推定を
+# 行う。サーバには raw description も API キーも届かない。

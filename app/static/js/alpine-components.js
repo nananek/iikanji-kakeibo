@@ -1155,17 +1155,10 @@ document.addEventListener('alpine:init', function() {
         }
         this.aiLoading = true;
         var self = this;
-        fetch('/journal/api/ai-suggest-categories', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-CSRFToken': Alpine.store('csrf').token,
-          },
-          body: JSON.stringify({ payment_account_code: paymentAccountCode, rows: targets }),
-        })
-          .then(function(res) { return res.json(); })
+        // E2 PR-C-6b: クライアント完結 E2EE フローで実行。サーバには
+        // description / API キーが届かない。
+        runSuggestCategoriesE2EE(paymentAccountCode, targets)
           .then(function(data) {
-            if (data.error) { alert(data.error); return; }
             for (var i = 0; i < indices.length; i++) {
               var row = self.rows[indices[i]];
               var sugg = data[row.description];
@@ -1210,3 +1203,27 @@ document.addEventListener('alpine:init', function() {
   });
 
 });
+
+
+// E2 PR-C-6b: importConfirm.aiSuggestCategories から呼ばれる E2EE
+// クライアント完結フロー。サーバには description/API キー一切送らない。
+async function runSuggestCategoriesE2EE(paymentAccountCode, rows) {
+  var orchestratorMod = await import("/static/js/crypto/suggest_categories_orchestrator.js");
+  var sharedClientMod = await import("/static/js/crypto/shared-client.js");
+  var workerUrl = "/static/js/crypto/shared-worker.js";
+  var client = new sharedClientMod.SharedCryptoClient(workerUrl);
+  try {
+    var status = await client.status();
+    if (!status.hasKey) {
+      throw new Error("MK ロック中です (設定 → 暗号鍵管理 で解除)");
+    }
+    return await orchestratorMod.runSuggestCategories({
+      paymentAccountCode: paymentAccountCode,
+      rows: rows,
+      client: client,
+    });
+  } finally {
+    try { client.close(); } catch (_e) { /* ignore */ }
+  }
+}
+window.runSuggestCategoriesE2EE = runSuggestCategoriesE2EE;

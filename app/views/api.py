@@ -521,6 +521,61 @@ def ai_prompt_context():
     })
 
 
+@bp.route("/suggest-categories/prompt-context", methods=["GET"])
+@auth_required(write=False)
+@limiter.limit("60 per hour", key_func=rate_limit_key)
+def suggest_categories_prompt_context():
+    """E2EE suggest-categories: クライアント側 LLM 呼出しのためのプロンプト材料を返す。
+
+    payment_account_code クエリパラメータ必須 (元帳テキストを構築するため)。
+    レスポンスには勘定科目コード → 名前マップ (account_map) も含めて、
+    クライアントが LLM 出力の account_code から account_name を解決できる
+    ようにする。
+    """
+    from app.models.account import Account
+    from app.services.ai_receipt import (
+        AI_SUGGEST_CATEGORIES_PROMPT_TEMPLATE,
+        PROVIDER_DEFAULTS,
+        _get_account_list_text,
+        _get_payment_ledger_context,
+    )
+
+    user_id = g.auth_user.id
+    payment_account_code = request.args.get("payment_account_code", "").strip()
+    if not payment_account_code:
+        return jsonify({"error": "payment_account_code が必要です。"}), 400
+
+    account = Account.query.filter_by(
+        user_id=user_id, code=payment_account_code,
+    ).first()
+    if not account:
+        return jsonify({"error": "指定された口座が存在しません。"}), 400
+
+    config = UserAIConfig.query.filter_by(user_id=user_id).first()
+    custom_prompt = config.custom_prompt if config else ""
+
+    ledger_context = _get_payment_ledger_context(user_id, payment_account_code)
+    account_list = _get_account_list_text(user_id)
+
+    accounts = Account.query.filter_by(
+        user_id=user_id, is_active=True,
+    ).all()
+    account_map = {a.code: a.name for a in accounts}
+
+    return jsonify({
+        "ok": True,
+        "prompt_template": AI_SUGGEST_CATEGORIES_PROMPT_TEMPLATE,
+        "payment_account_name": account.name,
+        "ledger_context": ledger_context,
+        "account_list": account_list,
+        "account_map": account_map,
+        "custom_prompt": custom_prompt,
+        "default_model_by_provider": {
+            k: v for k, v in PROVIDER_DEFAULTS.items() if k != "llama_cpp"
+        },
+    })
+
+
 @bp.route("/voucher-attach/prompt-context", methods=["GET"])
 @auth_required(write=False)
 @limiter.limit("60 per hour", key_func=rate_limit_key)

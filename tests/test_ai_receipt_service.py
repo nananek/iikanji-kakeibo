@@ -39,7 +39,6 @@ from app.services.ai_receipt import (
     decrypt_api_key,
     encrypt_api_key,
     match_account,
-    suggest_categories_by_ai,
 )
 
 
@@ -309,67 +308,10 @@ class TestCallAi:
 # tests/static/js/test_ai_journal_orchestrator.mjs で担保されている。
 
 
-class TestSuggestCategoriesByAi:
-    def test_unknown_provider(self, db, user, accounts):
-        cfg = UserAIConfig(
-            user_id=user.id, provider="bad",
-            api_key_encrypted=encrypt_api_key("k"),
-            model_name="x",
-        )
-        db.session.add(cfg)
-        db.session.commit()
-        with pytest.raises(ValueError):
-            suggest_categories_by_ai(user.id, "1010", [])
-
-    def test_success(self, db, user, accounts):
-        _ai_config(db, user.id)
-        rows = [{"description": "セブン", "deposit": 0, "withdrawal": 500}]
-        mock_call = MagicMock(); _patches_text = patch.dict("app.services.ai_receipt._TEXT_PROVIDER_HANDLERS", {"openai": mock_call})
-        with _patches_text:
-            mock_call.return_value = _h({
-                "results": [{"index": 0, "account_code": "5010"}],
-            })
-            result = suggest_categories_by_ai(user.id, "1010", rows)
-            assert "セブン" in result
-            assert result["セブン"]["account_code"] == "5010"
-
-    def test_invalid_index_skipped(self, db, user, accounts):
-        _ai_config(db, user.id)
-        rows = [{"description": "x", "deposit": 0, "withdrawal": 100}]
-        mock_call = MagicMock(); _patches_text = patch.dict("app.services.ai_receipt._TEXT_PROVIDER_HANDLERS", {"openai": mock_call})
-        with _patches_text:
-            mock_call.return_value = _h({
-                "results": [
-                    {"index": 99, "account_code": "5010"},  # 範囲外
-                    {"index": None, "account_code": "5010"},
-                    {"index": 0, "account_code": None},
-                ],
-            })
-            result = suggest_categories_by_ai(user.id, "1010", rows)
-            assert result == {}
-
-    def test_inactive_account_not_in_output(self, db, user, accounts):
-        _ai_config(db, user.id)
-        rows = [{"description": "x", "deposit": 0, "withdrawal": 100}]
-        mock_call = MagicMock(); _patches_text = patch.dict("app.services.ai_receipt._TEXT_PROVIDER_HANDLERS", {"openai": mock_call})
-        with _patches_text:
-            mock_call.return_value = _h({
-                "results": [{"index": 0, "account_code": "9999"}],  # 存在しない
-            })
-            result = suggest_categories_by_ai(user.id, "1010", rows)
-            assert result == {}
-
-    def test_http_error(self, db, user, accounts):
-        _ai_config(db, user.id)
-        mock_call = MagicMock(); _patches_text = patch.dict("app.services.ai_receipt._TEXT_PROVIDER_HANDLERS", {"openai": mock_call})
-        with _patches_text:
-            request = MagicMock()
-            response = MagicMock(status_code=500)
-            mock_call.side_effect = httpx.HTTPStatusError(
-                "500", request=request, response=response,
-            )
-            with pytest.raises(RuntimeError):
-                suggest_categories_by_ai(user.id, "1010", [{"description": "x"}])
+# E2 PR-C-6b: TestSuggestCategoriesByAi は対応関数の削除に伴い削除。
+# 等価のクライアント側ロジック (rows_text 構築 / プロンプト組立 / index
+# 検証 / account_map マッピング / HTTP エラー伝播) は
+# tests/static/js/test_suggest_categories_orchestrator.mjs でカバー。
 
 
 class TestMatchAccount:
