@@ -565,16 +565,19 @@ def ai_prompt_context():
     クライアントは:
       1. 画像 + round1_prompt + (compliance/custom_prompt 追記) で LLM 呼出
       2. Round 1 結果から needs_ledger=true なら ledger 取得 endpoint (別 PR)
-      3. round2_prompt_template の 2 プレースホルダを実行時に置換:
-         - __ACCOUNT_LIST_TEXT__ → account_list_text (本 endpoint 戻り値)
-         - __LEDGER_TEXT__       → Round 1 後取得した ledger (なければ "")
+      3. needs_ledger に応じてテンプレートを選択し、プレースホルダ置換:
+         - needs_ledger=false → round2_prompt_template_no_ledger を使用、
+           __ACCOUNT_LIST_TEXT__ のみ置換 (元帳ヘッダは含まれない)
+         - needs_ledger=true  → round2_prompt_template_with_ledger を使用、
+           __ACCOUNT_LIST_TEXT__ と __LEDGER_TEXT__ を置換
          で Round 2 プロンプト構築 → 2 度目の LLM 呼出
       4. PATCH /api/v1/ai/drafts/<id>/suggestions で結果保存
 
     本 endpoint はサーバ側 ai_receipt.py の DOCUMENT_PROMPT / COMPLIANCE_CHECK_PROMPT /
     _get_account_list_text / _build_suggestion_prompt と等価のメタデータを返却。
-    Round 2 プロンプトテンプレートは __ACCOUNT_LIST_TEXT__ / __LEDGER_TEXT__
-    の 2 プレースホルダ付きで返却 (custom_prompt はサーバで埋込済)。
+    Round 2 は no_ledger / with_ledger の 2 種類のテンプレートを返却して
+    needs_ledger=false 時に「以下は関連する元帳...」ヘッダのみ残るバグを防ぐ
+    (custom_prompt はサーバで埋込済)。
     """
     user_id = g.auth_user.id
     from app.services.ai_receipt import (
@@ -593,13 +596,20 @@ def ai_prompt_context():
     # 勘定科目一覧 (サーバで既に計算しているもの)
     account_list_text = _get_account_list_text(user_id)
 
-    # Round 2 プロンプトテンプレート。
-    # _build_suggestion_prompt にプレースホルダ文字列を渡してテンプレート
-    # 生成する。クライアントは以下 2 つのプレースホルダを実行時に置換:
-    #   __ACCOUNT_LIST_TEXT__ → 別途返却する account_list_text で置換
-    #   __LEDGER_TEXT__       → Round 1 後に取得した ledger 文字列で置換
-    # custom_prompt はサーバ側で既に埋め込み済み (再置換不要)。
-    round2_prompt_template = _build_suggestion_prompt(
+    # Round 2 プロンプトテンプレートを 2 種類生成する。
+    # _build_suggestion_prompt は ledger_text が空かどうかで「以下は関連する
+    # 勘定科目の元帳データ...」ヘッダの有無を切り替えるため、ヘッダのみ
+    # 残って中身が空になるバグ (PR #154 review 3) を防ぐには、needs_ledger
+    # で 2 テンプレートを切り替える方が安全。
+    # クライアントは needs_ledger に応じてどちらか 1 つを選び、
+    # __ACCOUNT_LIST_TEXT__ を置換する (with_ledger 版はさらに __LEDGER_TEXT__
+    # も置換)。custom_prompt はサーバで埋め込み済 (再置換不要)。
+    round2_template_no_ledger = _build_suggestion_prompt(
+        account_list_text="__ACCOUNT_LIST_TEXT__",
+        ledger_text="",
+        custom_prompt=custom_prompt,
+    )
+    round2_template_with_ledger = _build_suggestion_prompt(
         account_list_text="__ACCOUNT_LIST_TEXT__",
         ledger_text="__LEDGER_TEXT__",
         custom_prompt=custom_prompt,
@@ -611,13 +621,16 @@ def ai_prompt_context():
         "round1_prompt": DOCUMENT_PROMPT,
         "compliance_prompt": COMPLIANCE_CHECK_PROMPT,
         "compliance_check_enabled": compliance_check,
-        # Round 2 プロンプトテンプレート。
-        # クライアントは 2 つのプレースホルダを実行時に置換する:
-        #   __ACCOUNT_LIST_TEXT__ → 下記 account_list_text の値で置換
-        #   __LEDGER_TEXT__       → Round 1 後に取得した ledger 文字列で置換
-        #                           (needs_ledger=false なら空文字列 "")
+        # Round 2 プロンプトテンプレート 2 種類。クライアントは Round 1 結果の
+        # needs_ledger に応じてどちらか選び、__ACCOUNT_LIST_TEXT__ を置換する
+        # (with_ledger 版はさらに __LEDGER_TEXT__ も置換):
+        #   needs_ledger=false → round2_prompt_template_no_ledger
+        #                        (元帳ヘッダなし)
+        #   needs_ledger=true  → round2_prompt_template_with_ledger
+        #                        (__LEDGER_TEXT__ を実 ledger で置換)
         # custom_prompt はサーバ側で既に埋め込み済み (再置換不要)。
-        "round2_prompt_template": round2_prompt_template,
+        "round2_prompt_template_no_ledger": round2_template_no_ledger,
+        "round2_prompt_template_with_ledger": round2_template_with_ledger,
         # __ACCOUNT_LIST_TEXT__ プレースホルダ置換用に別途返却。
         # クライアント側 account_code バリデーション (実在チェック) にも使用。
         "account_list_text": account_list_text,

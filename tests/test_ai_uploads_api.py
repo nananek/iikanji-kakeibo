@@ -315,13 +315,21 @@ class TestAiPromptContext:
         assert "DOCUMENT" in body["round1_prompt"] or "領収書" in body["round1_prompt"]
         assert body["compliance_check_enabled"] is True
         assert "compliance_prompt" in body
-        # Round 2 template: __ACCOUNT_LIST_TEXT__ と __LEDGER_TEXT__ 両方が
-        # プレースホルダとして残る (クライアントが置換する)
-        assert "round2_prompt_template" in body
-        assert "__LEDGER_TEXT__" in body["round2_prompt_template"]
-        assert "__ACCOUNT_LIST_TEXT__" in body["round2_prompt_template"]
-        # custom_prompt はサーバで既に埋め込み済 (再置換不要)
-        assert "QUICPayはJCB CARD W" in body["round2_prompt_template"]
+        # Round 2 テンプレートは 2 種類 (needs_ledger 切替用)
+        assert "round2_prompt_template_no_ledger" in body
+        assert "round2_prompt_template_with_ledger" in body
+        # no_ledger には元帳ヘッダがない (= 「以下は関連する勘定科目の元帳」が現れない)
+        assert "元帳" not in body["round2_prompt_template_no_ledger"]
+        assert "__LEDGER_TEXT__" not in body["round2_prompt_template_no_ledger"]
+        # with_ledger には元帳ヘッダと __LEDGER_TEXT__ プレースホルダの両方が含まれる
+        assert "元帳" in body["round2_prompt_template_with_ledger"]
+        assert "__LEDGER_TEXT__" in body["round2_prompt_template_with_ledger"]
+        # 両テンプレートで __ACCOUNT_LIST_TEXT__ プレースホルダ
+        assert "__ACCOUNT_LIST_TEXT__" in body["round2_prompt_template_no_ledger"]
+        assert "__ACCOUNT_LIST_TEXT__" in body["round2_prompt_template_with_ledger"]
+        # custom_prompt は両方で埋め込み済 (再置換不要)
+        assert "QUICPayはJCB CARD W" in body["round2_prompt_template_no_ledger"]
+        assert "QUICPayはJCB CARD W" in body["round2_prompt_template_with_ledger"]
         # account_list_text は別途返却
         assert "account_list_text" in body
         # custom_prompt
@@ -332,6 +340,12 @@ class TestAiPromptContext:
             assert body["default_model_by_provider"][k] == PROVIDER_DEFAULTS[k]
         # llama_cpp は除外
         assert "llama_cpp" not in body["default_model_by_provider"]
+        # ★ セキュリティ重要: api_key 関連は一切返却しない
+        assert "api_key_blob" not in body
+        assert "api_key_iv" not in body
+        assert "api_key_encrypted" not in body
+        # ai_config 全体も含まない (provider 名は別経路 default_model_by_provider のみ)
+        assert "ai_config" not in body
 
     def test_no_ai_config_still_returns_context(
         self, db, logged_in_client, user, accounts,
