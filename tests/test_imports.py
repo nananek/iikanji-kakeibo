@@ -252,65 +252,42 @@ class TestOfxImportConfirm:
 # --- Web Import ---
 
 
+def _setup_web_import_session(logged_in_client, parsed_rows,
+                               payment_code="1010"):
+    """E2 PR-C-4h: POST /web-import/ が無効化されたため、parsed データを
+    save_import_data + session 直接設定で投入するヘルパー (confirm フロー
+    のテスト用)。"""
+    from app.views.helpers import save_import_data
+    key = save_import_data(parsed_rows)
+    with logged_in_client.session_transaction() as sess:
+        sess["web_data_key"] = key
+        sess["web_payment_account_code"] = payment_code
+    return key
+
+
 class TestWebImportUpload:
     def test_unauthenticated(self, client):
         resp = client.get("/web-import/")
         assert resp.status_code in (302, 401)
 
-    def test_get_renders_form(self, logged_in_client, accounts):
+    def test_get_renders_form_with_disabled_banner(
+        self, logged_in_client, accounts,
+    ):
+        """E2 PR-C-4h: 機能停止 warning バナーが表示される。"""
         resp = logged_in_client.get("/web-import/")
         assert resp.status_code == 200
+        assert "E2EE 移行に伴い一時的に利用できません" in resp.data.decode()
 
-    def test_post_empty_text(self, logged_in_client, accounts):
+    def test_post_returns_disabled_banner(self, logged_in_client, accounts):
+        """E2 PR-C-4h: POST しても解析されず、機能停止 warning を返す。"""
         resp = logged_in_client.post("/web-import/", data={
-            "raw_text": "",
+            "raw_text": "明細テキスト",
             "payment_account_code": "1010",
         })
         assert resp.status_code == 200
-
-    def test_post_too_long_text(self, logged_in_client, accounts):
-        resp = logged_in_client.post("/web-import/", data={
-            "raw_text": "x" * 200_001,
-            "payment_account_code": "1010",
-        })
-        assert resp.status_code == 200
-
-    def test_post_no_payment_account(self, logged_in_client, accounts):
-        resp = logged_in_client.post("/web-import/", data={
-            "raw_text": "some content",
-        })
-        assert resp.status_code == 200
-
-    def test_post_ai_failure_shows_error(self, logged_in_client, accounts):
-        with patch("app.views.web_import.parse_web_text") as mock_parse:
-            mock_parse.side_effect = ValueError("AI解析エラー")
-            resp = logged_in_client.post("/web-import/", data={
-                "raw_text": "明細テキスト",
-                "payment_account_code": "1010",
-            })
-        assert resp.status_code == 200
-
-    def test_post_no_results(self, logged_in_client, accounts):
-        with patch("app.views.web_import.parse_web_text") as mock_parse:
-            mock_parse.return_value = []
-            resp = logged_in_client.post("/web-import/", data={
-                "raw_text": "明細テキスト",
-                "payment_account_code": "1010",
-            })
-        assert resp.status_code == 200
-
-    def test_post_success_redirects(self, logged_in_client, accounts):
-        with patch("app.views.web_import.parse_web_text") as mock_parse:
-            mock_parse.return_value = [
-                {"date": "2026-02-15", "description": "x",
-                 "deposit": 0, "withdrawal": 100},
-            ]
-            resp = logged_in_client.post("/web-import/", data={
-                "raw_text": "明細テキスト",
-                "payment_account_code": "1010",
-            })
-        assert resp.status_code in (302, 303)
-        assert "/web-import/confirm" in resp.headers["Location"]
+        assert "E2EE 移行に伴い一時的に利用できません" in resp.data.decode()
+        # confirm へのリダイレクトはしない
+        assert "Location" not in resp.headers
 
 
 class TestWebImportConfirm:
@@ -319,15 +296,12 @@ class TestWebImportConfirm:
         assert resp.status_code in (302, 303)
 
     def test_full_flow(self, db, logged_in_client, user, accounts):
-        with patch("app.views.web_import.parse_web_text") as mock_parse:
-            mock_parse.return_value = [
-                {"date": "2026-02-15", "description": "セブン",
-                 "deposit": 0, "withdrawal": 500},
-            ]
-            logged_in_client.post("/web-import/", data={
-                "raw_text": "明細",
-                "payment_account_code": "1010",
-            })
+        # E2 PR-C-4h: parse_web_text 経由ではなく session を直接仕込んで
+        # confirm フロー (仕訳生成) だけをテスト。
+        _setup_web_import_session(logged_in_client, [
+            {"date": "2026-02-15", "description": "セブン",
+             "deposit": 0, "withdrawal": 500},
+        ])
 
         resp = logged_in_client.get("/web-import/confirm")
         assert resp.status_code == 200
@@ -353,11 +327,10 @@ class TestWebImportConfirm:
         self, db, logged_in_client, user, accounts,
     ):
         """enabled=false / 日付欠落 / カテゴリ欠落 / 金額 0 は skip される。"""
-        with patch("app.views.web_import.parse_web_text") as mock_parse:
-            mock_parse.return_value = [{"date": "2026-02-15", "description": "x"}]
-            logged_in_client.post("/web-import/", data={
-                "raw_text": "明細", "payment_account_code": "1010",
-            })
+        _setup_web_import_session(
+            logged_in_client,
+            [{"date": "2026-02-15", "description": "x"}],
+        )
         rows = [
             # enabled=False は skip
             {"enabled": False, "date": "2026-02-15", "description": "off",
@@ -392,11 +365,9 @@ class TestWebImportConfirm:
         from app.models.fiscal import FiscalClose
         db.session.add(FiscalClose(user_id=user.id, year=2026, closed_period=2))
         db.session.commit()
-        with patch("app.views.web_import.parse_web_text") as mock_parse:
-            mock_parse.return_value = [{"date": "2026-02-15"}]
-            logged_in_client.post("/web-import/", data={
-                "raw_text": "x", "payment_account_code": "1010",
-            })
+        _setup_web_import_session(
+            logged_in_client, [{"date": "2026-02-15"}],
+        )
         rows = [
             # 2026-02 は確定済み → skip
             {"enabled": True, "date": "2026-02-15", "description": "blocked",
@@ -430,11 +401,9 @@ class TestWebImportConfirm:
         )
         db.session.add(m)
         db.session.commit()
-        with patch("app.views.web_import.parse_web_text") as mock_parse:
-            mock_parse.return_value = [{"date": "2026-02-15"}]
-            logged_in_client.post("/web-import/", data={
-                "raw_text": "x", "payment_account_code": "1010",
-            })
+        _setup_web_import_session(
+            logged_in_client, [{"date": "2026-02-15"}],
+        )
         rows = [
             # 5010 はロック → skip
             {"enabled": True, "date": "2026-02-15", "description": "locked",
