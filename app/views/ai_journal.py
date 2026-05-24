@@ -70,15 +70,16 @@ def upload():
             record_delete(owner, sizes_to_release)
     session.pop("ai_journal_draft_id", None)
     # E2EE 形式の AI 設定が登録済みかをテンプレートに渡す。
-    # クライアント側で MK が解除されていれば JS が orchestrator を使う分岐に
-    # 入る (`config_is_e2ee=True` でかつ MK 解除済が前提)。
-    config_is_e2ee = bool(
-        config and config.api_key_blob and config.api_key_iv,
-    )
+    # 旧 Fernet データが残っているかも判定: migrate-key 呼出後は
+    # api_key_encrypted=NULL になり、サーバ側 ai_receipt.py の解析が失敗する
+    # ため、文言を「移行期間中=サーバ解析可」と「移行完了=解析不可」で分岐。
+    config_is_e2ee = bool(config and config.is_e2ee)
+    has_legacy_key = bool(config and config.api_key_encrypted)
     return render_template(
         "ai_journal/upload.html",
         has_config=bool(config),
         config_is_e2ee=config_is_e2ee,
+        has_legacy_key=has_legacy_key,
         draft_count=draft_count,
     )
 

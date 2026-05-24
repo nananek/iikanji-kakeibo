@@ -19,13 +19,25 @@
         </div>
         {% endif %}
 
-        {% if config_is_e2ee %}
+        {% if config_is_e2ee and has_legacy_key %}
+        {# 旧 Fernet データも残っている (= migrate-key 未実行) →
+           サーバ側 ai_receipt.py がまだ Fernet 復号できる #}
         <div class="alert alert-info small mb-3">
           <i class="bi bi-shield-lock"></i>
-          <strong>E2EE 形式で API キー登録済み</strong>。現在は移行期間として
+          <strong>E2EE 形式で API キー登録済み</strong>。移行期間として
           サーバ経由で解析しています。v5.0 公開時にクライアント側での
           完全 E2EE 解析 (画像とプロンプトをサーバに送らない方式) に切り替える
           予定です (Round 2 仕訳案生成の JS 移植が完了次第)。
+        </div>
+        {% elif config_is_e2ee %}
+        {# migrate-key 呼出後で旧 Fernet データが NULL クリア済み →
+           サーバは API キー復号不可、現状は解析機能を使えない #}
+        <div class="alert alert-warning small mb-3">
+          <i class="bi bi-shield-lock-fill"></i>
+          <strong>E2EE 移行完了</strong>。サーバ側で API キーを復号できない
+          状態のため、現在 AI 証憑解析は利用できません。クライアント側
+          完全 E2EE 解析 (Round 2 仕訳案生成の JS 移植) が v5.0 公開時に
+          有効になり次第ご利用いただけます。
         </div>
         {% endif %}
 
