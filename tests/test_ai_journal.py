@@ -66,7 +66,8 @@ class TestUpload:
     def test_upload_with_ai_config(self, db, logged_in_client, user, account_types):
         cfg = UserAIConfig(
             user_id=user.id, provider="openai",
-            api_key_encrypted=b"dummy", model_name="gpt-4o",
+            api_key_blob=b"\xAA" * 48, api_key_iv=b"\xBB" * 12,
+            model_name="gpt-4o",
         )
         db.session.add(cfg)
         db.session.commit()

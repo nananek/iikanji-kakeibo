@@ -59,9 +59,7 @@ def upload():
             record_delete(owner, sizes_to_release)
     session.pop("ai_journal_draft_id", None)
     # E2EE 形式の AI 設定が登録済みかをテンプレートに渡す。
-    # 旧 Fernet データが残っているかも判定: migrate-key 呼出後は
-    # api_key_encrypted=NULL になり、サーバ側 ai_receipt.py の解析が失敗する
-    # ため、文言を「移行期間中=サーバ解析可」と「移行完了=解析不可」で分岐。
+    # クライアント側 LLM 呼出 (orchestrator) は is_e2ee=True が必須。
     config_is_e2ee = bool(config and config.is_e2ee)
     return render_template(
         "ai_journal/upload.html",

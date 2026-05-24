@@ -1,20 +1,21 @@
-"""AI証憑読取サービス - 証憑画像からの仕訳データ抽出"""
+"""AI証憑読取サービス - 証憑画像からの仕訳データ抽出
 
-import base64
-import hashlib
-import json
+E2EE 化以降、サーバ側 LLM 呼出 (_call_ai / _PROVIDER_HANDLERS 等) は
+すべてクライアント側 orchestrator (app/static/js/crypto/llm/) に移行済。
+本モジュールは現在以下のみ提供する:
+  - プロンプトテンプレ定数 (api.py の prompt-context endpoint が返却)
+  - 元帳/科目一覧テキスト構築 helper (api.py が context 構築に使用)
+  - AI usage log 記録 (`_log_ai_usage`)
+  - dataclass (DocumentAnalysis / JournalSuggestion)
+"""
+
 import logging
-import re
 from dataclasses import dataclass, field
 
-import httpx
-from cryptography.fernet import Fernet
-from flask import current_app
 from sqlalchemy import func
 
 from app.extensions import db
 from app.models.account import Account, AccountType
-from app.models.ai_config import UserAIConfig
 from app.models.journal import JournalEntry, JournalEntryLine
 
 logger = logging.getLogger(__name__)
@@ -45,31 +46,9 @@ class JournalSuggestion:
     compliance: dict | None = None
 
 
-# --- 暗号化ヘルパー ---
-
-
-def _get_fernet():
-    """SECRET_KEY から Fernet インスタンスを生成"""
-    secret = current_app.config["SECRET_KEY"]
-    key_bytes = hashlib.sha256(secret.encode()).digest()
-    fernet_key = base64.urlsafe_b64encode(key_bytes)
-    return Fernet(fernet_key)
-
-
-def encrypt_api_key(plain_key: str) -> bytes:
-    """APIキーを暗号化"""
-    return _get_fernet().encrypt(plain_key.encode())
-
-
-def decrypt_api_key(encrypted: bytes) -> str:
-    """暗号化されたAPIキーを復号。SECRET_KEY 変更時は InvalidToken になる。"""
-    try:
-        return _get_fernet().decrypt(encrypted).decode()
-    except Exception:
-        raise ValueError(
-            "APIキーの復号に失敗しました。SECRET_KEYが変更された可能性があります。"
-            "設定画面でAPIキーを再登録してください。"
-        )
+# Fernet 暗号化ヘルパー (_get_fernet / encrypt_api_key / decrypt_api_key) は
+# E2EE 化完了に伴い削除。API キーは UserAIConfig.api_key_blob / api_key_iv に
+# クライアント側で暗号化されて保存される (ai_config_api PUT 経由)。
 
 
 # --- プロバイダー設定 ---
@@ -306,315 +285,10 @@ def _build_suggestion_prompt(account_list_text, ledger_text="",
 - 異なる解釈（例: 費目の分類の違い、内訳の粒度の違い）を反映した複数案を提案してください"""
 
 
-def _usage_openai_style(data: dict) -> dict:
-    """OpenAI 互換 (OpenAI / llama.cpp) のレスポンスから usage を正規化。"""
-    usage = data.get("usage") or {}
-    return {
-        "input_tokens": usage.get("prompt_tokens"),
-        "output_tokens": usage.get("completion_tokens"),
-    }
-
-
-def _usage_anthropic_style(data: dict) -> dict:
-    usage = data.get("usage") or {}
-    return {
-        "input_tokens": usage.get("input_tokens"),
-        "output_tokens": usage.get("output_tokens"),
-    }
-
-
-def _usage_google_style(data: dict) -> dict:
-    usage = data.get("usageMetadata") or {}
-    return {
-        "input_tokens": usage.get("promptTokenCount"),
-        "output_tokens": usage.get("candidatesTokenCount"),
-    }
-
-
-def _extract_json(text: str) -> dict:
-    """テキストからJSON部分を抽出してパース"""
-    text = text.strip()
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        pass
-    match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
-    if match:
-        return json.loads(match.group(1))
-    match = re.search(r"\{.*\}", text, re.DOTALL)
-    if match:
-        return json.loads(match.group(0))
-    raise json.JSONDecodeError("JSONが見つかりません", text, 0)
-
-
-# --- プロバイダー別API呼出し ---
-
-
-def _call_openai(api_key: str, model: str, image_bytes: bytes,
-                 mime_type: str, prompt: str = RECEIPT_PROMPT,
-                 max_tokens: int = 500):
-    """戻り値: (parsed_json, usage_dict)"""
-    b64_image = base64.b64encode(image_bytes).decode()
-    response = httpx.post(
-        "https://api.openai.com/v1/chat/completions",
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        },
-        json={
-            "model": model,
-            "messages": [
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": prompt},
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:{mime_type};base64,{b64_image}"
-                            },
-                        },
-                    ],
-                }
-            ],
-            "max_tokens": max_tokens,
-        },
-        timeout=60.0,
-    )
-    response.raise_for_status()
-    data = response.json()
-    content = data["choices"][0]["message"]["content"]
-    return _extract_json(content), _usage_openai_style(data)
-
-
-def _call_google(api_key: str, model: str, image_bytes: bytes,
-                 mime_type: str, prompt: str = RECEIPT_PROMPT,
-                 max_tokens: int = 500):
-    """戻り値: (parsed_json, usage_dict)"""
-    b64_image = base64.b64encode(image_bytes).decode()
-    response = httpx.post(
-        f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
-        params={"key": api_key},
-        headers={"Content-Type": "application/json"},
-        json={
-            "contents": [
-                {
-                    "parts": [
-                        {"text": prompt},
-                        {
-                            "inline_data": {
-                                "mime_type": mime_type,
-                                "data": b64_image,
-                            }
-                        },
-                    ]
-                }
-            ],
-            "generationConfig": {
-                "responseMimeType": "application/json",
-                "maxOutputTokens": max_tokens,
-            },
-        },
-        timeout=60.0,
-    )
-    response.raise_for_status()
-    data = response.json()
-    text = data["candidates"][0]["content"]["parts"][0]["text"]
-    return _extract_json(text), _usage_google_style(data)
-
-
-def _call_anthropic(api_key: str, model: str, image_bytes: bytes,
-                    mime_type: str, prompt: str = RECEIPT_PROMPT,
-                    max_tokens: int = 500):
-    """戻り値: (parsed_json, usage_dict)"""
-    b64_image = base64.b64encode(image_bytes).decode()
-    response = httpx.post(
-        "https://api.anthropic.com/v1/messages",
-        headers={
-            "x-api-key": api_key,
-            "anthropic-version": "2023-06-01",
-            "Content-Type": "application/json",
-        },
-        json={
-            "model": model,
-            "max_tokens": max_tokens,
-            "messages": [
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "image",
-                            "source": {
-                                "type": "base64",
-                                "media_type": mime_type,
-                                "data": b64_image,
-                            },
-                        },
-                        {"type": "text", "text": prompt},
-                    ],
-                }
-            ],
-        },
-        timeout=60.0,
-    )
-    response.raise_for_status()
-    data = response.json()
-    content = data["content"][0]["text"]
-    return _extract_json(content), _usage_anthropic_style(data)
-
-
-def _call_llama_cpp(api_key: str, model: str, image_bytes: bytes,
-                    mime_type: str, prompt: str = RECEIPT_PROMPT,
-                    max_tokens: int = 500, *, base_url: str = ""):
-    """llama.cpp (llama-server) の OpenAI 互換エンドポイントを呼ぶ。
-
-    デフォルトポートは 8080。マルチモーダル対応モデル (LLaVA など) が必要。
-    戻り値: (parsed_json, usage_dict)
-    """
-    url = (base_url.rstrip("/") if base_url else "http://localhost:8080")
-    b64_image = base64.b64encode(image_bytes).decode()
-    headers = {"Content-Type": "application/json"}
-    if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
-    response = httpx.post(
-        f"{url}/v1/chat/completions",
-        headers=headers,
-        json={
-            "model": model,
-            "messages": [
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": prompt},
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:{mime_type};base64,{b64_image}"
-                            },
-                        },
-                    ],
-                }
-            ],
-            "max_tokens": max_tokens,
-        },
-        timeout=120.0,
-    )
-    response.raise_for_status()
-    data = response.json()
-    content = data["choices"][0]["message"]["content"]
-    return _extract_json(content), _usage_openai_style(data)
-
-
-_PROVIDER_HANDLERS = {
-    "openai": _call_openai,
-    "google": _call_google,
-    "anthropic": _call_anthropic,
-    "llama_cpp": _call_llama_cpp,
-}
-
-
-# --- テキスト専用プロバイダー呼出し ---
-
-
-def _call_openai_text(api_key: str, model: str, prompt: str,
-                      max_tokens: int = 2000):
-    """戻り値: (parsed_json, usage_dict)"""
-    response = httpx.post(
-        "https://api.openai.com/v1/chat/completions",
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        },
-        json={
-            "model": model,
-            "messages": [{"role": "user", "content": prompt}],
-            "max_tokens": max_tokens,
-        },
-        timeout=120.0,
-    )
-    response.raise_for_status()
-    data = response.json()
-    content = data["choices"][0]["message"]["content"]
-    return _extract_json(content), _usage_openai_style(data)
-
-
-def _call_google_text(api_key: str, model: str, prompt: str,
-                      max_tokens: int = 2000):
-    """戻り値: (parsed_json, usage_dict)"""
-    response = httpx.post(
-        f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
-        params={"key": api_key},
-        headers={"Content-Type": "application/json"},
-        json={
-            "contents": [{"parts": [{"text": prompt}]}],
-            "generationConfig": {
-                "responseMimeType": "application/json",
-                "maxOutputTokens": max_tokens,
-            },
-        },
-        timeout=120.0,
-    )
-    response.raise_for_status()
-    data = response.json()
-    text = data["candidates"][0]["content"]["parts"][0]["text"]
-    return _extract_json(text), _usage_google_style(data)
-
-
-def _call_anthropic_text(api_key: str, model: str, prompt: str,
-                         max_tokens: int = 2000):
-    """戻り値: (parsed_json, usage_dict)"""
-    response = httpx.post(
-        "https://api.anthropic.com/v1/messages",
-        headers={
-            "x-api-key": api_key,
-            "anthropic-version": "2023-06-01",
-            "Content-Type": "application/json",
-        },
-        json={
-            "model": model,
-            "max_tokens": max_tokens,
-            "messages": [{"role": "user", "content": prompt}],
-        },
-        timeout=120.0,
-    )
-    response.raise_for_status()
-    data = response.json()
-    content = data["content"][0]["text"]
-    return _extract_json(content), _usage_anthropic_style(data)
-
-
-def _call_llama_cpp_text(api_key: str, model: str, prompt: str,
-                         max_tokens: int = 2000, *, base_url: str = ""):
-    """llama.cpp (llama-server) のテキスト専用 OpenAI 互換呼び出し。
-
-    戻り値: (parsed_json, usage_dict)
-    """
-    url = (base_url.rstrip("/") if base_url else "http://localhost:8080")
-    headers = {"Content-Type": "application/json"}
-    if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
-    response = httpx.post(
-        f"{url}/v1/chat/completions",
-        headers=headers,
-        json={
-            "model": model,
-            "messages": [{"role": "user", "content": prompt}],
-            "max_tokens": max_tokens,
-        },
-        timeout=120.0,
-    )
-    response.raise_for_status()
-    data = response.json()
-    content = data["choices"][0]["message"]["content"]
-    return _extract_json(content), _usage_openai_style(data)
-
-
-_TEXT_PROVIDER_HANDLERS = {
-    "openai": _call_openai_text,
-    "google": _call_google_text,
-    "anthropic": _call_anthropic_text,
-    "llama_cpp": _call_llama_cpp_text,
-}
+# サーバ側 LLM 呼出経路 (_call_openai/_call_google/_call_anthropic/_call_llama_cpp
+# とテキスト版、_usage_*/_extract_json/_PROVIDER_HANDLERS/_TEXT_PROVIDER_HANDLERS)
+# は E2 PR-C-6a〜6d で全 caller がクライアント完結 (E2EE) に置き換わったため削除。
+# クライアント側 orchestrator (app/static/js/crypto/llm/) が等価の処理を実行。
 
 
 # --- 元帳データ取得ヘルパー ---
@@ -727,174 +401,23 @@ def _get_account_list_text(user_id: int) -> str:
     return "\n".join(lines)
 
 
-# --- メイン関数 ---
+# --- usage 記録 ---
+#
+# _get_ai_config (旧サーバ側 LLM 呼出のための AI 設定取得 + Fernet 復号 +
+# entitlement check) は E2EE 化に伴い削除。client-side LLM 呼出では
+# /api/v1/ai-config (E2EE blob 返却) + クライアント側 has_entitlement
+# (presence_check のみ。entitlement gate は別途 API 層で実施) を使う。
 
 
-def _get_ai_config(user_id: int):
-    """AI設定を取得してバリデーション
-
-    Returns:
-        (api_key, provider, model, handler, custom_prompt, extra_kwargs, compliance_check)
-
-    llama.cpp はサーバー管理者が用意する任意機能。エンドポイント URL は
-    アプリ config の `LLAMA_CPP_URL` から取得する。未設定なら llama.cpp 設定
-    の既存ユーザーには「サーバー管理者が提供を停止した」と明確にエラーを返す。
-    """
-    config = UserAIConfig.query.filter_by(user_id=user_id).first()
-    if not config:
-        raise ValueError("AI API設定が登録されていません。設定画面で登録してください。")
-
-    raw_key = decrypt_api_key(config.api_key_encrypted)
-    # llama.cpp はダミーキー "_" で保存されるので空文字に戻す
-    api_key = "" if raw_key == "_" else raw_key
-    provider = config.provider
-    model = config.model_name or PROVIDER_DEFAULTS.get(provider, "")
-    custom_prompt = getattr(config, "custom_prompt", "") or ""
-    compliance_check = getattr(config, "compliance_check", False)
-
-    handler = _PROVIDER_HANDLERS.get(provider)
-    if not handler:
-        raise ValueError(f"未対応のAIプロバイダーです: {provider}")
-
-    extra_kwargs = {}
-    if provider == "llama_cpp":
-        from flask import current_app
-        url = (current_app.config.get("LLAMA_CPP_URL") or "").strip()
-        if not url:
-            raise ValueError(
-                "サーバー管理者が llama.cpp の提供を停止しました。"
-                "AI 設定画面で別のプロバイダーに変更してください。"
-            )
-        # サーバー提供 LLM (llama.cpp) は有償機能。BYOK 経由の外部プロバイダ
-        # (openai / anthropic / google) は引き続き無償で利用可能。
-        from app.services.entitlement import has_entitlement
-        from app.models.user import User
-        user = db.session.get(User, user_id)
-        if user is None:
-            raise ValueError("ユーザーが見つかりません。")
-        if not has_entitlement(user, "paid_llm"):
-            raise ValueError(
-                "サーバー提供 LLM (llama.cpp) の利用には有償プランが必要です。"
-                "ご自身の API キーで外部プロバイダー (OpenAI / Anthropic / Google) を"
-                "利用する場合は無償で継続できます。"
-            )
-        extra_kwargs["base_url"] = url
-
-    return api_key, provider, model, handler, custom_prompt, extra_kwargs, compliance_check
-
-
-def _log_ai_usage(user_id, provider, model, feature, usage, latency_ms,
-                  *, status="ok", http_status=None):
-    """AI API 呼び出し記録を ai_usage_logs テーブルに INSERT する。
-
-    DB 書き込み失敗は AI 呼び出し本体に波及させない（try/except + rollback）。
-    プライバシー: プロンプト本文・レスポンス本文・API キーは保存しない。
-    """
-    try:
-        from app.models.ai_usage_log import AIUsageLog
-        from app.extensions import db
-        in_t = (usage or {}).get("input_tokens")
-        out_t = (usage or {}).get("output_tokens")
-        total = None
-        if in_t is not None or out_t is not None:
-            total = (in_t or 0) + (out_t or 0)
-        db.session.add(AIUsageLog(
-            user_id=user_id, provider=provider, model=model, feature=feature,
-            input_tokens=in_t, output_tokens=out_t, total_tokens=total,
-            latency_ms=latency_ms, status=status, http_status=http_status,
-        ))
-        db.session.commit()
-    except Exception:
-        logger.exception("Failed to record AI usage log for user %s", user_id)
-        try:
-            from app.extensions import db
-            db.session.rollback()
-        except Exception:
-            pass
-
-
-def _classify_exception(exc) -> tuple[str, int | None]:
-    """例外を usage log の status / http_status に分類する。"""
-    if isinstance(exc, httpx.HTTPStatusError):
-        return "http_error", exc.response.status_code
-    if isinstance(exc, httpx.TimeoutException):
-        return "timeout", None
-    if isinstance(exc, (json.JSONDecodeError, KeyError, ValueError, TypeError)):
-        return "parse_error", None
-    return "other_error", None
-
-
-def _call_ai(handler, api_key, model, image_bytes, mime_type,
-             prompt, max_tokens, user_id, extra_kwargs=None,
-             *, provider="", feature=""):
-    """AI 画像 API 呼び出しの共通ラッパー。
-
-    呼び出し前後で latency 計測 + 呼び出し記録を保存する。
-    """
-    import time as _time
-    t0 = _time.perf_counter()
-    try:
-        kwargs = {"prompt": prompt, "max_tokens": max_tokens}
-        if extra_kwargs:
-            kwargs.update(extra_kwargs)
-        parsed, usage = handler(api_key, model, image_bytes, mime_type, **kwargs)
-        latency = int((_time.perf_counter() - t0) * 1000)
-        _log_ai_usage(user_id, provider, model, feature, usage, latency)
-        return parsed
-    except httpx.HTTPStatusError as e:
-        latency = int((_time.perf_counter() - t0) * 1000)
-        _log_ai_usage(user_id, provider, model, feature, {}, latency,
-                      status="http_error", http_status=e.response.status_code)
-        logger.error("AI API HTTP error for user %s: %s", user_id, e)
-        raise RuntimeError(
-            f"AI APIエラー（HTTP {e.response.status_code}）: "
-            "APIキーやモデル名を確認してください。"
-        )
-    except Exception as e:
-        latency = int((_time.perf_counter() - t0) * 1000)
-        status, http_status = _classify_exception(e)
-        _log_ai_usage(user_id, provider, model, feature, {}, latency,
-                      status=status, http_status=http_status)
-        logger.error("AI API call failed for user %s: %s", user_id, e)
-        raise RuntimeError(f"AI APIの呼び出しに失敗しました: {e}")
-
-
-def _call_ai_text(handler, api_key, model, prompt, max_tokens, user_id,
-                  extra_kwargs=None, *, provider="", feature=""):
-    """AI テキスト API 呼び出しの共通ラッパー (画像版と対称)。"""
-    import time as _time
-    t0 = _time.perf_counter()
-    try:
-        kwargs = {"max_tokens": max_tokens}
-        if extra_kwargs:
-            kwargs.update(extra_kwargs)
-        parsed, usage = handler(api_key, model, prompt, **kwargs)
-        latency = int((_time.perf_counter() - t0) * 1000)
-        _log_ai_usage(user_id, provider, model, feature, usage, latency)
-        return parsed
-    except httpx.HTTPStatusError as e:
-        latency = int((_time.perf_counter() - t0) * 1000)
-        _log_ai_usage(user_id, provider, model, feature, {}, latency,
-                      status="http_error", http_status=e.response.status_code)
-        logger.error("AI text API HTTP error for user %s: %s", user_id, e)
-        raise RuntimeError(
-            f"AI APIエラー（HTTP {e.response.status_code}）: "
-            "APIキーやモデル名を確認してください。"
-        )
-    except Exception as e:
-        latency = int((_time.perf_counter() - t0) * 1000)
-        status, http_status = _classify_exception(e)
-        _log_ai_usage(user_id, provider, model, feature, {}, latency,
-                      status=status, http_status=http_status)
-        logger.error("AI text API call failed for user %s: %s", user_id, e)
-        raise RuntimeError(f"AI APIの呼び出しに失敗しました: {e}")
-
-
-# E2 PR-C-4i: analyze_receipt / analyze_and_suggest / parse_web_text は
-# E2-C-4e〜4h ですべての caller を削除済のため本 PR で削除。
-# 残った _call_ai / _call_ai_text / _PROVIDER_HANDLERS / _TEXT_PROVIDER_HANDLERS
-# は analyze_voucher_for_attachment (vouchers.py) / suggest_categories_by_ai
-# (journal.py) / reconciliation 等のサーバ側 AI 機能で引き続き使用される。
+# _log_ai_usage (旧サーバ側 _call_ai/_call_ai_text 内から呼ばれていた
+# usage 記録 helper) は、サーバ側 LLM 呼出経路の削除に伴い caller がなくなり
+# 削除。E2EE クライアント完結フローでは PATCH /api/v1/ai/drafts/<id>/suggestions
+# 等のクライアント→サーバ通信で AIUsageLog を直接 INSERT する
+# (app/views/api.py L847)。
+#
+# サーバ側 LLM 呼出ラッパー (_classify_exception / _call_ai / _call_ai_text) も
+# 同様にクライアント完結フローに置き換わったため削除。クライアント側
+# callLLM / callLLMText (app/static/js/crypto/llm/) が等価。
 
 
 # 旧 AI_SUGGEST_CATEGORIES_PROMPT (Python str.format 版) は E2 PR-C-6b で

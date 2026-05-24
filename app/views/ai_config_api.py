@@ -1,26 +1,22 @@
-"""E2EE 化された UserAIConfig API (E2 Phase E2-a、設計書 §11.5)。
+"""E2EE 化された UserAIConfig API (設計書 §11.5)。
 
 クライアント側 MK で AES-256-GCM 暗号化された API キー (api_key_blob / api_key_iv)
 の保管・取得を担当する。サーバは復号できない。
 
 エンドポイント:
-- GET    /api/v1/ai-config             — 設定取得 (暗号文 + メタデータ)
-- PUT    /api/v1/ai-config             — 暗号文を保存 / 更新
-- DELETE /api/v1/ai-config             — 削除
-- POST   /api/v1/ai-config/migrate-key — Phase E2-a 限定の互換 endpoint
-                                          (旧 Fernet 暗号化を一時的に復号して
-                                           クライアントに返却、即座に旧カラムを
-                                           NULL クリア、per-user 1 回限り)
+- GET    /api/v1/ai-config — 設定取得 (暗号文 + メタデータ)
+- PUT    /api/v1/ai-config — 暗号文を保存 / 更新
+- DELETE /api/v1/ai-config — 削除
 
-設計書 §11.5 ですべて記述。migrate-key の per-user 1 回制約は §11.4-1078。
+旧 POST /migrate-key (Phase E2-a 限定の Fernet → E2EE 移行用) は Fernet
+完全廃止 (Phase E2-b) に伴い削除。
 """
 
 from base64 import b64decode, b64encode
-from datetime import datetime, timezone
 
 import logging
 
-from flask import Blueprint, current_app, g, jsonify, request
+from flask import Blueprint, g, jsonify, request
 
 from app.extensions import db, limiter
 from app.models.ai_config import UserAIConfig
@@ -63,7 +59,7 @@ def _b64_or_error(payload: dict, key: str, *, required: bool = True):
 
 
 def _serialize(config: UserAIConfig) -> dict:
-    """UserAIConfig を JSON 返却用に整形する (api_key_encrypted は返さない)。"""
+    """UserAIConfig を JSON 返却用に整形する。"""
     return {
         "provider": config.provider,
         "model_name": config.model_name,
@@ -76,11 +72,6 @@ def _serialize(config: UserAIConfig) -> dict:
             b64encode(config.api_key_iv).decode() if config.api_key_iv else None
         ),
         "is_e2ee": config.is_e2ee,
-        "migrated_at": (
-            config.migrated_at.isoformat() if config.migrated_at else None
-        ),
-        # 旧 Fernet 形式かどうか (未移行ユーザー判定用)
-        "has_legacy_key": config.api_key_encrypted is not None,
         "created_at": config.created_at.isoformat() if config.created_at else None,
         "updated_at": config.updated_at.isoformat() if config.updated_at else None,
     }
@@ -151,13 +142,9 @@ def put_ai_config():
     config.provider = provider
     config.api_key_blob = blob
     config.api_key_iv = iv
-    # 旧 Fernet データは PUT で上書きされた時点で不要、念のためクリア
-    config.api_key_encrypted = None
     config.model_name = model_name
     config.custom_prompt = custom_prompt
     config.compliance_check = compliance_check
-    if config.migrated_at is None:
-        config.migrated_at = datetime.now(timezone.utc)
     db.session.commit()
     return jsonify(_serialize(config))
 
@@ -175,70 +162,7 @@ def delete_ai_config():
     return ("", 204)
 
 
-@bp.post("/migrate-key")
-@auth_required(write=True)
-@limiter.limit("3 per hour", key_func=rate_limit_key)
-def migrate_key():
-    """Phase E2-a 限定の互換 endpoint。
-
-    旧 Fernet 暗号化された api_key_encrypted を一時的にサーバ復号し、平文を
-    呼出元 (クライアント) に返す。**per-user 1 回限り**: 呼出成功時に
-    migrated_at をセットし、以降は 410 Gone で拒否する。
-
-    ⚠️ この endpoint は v5.0 公開後 (全ユーザー移行完了後) に必ず削除すること。
-    残存させると全ユーザーの API キーをサーバ側で取得可能になる。
-
-    🛟 リカバリ手順 (commit 後にネットワーク障害でクライアントが平文を受け取
-    れずに 410 Gone で詰む稀なケース):
-        1. ユーザーが既に旧 Fernet 暗号鍵を別途バックアップしているなら設定
-           画面で再入力 → PUT で E2EE 形式に保存し直す
-        2. バックアップがない場合は API キー紛失扱い → ユーザーが LLM
-           プロバイダ管理画面で新規 API キーを発行 → 設定画面で再入力
-        3. 管理者が `flask ai-config-reset-migrate-key <user_id>` で migrate-key
-           を再呼出可能にするオプションはあるが、旧 Fernet データは即時 NULL
-           クリアされているため再呼出しても 404 になる。実用上は (1)(2) のみ
-    """
-    config = UserAIConfig.query.filter_by(user_id=g.auth_user.id).first()
-    if config is None:
-        return jsonify(error="AI config not set"), 404
-
-    # 既に migrate-key を呼出済みなら拒否 (per-user 1 回限り)
-    if config.migrated_at is not None:
-        return jsonify(
-            error="already migrated; this endpoint is one-time only per user",
-        ), 410
-
-    # 旧形式データがないと migrate のしようがない
-    if config.api_key_encrypted is None:
-        # E2EE 形式で新規登録されたユーザー (migrate 不要)。
-        # 念のため migrated_at をセットして再呼出を防ぐ
-        config.migrated_at = datetime.now(timezone.utc)
-        db.session.commit()
-        return jsonify(error="no legacy api_key_encrypted to migrate"), 404
-
-    # サーバ側で Fernet 復号 (本 endpoint だけが許容する例外的な平文露出)
-    from app.services.ai_receipt import decrypt_api_key
-    try:
-        plaintext = decrypt_api_key(config.api_key_encrypted)
-    except Exception:
-        # Fernet 復号失敗は SECRET_KEY 変更等の運用ミス。スタックトレースを
-        # サーバログに残し原因追跡を可能にする (ユーザーには汎用メッセージ)。
-        current_app.logger.exception(
-            "migrate_key: Fernet decryption failed for user_id=%s",
-            config.user_id,
-        )
-        return jsonify(error="failed to decrypt legacy key (server-side issue)"), 500
-
-    # 即座に旧カラムを NULL クリア + migrated_at セット
-    config.api_key_encrypted = None
-    config.migrated_at = datetime.now(timezone.utc)
-    db.session.commit()
-
-    return jsonify(
-        provider=config.provider,
-        # plaintext は migrate-key 戻り値としてのみ存在、サーバ側はもう持たない
-        api_key=plaintext.decode("utf-8") if isinstance(plaintext, bytes) else plaintext,
-        model_name=config.model_name,
-        custom_prompt=config.custom_prompt,
-        compliance_check=config.compliance_check,
-    )
+# 旧 POST /migrate-key (Fernet → E2EE blob 移行用) は E2EE 化完了 + Fernet
+# 完全廃止に伴い削除。旧 Fernet データを持ったユーザー (api_key_encrypted が
+# 非 NULL のまま残っていた場合) は LLM プロバイダ管理画面で API キーを新規
+# 発行し、設定画面で再登録する必要がある。
