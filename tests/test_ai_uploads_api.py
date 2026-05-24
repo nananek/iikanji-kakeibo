@@ -231,6 +231,32 @@ class TestAiSaveSuggestions:
         assert log.feature == "receipt_client_side"
         assert log.status == "ok"
 
+    def test_negative_tokens_rejected_recorded_as_null(
+        self, db, logged_in_client, user, accounts,
+    ):
+        """負トークン値は AIUsageLog に NULL で記録 (誤送信 / 不正クライアント対策)。
+
+        Phase 3 Billing 連携で総量集計時に負値混入を防ぐ。
+        """
+        from app.models.ai_usage_log import AIUsageLog
+        draft = self._make_pending_draft(db, user.id)
+        resp = logged_in_client.patch(
+            f"/api/v1/ai/drafts/{draft.id}/suggestions",
+            json={
+                "suggestions": [{"x": 1}],
+                "provider": "openai",
+                "model": "gpt-4o-mini",
+                "usage": {"input_tokens": -100, "output_tokens": 50},
+            },
+        )
+        assert resp.status_code == 200
+        log = AIUsageLog.query.filter_by(user_id=user.id).first()
+        assert log is not None
+        # 負値は NULL に正規化 (= total_tokens も None)
+        assert log.input_tokens is None
+        assert log.output_tokens == 50
+        assert log.total_tokens is None
+
     def test_no_usage_log_without_provider(
         self, db, logged_in_client, user, accounts,
     ):
