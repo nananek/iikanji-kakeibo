@@ -49,8 +49,8 @@ class TestAiAnalyzeRemoved:
       2. クライアント側で LLM 呼出 → PATCH /api/v1/ai/drafts/<id>/suggestions
     """
 
-    def test_no_auth_returns_401(self, client):
-        # ルート自体が無いため 404 になるが、認証チェック前にルート解決が走る
+    def test_no_auth_returns_404(self, client):
+        # ルート自体が無いため認証チェック前のルート解決で 404
         resp = client.post("/api/v1/ai/analyze")
         assert resp.status_code == 404
 
