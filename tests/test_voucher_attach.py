@@ -9,7 +9,6 @@ import pytest
 from app.extensions import db as _db
 from app.models.voucher import Voucher
 from app.models.voucher_audit_log import VoucherAuditLog
-from app.models.ai_config import UserAIConfig
 from app.services.voucher import create_voucher_from_upload
 from tests.conftest import make_journal
 
@@ -179,38 +178,12 @@ class TestAttachEndpoint:
         assert resp.status_code == 400
 
     @patch("app.services.voucher.store_image_with_thumbnail")
-    @patch("app.services.ai_receipt.analyze_voucher_for_attachment")
-    def test_attach_with_ai_returns_results(
-        self, mock_analyze, mock_store, logged_in_client, user, accounts, db,
+    def test_attach_returns_entry_metadata(
+        self, mock_store, logged_in_client, user, accounts, db,
     ):
-        """AI設定がある場合、compliance/consistency がレスポンスに含まれる"""
-        from app.services.ai_receipt import encrypt_api_key
-
-        config = UserAIConfig(
-            user_id=user.id,
-            provider="openai",
-            api_key_encrypted=encrypt_api_key("sk-test"),
-            model_name="gpt-4o",
-        )
-        db.session.add(config)
-        db.session.commit()
-
-        mock_analyze.return_value = {
-            "compliance": {
-                "status": "pass", "warnings": [], "details": [],
-            },
-            "consistency": {
-                "status": "pass",
-                "date_match": True,
-                "amount_match": True,
-                "description_match": True,
-                "warnings": [],
-            },
-        }
-
-        entry = make_journal(
-            db, user.id, "5010", "1010", 1500,
-        )
+        """E2 PR-C-6a: サーバ側 AI 解析は廃止。レスポンスは voucher_id +
+        journal_date/amount/description (クライアント側 AI が再構築に使用)。"""
+        entry = make_journal(db, user.id, "5010", "1010", 1500)
         data = {"image": (io.BytesIO(TINY_JPEG), "receipt.jpg", "image/jpeg")}
         resp = logged_in_client.post(
             f"/vouchers/attach/{entry.id}",
@@ -220,44 +193,11 @@ class TestAttachEndpoint:
         assert resp.status_code == 200
         result = resp.get_json()
         assert result["ok"] is True
-        assert result["compliance"]["status"] == "pass"
-        assert result["consistency"]["status"] == "pass"
-        mock_analyze.assert_called_once()
-
-    @patch("app.services.voucher.store_image_with_thumbnail")
-    @patch("app.services.ai_receipt.analyze_voucher_for_attachment")
-    def test_attach_ai_failure_no_block(
-        self, mock_analyze, mock_store, logged_in_client, user, accounts, db,
-    ):
-        """AI解析が例外を出してもVoucherは作成される"""
-        from app.services.ai_receipt import encrypt_api_key
-
-        config = UserAIConfig(
-            user_id=user.id,
-            provider="openai",
-            api_key_encrypted=encrypt_api_key("sk-test"),
-            model_name="gpt-4o",
-        )
-        db.session.add(config)
-        db.session.commit()
-
-        mock_analyze.side_effect = RuntimeError("API error")
-
-        entry = make_journal(
-            db, user.id, "5010", "1010", 800,
-        )
-        data = {"image": (io.BytesIO(TINY_JPEG), "receipt.jpg", "image/jpeg")}
-        resp = logged_in_client.post(
-            f"/vouchers/attach/{entry.id}",
-            data=data,
-            content_type="multipart/form-data",
-        )
-        assert resp.status_code == 200
-        result = resp.get_json()
-        assert result["ok"] is True
-        assert "ai_error" in result
-
-        # Voucher は作成されている
-        voucher = Voucher.query.filter_by(id=result["voucher_id"]).first()
-        assert voucher is not None
-        assert voucher.journal_entry_id == entry.id
+        assert "voucher_id" in result
+        # E2EE モード用に journal メタデータが含まれる
+        assert result["journal_date"] == entry.date.isoformat()
+        assert result["journal_amount"] == 1500
+        # compliance/consistency はサーバから返らない (クライアント側で実行)
+        assert "compliance" not in result
+        assert "consistency" not in result
+        assert "ai_error" not in result

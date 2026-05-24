@@ -521,6 +521,41 @@ def ai_prompt_context():
     })
 
 
+@bp.route("/voucher-attach/prompt-context", methods=["GET"])
+@auth_required(write=False)
+@limiter.limit("60 per hour", key_func=rate_limit_key)
+def voucher_attach_prompt_context():
+    """E2EE voucher-attach: クライアント側 LLM 呼出しのためのプロンプト材料を返す。"""
+    user_id = g.auth_user.id
+    from app.services.ai_receipt import (
+        COMPLIANCE_CHECK_PROMPT,
+        CONSISTENCY_CHECK_PROMPT_TEMPLATE,
+        DOCUMENT_PROMPT,
+        PROVIDER_DEFAULTS,
+    )
+
+    config = UserAIConfig.query.filter_by(user_id=user_id).first()
+    compliance_check = bool(config and config.compliance_check)
+
+    # サーバ側 analyze_voucher_for_attachment と等価のプロンプト構築:
+    # DOCUMENT_PROMPT + (compliance なら COMPLIANCE_CHECK_PROMPT) +
+    # CONSISTENCY_CHECK_PROMPT_TEMPLATE (placeholder のまま、クライアント側で
+    # __JOURNAL_DATE__ / __JOURNAL_AMOUNT__ / __JOURNAL_DESCRIPTION__ を置換)
+    prompt = DOCUMENT_PROMPT
+    if compliance_check:
+        prompt += COMPLIANCE_CHECK_PROMPT
+    prompt += CONSISTENCY_CHECK_PROMPT_TEMPLATE
+
+    return jsonify({
+        "ok": True,
+        "prompt_template": prompt,
+        "compliance_check_enabled": compliance_check,
+        "default_model_by_provider": {
+            k: v for k, v in PROVIDER_DEFAULTS.items() if k != "llama_cpp"
+        },
+    })
+
+
 @bp.route("/web-import/prompt-context", methods=["GET"])
 @auth_required(write=False)
 @limiter.limit("60 per hour", key_func=rate_limit_key)

@@ -16,7 +16,7 @@ from app.extensions import db, limiter
 from app.models.user import User
 from app.models.voucher import Voucher
 from app.models.voucher_audit_log import VoucherAuditLog
-from app.models.ai_config import UserAIConfig
+# E2 PR-C-6a: UserAIConfig import 削除 (analyze_voucher_for_attachment 廃止に伴い)
 from app.models.journal import JournalEntry, JournalEntryLine
 from app.services.audit import get_effective_user_id
 from app.services.storage import get_storage_backend, make_thumbnail_key
@@ -201,28 +201,19 @@ def attach(entry_id):
         # 明示的に `user_message` 属性経由でユーザー向け固定文言を返す。
         return jsonify({"error": exc.user_message}), 413
 
-    response_data = {"ok": True, "voucher_id": voucher.id}
-
-    config = UserAIConfig.query.filter_by(user_id=user_id).first()
-    if config and config.api_key_encrypted:
-        try:
-            from app.services.ai_receipt import analyze_voucher_for_attachment
-
-            result = analyze_voucher_for_attachment(
-                user_id=user_id,
-                image_bytes=image_bytes,
-                mime_type=mime_type,
-                journal_date=entry.date.isoformat(),
-                journal_amount=int(sum(
-                    line.debit_amount for line in entry.lines
-                )),
-                journal_description=entry.description or "",
-            )
-            if result.get("compliance"):
-                response_data["compliance"] = result["compliance"]
-            response_data["consistency"] = result["consistency"]
-        except Exception as e:
-            response_data["ai_error"] = str(e)
+    # E2 PR-C-6a: サーバ側 AI 解析 (analyze_voucher_for_attachment) を廃止。
+    # クライアントが E2EE モードなら別途 /api/v1/voucher-attach/prompt-context
+    # を叩いてクライアント側で LLM 呼出し → 結果は UI 表示のみ (現状の挙動と
+    # 同様、DB には保存しない)。サーバが返すのは voucher_id + entry メタのみ。
+    response_data = {
+        "ok": True,
+        "voucher_id": voucher.id,
+        "journal_date": entry.date.isoformat(),
+        "journal_amount": int(sum(
+            line.debit_amount for line in entry.lines
+        )),
+        "journal_description": entry.description or "",
+    }
 
     db.session.commit()
     return jsonify(response_data)
