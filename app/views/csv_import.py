@@ -246,7 +246,11 @@ def columns_detect_context():
     sample_lines = []
     for row in sample_rows[:5]:
         if isinstance(row, list):
-            sample_lines.append(", ".join(str(c)[:MAX_CELL_LEN] for c in row))
+            # 行のセル数も MAX_HEADERS でキャップ
+            # (LLM に渡すのは headers と対応する列だけで十分)
+            sample_lines.append(
+                ", ".join(str(c)[:MAX_CELL_LEN] for c in row[:MAX_HEADERS]),
+            )
     sample_text = "\n".join(sample_lines)
 
     user_id = get_effective_user_id()
