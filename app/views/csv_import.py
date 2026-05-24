@@ -409,11 +409,19 @@ def reconcile():
     return jsonify(results)
 
 
-@bp.route("/ai-reconcile", methods=["POST"])
+@bp.route("/ai-reconcile-context", methods=["GET"])
 @login_required
-def ai_reconcile():
-    """AI照合API — unmatched行の照合候補をAIで提案"""
-    from app.services.reconciliation import find_matches, find_ai_matches
+def ai_reconcile_context():
+    """E2 PR-C-6c: AI 照合のためのプロンプト材料 + 照合候補データを返す。
+
+    LLM 呼出はクライアント側 reconcile_orchestrator.js が行う。サーバには
+    LLM 出力 (matches) は通知不要 (クライアント UI で直接表示する)。
+    """
+    from app.services.reconciliation import (
+        AI_RECONCILE_PROMPT_TEMPLATE, AI_RECONCILE_BATCH_SIZE, find_matches,
+    )
+    from app.services.ai_receipt import PROVIDER_DEFAULTS
+    from app.models.ai_config import UserAIConfig
 
     data_key = session.get("csv_data_key")
     payment_account_code = session.get("csv_payment_account_code")
@@ -424,7 +432,6 @@ def ai_reconcile():
     user_id = get_effective_user_id()
     results = find_matches(user_id, payment_account_code, parsed)
 
-    # unmatched CSV行と journal_only を AI に渡す
     unmatched_csv = []
     for r in results["csv_results"]:
         if r["status"] == "unmatched":
@@ -438,19 +445,20 @@ def ai_reconcile():
                     "amount": amount,
                 })
 
-    journal_candidates = results["journal_only"]
+    config = UserAIConfig.query.filter_by(user_id=user_id).first()
+    custom_prompt = config.custom_prompt if config else ""
 
-    if not unmatched_csv or not journal_candidates:
-        return jsonify({"matches": []})
-
-    try:
-        ai_matches = find_ai_matches(user_id, unmatched_csv, journal_candidates)
-    except (ValueError, RuntimeError) as e:
-        from flask import current_app
-        current_app.logger.exception("find_ai_matches failed")
-        return jsonify({"error": safe_user_error(e)}), 400
-
-    return jsonify({"matches": ai_matches})
+    return jsonify({
+        "ok": True,
+        "prompt_template": AI_RECONCILE_PROMPT_TEMPLATE,
+        "batch_size": AI_RECONCILE_BATCH_SIZE,
+        "unmatched_csv": unmatched_csv,
+        "journal_candidates": results["journal_only"],
+        "custom_prompt": custom_prompt,
+        "default_model_by_provider": {
+            k: v for k, v in PROVIDER_DEFAULTS.items() if k != "llama_cpp"
+        },
+    })
 
 
 @bp.route("/match/snap-date", methods=["POST"])

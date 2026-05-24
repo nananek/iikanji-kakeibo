@@ -461,58 +461,42 @@ AI_RECONCILE_PROMPT = """\
   {{"csv_index": 1, "entry_id": null, "confidence": 0, "reason": "該当なし"}}
 ]}}"""
 
+
+# E2 PR-C-6c: クライアント完結 reconcile 用のプレースホルダ版。
+# クライアントが csv_rows_text / journal_rows_text を構築 + 置換する。
+AI_RECONCILE_PROMPT_TEMPLATE = """\
+あなたは日本の家計簿アプリの照合アシスタントです。
+以下はクレジットカード等のCSV明細と、既存の仕訳一覧です。
+金額が完全一致しないものの、同一取引である可能性があるペアを見つけてください。
+
+照合のヒント:
+- 摘要テキストの類似性（例: CSVの「アマゾン」と仕訳の「Amazon.co.jp」）
+- 日付の近さ（クレジットカードは利用日と計上日にずれが生じやすい）
+- 端数の違い（ポイント利用・割引で金額が僅かに異なるケース）
+- 分割払いの合計と一括の対応
+
+## CSV明細（未照合）
+__CSV_ROWS_TEXT__
+
+## 既存仕訳（未照合）
+__JOURNAL_ROWS_TEXT__
+
+各CSV行に対して、最も可能性の高い仕訳候補を1件（確信度とともに）提案してください。
+確信度が低い場合（0.3未満）は候補なしとしてください。
+
+必ず以下のJSON形式のみを返してください。他のテキストは含めないでください。
+{"matches": [
+  {"csv_index": 0, "entry_id": 123, "confidence": 0.85, "reason": "摘要が類似"},
+  {"csv_index": 1, "entry_id": null, "confidence": 0, "reason": "該当なし"}
+]}"""
+
 AI_RECONCILE_BATCH_SIZE = 30
 
 
-def find_ai_matches(user_id, unmatched_csv, journal_candidates):
-    """AIを使って金額不一致の照合候補を提案する。
-
-    Args:
-        user_id: ユーザーID
-        unmatched_csv: list of dict — {csv_index, date, description, amount}
-        journal_candidates: list of dict — {entry_id, date, description, amount, category_name}
-
-    Returns:
-        list of dict — {csv_index, entry_id, confidence, reason}
-    """
-    from app.services.ai_receipt import (
-        _get_ai_config, _TEXT_PROVIDER_HANDLERS, _call_ai_text,
-    )
-
-    api_key, provider, model, _, __, extra_kw, ___ = _get_ai_config(user_id)
-    text_handler = _TEXT_PROVIDER_HANDLERS.get(provider)
-    if not text_handler:
-        raise ValueError(f"未対応のAIプロバイダーです: {provider}")
-
-    if not unmatched_csv or not journal_candidates:
-        return []
-
-    journal_text = _format_journal_rows(journal_candidates)
-    all_matches = []
-
-    # バッチ処理
-    for start in range(0, len(unmatched_csv), AI_RECONCILE_BATCH_SIZE):
-        batch = unmatched_csv[start:start + AI_RECONCILE_BATCH_SIZE]
-        csv_text = _format_csv_rows(batch)
-        prompt = AI_RECONCILE_PROMPT.format(
-            csv_rows_text=csv_text,
-            journal_rows_text=journal_text,
-        )
-        parsed = _call_ai_text(
-            text_handler, api_key, model, prompt, 2000, user_id, extra_kw,
-            provider=provider, feature="csv_reconcile_ai",
-        )
-        if isinstance(parsed, dict) and "matches" in parsed:
-            for m in parsed["matches"]:
-                if m.get("entry_id") and m.get("confidence", 0) >= 0.3:
-                    all_matches.append({
-                        "csv_index": m["csv_index"],
-                        "entry_id": m["entry_id"],
-                        "confidence": m["confidence"],
-                        "reason": m.get("reason", ""),
-                    })
-
-    return all_matches
+# E2 PR-C-6c: find_ai_matches は E2EE 化に伴い削除。
+# クライアント側 reconcile_orchestrator.js が等価の処理を実行する。
+# 旧 AI_RECONCILE_PROMPT (Python str.format) も dead code として残る
+# (caller 無し、後続 PR で削除可)。
 
 
 def _format_csv_rows(rows):
