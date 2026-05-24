@@ -40,142 +40,31 @@ def _setup_ai_config(db, user_id):
     return cfg
 
 
-class TestAiAnalyze:
-    def test_no_auth(self, client):
+class TestAiAnalyzeRemoved:
+    """E2 PR-C-4f: Bearer API /api/v1/ai/analyze (Fernet 復号 + サーバ LLM
+    呼出し経路) は廃止。POST すると 404 を返すことを担保。
+
+    クライアントは 2-step フローに移行:
+      1. POST /api/v1/ai/uploads (画像 + comment) → draft_id
+      2. クライアント側で LLM 呼出 → PATCH /api/v1/ai/drafts/<id>/suggestions
+    """
+
+    def test_no_auth_returns_401(self, client):
+        # ルート自体が無いため 404 になるが、認証チェック前にルート解決が走る
         resp = client.post("/api/v1/ai/analyze")
-        assert resp.status_code == 401
+        assert resp.status_code == 404
 
-    def test_no_ai_config(self, client, auth_header, accounts):
-        # AI 設定なし
-        resp = client.post("/api/v1/ai/analyze",
-                           headers=auth_header,
-                           data={}, content_type="multipart/form-data")
-        assert resp.status_code == 400
-
-    def test_no_image(self, db, client, user, auth_header, accounts):
-        _setup_ai_config(db, user.id)
-        resp = client.post("/api/v1/ai/analyze",
-                           headers=auth_header,
-                           data={}, content_type="multipart/form-data")
-        assert resp.status_code == 400
-        assert "image" in resp.get_json()["error"]
-
-    def test_oversized(self, db, client, user, auth_header, accounts):
-        _setup_ai_config(db, user.id)
-        big = b"\x89PNG" + b"\x00" * (11 * 1024 * 1024)  # 11MB
-        resp = client.post("/api/v1/ai/analyze",
-                           headers=auth_header,
-                           data={"image": (io.BytesIO(big), "big.png")},
-                           content_type="multipart/form-data")
-        assert resp.status_code == 400
-
-    def test_unsupported_mime(self, db, client, user, auth_header, accounts):
+    def test_authed_post_returns_404(
+        self, db, client, user, auth_header, accounts,
+    ):
         _setup_ai_config(db, user.id)
         resp = client.post(
             "/api/v1/ai/analyze",
             headers=auth_header,
-            data={"image": (io.BytesIO(b"not-image"), "x.txt", "text/plain")},
+            data={"image": (io.BytesIO(_png_bytes()), "x.png", "image/png")},
             content_type="multipart/form-data",
         )
-        assert resp.status_code == 400
-
-    def test_success(self, db, client, user, auth_header, accounts):
-        _setup_ai_config(db, user.id)
-        with patch("app.services.ai_receipt.analyze_and_suggest") as mock_a, \
-             patch("app.services.storage.store_image_with_thumbnail"):
-            from app.services.ai_receipt import JournalSuggestion
-            mock_a.return_value = [
-                JournalSuggestion(
-                    title="領収書", description="セブン",
-                    date="2026-02-15",
-                    entry_description="ファミマ",
-                    lines=[
-                        {"account_code": "5010", "debit_amount": 100,
-                         "credit_amount": 0, "description": ""},
-                        {"account_code": "1010", "debit_amount": 0,
-                         "credit_amount": 100, "description": ""},
-                    ],
-                ),
-            ]
-            resp = client.post(
-                "/api/v1/ai/analyze",
-                headers=auth_header,
-                data={
-                    "image": (io.BytesIO(_png_bytes()), "x.png", "image/png"),
-                    "comment": "テスト",
-                },
-                content_type="multipart/form-data",
-            )
-        assert resp.status_code == 201
-        body = resp.get_json()
-        assert body["ok"] is True
-        assert "draft_id" in body
-
-    def test_analyze_error(self, db, client, user, auth_header, accounts):
-        _setup_ai_config(db, user.id)
-        with patch("app.services.ai_receipt.analyze_and_suggest") as mock_a:
-            mock_a.side_effect = ValueError("AI解析失敗")
-            resp = client.post(
-                "/api/v1/ai/analyze",
-                headers=auth_header,
-                data={
-                    "image": (io.BytesIO(_png_bytes()), "x.png", "image/png"),
-                },
-                content_type="multipart/form-data",
-            )
-        assert resp.status_code == 400
-
-    def test_record_upload_failure_does_not_record_delete(
-        self, db, client, user, auth_header, accounts, monkeypatch,
-    ):
-        """api.create_draft: record_upload 失敗時に TOCTOU 検証スキップで
-        record_delete が呼ばれない (他ユーザー計上の誤減算経路を遮断)。
-        ai_journal.analyze 側の同等テストと対称に追加。
-        """
-        from app.models.storage import StorageUsage
-        from app.services.ai_receipt import JournalSuggestion
-        from app.views import api as api_module
-
-        _setup_ai_config(db, user.id)
-        # 上限近くまで埋まった他ユーザー相当の計上を作る (495MB)
-        db.session.add(StorageUsage(user_id=user.id, used_bytes=495 * 1024 * 1024))
-        db.session.commit()
-
-        def fake_record_upload(*args, **kwargs):
-            raise RuntimeError("DB connection lost")
-
-        record_delete_called = []
-
-        def fake_record_delete(*args, **kwargs):
-            record_delete_called.append(args)
-
-        monkeypatch.setattr(api_module, "record_upload", fake_record_upload)
-        monkeypatch.setattr(api_module, "record_delete", fake_record_delete)
-
-        with patch("app.services.ai_receipt.analyze_and_suggest") as mock_a, \
-             patch("app.services.storage.store_image_with_thumbnail"):
-            mock_a.return_value = [
-                JournalSuggestion(
-                    title="x", description="", date="2026-02-15",
-                    entry_description="x", lines=[], compliance=None,
-                ),
-            ]
-            resp = client.post(
-                "/api/v1/ai/analyze",
-                headers=auth_header,
-                data={
-                    "image": (io.BytesIO(_png_bytes()), "x.png", "image/png"),
-                },
-                content_type="multipart/form-data",
-            )
-
-        # 201 (Created) — Draft は永続化される
-        assert resp.status_code == 201
-        # record_delete は呼ばれていない (誤減算なし)
-        assert record_delete_called == []
-        # StorageUsage は変動なし (record_upload 失敗のため)
-        usage = db.session.get(StorageUsage, user.id)
-        assert usage.used_bytes == 495 * 1024 * 1024
+        assert resp.status_code == 404
 
 
 class TestAiDrafts:

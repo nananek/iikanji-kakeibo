@@ -197,64 +197,9 @@ class TestJournalEditPostLv2:
         assert resp.status_code in (200, 302, 303)
 
 
-class TestSendDraftNotification:
-    """API: POST /api/v1/ai/analyze の notify=1 で _send_draft_notification 経由"""
-
-    def test_with_active_webhook(self, db, user, auth_header, accounts, client):
-        from app.models.auto_import import WebhookConfig
-        from app.models.ai_config import UserAIConfig
-        from app.services.ai_receipt import encrypt_api_key
-        from unittest.mock import patch
-
-        cfg = UserAIConfig(
-            user_id=user.id, provider="openai",
-            api_key_encrypted=encrypt_api_key("k"), model_name="gpt-4",
-        )
-        db.session.add(cfg)
-        wh = WebhookConfig(
-            user_id=user.id, name="hook", provider="discord",
-            webhook_url="https://discord.com/api/webhooks/x/y",
-            events_json='["import_success"]',
-            is_active=True,
-        )
-        db.session.add(wh)
-        db.session.commit()
-
-        with patch("app.services.ai_receipt.analyze_and_suggest") as mock_a, \
-             patch("app.views.api.store_image_with_thumbnail"), \
-             patch("app.services.notify.send_webhook") as mock_send:
-            from app.services.ai_receipt import JournalSuggestion
-            mock_a.return_value = [JournalSuggestion(
-                title="t", description="x",
-                date="2026-02-15", entry_description="セブン",
-                lines=[
-                    {"account_code": "5010", "debit_amount": 100,
-                     "credit_amount": 0, "description": ""},
-                    {"account_code": "1010", "debit_amount": 0,
-                     "credit_amount": 100, "description": ""},
-                ],
-            )]
-            mock_send.return_value = "msg-123"
-            import io
-            try:
-                from PIL import Image
-                buf = io.BytesIO()
-                Image.new("RGB", (4, 4)).save(buf, format="PNG")
-                img = buf.getvalue()
-            except ImportError:
-                img = b"\x89PNG" + b"\x00" * 50
-
-            resp = client.post("/api/v1/ai/analyze",
-                               headers=auth_header,
-                               data={
-                                   "image": (io.BytesIO(img), "x.png", "image/png"),
-                                   "notify": "1",
-                               },
-                               content_type="multipart/form-data")
-        # 200/201 は実装次第
-        assert resp.status_code in (200, 201)
-        # send_webhook が呼ばれた
-        mock_send.assert_called()
+# E2 PR-C-4f: _send_draft_notification は POST /api/v1/ai/analyze 削除に
+# 伴い廃止。Webhook 通知は後続 PR で PATCH /api/v1/ai/drafts/<id>/suggestions
+# 側に統合される (現状一時的に Bearer API 経由の AI 下書き作成通知は無効)。
 
 
 class TestMarkDraftDone:

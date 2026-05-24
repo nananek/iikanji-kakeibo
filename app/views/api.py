@@ -3,7 +3,6 @@
 import functools
 import hashlib
 import json
-from dataclasses import asdict
 from datetime import date as date_type, datetime, timezone
 
 from flask import Blueprint, jsonify, request, g
@@ -317,135 +316,11 @@ _MAX_IMAGE_SIZE = 10 * 1024 * 1024  # 10 MB
 _ALLOWED_MIME_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
 
 
-@bp.route("/ai/analyze", methods=["POST"])
-@limiter.limit("30/hour")
-@api_key_required(scope="ai:analyze", write=True)
-def ai_analyze():
-    """画像を AI 解析して下書きを作成する。
-
-    multipart/form-data:
-      image: 画像ファイル (必須)
-      comment: メモ (任意, 最大500文字)
-      notify: "1" でWebhook通知を送信 (任意)
-    """
-    from app.services.ai_receipt import analyze_and_suggest
-
-    user_id = g.api_user_id
-
-    config = UserAIConfig.query.filter_by(user_id=user_id).first()
-    if not config:
-        return jsonify({"error": "AI API設定が未登録です。"}), 400
-
-    image_file = request.files.get("image")
-    if not image_file or not image_file.filename:
-        return jsonify({"error": "image は必須です。"}), 400
-
-    image_bytes = image_file.read()
-    if len(image_bytes) > _MAX_IMAGE_SIZE:
-        return jsonify({"error": "ファイルサイズが大きすぎます（上限10MB）。"}), 400
-
-    mime_type = image_file.content_type
-    if mime_type not in _ALLOWED_MIME_TYPES:
-        return jsonify({
-            "error": "対応していないファイル形式です。JPEG/PNG/WebP/GIF を使用してください。"
-        }), 400
-
-    # Phase 5 #70: AIDraft 段階で StorageUsage に計上 (ai_journal.analyze と同等)
-    size = len(image_bytes)
-    owner = db.session.get(User, user_id)
-    if owner is None:
-        return jsonify({"error": "ユーザーが見つかりません。"}), 400
-    try:
-        check_quota(owner, size)
-    except QuotaExceededError as exc:
-        # CodeQL py/stack-trace-exposure 対策で `exc.user_message` 経由 (PR #92)
-        return jsonify({"error": exc.user_message}), 413
-
-    file_hash = hashlib.sha256(image_bytes).hexdigest()
-    comment = (request.form.get("comment") or "").strip()[:500]
-
-    try:
-        suggestions = analyze_and_suggest(
-            user_id, image_bytes, mime_type, comment=comment or None,
-        )
-    except (ValueError, RuntimeError) as e:
-        from flask import current_app
-        current_app.logger.exception("analyze_and_suggest failed (API)")
-        return jsonify({"error": safe_user_error(e)}), 400
-
-    suggestions_data = [asdict(s) for s in suggestions]
-    suggestions_json = json.dumps(suggestions_data, ensure_ascii=False)
-
-    draft = AIDraft(
-        user_id=user_id,
-        image_key="",
-        image_mime=mime_type,
-        file_hash=file_hash,
-        file_size=size,
-        comment=comment or None,
-        suggestions_json=suggestions_json,
-        status="analyzed",
-    )
-    db.session.add(draft)
-    db.session.flush()
-    key = make_storage_key(draft.user_id, draft.id, mime_type)
-    store_image_with_thumbnail(key, image_bytes, mime_type)
-    draft.image_key = key
-    db.session.commit()
-
-    # 容量加算 + TOCTOU 楽観的再検証 (create_voucher_from_upload と同じパターン)。
-    # Draft は既に commit 済のため、record_upload の例外で 500 を返すと
-    # quota リークになる。明示的に握ってログに残し、整合性監査バッチで補完。
-    record_upload_succeeded = False
-    try:
-        record_upload(owner, size)
-        record_upload_succeeded = True
-    except Exception as e:
-        from flask import current_app
-        current_app.logger.exception(
-            "api ai/drafts: record_upload failed (user=%d size=%d): %s",
-            owner.id, size, e,
-        )
-    # record_upload 失敗時は加算が成立していないため TOCTOU 検証を
-    # スキップする。検証走ると別ユーザーが先に上限近くまで埋めた状況で
-    # 超過判定 → record_delete で他ユーザーの計上を誤減算する経路が
-    # できてしまう。
-    if record_upload_succeeded and get_used_bytes(owner) > get_quota_bytes(owner):
-        from flask import current_app
-        storage = get_storage_backend()
-        for k in (key, make_thumbnail_key(key)):
-            try:
-                storage.delete(k)
-            except Exception as e:
-                current_app.logger.warning(
-                    "api ai/drafts rollback: storage delete failed %s: %s",
-                    k, e,
-                )
-        db.session.delete(draft)
-        db.session.commit()
-        try:
-            record_delete(owner, size)
-        except Exception as e:
-            current_app.logger.exception(
-                "api ai/drafts rollback: record_delete failed "
-                "(user=%d size=%d): %s", owner.id, size, e,
-            )
-        return jsonify({
-            "error": "並行アップロードにより容量上限を超えました。再試行してください。",
-        }), 413
-
-    # オプション: Webhook 通知
-    if request.form.get("notify") == "1":
-        _send_draft_notification(user_id, draft, suggestions_data)
-
-    # 容量警告メール (Phase 6 #71)。閾値超過時のみ送信、失敗は best-effort
-    maybe_send_quota_warning(owner)
-
-    return jsonify({
-        "ok": True,
-        "draft_id": draft.id,
-        "suggestions": suggestions_data,
-    }), 201
+# E2 PR-C-4f: 旧 POST /ai/analyze (Fernet 復号 + サーバ LLM 呼出し) は廃止。
+# Bearer API クライアントは下記の 2-step フローに移行する:
+#   1. POST /ai/uploads (multipart 画像 + comment) → draft_id 取得
+#   2. クライアント側で MK 復号した API キーで LLM 直接呼出し →
+#      PATCH /ai/drafts/<id>/suggestions で結果保存 (AIUsageLog 記録)
 
 
 def _draft_to_dict(draft: AIDraft, include_suggestions: bool = False) -> dict:
@@ -1195,53 +1070,6 @@ def api_tax_summary():
         "tax_summary": tax_serializable,
         "medical_summary": medical_serializable,
     })
-
-
-def _send_draft_notification(user_id: int, draft: AIDraft, suggestions: list):
-    """下書き作成をWebhookで通知する"""
-    from flask import current_app
-    from app.models.auto_import import WebhookConfig
-    from app.services.notify import send_webhook
-
-    webhooks = WebhookConfig.query.filter_by(
-        user_id=user_id, is_active=True
-    ).all()
-    if not webhooks:
-        return
-
-    base_url = current_app.config.get("WEBAUTHN_ORIGIN", "").rstrip("/")
-    drafts_url = f"{base_url}/ai-journal/drafts" if base_url else None
-
-    # 最初の候補からサマリーを生成
-    title_parts = []
-    if suggestions:
-        s = suggestions[0]
-        if s.get("date"):
-            title_parts.append(s["date"])
-        if s.get("entry_description"):
-            title_parts.append(s["entry_description"])
-    summary = " ".join(title_parts) if title_parts else "新しい下書き"
-
-    message = f"AI証憑仕訳の下書きを作成しました。\n{summary}"
-
-    for webhook in webhooks:
-        events = json.loads(webhook.events_json)
-        if "import_success" in events:
-            message_id = send_webhook(
-                provider=webhook.provider,
-                url=webhook.webhook_url,
-                title="いいかんじ™家計簿 AI仕訳",
-                message=message,
-                details={
-                    "候補数": len(suggestions),
-                    "メモ": draft.comment or "—",
-                },
-                link_url=drafts_url,
-            )
-            if message_id and webhook.provider == "discord":
-                draft.discord_webhook_url = webhook.webhook_url
-                draft.discord_message_id = message_id
-                db.session.commit()
 
 
 def _mark_draft_done(draft: AIDraft, entry_number: int):
