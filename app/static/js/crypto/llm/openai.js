@@ -85,3 +85,52 @@ export async function callOpenAI({
     },
   };
 }
+
+
+/** OpenAI Chat Completions の text-only 版 (E2 PR-C-5b)。Web 明細抽出用。 */
+export async function callOpenAIText({
+  apiKey, model, prompt, maxTokens = 16000, signal, fetchImpl,
+}) {
+  if (!apiKey || typeof apiKey !== "string") {
+    throw new Error("apiKey is required");
+  }
+  if (!model || typeof model !== "string") {
+    throw new Error("model is required");
+  }
+  if (typeof prompt !== "string" || !prompt) {
+    throw new Error("prompt is required");
+  }
+  const f = fetchImpl ?? globalThis.fetch;
+  const body = {
+    model,
+    messages: [{ role: "user", content: prompt }],
+    max_tokens: maxTokens,
+  };
+  const r = await f(OPENAI_URL, {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+    signal,
+  });
+  if (!r.ok) {
+    const text = await r.text().catch(() => "");
+    throw new Error(
+      `OpenAI API error: HTTP ${r.status} ${text.slice(0, 200)}`,
+    );
+  }
+  const data = await r.json();
+  const content = data?.choices?.[0]?.message?.content;
+  if (typeof content !== "string") {
+    throw new Error("OpenAI response missing content");
+  }
+  return {
+    result: extractJson(content),
+    usage: {
+      input_tokens: data?.usage?.prompt_tokens ?? null,
+      output_tokens: data?.usage?.completion_tokens ?? null,
+    },
+  };
+}

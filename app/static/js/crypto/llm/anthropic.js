@@ -83,3 +83,56 @@ export async function callAnthropic({
     },
   };
 }
+
+
+/** Anthropic Messages API の text-only 版 (E2 PR-C-5b)。Web 明細抽出用。 */
+export async function callAnthropicText({
+  apiKey, model, prompt, maxTokens = 16000, signal, fetchImpl,
+}) {
+  if (!apiKey || typeof apiKey !== "string") {
+    throw new Error("apiKey is required");
+  }
+  if (!model || typeof model !== "string") {
+    throw new Error("model is required");
+  }
+  if (typeof prompt !== "string" || !prompt) {
+    throw new Error("prompt is required");
+  }
+  const f = fetchImpl ?? globalThis.fetch;
+  const body = {
+    model,
+    max_tokens: maxTokens,
+    messages: [{
+      role: "user",
+      content: [{ type: "text", text: prompt }],
+    }],
+  };
+  const r = await f(ANTHROPIC_URL, {
+    method: "POST",
+    headers: {
+      "x-api-key": apiKey,
+      "anthropic-version": ANTHROPIC_VERSION,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+    signal,
+  });
+  if (!r.ok) {
+    const text = await r.text().catch(() => "");
+    throw new Error(
+      `Anthropic API error: HTTP ${r.status} ${text.slice(0, 200)}`,
+    );
+  }
+  const data = await r.json();
+  const content = data?.content?.[0]?.text;
+  if (typeof content !== "string") {
+    throw new Error("Anthropic response missing content");
+  }
+  return {
+    result: extractJson(content),
+    usage: {
+      input_tokens: data?.usage?.input_tokens ?? null,
+      output_tokens: data?.usage?.output_tokens ?? null,
+    },
+  };
+}
