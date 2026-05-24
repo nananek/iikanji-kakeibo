@@ -2,6 +2,12 @@
 //
 // サーバ側 _call_google と等価の挙動。
 // 認証: クエリパラメータ ?key=<apiKey> (Bearer ではない)。
+//
+// セキュリティ注意 (PR #164 review Minor 2):
+//   Gemini 標準仕様のため URL クエリに API キーが入る。E2EE 設計の趣旨
+//   (サーバにキーを送らない) は満たすが、ブラウザ履歴 / Referer / ネット
+//   ワークログにキーが残り得る点はユーザーに告知される必要あり。Anthropic /
+//   OpenAI はヘッダ認証のためこの問題なし。
 
 import { extractJson, bytesToBase64 } from "./parse.js";
 

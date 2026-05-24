@@ -218,6 +218,26 @@ test("callOpenAIText: HTTP エラーで throw", async () => {
   );
 });
 
+test("callAnthropicText: HTTP エラーで throw", async () => {
+  const fetchImpl = makeFetch(() => jsonResp("oops", false, 502));
+  await assert.rejects(
+    () => callAnthropicText({
+      apiKey: "k", model: "m", prompt: "P", fetchImpl,
+    }),
+    /Anthropic API error: HTTP 502/,
+  );
+});
+
+test("callGoogleText: HTTP エラーで throw", async () => {
+  const fetchImpl = makeFetch(() => jsonResp("oops", false, 503));
+  await assert.rejects(
+    () => callGoogleText({
+      apiKey: "k", model: "m", prompt: "P", fetchImpl,
+    }),
+    /Google API error: HTTP 503/,
+  );
+});
+
 test("callOpenAIText: 必須引数欠如で throw", async () => {
   await assert.rejects(
     () => callOpenAIText({ model: "m", prompt: "P" }),
@@ -230,6 +250,17 @@ test("callOpenAIText: 必須引数欠如で throw", async () => {
   await assert.rejects(
     () => callOpenAIText({ apiKey: "k", model: "m" }),
     /prompt is required/,
+  );
+});
+
+test("callAnthropicText / callGoogleText: 必須引数欠如で throw", async () => {
+  await assert.rejects(
+    () => callAnthropicText({ model: "m", prompt: "P" }),
+    /apiKey is required/,
+  );
+  await assert.rejects(
+    () => callGoogleText({ model: "m", prompt: "P" }),
+    /apiKey is required/,
   );
 });
 
@@ -281,6 +312,20 @@ test("runWebExtract: promptContext 欠如で throw", async () => {
       callLLMTextImpl: async () => ({}),
     }),
     /promptContext is required/,
+  );
+});
+
+test("runWebExtract: promptContext.prompt_template 欠如で早期 throw", async () => {
+  // PR #164 review Minor 4: promptContext オブジェクトだが prompt_template が
+  // 欠落しているケースを runWebExtract 側で早めに弾く
+  await assert.rejects(
+    () => runWebExtract({
+      promptContext: { custom_prompt: "x" },
+      provider: "openai", apiKey: "k", model: "m",
+      paymentAccountName: "x", rawText: "y",
+      callLLMTextImpl: async () => ({}),
+    }),
+    /prompt_template is required/,
   );
 });
 

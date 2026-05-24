@@ -34,9 +34,11 @@ export function buildWebExtractPrompt({
     throw new Error("rawText must be a string");
   }
   const truncated = rawText.slice(0, MAX_RAW_TEXT_LENGTH);
+  // replaceAll で全プレースホルダを置換 (paymentAccountName 中に __RAW_TEXT__
+  // 文字列を含んでも誤展開しない、PR #164 review Minor 1 対応)
   return promptTemplate
-    .replace("__PAYMENT_ACCOUNT_NAME__", paymentAccountName)
-    .replace("__RAW_TEXT__", truncated);
+    .replaceAll("__PAYMENT_ACCOUNT_NAME__", paymentAccountName)
+    .replaceAll("__RAW_TEXT__", truncated);
 }
 
 
@@ -76,6 +78,10 @@ export async function runWebExtract({
 }) {
   if (!promptContext || typeof promptContext !== "object") {
     throw new Error("promptContext is required");
+  }
+  if (typeof promptContext.prompt_template !== "string"
+      || !promptContext.prompt_template) {
+    throw new Error("promptContext.prompt_template is required");
   }
   const prompt = buildWebExtractPrompt({
     promptTemplate: promptContext.prompt_template,
