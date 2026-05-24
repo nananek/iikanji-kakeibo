@@ -17,8 +17,6 @@ from app.models.ai_draft import AIDraft
 from app.models.ai_usage_log import AIUsageLog
 from app.models.api_key import APIKey
 from app.models.audit import AuditGrant, AuditGrantAccount
-# E2 PR-E-a: AutoImportSource / ProcessedFile は廃止。WebhookConfig は維持。
-# 自動削除されるため明示削除不要 (未使用 import 整理、PR #97 Nit)。
 from app.models.auto_import import WebhookConfig
 from app.models.balance_cache import BalanceCache
 from app.models.csv_column_profile import CsvColumnProfile
