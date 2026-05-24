@@ -435,35 +435,10 @@ def _build_daily_summary(csv_rows, csv_results, candidates, csv_meta,
 
 # --- AI 照合 ---
 
-AI_RECONCILE_PROMPT = """\
-あなたは日本の家計簿アプリの照合アシスタントです。
-以下はクレジットカード等のCSV明細と、既存の仕訳一覧です。
-金額が完全一致しないものの、同一取引である可能性があるペアを見つけてください。
-
-照合のヒント:
-- 摘要テキストの類似性（例: CSVの「アマゾン」と仕訳の「Amazon.co.jp」）
-- 日付の近さ（クレジットカードは利用日と計上日にずれが生じやすい）
-- 端数の違い（ポイント利用・割引で金額が僅かに異なるケース）
-- 分割払いの合計と一括の対応
-
-## CSV明細（未照合）
-{csv_rows_text}
-
-## 既存仕訳（未照合）
-{journal_rows_text}
-
-各CSV行に対して、最も可能性の高い仕訳候補を1件（確信度とともに）提案してください。
-確信度が低い場合（0.3未満）は候補なしとしてください。
-
-必ず以下のJSON形式のみを返してください。他のテキストは含めないでください。
-{{"matches": [
-  {{"csv_index": 0, "entry_id": 123, "confidence": 0.85, "reason": "摘要が類似"}},
-  {{"csv_index": 1, "entry_id": null, "confidence": 0, "reason": "該当なし"}}
-]}}"""
-
-
-# E2 PR-C-6c: クライアント完結 reconcile 用のプレースホルダ版。
-# クライアントが csv_rows_text / journal_rows_text を構築 + 置換する。
+# 旧 AI_RECONCILE_PROMPT (Python str.format 版) は E2 PR-C-6c で
+# find_ai_matches が廃止された時点で dead code 化、本 PR で削除。
+# クライアント側 reconcile_orchestrator.js が AI_RECONCILE_PROMPT_TEMPLATE
+# (placeholder 版) を使用する。
 AI_RECONCILE_PROMPT_TEMPLATE = """\
 あなたは日本の家計簿アプリの照合アシスタントです。
 以下はクレジットカード等のCSV明細と、既存の仕訳一覧です。
@@ -495,8 +470,6 @@ AI_RECONCILE_BATCH_SIZE = 30
 
 # E2 PR-C-6c: find_ai_matches は E2EE 化に伴い削除。
 # クライアント側 reconcile_orchestrator.js が等価の処理を実行する。
-# 旧 AI_RECONCILE_PROMPT (Python str.format) も dead code として残る
-# (caller 無し、後続 PR で削除可)。
 
 
 def _format_csv_rows(rows):

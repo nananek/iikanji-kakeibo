@@ -225,37 +225,10 @@ details には、status に関わらず全チェック項目の結果を簡潔�
 warnings が空の場合は status を "pass" にしてください。"""
 
 
-CONSISTENCY_CHECK_PROMPT = """
-
-## 仕訳整合性チェック（必ず実施してください）
-この証憑画像から読み取れる情報を、以下の既存仕訳データと比較してください。
-
-既存仕訳:
-- 日付: {journal_date}
-- 金額: {journal_amount}円
-- 摘要: {journal_description}
-
-JSONに以下のフィールドを追加してください:
-"consistency": {{
-  "status": "pass" または "warn" または "fail",
-  "date_match": true/false,
-  "amount_match": true/false,
-  "description_match": true/false,
-  "warnings": ["警告メッセージ1", ...]
-}}
-
-判定基準:
-- date_match: 証憑の日付と仕訳日付が7日以内ならtrue
-- amount_match: 証憑の金額と仕訳金額の差が10%以内ならtrue
-- description_match: 証憑の店名/取引先と仕訳摘要に共通する語があればtrue
-- status: 全matchならtrue→"pass"、1つでもfalse→"warn"、2つ以上false→"fail"
-"""
-
-
-# E2 PR-C-6a: クライアント完結 voucher attach 用のプレースホルダ版。
-# 旧 CONSISTENCY_CHECK_PROMPT は Python str.format で {journal_date} 等を
-# 置換する設計だったが、E2EE クライアント側 JS では __XXX__ 形式が安全
-# (placeholder と JSON `{}` の混在を避ける)。
+# 旧 CONSISTENCY_CHECK_PROMPT (Python str.format 版) は E2 PR-C-4i で
+# analyze_voucher_for_attachment が廃止された時点で dead code 化、本 PR で
+# 削除。クライアント側 voucher_attach_orchestrator.js が
+# CONSISTENCY_CHECK_PROMPT_TEMPLATE (placeholder 版) を使用する。
 CONSISTENCY_CHECK_PROMPT_TEMPLATE = """
 
 ## 仕訳整合性チェック（必ず実施してください）
@@ -924,30 +897,10 @@ def _call_ai_text(handler, api_key, model, prompt, max_tokens, user_id,
 # (journal.py) / reconciliation 等のサーバ側 AI 機能で引き続き使用される。
 
 
-AI_SUGGEST_CATEGORIES_PROMPT = """あなたは日本の複式簿記の家計簿アプリのアシスタントです。
-以下は取込先口座「{payment_account_name}」の元帳（過去の取引履歴）です。
-各行の「相手科目」は、その取引で使われた費目（勘定科目）です。
-
-{ledger_context}
-
-以下はユーザーの勘定科目一覧です。科目コードを使って回答してください。
-{account_list}
-
-以下の新規取引それぞれに、元帳のパターンを参考にして最も適切な勘定科目コードを推定してください。
-- 出金は通常「費用」科目、入金は通常「収益」科目ですが、振替（資産・負債間の移動）の場合もあります。
-- 元帳に似た摘要の取引がある場合は、その相手科目と同じ科目を優先してください。
-- 該当なしの場合は account_code を null にしてください。
-
-{rows_text}
-
-必ず以下のJSON形式のみを返してください。余計なテキストは不要です。
-{{"results": [{{"index": 0, "account_code": "科目コード"}}, ...]}}"""
-
-
-# E2 PR-C-6b: クライアント完結 suggest-categories 用のプレースホルダ版。
-# サーバ側 suggest_categories_by_ai と等価のプロンプトを __XXX__ 形式で
-# 配信し、クライアントが payment_account_name / ledger_context / account_list
-# / rows_text を置換する。
+# 旧 AI_SUGGEST_CATEGORIES_PROMPT (Python str.format 版) は E2 PR-C-6b で
+# suggest_categories_by_ai が廃止された時点で dead code 化、本 PR で削除。
+# クライアント側 suggest_categories_orchestrator.js が
+# AI_SUGGEST_CATEGORIES_PROMPT_TEMPLATE (placeholder 版) を使用する。
 AI_SUGGEST_CATEGORIES_PROMPT_TEMPLATE = """あなたは日本の複式簿記の家計簿アプリのアシスタントです。
 以下は取込先口座「__PAYMENT_ACCOUNT_NAME__」の元帳（過去の取引履歴）です。
 各行の「相手科目」は、その取引で使われた費目（勘定科目）です。
@@ -1029,8 +982,6 @@ def _get_payment_ledger_context(user_id: int, payment_account_code: str,
 
 # E2 PR-C-6b: suggest_categories_by_ai は E2EE 化に伴い削除。
 # クライアント側 suggest_categories_orchestrator.js が等価の処理を実行。
-# 旧 AI_SUGGEST_CATEGORIES_PROMPT (Python str.format) も dead code として
-# 残る (caller 無し、後続 PR で削除可)。
 
 
 def match_account(user_id: int, category_name: str) -> str | None:
@@ -1066,6 +1017,5 @@ def match_account(user_id: int, category_name: str) -> str | None:
 
 # E2 PR-C-6a: analyze_voucher_for_attachment は E2EE 化に伴い削除。
 # クライアント側 voucher_attach_orchestrator.js が等価の処理を実行する。
-# 旧 CONSISTENCY_CHECK_PROMPT (Python str.format) もここでは使われなくなり、
-# クライアント側用の CONSISTENCY_CHECK_PROMPT_TEMPLATE (placeholder 版) が
+# CONSISTENCY_CHECK_PROMPT_TEMPLATE (placeholder 版) は
 # /api/v1/voucher-attach/prompt-context から配信される。
