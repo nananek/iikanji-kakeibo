@@ -278,59 +278,17 @@ class TestSuggestCategories:
         assert "未知の摘要" not in body
 
 
-class TestAiSuggestCategories:
-    def test_unauthenticated(self, client):
-        resp = client.post("/journal/api/ai-suggest-categories", json={})
-        assert resp.status_code in (302, 401)
+class TestAiSuggestCategoriesRemoved:
+    """E2 PR-C-6b: /journal/api/ai-suggest-categories は廃止。
+    POST すると 404 を返すことを担保。クライアントが直接
+    /api/v1/suggest-categories/prompt-context + 自己 LLM 呼出で実行する。"""
 
-    def test_no_body(self, logged_in_client, accounts):
+    def test_endpoint_returns_404(self, logged_in_client, accounts):
         resp = logged_in_client.post(
             "/journal/api/ai-suggest-categories",
-            json=None, content_type="application/json",
+            json={"payment_account_code": "1010", "rows": [{"description": "x"}]},
         )
-        assert resp.status_code == 400
-
-    def test_missing_payment_account(self, logged_in_client, accounts):
-        resp = logged_in_client.post("/journal/api/ai-suggest-categories", json={
-            "rows": [{"description": "x", "withdrawal": 100}],
-        })
-        assert resp.status_code == 400
-
-    def test_missing_rows(self, logged_in_client, accounts):
-        resp = logged_in_client.post("/journal/api/ai-suggest-categories", json={
-            "payment_account_code": "1010",
-        })
-        assert resp.status_code == 400
-
-    def test_success(self, logged_in_client, accounts):
-        with patch("app.services.ai_receipt.suggest_categories_by_ai") as mock_ai:
-            mock_ai.return_value = {
-                "セブン": {"account_code": "5010", "account_name": "食費"},
-            }
-            resp = logged_in_client.post("/journal/api/ai-suggest-categories", json={
-                "payment_account_code": "1010",
-                "rows": [{"description": "セブン", "withdrawal": 500}],
-            })
-            assert resp.status_code == 200
-            assert resp.get_json()["セブン"]["account_code"] == "5010"
-
-    def test_ai_value_error(self, logged_in_client, accounts):
-        with patch("app.services.ai_receipt.suggest_categories_by_ai") as mock_ai:
-            mock_ai.side_effect = ValueError("AI設定がありません")
-            resp = logged_in_client.post("/journal/api/ai-suggest-categories", json={
-                "payment_account_code": "1010",
-                "rows": [{"description": "x", "withdrawal": 100}],
-            })
-            assert resp.status_code == 400
-
-    def test_ai_runtime_error(self, logged_in_client, accounts):
-        with patch("app.services.ai_receipt.suggest_categories_by_ai") as mock_ai:
-            mock_ai.side_effect = RuntimeError("upstream timeout")
-            resp = logged_in_client.post("/journal/api/ai-suggest-categories", json={
-                "payment_account_code": "1010",
-                "rows": [{"description": "x", "withdrawal": 100}],
-            })
-            assert resp.status_code == 500
+        assert resp.status_code == 404
 
 
 class TestDeleteBatch:

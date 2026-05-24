@@ -417,6 +417,67 @@ class TestAiPromptContext:
         assert body["custom_prompt"] == ""
 
 
+class TestSuggestCategoriesPromptContext:
+    """E2 PR-C-6b: GET /api/v1/suggest-categories/prompt-context."""
+
+    def test_unauthenticated(self, client):
+        resp = client.get(
+            "/api/v1/suggest-categories/prompt-context"
+            "?payment_account_code=1010",
+        )
+        assert resp.status_code in (302, 401)
+
+    def test_missing_payment_account_code(self, logged_in_client, accounts):
+        resp = logged_in_client.get(
+            "/api/v1/suggest-categories/prompt-context",
+        )
+        assert resp.status_code == 400
+
+    def test_invalid_payment_account_code(self, logged_in_client, accounts):
+        resp = logged_in_client.get(
+            "/api/v1/suggest-categories/prompt-context"
+            "?payment_account_code=9999",
+        )
+        assert resp.status_code == 400
+
+    def test_returns_full_context(self, db, logged_in_client, user, accounts):
+        from app.models.ai_config import UserAIConfig
+        from app.extensions import db as _db
+        cfg = UserAIConfig(
+            user_id=user.id, provider="openai",
+            api_key_blob=b"\xAA" * 48, api_key_iv=b"\xBB" * 12,
+            custom_prompt="QUICPay は JCB",
+        )
+        _db.session.add(cfg)
+        _db.session.commit()
+        resp = logged_in_client.get(
+            "/api/v1/suggest-categories/prompt-context"
+            "?payment_account_code=1010",
+        )
+        assert resp.status_code == 200
+        body = resp.get_json()
+        # プレースホルダ 4 種
+        assert "__PAYMENT_ACCOUNT_NAME__" in body["prompt_template"]
+        assert "__LEDGER_CONTEXT__" in body["prompt_template"]
+        assert "__ACCOUNT_LIST__" in body["prompt_template"]
+        assert "__ROWS_TEXT__" in body["prompt_template"]
+        # 口座名
+        assert body["payment_account_name"]  # 1010 = 現金 等
+        # ledger_context / account_list / account_map
+        assert "ledger_context" in body
+        assert "account_list" in body
+        assert isinstance(body["account_map"], dict)
+        assert "5010" in body["account_map"]
+        assert body["custom_prompt"] == "QUICPay は JCB"
+        # default_model_by_provider
+        from app.services.ai_receipt import PROVIDER_DEFAULTS
+        for k in ("openai", "anthropic", "google"):
+            assert body["default_model_by_provider"][k] == PROVIDER_DEFAULTS[k]
+        assert "llama_cpp" not in body["default_model_by_provider"]
+        # api_key 一切返却しない
+        assert "api_key_blob" not in body
+
+
 class TestVoucherAttachPromptContext:
     """E2 PR-C-6a: GET /api/v1/voucher-attach/prompt-context."""
 

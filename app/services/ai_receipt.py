@@ -944,6 +944,30 @@ AI_SUGGEST_CATEGORIES_PROMPT = """あなたは日本の複式簿記の家計簿�
 {{"results": [{{"index": 0, "account_code": "科目コード"}}, ...]}}"""
 
 
+# E2 PR-C-6b: クライアント完結 suggest-categories 用のプレースホルダ版。
+# サーバ側 suggest_categories_by_ai と等価のプロンプトを __XXX__ 形式で
+# 配信し、クライアントが payment_account_name / ledger_context / account_list
+# / rows_text を置換する。
+AI_SUGGEST_CATEGORIES_PROMPT_TEMPLATE = """あなたは日本の複式簿記の家計簿アプリのアシスタントです。
+以下は取込先口座「__PAYMENT_ACCOUNT_NAME__」の元帳（過去の取引履歴）です。
+各行の「相手科目」は、その取引で使われた費目（勘定科目）です。
+
+__LEDGER_CONTEXT__
+
+以下はユーザーの勘定科目一覧です。科目コードを使って回答してください。
+__ACCOUNT_LIST__
+
+以下の新規取引それぞれに、元帳のパターンを参考にして最も適切な勘定科目コードを推定してください。
+- 出金は通常「費用」科目、入金は通常「収益」科目ですが、振替（資産・負債間の移動）の場合もあります。
+- 元帳に似た摘要の取引がある場合は、その相手科目と同じ科目を優先してください。
+- 該当なしの場合は account_code を null にしてください。
+
+__ROWS_TEXT__
+
+必ず以下のJSON形式のみを返してください。余計なテキストは不要です。
+{"results": [{"index": 0, "account_code": "科目コード"}, ...]}"""
+
+
 def _get_payment_ledger_context(user_id: int, payment_account_code: str,
                                 limit: int = 100) -> str:
     """支払口座の元帳データをテキスト形式で返す（相手科目名つき）"""
@@ -1003,77 +1027,10 @@ def _get_payment_ledger_context(user_id: int, payment_account_code: str,
     return "\n".join(lines)
 
 
-def suggest_categories_by_ai(user_id: int, payment_account_code: str,
-                              rows: list[dict]) -> dict:
-    """元帳データをAIに渡して科目を推定する
-
-    Args:
-        rows: [{"description": "...", "deposit": 0, "withdrawal": 5000}, ...]
-
-    Returns:
-        {"摘要": {"account_code": "XXXX", "account_name": "..."}, ...}
-    """
-    api_key, provider, model, _, __, extra_kw, ___ = _get_ai_config(user_id)
-    text_handler = _TEXT_PROVIDER_HANDLERS.get(provider)
-    if not text_handler:
-        raise ValueError(f"未対応のAIプロバイダーです: {provider}")
-
-    account = Account.query.filter_by(
-        user_id=user_id, code=payment_account_code
-    ).first()
-    payment_name = account.name if account else "不明"
-
-    ledger_context = _get_payment_ledger_context(user_id, payment_account_code)
-    account_list = _get_account_list_text(user_id)
-
-    rows_lines = []
-    for i, row in enumerate(rows):
-        dep = row.get("deposit", 0)
-        wd = row.get("withdrawal", 0)
-        rows_lines.append(
-            f"{i}. {row.get('description', '')} "
-            f"(入金: ¥{dep:,}, 出金: ¥{wd:,})"
-        )
-    rows_text = "\n".join(rows_lines)
-
-    prompt = AI_SUGGEST_CATEGORIES_PROMPT.format(
-        payment_account_name=payment_name,
-        ledger_context=ledger_context,
-        account_list=account_list,
-        rows_text=rows_text,
-    )
-
-    result = _call_ai_text(
-        text_handler, api_key, model, prompt, 4000, user_id, extra_kw,
-        provider=provider, feature="category_suggest",
-    )
-
-    # レスポンスを既存の suggest_categories と同じ形式に変換
-    ai_results = result.get("results", [])
-    accounts_cache = {}
-    output = {}
-
-    for item in ai_results:
-        idx = item.get("index")
-        acode = item.get("account_code")
-        if idx is None or acode is None or idx >= len(rows):
-            continue
-        acode = str(acode)
-        desc = rows[idx].get("description", "")
-        if not desc or desc in output:
-            continue
-
-        if acode not in accounts_cache:
-            acct = Account.query.filter_by(
-                code=acode, user_id=user_id, is_active=True
-            ).first()
-            accounts_cache[acode] = acct
-
-        acct = accounts_cache.get(acode)
-        if acct:
-            output[desc] = {"account_code": acct.code, "account_name": acct.name}
-
-    return output
+# E2 PR-C-6b: suggest_categories_by_ai は E2EE 化に伴い削除。
+# クライアント側 suggest_categories_orchestrator.js が等価の処理を実行。
+# 旧 AI_SUGGEST_CATEGORIES_PROMPT (Python str.format) も dead code として
+# 残る (caller 無し、後続 PR で削除可)。
 
 
 def match_account(user_id: int, category_name: str) -> str | None:
