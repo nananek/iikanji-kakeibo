@@ -1,8 +1,5 @@
-// E2 PR-C-6d: CSV mapping 画面の AI 列推定をクライアント完結で実行する
-// オーケストレーター。
-//
-// サーバ側 csv_import.detect_columns_by_ai (本 PR で削除) と等価。
-// mapping.html UI から呼ばれ、推定結果を select に反映する。
+// CSV mapping 画面の AI 列推定をクライアント完結 (E2EE) で実行する
+// オーケストレーター。mapping.html UI から呼ばれ、推定結果を select に反映する。
 //
 // フロー:
 //   1. POST /csv-import/api/columns-detect-context (headers + sample_rows)

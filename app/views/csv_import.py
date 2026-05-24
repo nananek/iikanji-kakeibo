@@ -6,7 +6,7 @@ import uuid
 from flask import Blueprint, render_template, redirect, url_for, flash, request, session, jsonify
 from flask_login import login_required, current_user
 
-from app.extensions import db
+from app.extensions import db, limiter
 from app.models.account import Account, AccountType
 from app.models.ai_config import UserAIConfig
 from app.models.journal import JournalEntry
@@ -124,11 +124,11 @@ def mapping():
             saved_mapping = profile
             mapping_source = "saved"
 
-    # E2 PR-C-6d: AI 列推定はクライアント完結フローに移行。mapping ページ
-    # 描画時はサーバ側で推定せず、ユーザーが UI 上の「AI で推定」ボタンを
-    # 押した時に /api/v1/csv-import/columns-detect-context + クライアント
-    # 側 LLM 呼出で推定する。
-    has_ai_config = UserAIConfig.query.filter_by(user_id=user_id).first() is not None
+    # AI 列推定 UI を出すかは E2EE 形式の AI 設定があるかで判定
+    # (旧 Fernet のみのユーザーには出さない、ai_journal.py 等の既存パターン
+    # と統一)。
+    _cfg = UserAIConfig.query.filter_by(user_id=user_id).first()
+    has_ai_config = bool(_cfg and _cfg.is_e2ee)
 
     if request.method == "POST":
         date_col = request.form.get("date_col", type=int)
@@ -212,8 +212,9 @@ def mapping():
 
 @bp.route("/api/columns-detect-context", methods=["POST"])
 @login_required
+@limiter.limit("60 per hour")
 def columns_detect_context():
-    """E2 PR-C-6d: CSV 列推定 AI のクライアント完結用エンドポイント。
+    """CSV 列推定 AI のクライアント完結用エンドポイント。
 
     クライアントが headers + sample_rows を POST し、サーバは prompt 構築用
     の placeholder テンプレ + default_model_by_provider を返す。LLM 呼出は

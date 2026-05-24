@@ -10,9 +10,10 @@
     <span class="text-muted ms-2">取込先: {{ payment_account.name }} / 全{{ total_rows }}件</span>
     {% if mapping_source == "saved" %}
     <span class="badge bg-success ms-2"><i class="bi bi-check-circle"></i> 保存済みプロファイル</span>
-    {% elif mapping_source == "ai" %}
-    <span class="badge bg-info ms-2"><i class="bi bi-stars"></i> AI自動検出</span>
     {% endif %}
+    <span class="badge bg-info ms-2 d-none" id="aiBadge">
+      <i class="bi bi-stars"></i> AI 推定済み
+    </span>
   </div>
   <div class="card-body">
     <form method="POST">
@@ -146,7 +147,7 @@ function highlightColumns() {
 
 document.addEventListener('DOMContentLoaded', highlightColumns);
 
-// --- E2 PR-C-6d: AI 列推定 (クライアント完結 E2EE フロー) ---
+// --- AI 列推定 (クライアント完結 E2EE フロー) ---
 {% if has_ai_config %}
 (function () {
   const btn = document.getElementById('aiDetectBtn');
@@ -211,6 +212,8 @@ document.addEventListener('DOMContentLoaded', highlightColumns);
           showErr('AI が有効な列マッピングを返せませんでした。');
         } else {
           applyMapping(mapping);
+          const badge = document.getElementById('aiBadge');
+          if (badge) badge.classList.remove('d-none');
         }
       } finally {
         try { client.close(); } catch (_e) { /* ignore */ }

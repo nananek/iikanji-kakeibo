@@ -1,4 +1,4 @@
-// E2 PR-C-6d: csv_columns_detect_orchestrator の Node 単体テスト。
+// csv_columns_detect_orchestrator の Node 単体テスト。
 
 import { test } from "node:test";
 import assert from "node:assert/strict";

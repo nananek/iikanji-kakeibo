@@ -244,8 +244,8 @@ def load_column_profile(user_id, account_code):
 
 # --- AI列自動検出 ---
 
-# E2 PR-C-6d: クライアント完結用 placeholder 版テンプレート。
-# `__HEADERS_TEXT__` / `__SAMPLE_TEXT__` / `__SAMPLE_COUNT__` を JS 側で置換。
+# クライアント完結用 placeholder テンプレート。__XXX__ は orchestrator が
+# replaceAll で置換する (JSON プレースホルダ `{...}` との衝突を避ける)。
 CSV_COLUMN_DETECT_PROMPT_TEMPLATE = """あなたは日本の家計簿アプリのアシスタントです。
 以下はCSVファイルのヘッダーとサンプルデータです。列マッピングを推定してください。
 

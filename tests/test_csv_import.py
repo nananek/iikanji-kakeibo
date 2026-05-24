@@ -460,13 +460,13 @@ class TestCsvColumnProfileModel:
 
 
 # ============================================================
-# validate_ai_column_mapping (E2 PR-C-6d)
+# validate_ai_column_mapping
 # ============================================================
 
 
 class TestValidateAiColumnMapping:
-    """E2 PR-C-6d: 旧 detect_columns_by_ai のサーバ側バリデーション部分のみ
-    残す (LLM 呼出はクライアント側 csv_columns_detect_orchestrator.js に移行)。"""
+    """LLM 出力の検証ロジック。LLM 呼出自体はクライアント側
+    csv_columns_detect_orchestrator.js が行う (E2EE)。"""
 
     def test_normal(self):
         m = validate_ai_column_mapping({
@@ -693,12 +693,12 @@ class TestSnapMatchDate:
 
 
 # ============================================================
-# E2 PR-C-6d: POST /csv-import/api/columns-detect-context
+# POST /csv-import/api/columns-detect-context
 # ============================================================
 
 
 class TestColumnsDetectContext:
-    """E2 PR-C-6d: クライアント側 LLM 呼出のためのプロンプト材料配信エンドポイント。"""
+    """クライアント側 LLM 呼出のためのプロンプト材料配信エンドポイント。"""
 
     def test_unauthenticated(self, client):
         resp = client.post("/csv-import/api/columns-detect-context",
