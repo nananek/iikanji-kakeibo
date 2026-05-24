@@ -789,3 +789,23 @@ class TestColumnsDetectContext:
         assert "x" * 2000 not in resp.get_json()["sample_text"]
         assert "x" * 1000 in resp.get_json()["sample_text"]
 
+    def test_wide_row_capped_to_max_headers(
+        self, logged_in_client, accounts,
+    ):
+        # sample_rows の 1 行に MAX_HEADERS (=50) を超える列を送っても
+        # sample_text 側で MAX_HEADERS 個までに切り詰められること
+        # (10MB 級の sample_text 肥大化を防ぐ。headers と対応する列だけ
+        #  あれば LLM 推定には十分。)
+        resp = logged_in_client.post(
+            "/csv-import/api/columns-detect-context",
+            json={
+                "headers": ["a", "b"],
+                "sample_rows": [[f"v{i}" for i in range(200)]],
+            },
+        )
+        assert resp.status_code == 200
+        sample_text = resp.get_json()["sample_text"]
+        # v0..v49 (MAX_HEADERS=50) は含むが v50 以降は含まない
+        assert "v49" in sample_text
+        assert "v50" not in sample_text
+
