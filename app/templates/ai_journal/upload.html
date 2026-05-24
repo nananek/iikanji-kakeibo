@@ -48,7 +48,7 @@
             <label class="form-label" for="image_file">証憑画像（領収書・給与明細・請求書など）</label>
             <input type="file" class="form-control" name="image_file" id="image_file"
                    accept="image/jpeg,image/png,image/webp,image/gif" required
-                   {% if not has_config %}disabled{% endif %}>
+                   {% if not has_config or (config_is_e2ee and not has_legacy_key) %}disabled{% endif %}>
             <div class="form-text">JPEG / PNG / WebP / GIF（上限10MB）</div>
           </div>
 
@@ -62,14 +62,14 @@
             <textarea class="form-control" name="comment" id="comment" rows="2"
                       maxlength="500"
                       placeholder="会社の懇親会、出張のタクシー代 など"
-                      {% if not has_config %}disabled{% endif %}></textarea>
+                      {% if not has_config or (config_is_e2ee and not has_legacy_key) %}disabled{% endif %}></textarea>
             <div class="form-text">AIの解析精度を上げるヒントになります</div>
           </div>
 
           <div id="errorAlert" class="alert alert-danger d-none"></div>
 
           <button type="submit" class="btn btn-primary" id="submitBtn"
-                  {% if not has_config %}disabled{% endif %}>
+                  {% if not has_config or (config_is_e2ee and not has_legacy_key) %}disabled{% endif %}>
             <i class="bi bi-robot"></i> AIで解析する
           </button>
           <a href="{{ url_for('journal.index') }}" class="btn btn-outline-secondary">

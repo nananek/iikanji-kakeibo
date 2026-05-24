@@ -545,3 +545,37 @@ class TestAiJournalE2EEBanner:
         html = resp.data.decode()
         assert "E2EE 形式で API キー登録済み" not in html
         assert "E2EE 移行完了" not in html
+
+
+class TestAnalyzeE2EEMigratedGuard:
+    """E2-C-3c PR #153 review 2: 移行完了 (api_key_encrypted=NULL) のユーザーが
+    /analyze に POST した時、ai_receipt.py の Fernet 復号失敗で SECRET_KEY
+    不一致風の無関係エラーになるのを防ぐガード。"""
+
+    def test_e2ee_only_post_returns_400_with_clear_message(
+        self, db, logged_in_client, user, accounts,
+    ):
+        from app.models.ai_config import UserAIConfig
+        from app.extensions import db as _db
+        cfg = UserAIConfig(
+            user_id=user.id, provider="openai",
+            api_key_encrypted=None,
+            api_key_blob=b"\xAA" * 48, api_key_iv=b"\xBB" * 12,
+            model_name="gpt-4o-mini",
+        )
+        _db.session.add(cfg)
+        _db.session.commit()
+        png_sig = b"\x89PNG\r\n\x1a\n" + b"\x00" * 56
+        resp = logged_in_client.post(
+            "/ai-journal/analyze",
+            data={
+                "image_file": (io.BytesIO(png_sig), "r.png", "image/png"),
+            },
+            content_type="multipart/form-data",
+        )
+        assert resp.status_code == 400
+        body = resp.get_json()
+        # 「E2EE 移行完了」を含むユーザーフレンドリーなメッセージ
+        assert "E2EE 移行完了" in body["error"]
+        # 旧い無関係エラーは出ない
+        assert "SECRET_KEY" not in body["error"]
