@@ -70,15 +70,16 @@ def upload():
             record_delete(owner, sizes_to_release)
     session.pop("ai_journal_draft_id", None)
     # E2EE 形式の AI 設定が登録済みかをテンプレートに渡す。
-    # クライアント側で MK が解除されていれば JS が orchestrator を使う分岐に
-    # 入る (`config_is_e2ee=True` でかつ MK 解除済が前提)。
-    config_is_e2ee = bool(
-        config and config.api_key_blob and config.api_key_iv,
-    )
+    # 旧 Fernet データが残っているかも判定: migrate-key 呼出後は
+    # api_key_encrypted=NULL になり、サーバ側 ai_receipt.py の解析が失敗する
+    # ため、文言を「移行期間中=サーバ解析可」と「移行完了=解析不可」で分岐。
+    config_is_e2ee = bool(config and config.is_e2ee)
+    has_legacy_key = bool(config and config.api_key_encrypted)
     return render_template(
         "ai_journal/upload.html",
         has_config=bool(config),
         config_is_e2ee=config_is_e2ee,
+        has_legacy_key=has_legacy_key,
         draft_count=draft_count,
     )
 
@@ -90,6 +91,15 @@ def analyze():
     config = UserAIConfig.query.filter_by(user_id=get_effective_user_id()).first()
     if not config:
         return jsonify({"error": "AI API設定が登録されていません。先に設定してください。"}), 400
+    # E2EE 移行完了済 (migrate-key 実行後で api_key_encrypted=NULL) では
+    # サーバ側 ai_receipt.py が Fernet 復号できないため、サーバ経由解析は不可。
+    # decrypt_api_key(None) が無関係なエラー (SECRET_KEY 不一致風) を返す
+    # 経路を塞ぎ、ユーザーに正しい説明を返す。
+    if config.is_e2ee and not config.api_key_encrypted:
+        return jsonify({
+            "error": "E2EE 移行完了のため、現在サーバ経由の AI 証憑解析は利用できません。"
+                     "クライアント側完全 E2EE 解析の v5.0 公開をお待ちください。",
+        }), 400
 
     image_file = request.files.get("image_file")
     if not image_file or not image_file.filename:

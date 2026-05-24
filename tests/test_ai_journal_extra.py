@@ -465,3 +465,117 @@ class TestUpdateDiscordDone:
             _update_discord_done(d, 99)
             # 例外を起こさず呼ばれる
             mock_upd.assert_called_once()
+
+
+class TestAiJournalE2EEBanner:
+    """E2-C-3c: /ai-journal upload 画面の E2EE 形式バナー表示分岐。
+
+    - legacy Fernet のみ → バナー非表示
+    - api_key_blob+iv あり + 旧キー残存 (migrate-key 未実行) → 移行中バナー (info)
+    - api_key_blob+iv あり + 旧キー NULL (migrate-key 実行済) → 移行完了バナー (warning)
+    - 設定なし → バナー非表示
+    """
+
+    def test_no_banner_when_legacy_only(
+        self, db, logged_in_client, user, accounts,
+    ):
+        from app.models.ai_config import UserAIConfig
+        from app.services.ai_receipt import encrypt_api_key
+        cfg = UserAIConfig(
+            user_id=user.id, provider="openai",
+            api_key_encrypted=encrypt_api_key("sk-legacy"),
+            model_name="gpt-4o-mini",
+        )
+        from app.extensions import db as _db
+        _db.session.add(cfg)
+        _db.session.commit()
+        resp = logged_in_client.get("/ai-journal/")
+        assert resp.status_code == 200
+        html = resp.data.decode()
+        assert "E2EE 形式で API キー登録済み" not in html
+        assert "E2EE 移行完了" not in html
+
+    def test_info_banner_when_e2ee_and_legacy_coexist(
+        self, db, logged_in_client, user, accounts,
+    ):
+        """旧キー未削除 (migrate-key 未呼出) — サーバ解析可で移行期間中。"""
+        from app.models.ai_config import UserAIConfig
+        from app.services.ai_receipt import encrypt_api_key
+        cfg = UserAIConfig(
+            user_id=user.id, provider="openai",
+            api_key_encrypted=encrypt_api_key("sk-legacy"),
+            api_key_blob=b"\xAA" * 48, api_key_iv=b"\xBB" * 12,
+            model_name="gpt-4o-mini",
+        )
+        from app.extensions import db as _db
+        _db.session.add(cfg)
+        _db.session.commit()
+        resp = logged_in_client.get("/ai-journal/")
+        html = resp.data.decode()
+        assert "E2EE 形式で API キー登録済み" in html
+        assert "移行期間として" in html
+        # 移行完了バナーは出ない
+        assert "E2EE 移行完了" not in html
+
+    def test_warning_banner_when_e2ee_only_no_legacy(
+        self, db, logged_in_client, user, accounts,
+    ):
+        """旧キー削除済 (migrate-key 実行後) — サーバ解析不可、警告バナー。"""
+        from app.models.ai_config import UserAIConfig
+        cfg = UserAIConfig(
+            user_id=user.id, provider="openai",
+            api_key_encrypted=None,
+            api_key_blob=b"\xAA" * 48, api_key_iv=b"\xBB" * 12,
+            model_name="gpt-4o-mini",
+        )
+        from app.extensions import db as _db
+        _db.session.add(cfg)
+        _db.session.commit()
+        resp = logged_in_client.get("/ai-journal/")
+        html = resp.data.decode()
+        assert "E2EE 移行完了" in html
+        assert "解析は利用できません" in html
+        # 移行中バナーは出ない
+        assert "移行期間として" not in html
+
+    def test_no_banner_when_no_config_at_all(
+        self, db, logged_in_client, user, accounts,
+    ):
+        resp = logged_in_client.get("/ai-journal/")
+        html = resp.data.decode()
+        assert "E2EE 形式で API キー登録済み" not in html
+        assert "E2EE 移行完了" not in html
+
+
+class TestAnalyzeE2EEMigratedGuard:
+    """E2-C-3c PR #153 review 2: 移行完了 (api_key_encrypted=NULL) のユーザーが
+    /analyze に POST した時、ai_receipt.py の Fernet 復号失敗で SECRET_KEY
+    不一致風の無関係エラーになるのを防ぐガード。"""
+
+    def test_e2ee_only_post_returns_400_with_clear_message(
+        self, db, logged_in_client, user, accounts,
+    ):
+        from app.models.ai_config import UserAIConfig
+        from app.extensions import db as _db
+        cfg = UserAIConfig(
+            user_id=user.id, provider="openai",
+            api_key_encrypted=None,
+            api_key_blob=b"\xAA" * 48, api_key_iv=b"\xBB" * 12,
+            model_name="gpt-4o-mini",
+        )
+        _db.session.add(cfg)
+        _db.session.commit()
+        png_sig = b"\x89PNG\r\n\x1a\n" + b"\x00" * 56
+        resp = logged_in_client.post(
+            "/ai-journal/analyze",
+            data={
+                "image_file": (io.BytesIO(png_sig), "r.png", "image/png"),
+            },
+            content_type="multipart/form-data",
+        )
+        assert resp.status_code == 400
+        body = resp.get_json()
+        # 「E2EE 移行完了」を含むユーザーフレンドリーなメッセージ
+        assert "E2EE 移行完了" in body["error"]
+        # 旧い無関係エラーは出ない
+        assert "SECRET_KEY" not in body["error"]
