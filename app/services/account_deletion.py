@@ -121,7 +121,6 @@ def delete_user_account(user_id: int) -> None:
     db.session.flush()
 
     # 5. user_id を持つ各テーブルを削除
-    # E2 PR-E-a: AutoImportSource は廃止 (テーブルごと削除)
     for model in (
         UserAIConfig, AIUsageLog, APIKey,
         BalanceCache, CsvColumnProfile,

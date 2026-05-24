@@ -1,5 +1,4 @@
 import json
-import re
 from datetime import date, datetime, timezone
 
 from flask import Blueprint, render_template, redirect, url_for, flash, request, jsonify, make_response, current_app, session as flask_session
@@ -14,8 +13,6 @@ from app.models.ai_config import UserAIConfig
 from app.models.api_key import APIKey, ALL_SCOPES, SCOPE_LABELS, SCOPE_DEPENDENCIES
 from app.models.oauth import OAuthToken
 from app.models.audit import AuditGrant, AuditGrantAccount
-# E2 PR-E-a: AutoImportSource / WebhookConfig は本ファイルからは不要に。
-# auto_import 関連 view (Webhook 設定 UI を含む) を全廃したため import 削除。
 from app.services.ai_receipt import (
     encrypt_api_key, PROVIDER_DEFAULTS, PROVIDER_LABELS,
     get_available_provider_labels, is_llama_cpp_available,
@@ -29,19 +26,6 @@ from app.services.fiscal import (
 from app.views.helpers import safe_user_error, maybe_clear_pending_recovery
 
 bp = Blueprint("settings", __name__, url_prefix="/settings")
-
-# HTTP ステータスコード形式のエラーはそのまま返し、
-# それ以外の内部例外メッセージは隠蔽する
-_HTTP_STATUS_RE = re.compile(r"^HTTP \d{3}$")
-
-
-def _safe_connection_error(err: str | None) -> str:
-    """接続テストのエラーメッセージを安全な形に変換する。"""
-    if not err:
-        return "不明なエラー"
-    if _HTTP_STATUS_RE.match(err):
-        return err
-    return "サーバーに接続できませんでした。URL・認証情報を確認してください。"
 
 
 @bp.route("/")

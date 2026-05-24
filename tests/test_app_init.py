@@ -160,7 +160,7 @@ class TestSeedUserCommand:
 
 
 class TestAutoImportCommandRemoved:
-    """E2 PR-E-a: auto-import CLI コマンドは廃止 (auto_import 機能丸ごと削除)。"""
+    """auto-import CLI コマンドは廃止 (auto_import 機能丸ごと削除)。"""
 
     def test_command_no_longer_exists(self, db, app):
         runner = app.test_cli_runner()

@@ -1,6 +1,5 @@
-# E2 PR-E-a: AutoImportSource / ProcessedFile は廃止 (auto_import 機能削除)。
 # WebhookConfig は account_deletion.py からの参照 + 将来の Discord 通知設定
-# 再構築用に残す。
+# 再構築用のため、auto_import 機能廃止後も維持する。
 
 from datetime import datetime, timezone
 

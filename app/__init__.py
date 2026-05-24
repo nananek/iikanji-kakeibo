@@ -375,10 +375,6 @@ def register_cli(app):
                     failed += 1
         print(f"送信完了: 成功 {sent} 件 / 失敗 {failed} 件")
 
-    # E2 PR-E-a: auto-import CLI コマンドは廃止
-    # (auto_import 機能丸ごと廃止に伴い、AutoImportSource / WebDAV provider /
-    # run_auto_import を全削除)
-
     @app.cli.command("generate-thumbnails")
     @click.option("--dry-run", is_flag=True, help="サムネイル生成をスキップして対象件数のみ表示")
     def generate_thumbnails_command(dry_run):
