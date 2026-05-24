@@ -9,7 +9,7 @@ from tests.conftest import make_journal
 from app.models.journal import JournalEntry, JournalEntryLine
 from app.services.accounting import get_next_entry_number
 from app.services.reconciliation import (
-    find_matches, find_ai_matches, _format_csv_rows, _format_journal_rows,
+    find_matches, _format_csv_rows, _format_journal_rows,
 )
 
 
@@ -393,44 +393,10 @@ class TestDailySummary:
         assert day["has_discrepancy"] is True
 
 
-class TestFindAiMatches:
-    """AI照合のテスト"""
-
-    def test_ai_matches_returns_results(self, db, user, accounts, cc_account):
-        """AIが照合候補を返す"""
-        mock_response = {"matches": [{"csv_index": 0, "entry_id": 99, "confidence": 0.8, "reason": "摘要類似"}]}
-        unmatched = [{"csv_index": 0, "date": "2026-01-10", "description": "アマゾン", "amount": 1500}]
-        journal = [{"entry_id": 99, "date": "2026-01-10", "description": "Amazon", "amount": 1480, "category_name": "日用品"}]
-
-        with patch("app.services.ai_receipt._get_ai_config") as mock_config, \
-             patch("app.services.ai_receipt._TEXT_PROVIDER_HANDLERS", {"openai": lambda *a, **kw: (mock_response, {})}):
-            mock_config.return_value = ("key", "openai", "gpt-4", None, "", {}, False)
-            results = find_ai_matches(user.id, unmatched, journal)
-
-        assert len(results) == 1
-        assert results[0]["csv_index"] == 0
-        assert results[0]["entry_id"] == 99
-        assert results[0]["confidence"] == 0.8
-
-    def test_ai_matches_filters_low_confidence(self, db, user, accounts):
-        """confidence 0.3未満は除外される"""
-        mock_response = {"matches": [{"csv_index": 0, "entry_id": 1, "confidence": 0.2, "reason": "低確信"}]}
-        unmatched = [{"csv_index": 0, "date": "2026-01-10", "description": "何か", "amount": 500}]
-        journal = [{"entry_id": 1, "date": "2026-01-10", "description": "別", "amount": 999, "category_name": "雑費"}]
-
-        with patch("app.services.ai_receipt._get_ai_config") as mock_config, \
-             patch("app.services.ai_receipt._TEXT_PROVIDER_HANDLERS", {"openai": lambda *a, **kw: (mock_response, {})}):
-            mock_config.return_value = ("key", "openai", "gpt-4", None, "", {}, False)
-            results = find_ai_matches(user.id, unmatched, journal)
-
-        assert len(results) == 0
-
-    def test_ai_matches_empty_inputs(self, db, user, accounts):
-        """入力が空の場合は空リストを返す"""
-        with patch("app.services.ai_receipt._get_ai_config") as mock_config:
-            mock_config.return_value = ("key", "openai", "gpt-4", None, "", {}, False)
-            assert find_ai_matches(user.id, [], [{"entry_id": 1}]) == []
-            assert find_ai_matches(user.id, [{"csv_index": 0}], []) == []
+# E2 PR-C-6c: TestFindAiMatches は対応関数の削除に伴い削除。
+# 等価のクライアント側ロジック (バッチ処理 / confidence フィルタ /
+# 空入力 / dict 以外応答処理) は
+# tests/static/js/test_reconcile_orchestrator.mjs でカバー。
 
 
 class TestEdgeCases:
@@ -471,17 +437,8 @@ class TestEdgeCases:
         assert len(result["journal_only"]) == 1
         assert result["journal_only"][0]["direction"] == "deposit"
 
-    def test_ai_non_dict_response_ignored(self, db, user, accounts):
-        """text handlerがdict以外を返しても空リストを返す"""
-        mock_response = "unexpected string"
-        unmatched = [{"csv_index": 0, "date": "2026-01-10", "description": "テスト", "amount": 500}]
-        journal = [{"entry_id": 1, "date": "2026-01-10", "description": "x", "amount": 499, "category_name": "雑"}]
-
-        with patch("app.services.ai_receipt._get_ai_config") as mock_config, \
-             patch("app.services.ai_receipt._TEXT_PROVIDER_HANDLERS", {"openai": lambda *a, **kw: (mock_response, {})}):
-            mock_config.return_value = ("key", "openai", "gpt-4", None, "", {}, False)
-            results = find_ai_matches(user.id, unmatched, journal)
-        assert results == []
+    # E2 PR-C-6c: test_ai_non_dict_response_ignored は JS テスト
+    # (test_reconcile_orchestrator.mjs::"filterMatches: 非dict で空") へ移行。
 
     def test_all_dates_from_date_objects(self, db, user, accounts, cc_account):
         """CSV行のdateが全てdateオブジェクトでも日付範囲が正しく算出される"""
@@ -552,29 +509,8 @@ class TestEdgeCases:
         assert day[0]["csv_count"] == 1
 
 
-class TestAiMatchesAdditional:
-    """AI照合の追加テスト"""
-
-    def test_unsupported_provider(self, db, user, accounts):
-        """未対応プロバイダーはValueError"""
-        unmatched = [{"csv_index": 0, "date": "2026-01-10", "description": "x", "amount": 500}]
-        journal = [{"entry_id": 1, "date": "2026-01-10", "description": "y", "amount": 500, "category_name": "雑"}]
-        with patch("app.services.ai_receipt._get_ai_config") as mock_config, \
-             patch("app.services.ai_receipt._TEXT_PROVIDER_HANDLERS", {}):
-            mock_config.return_value = ("key", "unknown", "model", None, "", {}, False)
-            with pytest.raises(ValueError, match="未対応"):
-                find_ai_matches(user.id, unmatched, journal)
-
-    def test_no_matches_key_in_response(self, db, user, accounts):
-        """AI応答にmatchesキーがない場合は空リスト"""
-        mock_response = {"error": "parse failed"}
-        unmatched = [{"csv_index": 0, "date": "2026-01-10", "description": "x", "amount": 500}]
-        journal = [{"entry_id": 1, "date": "2026-01-10", "description": "y", "amount": 500, "category_name": "雑"}]
-        with patch("app.services.ai_receipt._get_ai_config") as mock_config, \
-             patch("app.services.ai_receipt._TEXT_PROVIDER_HANDLERS", {"openai": lambda *a, **kw: (mock_response, {})}):
-            mock_config.return_value = ("key", "openai", "gpt-4", None, "", {}, False)
-            results = find_ai_matches(user.id, unmatched, journal)
-        assert results == []
+# E2 PR-C-6c: TestAiMatchesAdditional は対応関数の削除に伴い削除。
+# 等価のクライアント側ロジックは test_reconcile_orchestrator.mjs でカバー。
 
 
 class TestFormatHelpers:

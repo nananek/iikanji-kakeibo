@@ -73,74 +73,53 @@ class TestReconcile:
         assert resp.status_code in (302, 401)
 
 
-class TestAIReconcile:
-    """POST /csv-import/ai-reconcile"""
+class TestAIReconcileContext:
+    """E2 PR-C-6c: GET /csv-import/ai-reconcile-context (新エンドポイント)。
+    旧 POST /csv-import/ai-reconcile は廃止 (LLM 呼出は client-side)。"""
 
-    def test_no_session_data_returns_400(self, logged_in_client, accounts, account_types):
-        resp = logged_in_client.post("/csv-import/ai-reconcile")
+    def test_no_session_data_returns_400(
+        self, logged_in_client, accounts, account_types,
+    ):
+        resp = logged_in_client.get("/csv-import/ai-reconcile-context")
         assert resp.status_code == 400
 
-    def test_no_unmatched_returns_empty(self, db, user, logged_in_client, accounts,
-                                        account_types):
-        parsed = [{"row_num": 1, "date": "2026-01-10", "description": "コンビニ",
-                   "deposit": 0, "withdrawal": 1500}]
-        make_journal(db, user.id, "5010", "1020", 1500,
-                     entry_date=date(2026, 1, 10), source="cashbook")
+    def test_returns_context_with_unmatched_and_candidates(
+        self, db, user, logged_in_client, accounts, account_types,
+    ):
+        parsed = self._setup_unmatched_and_journal_only(db, user)
         _set_session(logged_in_client, "test-key", "1020")
         with patch("app.views.csv_import.load_import_data", return_value=parsed):
-            resp = logged_in_client.post("/csv-import/ai-reconcile")
+            resp = logged_in_client.get("/csv-import/ai-reconcile-context")
         assert resp.status_code == 200
-        assert resp.get_json()["matches"] == []
-
-    def test_no_journal_only_returns_empty(self, logged_in_client, accounts, account_types):
-        parsed = [{"row_num": 1, "date": "2026-01-10", "description": "コンビニ",
-                   "deposit": 0, "withdrawal": 1500}]
-        _set_session(logged_in_client, "test-key", "1020")
-        with patch("app.views.csv_import.load_import_data", return_value=parsed):
-            resp = logged_in_client.post("/csv-import/ai-reconcile")
-        assert resp.status_code == 200
-        assert resp.get_json()["matches"] == []
+        body = resp.get_json()
+        # プレースホルダ 2 種
+        assert "__CSV_ROWS_TEXT__" in body["prompt_template"]
+        assert "__JOURNAL_ROWS_TEXT__" in body["prompt_template"]
+        # unmatched_csv + journal_candidates
+        assert isinstance(body["unmatched_csv"], list)
+        assert isinstance(body["journal_candidates"], list)
+        assert body["batch_size"] == 30
+        from app.services.ai_receipt import PROVIDER_DEFAULTS
+        for k in ("openai", "anthropic", "google"):
+            assert body["default_model_by_provider"][k] == PROVIDER_DEFAULTS[k]
+        assert "llama_cpp" not in body["default_model_by_provider"]
+        # api_key 一切返却しない
+        assert "api_key_blob" not in body
 
     def _setup_unmatched_and_journal_only(self, db, user):
-        """CSV行がunmatched、仕訳がjournal_onlyになるセットアップ（金額不一致）"""
         parsed = [{"row_num": 1, "date": "2026-01-10", "description": "アマゾン",
                    "deposit": 0, "withdrawal": 3000}]
-        # 金額を変えて金額マッチしないようにする → CSV=unmatched, 仕訳=journal_only
         make_journal(db, user.id, "5010", "1020", 2980,
                      entry_date=date(2026, 1, 10), source="ai_receipt")
         return parsed
 
-    def test_ai_matches_success(self, db, user, logged_in_client, accounts, account_types):
-        parsed = self._setup_unmatched_and_journal_only(db, user)
-        ai_result = [{"csv_index": 0, "entry_id": 1, "confidence": 0.85, "reason": "類似"}]
-        _set_session(logged_in_client, "test-key", "1020")
-        with patch("app.views.csv_import.load_import_data", return_value=parsed), \
-             patch("app.services.reconciliation.find_ai_matches", return_value=ai_result):
-            resp = logged_in_client.post("/csv-import/ai-reconcile")
-        assert resp.status_code == 200
-        assert resp.get_json()["matches"] == ai_result
-
-    def test_value_error_returns_400(self, db, user, logged_in_client, accounts,
-                                     account_types):
-        parsed = self._setup_unmatched_and_journal_only(db, user)
-        _set_session(logged_in_client, "test-key", "1020")
-        with patch("app.views.csv_import.load_import_data", return_value=parsed), \
-             patch("app.services.reconciliation.find_ai_matches",
-                   side_effect=ValueError("AI設定がありません")):
-            resp = logged_in_client.post("/csv-import/ai-reconcile")
-        assert resp.status_code == 400
-        assert "AI設定" in resp.get_json()["error"]
-
-    def test_runtime_error_returns_400(self, db, user, logged_in_client, accounts,
-                                       account_types):
-        parsed = self._setup_unmatched_and_journal_only(db, user)
-        _set_session(logged_in_client, "test-key", "1020")
-        with patch("app.views.csv_import.load_import_data", return_value=parsed), \
-             patch("app.services.reconciliation.find_ai_matches",
-                   side_effect=RuntimeError("API失敗")):
-            resp = logged_in_client.post("/csv-import/ai-reconcile")
-        assert resp.status_code == 400
-
     def test_unauthenticated_redirects(self, client, accounts, account_types):
-        resp = client.post("/csv-import/ai-reconcile")
+        resp = client.get("/csv-import/ai-reconcile-context")
         assert resp.status_code in (302, 401)
+
+    def test_old_post_endpoint_returns_404(
+        self, logged_in_client, accounts, account_types,
+    ):
+        """旧 POST /csv-import/ai-reconcile は削除済 (404)。"""
+        resp = logged_in_client.post("/csv-import/ai-reconcile")
+        assert resp.status_code == 404

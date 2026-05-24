@@ -819,17 +819,10 @@ document.addEventListener('alpine:init', function() {
       runAiReconcile: function() {
         this.aiReconcileLoading = true;
         var self = this;
-        fetch('/csv-import/ai-reconcile', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-CSRFToken': Alpine.store('csrf').token,
-          },
-        })
-        .then(function(res) { return res.json(); })
-        .then(function(data) {
-          if (data.error) { showToast(data.error, 'danger'); return; }
-          var matches = data.matches || [];
+        // E2 PR-C-6c: クライアント完結 E2EE フローで実行。サーバには
+        // raw description / API キーが届かない。
+        runReconcileE2EE()
+        .then(function(matches) {
           for (var m = 0; m < matches.length; m++) {
             var ai = matches[m];
             for (var r = 0; r < self.reconcileRows.length; r++) {
@@ -866,7 +859,7 @@ document.addEventListener('alpine:init', function() {
           if (matches.length === 0) { showToast('AI照合候補が見つかりませんでした。', 'info'); }
           else { showToast('AI照合: ' + matches.length + '件の候補が見つかりました。', 'success'); }
         })
-        .catch(function(err) { showToast('AI照合に失敗しました: ' + err.message, 'danger'); })
+        .catch(function(err) { showToast('AI照合に失敗しました: ' + (err.message || err), 'danger'); })
         .finally(function() { self.aiReconcileLoading = false; });
       },
 
@@ -1227,3 +1220,22 @@ async function runSuggestCategoriesE2EE(paymentAccountCode, rows) {
   }
 }
 window.runSuggestCategoriesE2EE = runSuggestCategoriesE2EE;
+
+
+// E2 PR-C-6c: reconcileMode.runAiReconcile から呼ばれる E2EE フロー。
+async function runReconcileE2EE() {
+  var orchestratorMod = await import("/static/js/crypto/reconcile_orchestrator.js");
+  var sharedClientMod = await import("/static/js/crypto/shared-client.js");
+  var workerUrl = "/static/js/crypto/shared-worker.js";
+  var client = new sharedClientMod.SharedCryptoClient(workerUrl);
+  try {
+    var status = await client.status();
+    if (!status.hasKey) {
+      throw new Error("MK ロック中です (設定 → 暗号鍵管理 で解除)");
+    }
+    return await orchestratorMod.runReconcile({ client: client });
+  } finally {
+    try { client.close(); } catch (_e) { /* ignore */ }
+  }
+}
+window.runReconcileE2EE = runReconcileE2EE;

@@ -216,6 +216,11 @@ class TestReconcile:
 
 
 class TestAiReconcile:
-    def test_unauthenticated(self, client):
+    """E2 PR-C-6c: 旧 POST /csv-import/ai-reconcile は廃止 (404)。
+    新エンドポイント GET /csv-import/ai-reconcile-context は
+    tests/test_csv_import_reconcile.py::TestAIReconcileContext でカバー。"""
+
+    def test_unauthenticated_old_post_returns_404_or_redirect(self, client):
+        # ルート自体が無くなったため認証チェック前に 404 が返る
         resp = client.post("/csv-import/ai-reconcile")
-        assert resp.status_code in (302, 401)
+        assert resp.status_code == 404
