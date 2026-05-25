@@ -16,14 +16,8 @@
 //     consistency: {status, date_match, amount_match, description_match, warnings} }
 
 import { callLLM } from "./llm/index.js";
+import { b64decode } from "./b64.js";
 
-
-function b64decode(s) {
-  const bin = atob(s);
-  const out = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
-  return out;
-}
 
 
 async function _fetchPromptContext(fetchImpl) {

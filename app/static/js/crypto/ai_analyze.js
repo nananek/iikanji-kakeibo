@@ -18,14 +18,8 @@
 // 設計書 §11.3 / §11.6 参照。
 
 import { callLLM } from "./llm/index.js";
+import { b64decode } from "./b64.js";
 
-
-function b64decode(s) {
-  const bin = atob(s);
-  const out = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
-  return out;
-}
 
 function csrfToken() {
   const meta = (typeof document !== "undefined")

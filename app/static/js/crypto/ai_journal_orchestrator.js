@@ -21,14 +21,8 @@
 
 import { runRound1 } from "./llm/round1.js";
 import { runRound2 } from "./llm/round2.js";
+import { b64decode } from "./b64.js";
 
-
-function b64decode(s) {
-  const bin = atob(s);
-  const out = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
-  return out;
-}
 
 function _csrf() {
   if (typeof document === "undefined") return "";

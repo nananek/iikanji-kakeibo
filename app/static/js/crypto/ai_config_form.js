@@ -15,6 +15,7 @@
 
 import { SharedCryptoClient } from "./shared-client.js";
 import { utf8 } from "./client.js";
+import { b64encode } from "./b64.js";
 
 
 // 設定画面が単一インスタンスを使うように window グローバル
@@ -25,21 +26,6 @@ function getSharedWorkerUrl() {
   );
 }
 
-
-function b64encode(bytes) {
-  let s = "";
-  for (let i = 0; i < bytes.byteLength; i++) {
-    s += String.fromCharCode(bytes[i]);
-  }
-  return btoa(s);
-}
-
-function b64decode(s) {
-  const bin = atob(s);
-  const out = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
-  return out;
-}
 
 function csrfToken() {
   const meta = document.querySelector('meta[name="csrf-token"]');
