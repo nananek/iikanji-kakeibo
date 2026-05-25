@@ -2,9 +2,6 @@
 {% block title %}残高試算表 - いいかんじ™家計簿{% endblock %}
 
 {% block content %}
-<script id="trial-balance-accounts-data" type="application/json">
-{{ accounts_meta | tojson }}
-</script>
 <script id="trial-balance-server-params" type="application/json">
 {{ {"fiscal_year": year, "fiscal_period_from": pf, "fiscal_period_to": pt, "user_id": effective_user_id} | tojson }}
 </script>

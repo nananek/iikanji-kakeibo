@@ -203,19 +203,6 @@ def balance():
         .first()
     ) is not None
 
-    # client-side validator needs account type info for computeTrialBalance.
-    # Name is intentionally omitted because mask_account filter may rewrite it
-    # at template-render time (e.g. proprietor) — leaking the raw name here
-    # would bypass that mask for Lv2 auditors.
-    accounts_meta = [
-        {
-            "code": b["account"].code,
-            "type": b["account"].account_type.code,
-            "normal_balance": b["account"].account_type.normal_balance,
-        }
-        for b in balances
-    ]
-
     return render_template(
         "reports/balance.html",
         year=year,
@@ -227,7 +214,6 @@ def balance():
         net_income=net_income,
         ytd_net_income=ytd_net_income,
         has_closing=has_closing,
-        accounts_meta=accounts_meta,
         effective_user_id=user_id,
     )
 
