@@ -319,5 +319,12 @@
 })();
 </script>
 
+<script>
+  // SharedWorker は URL でインスタンス共有されるため、validator が起動する
+  // SharedCryptoClient を他の crypto UI (wizard.js / ai_config_form.js) と
+  // 同じ Worker に届かせるために、Flask の url_for で実際の static URL を渡す。
+  globalThis.IIKANJI_SHARED_WORKER_URL =
+    "{{ url_for('static', filename='js/crypto/shared-worker.js') }}";
+</script>
 <script type="module" src="{{ url_for('static', filename='js/reports/trial_balance_validator.mjs') }}"></script>
 {% endblock %}
