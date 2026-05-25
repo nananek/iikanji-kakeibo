@@ -17,7 +17,7 @@ from app.models.ai_draft import AIDraft
 from app.models.ai_usage_log import AIUsageLog
 from app.models.api_key import APIKey
 from app.models.audit import AuditGrant, AuditGrantAccount
-from app.models.auto_import import WebhookConfig
+from app.models.webhook import WebhookConfig
 from app.models.balance_cache import BalanceCache
 from app.models.csv_column_profile import CsvColumnProfile
 from app.models.fiscal import FiscalClose

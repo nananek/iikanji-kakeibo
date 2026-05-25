@@ -1,5 +1,8 @@
-# WebhookConfig は account_deletion.py からの参照 + 将来の Discord 通知設定
-# 再構築用のため、auto_import 機能廃止後も維持する。
+"""Webhook 通知設定モデル。
+
+Discord 等の外部 Webhook URL とイベント種別を保管する。account_deletion から
+参照されるほか、Discord 通知設定 UI の再構築 (将来) で使用される。
+"""
 
 from datetime import datetime, timezone
 
