@@ -3,6 +3,12 @@
 // 暗号文 (Uint8Array) と base64 文字列の変換、CSRF トークン取得を含む。
 // 設計書 §10.3 の API 仕様参照。
 
+import { b64encode, b64decode } from "./b64.js";
+
+// 既存 import 互換のため re-export
+export { b64encode, b64decode };
+
+
 function _csrfToken() {
   const meta = document.querySelector('meta[name="csrf-token"]');
   return meta ? meta.getAttribute("content") : "";
@@ -13,21 +19,6 @@ function _baseHeaders() {
     "Content-Type": "application/json",
     "X-CSRFToken": _csrfToken(),
   };
-}
-
-export function b64encode(bytes) {
-  let s = "";
-  for (let i = 0; i < bytes.byteLength; i++) {
-    s += String.fromCharCode(bytes[i]);
-  }
-  return btoa(s);
-}
-
-export function b64decode(s) {
-  const bin = atob(s);
-  const out = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
-  return out;
 }
 
 /** 自身の wrapped_keys 一覧を取得。各エントリの暗号文は Uint8Array に変換済。 */
