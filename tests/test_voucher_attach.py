@@ -181,7 +181,7 @@ class TestAttachEndpoint:
     def test_attach_returns_entry_metadata(
         self, mock_store, logged_in_client, user, accounts, db,
     ):
-        """E2 PR-C-6a: サーバ側 AI 解析は廃止。レスポンスは voucher_id +
+        """サーバ側 AI 解析は廃止。レスポンスは voucher_id +
         journal_date/amount/description (クライアント側 AI が再構築に使用)。"""
         entry = make_journal(db, user.id, "5010", "1010", 1500)
         data = {"image": (io.BytesIO(TINY_JPEG), "receipt.jpg", "image/jpeg")}

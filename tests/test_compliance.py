@@ -81,8 +81,8 @@ class TestComplianceCheckConfig:
         assert loaded.compliance_check is True
 
 
-# E2 PR-C-4i: TestCompliancePromptInjection (旧 analyze_and_suggest 経由の
-# サーバ側プロンプト注入テスト) は対応関数の削除に伴い削除。
+# TestCompliancePromptInjection (旧 analyze_and_suggest 経由の
+# サーバ側プロンプト注入テスト) は対応関数の削除に伴い削除済。
 # クライアント側 round1.js + /api/v1/ai/prompt-context endpoint での
 # COMPLIANCE_CHECK_PROMPT 配信は tests/test_ai_uploads_api.py の
 # TestAiPromptContext と tests/static/js/test_round1.mjs でカバー済。

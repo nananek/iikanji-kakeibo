@@ -254,7 +254,7 @@ class TestOfxImportConfirm:
 
 def _setup_web_import_session(logged_in_client, parsed_rows,
                                payment_code="1010"):
-    """E2 PR-C-4h: POST /web-import/ が無効化されたため、parsed データを
+    """POST /web-import/ が無効化されたため、parsed データを
     save_import_data + session 直接設定で投入するヘルパー (confirm フロー
     のテスト用)。"""
     from app.views.helpers import save_import_data
@@ -293,7 +293,7 @@ def _make_non_e2ee_ai_config(db, user_id):
 
 
 class TestWebImportUpload:
-    """E2 PR-C-5c: クライアント完結 E2EE モード対応後の GET/POST 挙動。"""
+    """クライアント完結 E2EE モード対応後の GET/POST 挙動。"""
 
     def test_unauthenticated(self, client):
         resp = client.get("/web-import/")
@@ -414,7 +414,7 @@ class TestWebImportConfirm:
         assert resp.status_code in (302, 303)
 
     def test_full_flow(self, db, logged_in_client, user, accounts):
-        # E2 PR-C-4h: parse_web_text 経由ではなく session を直接仕込んで
+        # parse_web_text 経由ではなく session を直接仕込んで
         # confirm フロー (仕訳生成) だけをテスト。
         _setup_web_import_session(logged_in_client, [
             {"date": "2026-02-15", "description": "セブン",

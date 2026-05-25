@@ -64,7 +64,7 @@ def _draft(db, user_id, *, status="analyzed", suggestions=None):
 
 
 class TestAnalyzeEndpointRemoved:
-    """E2 PR-C-4e: /ai-journal/analyze (サーバ Fernet 経路) は廃止。
+    """/ai-journal/analyze (サーバ Fernet 経路) は廃止。
     POST すると 404 (ルート未定義) を返すことを担保。"""
 
     def test_analyze_endpoint_is_gone(self, logged_in_client, accounts):

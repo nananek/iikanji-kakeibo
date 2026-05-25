@@ -1,9 +1,9 @@
 """Webページ貼り付け→AI明細取込ビュー
 
-E2 PR-C-5c: クライアント完結 E2EE モードに統合。POST は AJAX JSON ボディで
+クライアント完結 E2EE モードに統合。POST は AJAX JSON ボディで
 parsed_transactions[] + payment_account_code を受け取り、session に保存して
-/web-import/confirm への遷移用 URL を返す。LLM 呼出はクライアント側 (E2-C-5b
-の web_extract.js) が完了している前提。
+/web-import/confirm への遷移用 URL を返す。LLM 呼出はクライアント側
+(web_extract.js) が完了している前提。
 """
 
 import json
@@ -47,7 +47,7 @@ def upload():
 
     GET: アップロード画面を表示 (E2EE モード対応)
     POST (JSON): クライアント側で抽出済みの parsed_transactions[] を受け取り
-                 session に保存する (E2 PR-C-5c)
+                 session に保存する
     """
     user_id = get_effective_user_id()
     config = UserAIConfig.query.filter_by(user_id=user_id).first()

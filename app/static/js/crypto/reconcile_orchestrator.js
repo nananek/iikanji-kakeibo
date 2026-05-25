@@ -1,6 +1,6 @@
-// E2 PR-C-6c: AI 照合をクライアント完結で実行するオーケストレーター。
+// AI 照合をクライアント完結で実行するオーケストレーター。
 //
-// サーバ側 find_ai_matches (本 PR で削除) と等価。csv_import の
+// 旧サーバ側 find_ai_matches と等価。csv_import の
 // reconcileMode UI から呼ばれる。
 //
 // フロー:

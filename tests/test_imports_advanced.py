@@ -202,11 +202,11 @@ class TestOfxTransferAndOldYear:
 
 
 class TestWebTransferAndOldYear:
-    """E2 PR-C-4h: POST /web-import/ は機能停止。session を直接仕込んで
+    """POST /web-import/ は機能停止のため、session を直接仕込んで
     confirm フロー (仕訳生成) のみをテスト。"""
 
-    # E2 PR-C-4i: 旧 _seed と test_imports._setup_web_import_session の重複を
-    # 解消。test_imports 側のヘルパーを再利用。
+    # 旧 _seed と test_imports._setup_web_import_session の重複を
+    # 解消するため、test_imports 側のヘルパーを再利用。
     @staticmethod
     def _seed(logged_in_client, parsed_rows):
         from tests.test_imports import _setup_web_import_session

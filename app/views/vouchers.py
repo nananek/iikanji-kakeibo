@@ -16,7 +16,6 @@ from app.extensions import db, limiter
 from app.models.user import User
 from app.models.voucher import Voucher
 from app.models.voucher_audit_log import VoucherAuditLog
-# E2 PR-C-6a: UserAIConfig import 削除 (analyze_voucher_for_attachment 廃止に伴い)
 from app.models.journal import JournalEntry, JournalEntryLine
 from app.services.audit import get_effective_user_id
 from app.services.storage import get_storage_backend, make_thumbnail_key
@@ -201,7 +200,7 @@ def attach(entry_id):
         # 明示的に `user_message` 属性経由でユーザー向け固定文言を返す。
         return jsonify({"error": exc.user_message}), 413
 
-    # E2 PR-C-6a: サーバ側 AI 解析 (analyze_voucher_for_attachment) を廃止。
+    # サーバ側 AI 解析 (analyze_voucher_for_attachment) は廃止。
     # クライアントが E2EE モードなら別途 /api/v1/voucher-attach/prompt-context
     # を叩いてクライアント側で LLM 呼出し → 結果は UI 表示のみ (現状の挙動と
     # 同様、DB には保存しない)。サーバが返すのは voucher_id + entry メタのみ。

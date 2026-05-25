@@ -1,4 +1,4 @@
-// OpenAI Chat Completions の fetch ラッパー (E2 PR-C-1)。
+// OpenAI Chat Completions の fetch ラッパー。
 //
 // サーバ側 _call_openai と等価の挙動を実装。クライアント (ブラウザ) が
 // 直接 OpenAI API を呼び、サーバには平文画像 / プロンプトを送らない。
@@ -87,7 +87,7 @@ export async function callOpenAI({
 }
 
 
-/** OpenAI Chat Completions の text-only 版 (E2 PR-C-5b)。Web 明細抽出用。 */
+/** OpenAI Chat Completions の text-only 版。Web 明細抽出用。 */
 export async function callOpenAIText({
   apiKey, model, prompt, maxTokens = 16000, signal, fetchImpl,
 }) {

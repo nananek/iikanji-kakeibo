@@ -435,10 +435,9 @@ def _build_daily_summary(csv_rows, csv_results, candidates, csv_meta,
 
 # --- AI 照合 ---
 
-# 旧 AI_RECONCILE_PROMPT (Python str.format 版) は E2 PR-C-6c で
-# find_ai_matches が廃止された時点で dead code 化、本 PR で削除。
-# クライアント側 reconcile_orchestrator.js が AI_RECONCILE_PROMPT_TEMPLATE
-# (placeholder 版) を使用する。
+# 旧 AI_RECONCILE_PROMPT (Python str.format 版) は find_ai_matches 廃止に
+# 伴い削除済。クライアント側 reconcile_orchestrator.js が
+# AI_RECONCILE_PROMPT_TEMPLATE (placeholder 版) を使用する。
 AI_RECONCILE_PROMPT_TEMPLATE = """\
 あなたは日本の家計簿アプリの照合アシスタントです。
 以下はクレジットカード等のCSV明細と、既存の仕訳一覧です。
@@ -468,7 +467,7 @@ __JOURNAL_ROWS_TEXT__
 AI_RECONCILE_BATCH_SIZE = 30
 
 
-# E2 PR-C-6c: find_ai_matches は E2EE 化に伴い削除。
+# find_ai_matches は E2EE 化に伴い削除。
 # クライアント側 reconcile_orchestrator.js が等価の処理を実行する。
 
 

@@ -1,4 +1,4 @@
-// E2 PR-C-6a: voucher_attach_orchestrator.runVoucherAttachAnalysis テスト。
+// voucher_attach_orchestrator.runVoucherAttachAnalysis テスト。
 
 import { test } from "node:test";
 import assert from "node:assert/strict";

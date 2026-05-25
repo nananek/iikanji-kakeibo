@@ -279,7 +279,7 @@ class TestSuggestCategories:
 
 
 class TestAiSuggestCategoriesRemoved:
-    """E2 PR-C-6b: /journal/api/ai-suggest-categories は廃止。
+    """/journal/api/ai-suggest-categories は廃止。
     POST すると 404 を返すことを担保。クライアントが直接
     /api/v1/suggest-categories/prompt-context + 自己 LLM 呼出で実行する。"""
 

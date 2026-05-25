@@ -18,7 +18,7 @@
           <a href="{{ url_for('settings.ai_config') }}">外部AI設定</a>でAPIキーを登録してください。
         </div>
         {% elif not config_is_e2ee %}
-        {# E2 PR-C-4e: サーバ側 Fernet 解析経路を廃止。
+        {# サーバ側 Fernet 解析経路を廃止。
            Fernet 形式のみで登録された旧ユーザーは E2EE 形式での再登録が必要。 #}
         <div class="alert alert-warning">
           <i class="bi bi-shield-exclamation"></i>
@@ -256,7 +256,7 @@
       renderSuggestions(suggestions);
     };
 
-    // E2 PR-C-4e: サーバ Fernet 経路を廃止。常にクライアント完結 E2EE フロー。
+    // サーバ Fernet 経路を廃止。常にクライアント完結 E2EE フロー。
     runE2EEFullClientFlow(fileInput.files[0],
       document.getElementById('comment').value)
       .then(function(result) { finished(null, result.suggestions); })

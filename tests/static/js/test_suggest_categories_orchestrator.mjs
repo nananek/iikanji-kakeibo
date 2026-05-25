@@ -1,4 +1,4 @@
-// E2 PR-C-6b: suggest_categories_orchestrator の Node 単体テスト。
+// suggest_categories_orchestrator の Node 単体テスト。
 
 import { test } from "node:test";
 import assert from "node:assert/strict";

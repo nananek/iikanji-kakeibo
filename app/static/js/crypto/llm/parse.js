@@ -1,4 +1,4 @@
-// LLM レスポンスの JSON 抽出ユーティリティ (E2 PR-C-1)。
+// LLM レスポンスの JSON 抽出ユーティリティ。
 //
 // サーバ側 ai_receipt.py の `_extract_json` と等価の挙動。LLM がコードブロック
 // や前後余白付きで JSON を返すケースに対応する。

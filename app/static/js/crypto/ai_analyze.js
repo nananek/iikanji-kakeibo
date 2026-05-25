@@ -1,4 +1,4 @@
-// クライアント側 AI 証憑解析オーケストレーター (E2 PR-C-2)。
+// クライアント側 AI 証憑解析オーケストレーター。
 //
 // 全体フロー:
 //   1. 画像を /api/v1/ai/uploads にアップロード (LLM 呼出なし)
@@ -135,7 +135,7 @@ export async function analyzeReceiptClientSide({
   // 復号後すぐに raw bytes を消す (api_key string は GC 任せ)
   try { plaintextBytes.fill(0); } catch (_e) { /* detached / immutable */ }
 
-  // 4. LLM 呼出 (E2-C-1 module)
+  // 4. LLM 呼出
   const usedModel = cfg.model_name || _defaultModelFor(cfg.provider);
   const imageBytes = new Uint8Array(await file.arrayBuffer());
   const llmRes = await callLLMImpl({

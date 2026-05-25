@@ -1,8 +1,8 @@
-// クライアント側 LLM 呼出の統一インターフェイス (E2 PR-C-1)。
+// クライアント側 LLM 呼出の統一インターフェイス。
 //
 // 設計書 §11.3 / §11.6: v5.0 では AI 呼出をクライアント側で完結させる。
 // サーバ側 _PROVIDER_HANDLERS と等価の振る舞いを JS で実装し、ai-journal
-// UI から本モジュールを通じて LLM を呼ぶ (E2 PR-C-2 で実装予定)。
+// UI から本モジュールを通じて LLM を呼ぶ。
 //
 // 対応 provider:
 //   - openai
@@ -27,7 +27,7 @@ export const LLM_HANDLERS = Object.freeze({
 });
 
 
-/** provider → text-only handler (E2 PR-C-5b、Web 明細抽出用)。 */
+/** provider → text-only handler (Web 明細抽出用)。 */
 export const LLM_TEXT_HANDLERS = Object.freeze({
   openai: callOpenAIText,
   anthropic: callAnthropicText,

@@ -1,4 +1,4 @@
-// E2 PR-C-5b: web_extract.js + text-only LLM handlers の Node 単体テスト。
+// web_extract.js + text-only LLM handlers の Node 単体テスト。
 
 import { test } from "node:test";
 import assert from "node:assert/strict";

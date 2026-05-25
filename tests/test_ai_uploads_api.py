@@ -1,4 +1,4 @@
-"""E2 PR-C-2: クライアント側 LLM 呼出フロー向けエンドポイントのテスト。
+"""クライアント側 LLM 呼出フロー向けエンドポイントのテスト。
 
 対象:
   POST  /api/v1/ai/uploads                       — 画像アップロード (LLM 呼出なし)
@@ -288,7 +288,7 @@ class TestAiSaveSuggestions:
 
 
 class TestAiLedgerContext:
-    """E2 PR-C-4c: POST /api/v1/ai/ledger-context."""
+    """POST /api/v1/ai/ledger-context."""
 
     def test_unauthenticated(self, client):
         resp = client.post("/api/v1/ai/ledger-context", json={"account_names": []})
@@ -347,7 +347,7 @@ class TestAiLedgerContext:
 
 
 class TestAiPromptContext:
-    """E2 PR-C-4a: GET /api/v1/ai/prompt-context."""
+    """GET /api/v1/ai/prompt-context."""
 
     def test_unauthenticated(self, client):
         resp = client.get("/api/v1/ai/prompt-context")
@@ -418,7 +418,7 @@ class TestAiPromptContext:
 
 
 class TestSuggestCategoriesPromptContext:
-    """E2 PR-C-6b: GET /api/v1/suggest-categories/prompt-context."""
+    """GET /api/v1/suggest-categories/prompt-context."""
 
     def test_unauthenticated(self, client):
         resp = client.get(
@@ -479,7 +479,7 @@ class TestSuggestCategoriesPromptContext:
 
 
 class TestVoucherAttachPromptContext:
-    """E2 PR-C-6a: GET /api/v1/voucher-attach/prompt-context."""
+    """GET /api/v1/voucher-attach/prompt-context."""
 
     def test_unauthenticated(self, client):
         resp = client.get("/api/v1/voucher-attach/prompt-context")
@@ -534,7 +534,7 @@ class TestVoucherAttachPromptContext:
 
 
 class TestWebImportPromptContext:
-    """E2 PR-C-5a: GET /api/v1/web-import/prompt-context."""
+    """GET /api/v1/web-import/prompt-context."""
 
     def test_unauthenticated(self, client):
         resp = client.get("/api/v1/web-import/prompt-context")

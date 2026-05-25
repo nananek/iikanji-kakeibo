@@ -1,6 +1,6 @@
-// Web 明細抽出をクライアント完結で実行 (E2 PR-C-5b)。
+// Web 明細抽出をクライアント完結で実行。
 //
-// サーバ側 ai_receipt.parse_web_text (E2-C-4i で削除済) と等価。クライアント
+// 旧サーバ側 ai_receipt.parse_web_text と等価。クライアント
 // 側で raw_text + payment_account_name → LLM → transactions[] の抽出を行い、
 // サーバには平文テキストも API キーも一切送らない。
 //

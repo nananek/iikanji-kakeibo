@@ -1,4 +1,4 @@
-// E2 PR-C-4d: analyzeReceiptFull オーケストレーターの Node 単体テスト。
+// analyzeReceiptFull オーケストレーターの Node 単体テスト。
 
 import { test } from "node:test";
 import assert from "node:assert/strict";

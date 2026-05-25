@@ -1008,7 +1008,7 @@ def suggest_categories():
     return jsonify(result)
 
 
-# E2 PR-C-6b: /journal/api/ai-suggest-categories は廃止。
+# /journal/api/ai-suggest-categories は廃止。
 # クライアントが直接 /api/v1/suggest-categories/prompt-context + ai-config +
 # クライアント側 LLM 呼出 (suggest_categories_orchestrator.js) で科目推定を
 # 行う。サーバには raw description も API キーも届かない。

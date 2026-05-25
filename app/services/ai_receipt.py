@@ -204,10 +204,10 @@ details には、status に関わらず全チェック項目の結果を簡潔�
 warnings が空の場合は status を "pass" にしてください。"""
 
 
-# 旧 CONSISTENCY_CHECK_PROMPT (Python str.format 版) は E2 PR-C-4i で
-# analyze_voucher_for_attachment が廃止された時点で dead code 化、本 PR で
-# 削除。クライアント側 voucher_attach_orchestrator.js が
-# CONSISTENCY_CHECK_PROMPT_TEMPLATE (placeholder 版) を使用する。
+# 旧 CONSISTENCY_CHECK_PROMPT (Python str.format 版) は
+# analyze_voucher_for_attachment 廃止に伴い削除済。クライアント側
+# voucher_attach_orchestrator.js が CONSISTENCY_CHECK_PROMPT_TEMPLATE
+# (placeholder 版) を使用する。
 CONSISTENCY_CHECK_PROMPT_TEMPLATE = """
 
 ## 仕訳整合性チェック（必ず実施してください）
@@ -287,7 +287,7 @@ def _build_suggestion_prompt(account_list_text, ledger_text="",
 
 # サーバ側 LLM 呼出経路 (_call_openai/_call_google/_call_anthropic/_call_llama_cpp
 # とテキスト版、_usage_*/_extract_json/_PROVIDER_HANDLERS/_TEXT_PROVIDER_HANDLERS)
-# は E2 PR-C-6a〜6d で全 caller がクライアント完結 (E2EE) に置き換わったため削除。
+# は E2EE 化に伴い全 caller がクライアント完結に置き換わったため削除済。
 # クライアント側 orchestrator (app/static/js/crypto/llm/) が等価の処理を実行。
 
 
@@ -420,10 +420,10 @@ def _get_account_list_text(user_id: int) -> str:
 # callLLM / callLLMText (app/static/js/crypto/llm/) が等価。
 
 
-# 旧 AI_SUGGEST_CATEGORIES_PROMPT (Python str.format 版) は E2 PR-C-6b で
-# suggest_categories_by_ai が廃止された時点で dead code 化、本 PR で削除。
-# クライアント側 suggest_categories_orchestrator.js が
-# AI_SUGGEST_CATEGORIES_PROMPT_TEMPLATE (placeholder 版) を使用する。
+# 旧 AI_SUGGEST_CATEGORIES_PROMPT (Python str.format 版) は
+# suggest_categories_by_ai 廃止に伴い削除済。クライアント側
+# suggest_categories_orchestrator.js が AI_SUGGEST_CATEGORIES_PROMPT_TEMPLATE
+# (placeholder 版) を使用する。
 AI_SUGGEST_CATEGORIES_PROMPT_TEMPLATE = """あなたは日本の複式簿記の家計簿アプリのアシスタントです。
 以下は取込先口座「__PAYMENT_ACCOUNT_NAME__」の元帳（過去の取引履歴）です。
 各行の「相手科目」は、その取引で使われた費目（勘定科目）です。
@@ -503,7 +503,7 @@ def _get_payment_ledger_context(user_id: int, payment_account_code: str,
     return "\n".join(lines)
 
 
-# E2 PR-C-6b: suggest_categories_by_ai は E2EE 化に伴い削除。
+# suggest_categories_by_ai は E2EE 化に伴い削除済。
 # クライアント側 suggest_categories_orchestrator.js が等価の処理を実行。
 
 
@@ -538,7 +538,7 @@ def match_account(user_id: int, category_name: str) -> str | None:
     return None
 
 
-# E2 PR-C-6a: analyze_voucher_for_attachment は E2EE 化に伴い削除。
+# analyze_voucher_for_attachment は E2EE 化に伴い削除済。
 # クライアント側 voucher_attach_orchestrator.js が等価の処理を実行する。
 # CONSISTENCY_CHECK_PROMPT_TEMPLATE (placeholder 版) は
 # /api/v1/voucher-attach/prompt-context から配信される。
