@@ -62,13 +62,25 @@ CSRF トークンが無効化** され、再ログインが必要になる。事
 docker compose up -d --force-recreate web
 ```
 
-### 4. 旧 `SECRET_KEY` の抹消
+### 4. 動作確認
+
+旧鍵抹消は不可逆なので、抹消の **前に** 必ず動作確認する。
+
+- ブラウザから実際にログインし、ダッシュボード等が正常表示されることを確認
+- アプリログ (`docker compose logs web`) にエラーがないことを確認
+- 既存ユーザーには再ログインを案内 (既存セッション cookie は新鍵で署名検証失敗 → 自動ログアウト)
+
+### 5. 旧 `SECRET_KEY` の抹消
 
 - パスワードマネージャ・HashiCorp Vault 等から旧値を削除
 - オフライン媒体 (USB 等のバックアップ) からも削除
 - 過去の `.env` を git stash / 個人 PC の履歴等に残していないか確認
+- ターミナルのシェル履歴 (`~/.bash_history` / `~/.zsh_history`) に
+  `SECRET_KEY=...` を入力した記録があれば `history -d <行番号>` 等で削除
+- `docker compose` 実行時のログ・systemd journal 等に `.env` 内容が
+  記録されていないか確認 (通常は記録されないが念のため)
 
-### 5. (v4.x からのアップグレード時のみ) 過去 Fernet 暗号文の存在確認
+### 6. (v4.x からのアップグレード時のみ) 過去 Fernet 暗号文の存在確認
 
 v4.x の DB バックアップに `user_ai_configs.api_key_encrypted` カラムの値が
 残っている場合、旧 `SECRET_KEY` での復号は理論上可能。バックアップを保持する
