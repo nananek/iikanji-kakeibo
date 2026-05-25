@@ -563,6 +563,133 @@ class TestDeleteJournal:
         assert resp.status_code == 400
 
 
+# --- 医療費 (Phase E3-C-8b) ---
+
+
+class TestMedicalExpenses:
+    """GET /api/v1/medical-expenses"""
+
+    def _make_expense(self, db, user_id, entry, **kwargs):
+        from app.models.medical import MedicalExpense
+        from datetime import date as _date
+        e = MedicalExpense(
+            user_id=user_id,
+            journal_entry_id=entry.id,
+            date=kwargs.get("date", _date(2026, 5, 1)),
+            patient_name=kwargs.get("patient_name", "本人"),
+            hospital_name=kwargs.get("hospital_name", "A病院"),
+            treatment_description=kwargs.get("treatment_description", ""),
+            provider_type=kwargs.get("provider_type", "hospital"),
+            amount_paid=kwargs.get("amount_paid", 5000),
+            insurance_reimbursement=kwargs.get("insurance_reimbursement", 0),
+        )
+        db.session.add(e)
+        db.session.commit()
+        return e
+
+    def test_unauthenticated(self, client):
+        resp = client.get("/api/v1/medical-expenses")
+        assert resp.status_code in (302, 401)
+
+    def test_empty_returns_total_0(self, client, db, user, accounts, auth_header):
+        resp = client.get("/api/v1/medical-expenses", headers=auth_header)
+        assert resp.status_code == 200
+        body = resp.get_json()
+        assert body["expenses"] == []
+        assert body["total"] == 0
+
+    def test_lists_expenses_with_plaintext_fields(
+        self, client, db, user, accounts, auth_header,
+    ):
+        entry = make_journal(db, user.id, "5010", "1010", 5000,
+                             entry_date=date(2026, 5, 1))
+        # tax_category=medical の科目を 5099 として用意するのが面倒なので
+        # 既存科目で代用 (テストは MedicalExpense の取得経路を見る)
+        e = self._make_expense(db, user.id, entry)
+        resp = client.get("/api/v1/medical-expenses", headers=auth_header)
+        assert resp.status_code == 200
+        body = resp.get_json()
+        assert body["total"] == 1
+        item = body["expenses"][0]
+        assert item["id"] == e.id
+        assert item["journal_entry_id"] == entry.id
+        assert item["patient_name"] == "本人"
+        assert item["amount_paid"] == 5000
+        # 暗号化未設定なら null
+        assert item["encrypted_blob"] is None
+        assert item["blob_iv"] is None
+
+    def test_returns_blob_iv_base64(
+        self, client, db, user, accounts, auth_header,
+    ):
+        from base64 import b64decode
+        entry = make_journal(db, user.id, "5010", "1010", 5000,
+                             entry_date=date(2026, 5, 1))
+        e = self._make_expense(db, user.id, entry)
+        e.encrypted_blob = b"\xAA" * 48
+        e.blob_iv = b"\xBB" * 12
+        db.session.commit()
+        resp = client.get("/api/v1/medical-expenses", headers=auth_header)
+        item = resp.get_json()["expenses"][0]
+        assert b64decode(item["encrypted_blob"]) == b"\xAA" * 48
+        assert b64decode(item["blob_iv"]) == b"\xBB" * 12
+
+    def test_fiscal_year_filter(
+        self, client, db, user, accounts, auth_header,
+    ):
+        entry2025 = make_journal(db, user.id, "5010", "1010", 1000,
+                                 entry_date=date(2025, 6, 1))
+        entry2026 = make_journal(db, user.id, "5010", "1010", 2000,
+                                 entry_date=date(2026, 6, 1))
+        self._make_expense(db, user.id, entry2025,
+                           date=date(2025, 6, 1), amount_paid=1000)
+        self._make_expense(db, user.id, entry2026,
+                           date=date(2026, 6, 1), amount_paid=2000)
+        # 2026 だけ取得
+        resp = client.get("/api/v1/medical-expenses?fiscal_year=2026",
+                          headers=auth_header)
+        body = resp.get_json()
+        assert body["total"] == 1
+        assert body["expenses"][0]["amount_paid"] == 2000
+
+    def test_fiscal_year_invalid_int(
+        self, client, db, user, accounts, auth_header,
+    ):
+        resp = client.get("/api/v1/medical-expenses?fiscal_year=abc",
+                          headers=auth_header)
+        assert resp.status_code == 400
+
+    def test_fiscal_year_out_of_range(
+        self, client, db, user, accounts, auth_header,
+    ):
+        resp = client.get("/api/v1/medical-expenses?fiscal_year=99999",
+                          headers=auth_header)
+        assert resp.status_code == 400
+
+    def test_idor_only_own_user(
+        self, client, db, user, auditor, accounts, auth_header,
+    ):
+        # auditor 用の Account を作る必要を避けるため、journal_entry_id=null
+        # で直接 MedicalExpense を作成 (本人 user 用 entry はなし)。
+        # 重要なのは別 user_id の expense が本人取得に出ないこと。
+        from app.models.medical import MedicalExpense
+        from datetime import date as _date
+        other_exp = MedicalExpense(
+            user_id=auditor.id,
+            journal_entry_id=None,
+            date=_date(2026, 6, 1),
+            patient_name="他人",
+            hospital_name="X病院",
+            amount_paid=999,
+        )
+        db.session.add(other_exp)
+        db.session.commit()
+        # 本人 (user) は他人の expense を見えない
+        resp = client.get("/api/v1/medical-expenses", headers=auth_header)
+        body = resp.get_json()
+        assert body["total"] == 0
+
+
 # --- 下書き一覧 ---
 
 
