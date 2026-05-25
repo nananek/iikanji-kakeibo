@@ -392,6 +392,36 @@ class TestListJournals:
         data = resp.get_json()
         assert data["total"] == 1
 
+    def test_fiscal_year_filter(self, client, db, user, accounts, auth_header):
+        """Phase E3: fiscal_year パラメータで年度別取得 (date 暗号化後の代替)。"""
+        make_journal(db, user.id, "5010", "1010", 100,
+                     entry_date=date(2024, 5, 1))
+        make_journal(db, user.id, "5010", "1010", 200,
+                     entry_date=date(2025, 5, 1))
+        make_journal(db, user.id, "5010", "1010", 300,
+                     entry_date=date(2026, 5, 1))
+        resp = client.get("/api/v1/journals?fiscal_year=2025",
+                          headers=auth_header)
+        data = resp.get_json()
+        assert data["total"] == 1
+        assert data["journals"][0]["fiscal_year"] == 2025
+
+    def test_fiscal_year_filter_invalid_int(
+        self, client, db, user, accounts, auth_header,
+    ):
+        resp = client.get("/api/v1/journals?fiscal_year=abc",
+                          headers=auth_header)
+        assert resp.status_code == 400
+        assert "整数" in resp.get_json()["error"]
+
+    def test_fiscal_year_filter_out_of_range(
+        self, client, db, user, accounts, auth_header,
+    ):
+        resp = client.get("/api/v1/journals?fiscal_year=99999",
+                          headers=auth_header)
+        assert resp.status_code == 400
+        assert "範囲" in resp.get_json()["error"]
+
     def test_pagination(self, client, db, user, accounts, auth_header):
         for i in range(5):
             make_journal(db, user.id, "5010", "1010",

@@ -345,6 +345,20 @@ def list_journals():
         except ValueError:
             return jsonify({"error": "date_to の形式が不正です（YYYY-MM-DD）。"}), 400
 
+    # Phase E3: fiscal_year フィルタ (date 暗号化後にレポート集計が依存)。
+    # POST 時の検証と同じ範囲 1900〜2200 を要求する。
+    fiscal_year_str = request.args.get("fiscal_year")
+    if fiscal_year_str:
+        try:
+            fy = int(fiscal_year_str)
+        except (ValueError, TypeError):
+            return jsonify({"error": "fiscal_year は整数で指定してください。"}), 400
+        if not (1900 <= fy <= 2200):
+            return jsonify({
+                "error": "fiscal_year の範囲が不正です (1900〜2200)。",
+            }), 400
+        query = query.filter(JournalEntry.fiscal_year == fy)
+
     total = query.count()
     entries = (
         query.order_by(JournalEntry.date.desc(), JournalEntry.entry_number.desc())
