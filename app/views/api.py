@@ -1282,7 +1282,7 @@ def api_tax_summary():
             "label": v["label"],
             "total": int(v["total"]),
             "accounts": [
-                {"name": a["name"], "amount": int(a["amount"])}
+                {"name": a["name"], "code": a["code"], "amount": int(a["amount"])}
                 for a in v["accounts"]
             ],
         }
