@@ -483,6 +483,42 @@ class TestWebImportUpload:
         )
         assert resp.status_code == 400
 
+    def test_post_validates_nan_amount(
+        self, db, logged_in_client, user, accounts,
+    ):
+        """json.loads は NaN トークンを許容するため、validator が
+        math.isfinite で弾かないと後段の int(nan) が 500 エラーになる。"""
+        _make_e2ee_ai_config(db, user.id)
+        # Flask test client は json= で送ると標準 json.dumps を使うので
+        # NaN を直接埋め込めない → raw body 送信
+        resp = logged_in_client.post(
+            "/web-import/",
+            data=(
+                '{"parsed_transactions": [{"date": "2026-02-15", '
+                '"deposit": NaN, "withdrawal": 0}], '
+                '"payment_account_code": "1010"}'
+            ),
+            content_type="application/json",
+        )
+        assert resp.status_code == 400
+        assert "deposit" in resp.get_json()["error"]
+
+    def test_post_validates_inf_amount(
+        self, db, logged_in_client, user, accounts,
+    ):
+        _make_e2ee_ai_config(db, user.id)
+        resp = logged_in_client.post(
+            "/web-import/",
+            data=(
+                '{"parsed_transactions": [{"date": "2026-02-15", '
+                '"withdrawal": Infinity, "deposit": 0}], '
+                '"payment_account_code": "1010"}'
+            ),
+            content_type="application/json",
+        )
+        assert resp.status_code == 400
+        assert "withdrawal" in resp.get_json()["error"]
+
 
 class TestWebImportConfirm:
     def test_no_data_redirects(self, logged_in_client, accounts):

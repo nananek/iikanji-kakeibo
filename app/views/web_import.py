@@ -7,6 +7,7 @@ parsed_transactions[] + payment_account_code を受け取り、session に保存
 """
 
 import json
+import math
 import uuid
 from datetime import date as date_type
 
@@ -60,8 +61,12 @@ def _validate_parsed_row(row):
         amt = row.get(amt_key)
         if amt is not None and not isinstance(amt, (int, float)):
             return f"{amt_key} は数値である必要があります"
-        if isinstance(amt, (int, float)) and (amt < 0 or amt > MAX_AMOUNT):
-            return f"{amt_key} が範囲外です (0〜{MAX_AMOUNT})"
+        # NaN / Inf も弾く: NaN は全比較 False なので range check を通過してしまい、
+        # 後続の int(nan) が ValueError → 500 を引き起こす (json.loads は NaN を許容)
+        if isinstance(amt, (int, float)) and (
+            not math.isfinite(amt) or amt < 0 or amt > MAX_AMOUNT
+        ):
+            return f"{amt_key} が範囲外です (有限の 0〜{MAX_AMOUNT})"
     return None
 
 
@@ -199,7 +204,9 @@ def confirm():
                 continue
 
             row_date = date_type.fromisoformat(row_date_str)
-            description = row.get("description", "")
+            # description が null/未設定なら空文字に正規化
+            # (JournalEntry.description は nullable=False、None だと IntegrityError)
+            description = row.get("description") or ""
             deposit = int(row.get("deposit", 0))
             withdrawal = int(row.get("withdrawal", 0))
             category_code = row.get("category_code", "")
