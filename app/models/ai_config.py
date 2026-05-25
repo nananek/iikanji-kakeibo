@@ -8,14 +8,11 @@ from app.extensions import db
 class UserAIConfig(db.Model):
     """ユーザーごとの AI API 設定。
 
-    E2EE 移行 (E2 Phase E2-a):
-        v4.x までは `api_key_encrypted` (Fernet サーバ暗号化) のみ。
-        v5.0 では `api_key_blob` (AES-256-GCM 暗号文) + `api_key_iv` を
-        **クライアント側で MK で暗号化** して保管 (サーバは復号不可)。
-
-    移行期間中は両カラムが共存し、`migrated_at` で 1 回限りの migrate-key
-    呼出を制御する (一度移行したら api_key_encrypted は NULL クリア)。
-    Phase E2-b (別マイグレーション) で旧カラム削除。
+    E2EE 化完了 (Phase E2-b):
+        API キーはクライアント側で MK で AES-256-GCM 暗号化された状態
+        (api_key_blob + api_key_iv) で保管され、サーバは復号できない。
+        旧 Fernet サーバ暗号化カラム (api_key_encrypted) + migrate-key
+        endpoint 1 回限り判定用カラム (migrated_at) は Phase E2-b で削除済。
 
     設計書 §11 参照。
     """
@@ -27,15 +24,10 @@ class UserAIConfig(db.Model):
         db.Integer, db.ForeignKey("users.id"), nullable=False, unique=True
     )
     provider = db.Column(db.String(20), nullable=False, default="openai")
-    # 旧: Fernet サーバ暗号化された API キー。移行完了後 NULL クリア
-    # (Phase E2-b で DROP 予定)。
-    api_key_encrypted = db.Column(db.LargeBinary, nullable=True)
-    # 新: クライアント側 MK で AES-256-GCM 暗号化された API キー (タグ込)
+    # クライアント側 MK で AES-256-GCM 暗号化された API キー (タグ込)
     api_key_blob = db.Column(db.LargeBinary, nullable=True)
     # AES-GCM IV (12B)。blob と一緒に保存
     api_key_iv = db.Column(db.LargeBinary, nullable=True)
-    # E2EE 形式への移行完了時刻 (migrate-key endpoint 1 回限り判定用)
-    migrated_at = db.Column(db.DateTime(timezone=True), nullable=True)
     model_name = db.Column(db.String(100), nullable=False, default="")
     custom_prompt = db.Column(db.Text, nullable=False, default="")
     compliance_check = db.Column(db.Boolean, nullable=False, default=False)
