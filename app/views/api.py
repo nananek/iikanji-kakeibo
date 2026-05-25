@@ -297,11 +297,19 @@ def _entry_to_dict(entry):
         "entry_number": entry.entry_number,
         "description": entry.description,
         "source": entry.source,
+        # E3-C: クライアント側 dual-read 時に fiscal_period が必要 (期首仕訳
+        # 等の月次集計、設計書 §12.7)。
+        "fiscal_period": entry.fiscal_period,
         "fiscal_year": entry.fiscal_year,
         "encrypted_blob": _b64_or_none(entry.encrypted_blob),
         "blob_iv": _b64_or_none(entry.blob_iv),
         "lines": [
             {
+                # E3-C: line.id を返すことで AAD ("jel", user_id, entry_id,
+                # line_id) の構築をクライアント側で安定させる。line index に
+                # 依存しないため、将来 lines の並び替え・削除があっても
+                # 既存暗号文の復号が破壊されない。
+                "id": line.id,
                 "account_code": line.account_code,
                 "debit": int(line.debit_amount or 0),
                 "credit": int(line.credit_amount or 0),

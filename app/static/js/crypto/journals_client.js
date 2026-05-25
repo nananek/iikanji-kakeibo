@@ -24,14 +24,24 @@ import { buildAAD, decryptRecord } from "./record.js";
 async function _normalizeEntry(client, userId, apiEntry) {
   let body = null;
   if (apiEntry.encrypted_blob && apiEntry.blob_iv) {
-    const blob = b64decode(apiEntry.encrypted_blob);
-    const iv = b64decode(apiEntry.blob_iv);
-    const aad = buildAAD("je", userId, apiEntry.id);
-    body = await decryptRecord(client, blob, iv, aad);
+    try {
+      const blob = b64decode(apiEntry.encrypted_blob);
+      const iv = b64decode(apiEntry.blob_iv);
+      const aad = buildAAD("je", userId, apiEntry.id);
+      body = await decryptRecord(client, blob, iv, aad);
+    } catch (e) {
+      // 復号失敗 (AAD 不一致 / bit flip / 鍵不一致) は dual-read 設計通り
+      // 平文フォールバックする。1 件の異常で全件取得が失敗しないよう
+      // entry 単位で局所化する。
+      console.warn(
+        `journals_client: entry ${apiEntry.id} decrypt failed, ` +
+        `falling back to plaintext: ${e?.message || e}`,
+      );
+    }
   }
   const lines = await Promise.all(
-    (apiEntry.lines || []).map((line, idx) =>
-      _normalizeLine(client, userId, apiEntry.id, line, idx),
+    (apiEntry.lines || []).map((line) =>
+      _normalizeLine(client, userId, apiEntry.id, line),
     ),
   );
   return {
@@ -42,26 +52,38 @@ async function _normalizeEntry(client, userId, apiEntry) {
     description: body?.description ?? apiEntry.description,
     source: body?.source ?? apiEntry.source,
     batch_id: body?.batch_id ?? null,
-    fiscal_period: body?.fiscal_period ?? null,
+    // fiscal_period: 復号値 → API レスポンスの平文 → null の優先順
+    // (API 側 _entry_to_dict が fiscal_period を返却するよう E3-C-1b で拡張)
+    fiscal_period: body?.fiscal_period ?? apiEntry.fiscal_period ?? null,
     lines,
   };
 }
 
 
-async function _normalizeLine(client, userId, entryId, apiLine, lineIdx) {
-  // line_id は API レスポンスに含まれない。API 側で line_id を返すよう
-  // E3-B 時点で拡張すべきだったが (申し送り)、暫定で line index (0-based)
-  // を AAD に使う。E3 完了前に line_id 返却に移行する必要あり。
-  // (本実装は test での round-trip 用ダミー実装で、本番 production では
-  //  サーバ側で line_id を返却することを前提とする)
+async function _normalizeLine(client, userId, entryId, apiLine) {
   let body = null;
   if (apiLine.encrypted_blob && apiLine.blob_iv) {
-    const blob = b64decode(apiLine.encrypted_blob);
-    const iv = b64decode(apiLine.blob_iv);
-    // 暫定: line.id があれば使う、なければ lineIdx (TODO: API 側で line.id を返す)
-    const lineId = apiLine.id ?? lineIdx;
-    const aad = buildAAD("jel", userId, entryId, lineId);
-    body = await decryptRecord(client, blob, iv, aad);
+    // E3-C-1b: line.id が API レスポンスに必須。AAD は
+    // ("jel", user_id, entry_id, line_id) で、line index 由来の AAD だと
+    // 将来 lines の並び替え・削除で復号不能になるため。
+    if (apiLine.id === undefined || apiLine.id === null) {
+      throw new Error(
+        `journals_client: encrypted line missing apiLine.id ` +
+        `(entry=${entryId}); サーバ /api/v1/journals レスポンスに line.id ` +
+        `が含まれていません。E3-C-1b 以降のサーバが必須です。`,
+      );
+    }
+    try {
+      const blob = b64decode(apiLine.encrypted_blob);
+      const iv = b64decode(apiLine.blob_iv);
+      const aad = buildAAD("jel", userId, entryId, apiLine.id);
+      body = await decryptRecord(client, blob, iv, aad);
+    } catch (e) {
+      console.warn(
+        `journals_client: line ${apiLine.id} (entry=${entryId}) decrypt ` +
+        `failed, falling back to plaintext: ${e?.message || e}`,
+      );
+    }
   }
   return {
     account_code: body?.account_code ?? apiLine.account_code,
@@ -95,6 +117,12 @@ export async function fetchJournalsForYear({
   if (userId === undefined || userId === null) {
     throw new Error("userId is required");
   }
+  if (typeof userId !== "number" && typeof userId !== "bigint") {
+    throw new Error("userId must be a number or bigint");
+  }
+  if (typeof userId === "number" && !Number.isSafeInteger(userId)) {
+    throw new Error("userId Number must be a safe integer (use BigInt for > 2^53)");
+  }
   if (!Number.isInteger(fiscalYear) || !(1900 <= fiscalYear && fiscalYear <= 2200)) {
     throw new Error("fiscalYear must be int in 1900..2200");
   }
@@ -114,7 +142,13 @@ export async function fetchJournalsForYear({
     for (const apiEntry of journals) {
       all.push(await _normalizeEntry(client, userId, apiEntry));
     }
-    if (all.length >= (body.total || 0) || journals.length === 0) break;
+    // 打ち切り条件:
+    //   1. 当該ページが空 → これ以上ない
+    //   2. total が定義されており、累計取得数が total に達した
+    // `body.total || 0` だと total=0 + journals 非空のサーババグ時に
+    // 即 break して 2 ページ目以降を取得しないので、明示的に分離する。
+    if (journals.length === 0) break;
+    if (typeof body.total === "number" && all.length >= body.total) break;
     page += 1;
     if (page > 1000) {
       throw new Error("fetchJournalsForYear: pagination exceeded 1000 pages");

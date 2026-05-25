@@ -140,6 +140,24 @@ test("argument validation: fiscalYear 範囲外で throw", async () => {
   );
 });
 
+test("argument validation: userId が string で throw", async () => {
+  const client = makeMockClient();
+  await assert.rejects(
+    () => fetchJournalsForYear({ client, userId: "abc", fiscalYear: 2026 }),
+    /userId must be a number or bigint/,
+  );
+});
+
+test("argument validation: userId が unsafe Number で throw", async () => {
+  const client = makeMockClient();
+  await assert.rejects(
+    () => fetchJournalsForYear({
+      client, userId: Number.MAX_SAFE_INTEGER + 1, fiscalYear: 2026,
+    }),
+    /safe integer/,
+  );
+});
+
 test("空レスポンスで空配列を返す", async () => {
   const client = makeMockClient();
   const fetchImpl = makeFetch([]);
@@ -248,19 +266,101 @@ test("HTTP エラーで throw", async () => {
   );
 });
 
-test("AAD すり替え (別 user_id) で復号失敗 → throw", async () => {
+test("AAD すり替え (別 user_id) は平文フォールバックする (全件 reject しない)", async () => {
   const client = makeMockClient();
   const userId = 1;
   const entry = await makeEncryptedEntry(client, userId, 100, {
-    v: 1, date: "2026-05-22", description: "x",
+    v: 1, date: "2026-05-22", description: "正常",
     source: "journal", fiscal_year: 2026,
   });
+  // 平文フィールドは API レスポンスに null だが、復号失敗時は body=null →
+  // null フォールバック値が透過的に返る (= 個別 entry は読めなくなるが
+  // 全件取得自体は成功する)
   const fetchImpl = makeFetch([entry]);
-  // fetchJournalsForYear に別 userId (2) を渡すと AAD が違って復号失敗
+  const result = await fetchJournalsForYear({
+    client, userId: 2, fiscalYear: 2026, fetchImpl,  // userId mismatch
+  });
+  assert.equal(result.length, 1);
+  // 平文フォールバック値が透過 (null だが throw はしない)
+  assert.equal(result[0].id, 100);
+  assert.equal(result[0].date, null);
+  assert.equal(result[0].description, null);
+});
+
+test("encrypted line に id が無いと throw (前方互換性ガード)", async () => {
+  const client = makeMockClient();
+  const userId = 1;
+  const entryId = 100;
+  // 暗号化済 entry + 暗号化済 line だが line に id がない
+  // (古い API 実装でレスポンスに id 含まずのケース)
+  const entry = await makeEncryptedEntry(client, userId, entryId, {
+    v: 1, date: "2026-05-22", description: "x", fiscal_year: 2026,
+  });
+  const lineWithoutId = await makeEncryptedLine(
+    client, userId, entryId, 200,
+    { account_code: "5010", debit_amount: 100, credit_amount: 0 },
+  );
+  delete lineWithoutId.id;  // id 欠落を再現
+  entry.lines = [lineWithoutId];
+  const fetchImpl = makeFetch([entry]);
   await assert.rejects(
     () => fetchJournalsForYear({
-      client, userId: 2, fiscalYear: 2026, fetchImpl,
+      client, userId, fiscalYear: 2026, fetchImpl,
     }),
-    /AAD mismatch/,
+    /missing apiLine\.id/,
   );
+});
+
+test("fiscal_period が API レスポンスから取れる (dual-read)", async () => {
+  const client = makeMockClient();
+  const fetchImpl = makeFetch([{
+    id: 1, fiscal_year: 2026,
+    date: "2026-01-01", description: "期首",
+    source: "journal", fiscal_period: 0,  // 期首振戻
+    encrypted_blob: null, blob_iv: null,
+    lines: [],
+  }]);
+  const result = await fetchJournalsForYear({
+    client, userId: 1, fiscalYear: 2026, fetchImpl,
+  });
+  assert.equal(result[0].fiscal_period, 0);
+});
+
+test("ページネ: total=0 + journals 非空のサーババグでも全件取得する", async () => {
+  // サーバが誤って total=0 を返したが journals は実は存在するケース。
+  // 旧実装 (body.total || 0) だと初回で break して 1 ページのみだったが、
+  // journals.length > 0 なら続行するように修正済。
+  const client = makeMockClient();
+  let page_calls = 0;
+  const fetchImpl = async (url) => {
+    page_calls++;
+    const u = new URL(url, "http://x");
+    const page = parseInt(u.searchParams.get("page") || "1", 10);
+    if (page === 1) {
+      return {
+        ok: true,
+        json: async () => ({
+          ok: true,
+          journals: [{
+            id: page * 10, fiscal_year: 2026,
+            date: `2026-01-0${page}`, description: `entry-${page}`,
+            source: "journal", encrypted_blob: null, blob_iv: null,
+            lines: [],
+          }],
+          total: 0,  // サーババグ
+        }),
+      };
+    }
+    // 2 ページ目以降は empty
+    return {
+      ok: true,
+      json: async () => ({ ok: true, journals: [], total: 0 }),
+    };
+  };
+  const result = await fetchJournalsForYear({
+    client, userId: 1, fiscalYear: 2026, fetchImpl,
+  });
+  // page 1 で 1 件取得、page 2 で空 → break。1 件取得できる。
+  assert.equal(result.length, 1);
+  assert.equal(result[0].id, 10);
 });
