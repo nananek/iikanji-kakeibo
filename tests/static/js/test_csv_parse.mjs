@@ -278,3 +278,60 @@ test("DATE_FORMATS export 確認", () => {
   assert.ok(DATE_FORMATS.length > 0);
   assert.deepEqual(DATE_FORMATS[0], ["YYYY/MM/DD", "%Y/%m/%d"]);
 });
+
+
+// --- カバレッジ補強テスト (#195 review 指摘 — 95% gate 達成) ---
+
+test("detectEncoding: 全候補失敗時の fallback で文字列を返す", () => {
+  // 全エンコーディングを fatal で失敗させる無効バイト列。
+  // 重要なのは throw せず文字列を返すこと (utf-8 fallback)。
+  const bytes = new Uint8Array([0xFE, 0xFF, 0xFE, 0xFF]);
+  const enc = detectEncoding(bytes);
+  assert.ok(typeof enc === "string");
+});
+
+test("parseCsvPreview: クォート内のダブルクォートエスケープ (\"\" → \")", () => {
+  const r = parseCsvPreview(csvBytes(
+    'desc,amount\n' +
+    '"He said ""hi""",500\n'
+  ));
+  assert.deepEqual(r.rows[0], ['He said "hi"', "500"]);
+});
+
+test("parseCsvPreview: CRLF 改行", () => {
+  const r = parseCsvPreview(csvBytes("a,b\r\n1,2\r\n3,4\r\n"));
+  assert.equal(r.total_rows, 2);
+  assert.deepEqual(r.rows, [["1", "2"], ["3", "4"]]);
+});
+
+test("parseCsvPreview: CR 単独改行 (旧 Mac)", () => {
+  const r = parseCsvPreview(csvBytes("a,b\r1,2\r3,4\r"));
+  assert.equal(r.total_rows, 2);
+  assert.deepEqual(r.rows, [["1", "2"], ["3", "4"]]);
+});
+
+test("parseCsvPreview: 末尾改行なしの最終行も取得", () => {
+  const r = parseCsvPreview(csvBytes("a,b\n1,2"));  // 末尾 \n なし
+  assert.equal(r.total_rows, 1);
+  assert.deepEqual(r.rows[0], ["1", "2"]);
+});
+
+test("parseCsvPreview: bytes が Uint8Array でないと TypeError", () => {
+  assert.throws(() => parseCsvPreview("string"), /Uint8Array/);
+  assert.throws(() => parseCsvPreview(null), /Uint8Array/);
+});
+
+test("parseCsvFull: deposit 側のマイナス値も反転 (返金等)", () => {
+  // 入金カラムにマイナス値が入るケース (普段は出金カラム側だが、
+  // 銀行 CSV によってはあり得る)
+  const bytes = csvBytes(
+    "日付,摘要,入金,出金\n" +
+    "2026/01/15,返金処理,-300,\n"
+  );
+  const r = parseCsvFull(bytes, {
+    date_col: 0, desc_col: 1, deposit_col: 2, withdrawal_col: 3,
+  }, "%Y/%m/%d");
+  // 入金 -300 → 出金 300 に反転
+  assert.equal(r[0].deposit, 0);
+  assert.equal(r[0].withdrawal, 300);
+});

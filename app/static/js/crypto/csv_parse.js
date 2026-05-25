@@ -155,11 +155,11 @@ export function parseAmount(value) {
   if (value == null) return 0;
   let s = String(value).trim();
   if (s === "") return 0;
+  // ¥ (U+00A5 半角円記号) / ￥ (U+FFE5 全角円記号) / 円 (漢字) を除去。
+  // サーバ側 csv_import.parse_amount と同等。
   s = s.replace(/,/g, "")
-       .replace(/¥/g, "")
-       .replace(/￥/g, "")
+       .replace(/[¥￥]/g, "")
        .replace(/円/g, "")
-       .replace(/¥/g, "")  // half-width yen
        .trim();
   if (s === "" || s === "-") return 0;
   const n = parseFloat(s);
