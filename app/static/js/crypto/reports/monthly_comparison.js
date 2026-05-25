@@ -13,9 +13,6 @@
 //     は月次比較から除外する。これらは年度内全期間集計には P/L 関数で
 //     拾えるが、12 ヶ月の月別棒グラフという表示形式には乗らない。
 
-import { computeProfitLoss } from "./profit_loss.js";  // noqa (reserved for future)
-
-
 /**
  * 12 ヶ月の月次比較を計算。
  *
