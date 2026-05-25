@@ -11,6 +11,7 @@ title: 運用ガイド
 
 - [バックアップと復旧]({{ '/operations/backup/' | relative_url }}) — PostgreSQL ダンプ・S3 オブジェクト・整合性監査
 - [監視]({{ '/operations/monitoring/' | relative_url }}) — ログ・エラー検知・容量警告
+- [SECRET_KEY ローテーション]({{ '/operations/secret-key-rotation/' | relative_url }}) — Flask 秘密鍵の更新手順 (v4.x → v5.0 アップグレード時必須)
 
 ## 主要な運用 CLI コマンド
 
