@@ -2,6 +2,9 @@
 {% block title %}残高試算表 - いいかんじ™家計簿{% endblock %}
 
 {% block content %}
+<script id="trial-balance-server-params" type="application/json">
+{{ {"fiscal_year": year, "fiscal_period_from": pf, "fiscal_period_to": pt, "user_id": current_user.id, "is_audit_proxy": session.get('acting_as_user_id') is not none} | tojson }}
+</script>
 {% set range_label %}
   {% if pf == pt %}{{ period_labels.get(pf, '') }}{% else %}{{ period_labels.get(pf, '') }}〜{{ period_labels.get(pt, '') }}{% endif %}
 {% endset %}
@@ -104,7 +107,9 @@
             <td colspan="6"><strong>{{ ns.current_type }}</strong></td>
           </tr>
         {% endif %}
-        <tr>
+        <tr data-trial-balance-row="{{ item.account.code }}"
+            data-server-debit="{{ item.debit|int }}"
+            data-server-credit="{{ item.credit|int }}">
           <td class="d-mobile-none">{{ item.account.code }}</td>
           <td>
             <a href="{{ url_for('reports.ledger', year=year, account_code=item.account.code, pf=pf, pt=pt) }}"
@@ -313,4 +318,13 @@
   });
 })();
 </script>
+
+<script>
+  // SharedWorker は URL でインスタンス共有されるため、validator が起動する
+  // SharedCryptoClient を他の crypto UI (wizard.js / ai_config_form.js) と
+  // 同じ Worker に届かせるために、Flask の url_for で実際の static URL を渡す。
+  globalThis.IIKANJI_SHARED_WORKER_URL =
+    "{{ url_for('static', filename='js/crypto/shared-worker.js') }}";
+</script>
+<script type="module" src="{{ url_for('static', filename='js/reports/trial_balance_validator.mjs') }}"></script>
 {% endblock %}
