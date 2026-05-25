@@ -393,7 +393,7 @@ class TestDailySummary:
         assert day["has_discrepancy"] is True
 
 
-# E2 PR-C-6c: TestFindAiMatches は対応関数の削除に伴い削除。
+# TestFindAiMatches は対応関数の削除に伴い削除済。
 # 等価のクライアント側ロジック (バッチ処理 / confidence フィルタ /
 # 空入力 / dict 以外応答処理) は
 # tests/static/js/test_reconcile_orchestrator.mjs でカバー。
@@ -437,8 +437,8 @@ class TestEdgeCases:
         assert len(result["journal_only"]) == 1
         assert result["journal_only"][0]["direction"] == "deposit"
 
-    # E2 PR-C-6c: test_ai_non_dict_response_ignored は JS テスト
-    # (test_reconcile_orchestrator.mjs::"filterMatches: 非dict で空") へ移行。
+    # test_ai_non_dict_response_ignored は JS テスト
+    # (test_reconcile_orchestrator.mjs::"filterMatches: 非dict で空") へ移行済。
 
     def test_all_dates_from_date_objects(self, db, user, accounts, cc_account):
         """CSV行のdateが全てdateオブジェクトでも日付範囲が正しく算出される"""
@@ -509,7 +509,7 @@ class TestEdgeCases:
         assert day[0]["csv_count"] == 1
 
 
-# E2 PR-C-6c: TestAiMatchesAdditional は対応関数の削除に伴い削除。
+# TestAiMatchesAdditional は対応関数の削除に伴い削除済。
 # 等価のクライアント側ロジックは test_reconcile_orchestrator.mjs でカバー。
 
 

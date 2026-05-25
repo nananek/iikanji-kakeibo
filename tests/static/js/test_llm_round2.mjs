@@ -1,5 +1,4 @@
-// Round 2 (Round 1 結果 + 元帳 → 仕訳案生成) JS 実装の Node 単体テスト
-// (E2 PR-C-4c)。
+// Round 2 (Round 1 結果 + 元帳 → 仕訳案生成) JS 実装の Node 単体テスト。
 
 import { test } from "node:test";
 import assert from "node:assert/strict";

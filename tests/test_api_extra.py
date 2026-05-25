@@ -40,7 +40,7 @@ def _setup_ai_config(db, user_id):
 
 
 class TestAiAnalyzeRemoved:
-    """E2 PR-C-4f: Bearer API /api/v1/ai/analyze (Fernet 復号 + サーバ LLM
+    """Bearer API /api/v1/ai/analyze (Fernet 復号 + サーバ LLM
     呼出し経路) は廃止。POST すると 404 を返すことを担保。
 
     クライアントは 2-step フローに移行:

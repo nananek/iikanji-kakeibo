@@ -1,4 +1,4 @@
-// Round 1 (画像→文書解析) JS 実装の Node 単体テスト (E2 PR-C-4b)。
+// Round 1 (画像→文書解析) JS 実装の Node 単体テスト。
 
 import { test } from "node:test";
 import assert from "node:assert/strict";

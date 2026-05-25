@@ -18,7 +18,7 @@
           <a href="{{ url_for('settings.ai_config') }}">外部AI設定</a>でAPIキーを登録してください。
         </div>
         {% elif not config_is_e2ee %}
-        {# E2 PR-C-5c: サーバ側 parse_web_text は廃止済、E2EE モードのみ対応 #}
+        {# サーバ側 parse_web_text は廃止済、E2EE モードのみ対応 #}
         <div class="alert alert-warning">
           <i class="bi bi-shield-exclamation"></i>
           <strong>Web貼り付け取込はクライアント完結の E2EE モードに移行しました</strong>。
@@ -141,7 +141,7 @@ function onPaymentSelected(code, name) {
   var form = document.getElementById('uploadForm');
   var submitBtn = document.getElementById('submitBtn');
   var errorAlert = document.getElementById('errorAlert');
-  // E2 PR-C-5c: クライアント完結 E2EE モード判定 (フォーム有効化条件と同じ)
+  // クライアント完結 E2EE モード判定 (フォーム有効化条件と同じ)
   var e2eeFullClientMode = {{ (has_config and config_is_e2ee) | tojson }};
 
   form.addEventListener('submit', function(e) {

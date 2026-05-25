@@ -316,7 +316,7 @@ _MAX_IMAGE_SIZE = 10 * 1024 * 1024  # 10 MB
 _ALLOWED_MIME_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
 
 
-# E2 PR-C-4f: 旧 POST /ai/analyze (Fernet 復号 + サーバ LLM 呼出し) は廃止。
+# 旧 POST /ai/analyze (Fernet 復号 + サーバ LLM 呼出し) は廃止。
 # Bearer API クライアントは下記の 2-step フローに移行する:
 #   1. POST /ai/uploads (multipart 画像 + comment) → draft_id 取得
 #   2. クライアント側で MK 復号した API キーで LLM 直接呼出し →
@@ -434,7 +434,7 @@ def ai_draft_delete(draft_id):
 @auth_required(write=False)
 @limiter.limit("60 per hour", key_func=rate_limit_key)
 def ai_prompt_context():
-    """E2 PR-C-4a: クライアント側で Round 1+2 プロンプトを組み立てるための
+    """クライアント側で Round 1+2 プロンプトを組み立てるための
     材料をサーバから一括取得する endpoint。
 
     クライアントは:
@@ -638,7 +638,7 @@ def web_import_prompt_context():
 @auth_required(write=False)
 @limiter.limit("60 per hour", key_func=rate_limit_key)
 def ai_ledger_context():
-    """E2 PR-C-4c: Round 2 LLM 入力用に、requested_accounts の元帳テキストを返却。
+    """Round 2 LLM 入力用に、requested_accounts の元帳テキストを返却。
 
     クライアントは Round 1 結果 (needs_ledger=true) の requested_accounts を
     送信し、本 endpoint が _get_ledger_context() でテキスト整形して返す。
@@ -656,10 +656,9 @@ def ai_ledger_context():
     """
     user_id = g.auth_user.id
     # `_get_ledger_context` は ai_receipt.py の内部関数 (`_` プレフィックス)
-    # だが、本 endpoint は移行期間の互換層であり、E2-C-4e で ai_receipt.py
-    # 全体を削除する際に本 endpoint も同時に削除予定 (E3 では仕訳暗号化で
-    # クライアント側 ledger 構築に変わる)。短命なので意図的に内部関数を直接
-    # 流用している。
+    # だが、本 endpoint は移行期間の互換層であり、ai_receipt.py 全体削除時に
+    # 本 endpoint も同時に削除予定 (E3 では仕訳暗号化でクライアント側 ledger
+    # 構築に変わる)。短命なので意図的に内部関数を直接流用している。
     from app.services.ai_receipt import _get_ledger_context
 
     payload = request.get_json(silent=True) or {}
@@ -678,7 +677,7 @@ def ai_ledger_context():
     return jsonify({"ledger_text": ledger_text})
 
 
-# E2 PR-C-2: クライアント側 LLM 呼出フロー用 endpoint。
+# クライアント側 LLM 呼出フロー用 endpoint。
 # サーバ側で LLM を呼ばないため /ai/analyze と異なり API キーが不要。
 # クライアントが画像をアップロード → 自分で LLM を呼ぶ → 結果を PATCH で保存。
 

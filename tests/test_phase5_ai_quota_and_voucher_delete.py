@@ -168,7 +168,7 @@ class TestCreateVoucherFromDraft:
 
 
 class TestAIJournalAnalyzeQuota:
-    """E2 PR-C-4e: /ai-journal/analyze 廃止に伴い、quota 計上は
+    """/ai-journal/analyze 廃止に伴い、quota 計上は
     /api/v1/ai/uploads (クライアント完結 E2EE フローのアップロード受口) で
     同等に行われる。本クラスは新エンドポイントの quota 動作を担保する。"""
 

@@ -777,7 +777,7 @@ function uploadVoucher() {
   document.getElementById('voucherUploadProgress').classList.remove('d-none');
   document.getElementById('voucherCheckResult').classList.add('d-none');
 
-  // E2 PR-C-6a: サーバ側 AI 解析を廃止。attach レスポンスは voucher_id +
+  // サーバ側 AI 解析は廃止。attach レスポンスは voucher_id +
   // entry メタ (journal_date/amount/description) のみ。AI 解析は E2EE モード
   // のクライアント側で別途実行する。
   fetch('/vouchers/attach/' + currentEntryId, {

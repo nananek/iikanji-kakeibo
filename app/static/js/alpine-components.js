@@ -819,7 +819,7 @@ document.addEventListener('alpine:init', function() {
       runAiReconcile: function() {
         this.aiReconcileLoading = true;
         var self = this;
-        // E2 PR-C-6c: クライアント完結 E2EE フローで実行。サーバには
+        // クライアント完結 E2EE フローで実行。サーバには
         // raw description / API キーが届かない。
         runReconcileE2EE()
         .then(function(matches) {
@@ -1148,7 +1148,7 @@ document.addEventListener('alpine:init', function() {
         }
         this.aiLoading = true;
         var self = this;
-        // E2 PR-C-6b: クライアント完結 E2EE フローで実行。サーバには
+        // クライアント完結 E2EE フローで実行。サーバには
         // description / API キーが届かない。
         runSuggestCategoriesE2EE(paymentAccountCode, targets)
           .then(function(data) {
@@ -1198,7 +1198,7 @@ document.addEventListener('alpine:init', function() {
 });
 
 
-// E2 PR-C-6b: importConfirm.aiSuggestCategories から呼ばれる E2EE
+// importConfirm.aiSuggestCategories から呼ばれる E2EE
 // クライアント完結フロー。サーバには description/API キー一切送らない。
 async function runSuggestCategoriesE2EE(paymentAccountCode, rows) {
   var orchestratorMod = await import("/static/js/crypto/suggest_categories_orchestrator.js");
@@ -1222,7 +1222,7 @@ async function runSuggestCategoriesE2EE(paymentAccountCode, rows) {
 window.runSuggestCategoriesE2EE = runSuggestCategoriesE2EE;
 
 
-// E2 PR-C-6c: reconcileMode.runAiReconcile から呼ばれる E2EE フロー。
+// reconcileMode.runAiReconcile から呼ばれる E2EE フロー。
 async function runReconcileE2EE() {
   var orchestratorMod = await import("/static/js/crypto/reconcile_orchestrator.js");
   var sharedClientMod = await import("/static/js/crypto/shared-client.js");

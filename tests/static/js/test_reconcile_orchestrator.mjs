@@ -1,4 +1,4 @@
-// E2 PR-C-6c: reconcile_orchestrator の Node 単体テスト。
+// reconcile_orchestrator の Node 単体テスト。
 
 import { test } from "node:test";
 import assert from "node:assert/strict";

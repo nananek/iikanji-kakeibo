@@ -1,4 +1,4 @@
-// Round 1: 画像 → 文書解析 (DocumentAnalysis) を JS 側で実行 (E2 PR-C-4b)。
+// Round 1: 画像 → 文書解析 (DocumentAnalysis) を JS 側で実行。
 //
 // サーバ側 ai_receipt.py analyze_and_suggest() の Round 1 部分と等価:
 //   1. /api/v1/ai/prompt-context から round1_prompt + compliance_prompt +

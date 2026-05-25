@@ -1,7 +1,7 @@
-// E2 PR-C-6b: 取込確認画面の科目推定 AI をクライアント完結で実行する
+// 取込確認画面の科目推定 AI をクライアント完結で実行する
 // オーケストレーター。
 //
-// サーバ側 suggest_categories_by_ai (本 PR で削除) と等価。alpine
+// 旧サーバ側 suggest_categories_by_ai と等価。alpine
 // `importConfirm.aiSuggestCategories` から呼ばれる。
 //
 // フロー:

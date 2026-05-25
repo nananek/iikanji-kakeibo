@@ -1,4 +1,4 @@
-// Google Gemini generateContent API の fetch ラッパー (E2 PR-C-1)。
+// Google Gemini generateContent API の fetch ラッパー。
 //
 // サーバ側 _call_google と等価の挙動。
 // 認証: クエリパラメータ ?key=<apiKey> (Bearer ではない)。
@@ -84,7 +84,7 @@ export async function callGoogle({
 }
 
 
-/** Google Gemini generateContent の text-only 版 (E2 PR-C-5b)。Web 明細抽出用。 */
+/** Google Gemini generateContent の text-only 版。Web 明細抽出用。 */
 export async function callGoogleText({
   apiKey, model, prompt, maxTokens = 16000, signal, fetchImpl,
 }) {

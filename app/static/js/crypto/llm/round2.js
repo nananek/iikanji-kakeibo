@@ -1,4 +1,4 @@
-// Round 2: Round 1 結果 + 元帳 → 仕訳案生成 (E2 PR-C-4c)。
+// Round 2: Round 1 結果 + 元帳 → 仕訳案生成。
 //
 // サーバ側 ai_receipt.py analyze_and_suggest() の Round 2 部分と等価:
 //   1. Round 1 結果 (needs_ledger / requested_accounts) を元に
@@ -95,7 +95,7 @@ export function buildRound2Prompt({
  * 仕様: 借方 / 貸方の合計バランスチェックは行わない (line 数の有無のみ確認)。
  * サーバ側でも _build_suggestion_prompt は「合計一致」を LLM 出力の前提に
  * しているため、合計不一致は LLM のミスとして許容する設計。バランスの最終
- * 検証は仕訳登録フロー (E2-C-4d UI 統合) で実施する。
+ * 検証は仕訳登録フローの UI 側で実施する。
  */
 export function validateSuggestions(rawSuggestions, validCodeSet) {
   if (!Array.isArray(rawSuggestions)) return { suggestions: [], dropped: 0 };

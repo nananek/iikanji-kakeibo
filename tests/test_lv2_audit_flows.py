@@ -197,9 +197,9 @@ class TestJournalEditPostLv2:
         assert resp.status_code in (200, 302, 303)
 
 
-# E2 PR-C-4f: _send_draft_notification は POST /api/v1/ai/analyze 削除に
-# 伴い廃止。Webhook 通知は後続 PR で PATCH /api/v1/ai/drafts/<id>/suggestions
-# 側に統合される (現状一時的に Bearer API 経由の AI 下書き作成通知は無効)。
+# _send_draft_notification は POST /api/v1/ai/analyze 削除に伴い廃止済。
+# Webhook 通知は将来 PATCH /api/v1/ai/drafts/<id>/suggestions 側に統合される
+# (現状一時的に Bearer API 経由の AI 下書き作成通知は無効)。
 
 
 class TestMarkDraftDone:

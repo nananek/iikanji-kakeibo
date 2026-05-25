@@ -1,4 +1,4 @@
-// Anthropic Claude Messages API の fetch ラッパー (E2 PR-C-1)。
+// Anthropic Claude Messages API の fetch ラッパー。
 //
 // サーバ側 _call_anthropic と等価の挙動。
 // 認証: x-api-key ヘッダ (Bearer ではない)。
@@ -85,7 +85,7 @@ export async function callAnthropic({
 }
 
 
-/** Anthropic Messages API の text-only 版 (E2 PR-C-5b)。Web 明細抽出用。 */
+/** Anthropic Messages API の text-only 版。Web 明細抽出用。 */
 export async function callAnthropicText({
   apiKey, model, prompt, maxTokens = 16000, signal, fetchImpl,
 }) {

@@ -216,7 +216,7 @@ class TestReconcile:
 
 
 class TestAiReconcile:
-    """E2 PR-C-6c: 旧 POST /csv-import/ai-reconcile は廃止 (404)。
+    """旧 POST /csv-import/ai-reconcile は廃止 (404)。
     新エンドポイント GET /csv-import/ai-reconcile-context は
     tests/test_csv_import_reconcile.py::TestAIReconcileContext でカバー。"""
 

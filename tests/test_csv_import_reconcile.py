@@ -74,7 +74,7 @@ class TestReconcile:
 
 
 class TestAIReconcileContext:
-    """E2 PR-C-6c: GET /csv-import/ai-reconcile-context (新エンドポイント)。
+    """GET /csv-import/ai-reconcile-context (新エンドポイント)。
     旧 POST /csv-import/ai-reconcile は廃止 (LLM 呼出は client-side)。"""
 
     def test_no_session_data_returns_400(

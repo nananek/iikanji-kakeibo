@@ -1,8 +1,8 @@
-// E2 PR-C-6a: 証憑添付時の AI 解析 (コンプライアンス + 仕訳整合性) を
+// 証憑添付時の AI 解析 (コンプライアンス + 仕訳整合性) を
 // クライアント完結で実行するオーケストレーター。
 //
-// サーバ側 analyze_voucher_for_attachment (E2-C-4i では維持し、本 PR で削除)
-// と等価。ledger.html UI が voucher attach 完了後にこれを呼ぶ。
+// 旧サーバ側 analyze_voucher_for_attachment と等価。
+// ledger.html UI が voucher attach 完了後にこれを呼ぶ。
 //
 // フロー:
 //   1. GET /api/v1/voucher-attach/prompt-context

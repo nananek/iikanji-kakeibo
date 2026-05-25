@@ -1,4 +1,4 @@
-// E2 PR-C-4d: AI 証憑解析のクライアント側オーケストレーター。
+// AI 証憑解析のクライアント側オーケストレーター。
 //
 // 既存 ai_analyze.js が「単発の analyze (LLM 1 回)」を提供していたのに対し、
 // 本モジュールはサーバ側 ai_receipt.analyze_and_suggest() と等価な

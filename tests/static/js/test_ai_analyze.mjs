@@ -1,4 +1,4 @@
-// analyzeReceiptClientSide オーケストレーターの Node テスト (E2 PR-C-2)。
+// analyzeReceiptClientSide オーケストレーターの Node テスト。
 //
 // fetch + SharedCryptoClient + callLLM をモックして全フローを検証する。
 
