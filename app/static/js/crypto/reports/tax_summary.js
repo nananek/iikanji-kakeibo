@@ -40,13 +40,14 @@ const EXCLUDED_TAX_CATEGORIES = new Set(["medical", "resident_tax"]);
  *
  * @returns {Object<string, {label, accounts: [{name, amount}], total}>}
  *   tax_category をキーとする dict (medical/resident_tax は除外)。
- *   accounts は name 昇順、total >= 0 のもののみ。
+ *   accounts は name 昇順、total != 0 のもののみ (負値も含む = 返金等で
+ *   credit > debit となるケース。サーバ側 get_tax_summary と挙動を一致)。
  *
  * 集計式: amount = debit - credit (借方発生額 = 支出額)
  *   - source="closing" 仕訳は除外
  *   - tax_category が medical / resident_tax の科目は除外
  *   - amount == 0 の科目は accounts から除外
- *   - total == 0 の category は結果に含めない
+ *   - total == 0 の category は結果に含めない (相殺で 0 になる場合も含む)
  */
 export function computeTaxSummary(entries, options) {
   if (!Array.isArray(entries)) {
@@ -97,7 +98,9 @@ export function computeTaxSummary(entries, options) {
       });
       total += amount;
     }
-    if (total === 0 && accounts.length === 0) continue;
+    // 相殺で total==0 になった場合も含めて、total==0 の category は除外
+    // (UI 上「控除なし」と同義)
+    if (total === 0) continue;
     accounts.sort((a, b) => a.name.localeCompare(b.name));
     result[cat] = {
       label: TAX_CATEGORY_LABELS[cat] ?? cat,

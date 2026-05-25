@@ -137,6 +137,33 @@ test("TAX_CATEGORY_LABELS export 確認", () => {
   assert.equal(TAX_CATEGORY_LABELS.ideco, "小規模企業共済等掛金控除");
 });
 
+test("同カテゴリ内で相殺 total==0 → category 自体を除外", () => {
+  // 5050 (social_insurance, 健康保険料): +5000
+  // 5051 (social_insurance, 国民年金):  -5000 (返金)
+  // total = 0、accounts.length = 2 だがカテゴリは結果から消える
+  const entries = [
+    entry(1, "journal", [["5050", 5000, 0]]),
+    entry(2, "journal", [["1010", 5000, 0], ["5051", 0, 5000]]),
+  ];
+  const r = computeTaxSummary(entries, {
+    taxCategoryByCode: TAX_CAT, accountNameByCode: NAMES,
+  });
+  assert.equal(r.social_insurance, undefined);
+});
+
+test("total<0 (credit > debit 返金超過) は結果に含める (サーバ整合)", () => {
+  // 5060 (life_insurance, 生命保険料): -5000 (返金が支払を超過した極端ケース)
+  const entries = [
+    entry(1, "journal", [["1010", 5000, 0], ["5060", 0, 5000]]),
+  ];
+  const r = computeTaxSummary(entries, {
+    taxCategoryByCode: TAX_CAT, accountNameByCode: NAMES,
+  });
+  assert.ok(r.life_insurance, "life_insurance カテゴリは含まれるべき");
+  assert.equal(r.life_insurance.total, -5000);
+  assert.equal(r.life_insurance.accounts[0].amount, -5000);
+});
+
 test("account_code null の line はスキップ (復号失敗対応)", () => {
   const entries = [
     {id: 1, fiscal_period: 5, source: "journal", lines: [
