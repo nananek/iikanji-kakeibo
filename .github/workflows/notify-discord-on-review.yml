@@ -1,6 +1,6 @@
 name: Notify Discord on claude-review verdict
 
-# claude-review-bot が PR にコメントを残したとき、verdict (approve /
+# claude[bot] が PR にコメントを残したとき、verdict (approve /
 # request-changes / block) を Discord webhook に通知する。
 #
 # 必要な repo secret:
@@ -9,7 +9,7 @@ name: Notify Discord on claude-review verdict
 # 注意:
 # - issue_comment.created のみ拾う (edited は事後 typo 修正等で重複通知に
 #   なるため除外)
-# - claude-review-bot 以外のコメント / verdict 行を含まないコメントは無視
+# - claude[bot] 以外のコメント / verdict 行を含まないコメントは無視
 # - jq でメッセージを組み立て、curl で Discord に POST
 # - DISCORD_REVIEW_WEBHOOK_URL 未設定なら skip (fork PR 等を想定)
 
@@ -26,7 +26,7 @@ jobs:
   notify:
     if: >-
       github.event.issue.pull_request != null &&
-      github.event.comment.user.login == 'claude-review-bot' &&
+      github.event.comment.user.login == 'claude[bot]' &&
       contains(github.event.comment.body, 'verdict')
     runs-on: ubuntu-latest
     steps:
