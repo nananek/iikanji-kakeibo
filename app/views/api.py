@@ -330,15 +330,15 @@ def _entry_to_dict(entry):
 
 
 @bp.route("/journals", methods=["GET"])
-@auth_required()
+@auth_required(scope="journals:read")
 def list_journals():
     """仕訳一覧 API.
 
     E3-C-1b 以降、クライアント側 (ブラウザ JS の journals_client.js) からも
     fetch する。ブラウザは Cookie 認証 (Flask-Login session) で叩くため、
     `@api_key_required` (Bearer only) ではなく `@auth_required` (Bearer +
-    session) を使う。scope check は失われるが、`auth_required` は OAuth
-    トークンも受け付けるためサーバ側のアクセス制御は維持される。
+    session) を使う。`scope="journals:read"` は API キー認証時のみ要求 (OAuth
+    トークン・セッション認証は scope 不問)。
     """
     user_id = g.auth_user.id
     page = request.args.get("page", 1, type=int)
