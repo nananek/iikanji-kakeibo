@@ -1,11 +1,11 @@
-// trial_balance_validator.js (Phase E3-C-2b) の純粋関数部分のテスト。
-// _run() (DOM/動的 import) は Node 環境で実行不可なのでテスト対象外。
+// Tests for the pure compareTrialBalance helper.
+// _run() (DOM + dynamic imports) is browser-only and not covered here.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
 const M = new URL(
-  "../../../app/static/js/reports/trial_balance_validator.js",
+  "../../../app/static/js/reports/trial_balance_validator.mjs",
   import.meta.url,
 );
 const { compareTrialBalance } = await import(M.href);

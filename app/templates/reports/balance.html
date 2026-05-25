@@ -2,12 +2,11 @@
 {% block title %}残高試算表 - いいかんじ™家計簿{% endblock %}
 
 {% block content %}
-{# E3-C-2b: クライアントサイド集計との並列検証データ #}
 <script id="trial-balance-accounts-data" type="application/json">
 {{ accounts_meta | tojson }}
 </script>
 <script id="trial-balance-server-params" type="application/json">
-{{ {"fiscal_year": year, "fiscal_period_from": pf, "fiscal_period_to": pt} | tojson }}
+{{ {"fiscal_year": year, "fiscal_period_from": pf, "fiscal_period_to": pt, "user_id": current_user.id} | tojson }}
 </script>
 {% set range_label %}
   {% if pf == pt %}{{ period_labels.get(pf, '') }}{% else %}{{ period_labels.get(pf, '') }}〜{{ period_labels.get(pt, '') }}{% endif %}
@@ -323,6 +322,5 @@
 })();
 </script>
 
-{# E3-C-2b: クライアント側集計との並列検証 (console 出力のみ、UI 非影響) #}
-<script type="module" src="{{ url_for('static', filename='js/reports/trial_balance_validator.js') }}" defer></script>
+<script type="module" src="{{ url_for('static', filename='js/reports/trial_balance_validator.mjs') }}" defer></script>
 {% endblock %}

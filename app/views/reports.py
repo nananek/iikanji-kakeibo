@@ -203,14 +203,15 @@ def balance():
         .first()
     ) is not None
 
-    # E3-C-2b: クライアント側 (computeTrialBalance) との並列検証用に
-    # 表示中科目の type/normal_balance マッピングを JSON で渡す。
+    # client-side validator needs account type info for computeTrialBalance.
+    # Name is intentionally omitted because mask_account filter may rewrite it
+    # at template-render time (e.g. proprietor) — leaking the raw name here
+    # would bypass that mask for Lv2 auditors.
     accounts_meta = [
         {
             "code": b["account"].code,
             "type": b["account"].account_type.code,
             "normal_balance": b["account"].account_type.normal_balance,
-            "name": b["account"].name,
         }
         for b in balances
     ]
