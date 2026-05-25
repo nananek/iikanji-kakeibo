@@ -2,6 +2,9 @@
 {% block title %}確定申告用集計 - いいかんじ™家計簿{% endblock %}
 
 {% block content %}
+<script id="medical-summary-server-params" type="application/json">
+{{ {"year": year, "user_id": current_user.id, "is_audit_proxy": session.get('acting_as_user_id') is not none} | tojson }}
+</script>
 <h2><i class="bi bi-file-earmark-text"></i> 確定申告用集計</h2>
 
 <form class="row g-3 mb-4 mt-2" method="GET">
@@ -53,7 +56,11 @@
   {% endif %}
 </div>
 
-<div class="card shadow-sm mb-3">
+<div class="card shadow-sm mb-3"
+     data-medical-summary-totals
+     data-server-paid="{{ medical_summary.total_paid|int }}"
+     data-server-reimbursed="{{ medical_summary.total_reimbursed|int }}"
+     data-server-net="{{ medical_summary.net_total|int }}">
   <div class="card-body">
     <div class="row text-center">
       <div class="col-md-4">
@@ -74,7 +81,11 @@
 
 {% if medical_summary.by_patient %}
 {% for p in medical_summary.by_patient %}
-<div class="card shadow-sm mb-3">
+<div class="card shadow-sm mb-3"
+     data-medical-patient="{{ p.name }}"
+     data-server-paid="{{ p.paid|int }}"
+     data-server-reimbursed="{{ p.reimbursed|int }}"
+     data-server-net="{{ p.net|int }}">
   <div class="card-header d-flex justify-content-between">
     <strong><i class="bi bi-person"></i> {{ p.name }}</strong>
     <span>
@@ -162,4 +173,10 @@
   </div>
 </details>
 {% endif %}
+
+<script>
+  globalThis.IIKANJI_SHARED_WORKER_URL =
+    "{{ url_for('static', filename='js/crypto/shared-worker.js') }}";
+</script>
+<script type="module" src="{{ url_for('static', filename='js/reports/medical_summary_validator.mjs') }}"></script>
 {% endblock %}
