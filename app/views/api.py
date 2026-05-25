@@ -297,11 +297,19 @@ def _entry_to_dict(entry):
         "entry_number": entry.entry_number,
         "description": entry.description,
         "source": entry.source,
+        # E3-C: クライアント側 dual-read 時に fiscal_period が必要 (期首仕訳
+        # 等の月次集計、設計書 §12.7)。
+        "fiscal_period": entry.fiscal_period,
         "fiscal_year": entry.fiscal_year,
         "encrypted_blob": _b64_or_none(entry.encrypted_blob),
         "blob_iv": _b64_or_none(entry.blob_iv),
         "lines": [
             {
+                # E3-C: line.id を返すことで AAD ("jel", user_id, entry_id,
+                # line_id) の構築をクライアント側で安定させる。line index に
+                # 依存しないため、将来 lines の並び替え・削除があっても
+                # 既存暗号文の復号が破壊されない。
+                "id": line.id,
                 "account_code": line.account_code,
                 "debit": int(line.debit_amount or 0),
                 "credit": int(line.credit_amount or 0),
@@ -322,10 +330,21 @@ def _entry_to_dict(entry):
 
 
 @bp.route("/journals", methods=["GET"])
-@api_key_required(scope="journals:read")
+@auth_required(scope="journals:read")
+@limiter.limit("120 per hour", key_func=rate_limit_key)
 def list_journals():
-    """仕訳一覧 API"""
-    user_id = g.api_user_id
+    """仕訳一覧 API.
+
+    E3-C-1b 以降、クライアント側 (ブラウザ JS の journals_client.js) からも
+    fetch する。ブラウザは Cookie 認証 (Flask-Login session) で叩くため、
+    `@api_key_required` (Bearer only) ではなく `@auth_required` (Bearer +
+    session) を使う。`scope="journals:read"` は API キー認証時のみ要求 (OAuth
+    トークン・セッション認証は scope 不問)。
+
+    rate-limit 120/hour: ブラウザクライアントが年度別に全件取得するため、
+    1 年 = 数 page (per_page=100) を想定し他 AI 系 (60/h) より緩めに設定。
+    """
+    user_id = g.auth_user.id
     page = request.args.get("page", 1, type=int)
     per_page = min(request.args.get("per_page", 20, type=int), 100)
 

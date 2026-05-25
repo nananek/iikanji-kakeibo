@@ -22,13 +22,18 @@ from app.models.user import User
 
 
 def resolve_bearer_or_session(
-    write: bool = False, allow_session: bool = True
+    write: bool = False, allow_session: bool = True,
+    scope: str | None = None,
 ) -> tuple[User | None, tuple | None]:
     """Authorization ヘッダ or Flask-Login セッションから User を解決する。
 
     - `Authorization: Bearer <ikt_...>` → OAuthToken (read_only なら write 拒否)
-    - `Authorization: Bearer <ik_...>` → APIKey
-    - ヘッダなし & `allow_session=True` → Flask-Login の current_user
+    - `Authorization: Bearer <ik_...>` → APIKey (scope 指定時はそのスコープを要求)
+    - ヘッダなし & `allow_session=True` → Flask-Login の current_user (scope 不問)
+
+    scope: API キー認証時のみ scope check を行う。OAuth トークンは全 scope を
+    暗黙的に持つ、セッション認証は scope の概念がない (UI 経由なのでユーザー
+    本人の意思とみなす)。
 
     戻り値: `(user, error_response)` のタプル。エラー時は `(None, (response, status))`、
     成功時は `(user, None)`。エラーレスポンスは Flask response tuple。
@@ -60,6 +65,10 @@ def resolve_bearer_or_session(
         ).first()
         if not api_key:
             return None, (jsonify(error="Invalid API key"), 401)
+        if scope and not api_key.has_scope(scope):
+            return None, (jsonify(
+                error=f"この API キーには {scope} 権限がありません。"
+            ), 403)
         api_key.last_used_at = now
         db.session.commit()
         user = db.session.get(User, api_key.user_id)
@@ -73,7 +82,10 @@ def resolve_bearer_or_session(
     return None, (jsonify(error="Authentication required"), 401)
 
 
-def auth_required(write: bool = False, allow_session: bool = True):
+def auth_required(
+    write: bool = False, allow_session: bool = True,
+    scope: str | None = None,
+):
     """Bearer + (オプションで) Web セッションの統合デコレータ。
 
     認証成功時は `g.auth_user` に User をセットし、エンドポイント関数を呼ぶ。
@@ -81,12 +93,14 @@ def auth_required(write: bool = False, allow_session: bool = True):
 
     write=True なら OAuth read-only トークンを 403 で拒否。
     allow_session=False ならヘッダ必須 (Bearer 専用 endpoint 用)。
+    scope を指定すると API キー認証時に当該 scope を要求する (OAuth トークン
+    とセッション認証は scope 不問)。
     """
     def decorator(f):
         @functools.wraps(f)
         def wrapper(*args, **kwargs):
             user, err = resolve_bearer_or_session(
-                write=write, allow_session=allow_session
+                write=write, allow_session=allow_session, scope=scope,
             )
             if err is not None:
                 return err
