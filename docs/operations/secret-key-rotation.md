@@ -79,15 +79,20 @@ docker compose up -d --force-recreate web
   `SECRET_KEY=...` を入力した記録があれば `history -d <行番号>` 等で削除
 - `docker compose` 実行時のログ・systemd journal 等に `.env` 内容が
   記録されていないか確認 (通常は記録されないが念のため)
+- CI/CD のシークレット (GitHub Actions Secrets / GitLab CI variables 等)
+  やクラウドストレージ (Dropbox / Google Drive 等) に `.env` または
+  `SECRET_KEY` をコピーしている場合は同時に更新
 
-### 6. (v4.x からのアップグレード時のみ) 過去 Fernet 暗号文の存在確認
+## 補足: 過去 Fernet 暗号文の存在確認 (v4.x からのアップグレード時のみ)
 
 v4.x の DB バックアップに `user_ai_configs.api_key_encrypted` カラムの値が
 残っている場合、旧 `SECRET_KEY` での復号は理論上可能。バックアップを保持する
 必要がない期間 (運用上の最低保存期間を超えた古いバックアップ) は破棄を検討。
 
 ```sql
--- v5.0 マイグレ 049 適用前のバックアップに対して
+-- バックアップを別環境にリストアしたうえで実行すること。
+-- v5.0 本番 DB にはマイグレ 049 で api_key_encrypted カラムが存在しないため、
+-- 本番 DB に対して実行すると `column does not exist` エラーになる。
 SELECT user_id FROM user_ai_configs WHERE api_key_encrypted IS NOT NULL;
 ```
 
