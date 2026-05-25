@@ -228,6 +228,7 @@ def balance():
         ytd_net_income=ytd_net_income,
         has_closing=has_closing,
         accounts_meta=accounts_meta,
+        effective_user_id=user_id,
     )
 
 
