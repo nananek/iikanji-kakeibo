@@ -472,8 +472,9 @@ def reconcile():
 
 @bp.route("/ai-reconcile-context", methods=["GET"])
 @login_required
+@limiter.limit("60 per hour")
 def ai_reconcile_context():
-    """E2 PR-C-6c: AI 照合のためのプロンプト材料 + 照合候補データを返す。
+    """AI 照合のためのプロンプト材料 + 照合候補データを返す。
 
     LLM 呼出はクライアント側 reconcile_orchestrator.js が行う。サーバには
     LLM 出力 (matches) は通知不要 (クライアント UI で直接表示する)。
