@@ -2,6 +2,13 @@
 {% block title %}残高試算表 - いいかんじ™家計簿{% endblock %}
 
 {% block content %}
+{# E3-C-2b: クライアントサイド集計との並列検証データ #}
+<script id="trial-balance-accounts-data" type="application/json">
+{{ accounts_meta | tojson }}
+</script>
+<script id="trial-balance-server-params" type="application/json">
+{{ {"fiscal_year": year, "fiscal_period_from": pf, "fiscal_period_to": pt} | tojson }}
+</script>
 {% set range_label %}
   {% if pf == pt %}{{ period_labels.get(pf, '') }}{% else %}{{ period_labels.get(pf, '') }}〜{{ period_labels.get(pt, '') }}{% endif %}
 {% endset %}
@@ -104,7 +111,9 @@
             <td colspan="6"><strong>{{ ns.current_type }}</strong></td>
           </tr>
         {% endif %}
-        <tr>
+        <tr data-trial-balance-row="{{ item.account.code }}"
+            data-server-debit="{{ item.debit|int }}"
+            data-server-credit="{{ item.credit|int }}">
           <td class="d-mobile-none">{{ item.account.code }}</td>
           <td>
             <a href="{{ url_for('reports.ledger', year=year, account_code=item.account.code, pf=pf, pt=pt) }}"
@@ -313,4 +322,7 @@
   });
 })();
 </script>
+
+{# E3-C-2b: クライアント側集計との並列検証 (console 出力のみ、UI 非影響) #}
+<script type="module" src="{{ url_for('static', filename='js/reports/trial_balance_validator.js') }}" defer></script>
 {% endblock %}

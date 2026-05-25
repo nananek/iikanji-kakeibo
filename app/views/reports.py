@@ -203,6 +203,18 @@ def balance():
         .first()
     ) is not None
 
+    # E3-C-2b: クライアント側 (computeTrialBalance) との並列検証用に
+    # 表示中科目の type/normal_balance マッピングを JSON で渡す。
+    accounts_meta = [
+        {
+            "code": b["account"].code,
+            "type": b["account"].account_type.code,
+            "normal_balance": b["account"].account_type.normal_balance,
+            "name": b["account"].name,
+        }
+        for b in balances
+    ]
+
     return render_template(
         "reports/balance.html",
         year=year,
@@ -214,6 +226,7 @@ def balance():
         net_income=net_income,
         ytd_net_income=ytd_net_income,
         has_closing=has_closing,
+        accounts_meta=accounts_meta,
     )
 
 
