@@ -32,6 +32,7 @@ def get_tax_summary(user_id, year):
         db.session.query(
             Account.tax_category,
             Account.name,
+            Account.code,
             (func.coalesce(func.sum(JournalEntryLine.debit_amount), 0)
              - func.coalesce(func.sum(JournalEntryLine.credit_amount), 0)).label("total"),
         )
@@ -45,13 +46,13 @@ def get_tax_summary(user_id, year):
             JournalEntry.date <= end,
             JournalEntry.source != "closing",
         )
-        .group_by(Account.tax_category, Account.name)
+        .group_by(Account.tax_category, Account.name, Account.code)
         .order_by(Account.tax_category, Account.name)
         .all()
     )
 
     summary = {}
-    for tax_cat, account_name, total in results:
+    for tax_cat, account_name, account_code, total in results:
         if tax_cat not in summary:
             summary[tax_cat] = {
                 "label": TAX_CATEGORY_LABELS.get(tax_cat, tax_cat),
@@ -59,7 +60,9 @@ def get_tax_summary(user_id, year):
                 "total": Decimal(0),
             }
         amount = total or Decimal(0)
-        summary[tax_cat]["accounts"].append({"name": account_name, "amount": amount})
+        summary[tax_cat]["accounts"].append(
+            {"name": account_name, "code": account_code, "amount": amount}
+        )
         summary[tax_cat]["total"] += amount
 
     return summary
