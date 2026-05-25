@@ -504,6 +504,39 @@ class TestGetJournal:
         resp = client.get("/api/v1/journals/99999", headers=auth_header)
         assert resp.status_code == 404
 
+    def test_get_via_session_cookie(
+        self, db, logged_in_client, user, accounts,
+    ):
+        """E3-C-1c: Cookie 認証で GET /api/v1/journals/<id> できる。"""
+        entry = make_journal(db, user.id, "5010", "1010", 1500,
+                             entry_date=date(2026, 4, 1))
+        resp = logged_in_client.get(f"/api/v1/journals/{entry.id}")
+        assert resp.status_code == 200
+        j = resp.get_json()["journal"]
+        assert j["id"] == entry.id
+        # E3 で追加した新フィールドも返る
+        assert "fiscal_period" in j
+        assert "fiscal_year" in j
+
+    def test_get_scope_required_for_api_key(
+        self, client, db, user, accounts,
+    ):
+        """journals:create のみの API キーで GET /journals/<id> → 403。"""
+        from app.models.api_key import APIKey
+        from tests.conftest import _auth_header
+        raw, key_hash, key_prefix = APIKey.generate()
+        key = APIKey(
+            user_id=user.id, name="write-only",
+            key_hash=key_hash, key_prefix=key_prefix,
+            scopes="journals:create", is_active=True,
+        )
+        db.session.add(key)
+        db.session.commit()
+        entry = make_journal(db, user.id, "5010", "1010", 500)
+        resp = client.get(f"/api/v1/journals/{entry.id}",
+                          headers=_auth_header(raw))
+        assert resp.status_code == 403
+
 
 # --- 仕訳削除 ---
 
