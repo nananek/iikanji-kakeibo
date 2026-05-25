@@ -1320,6 +1320,70 @@ def api_tax_summary():
     })
 
 
+# --- 医療費 API (Phase E3-C-8b) ---
+
+
+@bp.route("/medical-expenses", methods=["GET"])
+@auth_required(scope="journals:read")
+@limiter.limit("120 per hour", key_func=rate_limit_key)
+def list_medical_expenses():
+    """医療費 (MedicalExpense) 一覧 API。
+
+    Phase E3-C-8b: クライアント側 medical_expenses_client が
+    fetchMedicalExpensesForYear で取得する。年度 (?fiscal_year=) で
+    フィルタ。本テーブルは通常 1 年あたり数百件以下なのでページネは省略。
+
+    レスポンス:
+    - 平文フィールド (dual-read 期間中の互換、Phase E7 で削除予定)
+    - encrypted_blob / blob_iv (base64、クライアント側で MK 復号)
+    """
+    from app.models.medical import MedicalExpense
+    from app.models.journal import JournalEntry as _JE
+    user_id = g.auth_user.id
+
+    query = MedicalExpense.query.filter_by(user_id=user_id)
+
+    fy_str = request.args.get("fiscal_year")
+    if fy_str:
+        try:
+            fy = int(fy_str)
+        except (ValueError, TypeError):
+            return jsonify({"error": "fiscal_year は整数で指定してください。"}), 400
+        if not (1900 <= fy <= 2200):
+            return jsonify({
+                "error": "fiscal_year の範囲が不正です (1900〜2200)。",
+            }), 400
+        # 紐付く JournalEntry の fiscal_year (E3-A で導入、date 暗号化後も有効)
+        query = (
+            query.join(_JE, MedicalExpense.journal_entry_id == _JE.id)
+            .filter(_JE.fiscal_year == fy)
+        )
+
+    expenses = query.order_by(MedicalExpense.id).all()
+    return jsonify({
+        "ok": True,
+        "expenses": [
+            {
+                "id": e.id,
+                "journal_entry_id": e.journal_entry_id,
+                # 平文 (dual-read 互換)。Phase E7 で削除予定。
+                "date": e.date.isoformat() if e.date else None,
+                "patient_name": e.patient_name,
+                "hospital_name": e.hospital_name,
+                "treatment_description": e.treatment_description,
+                "provider_type": e.provider_type,
+                "amount_paid": int(e.amount_paid or 0),
+                "insurance_reimbursement": int(e.insurance_reimbursement or 0),
+                # Phase E3: クライアント MK で AES-GCM 暗号化済の本体
+                "encrypted_blob": _b64_or_none(e.encrypted_blob),
+                "blob_iv": _b64_or_none(e.blob_iv),
+            }
+            for e in expenses
+        ],
+        "total": len(expenses),
+    })
+
+
 def _mark_draft_done(draft: AIDraft, entry_number: int):
     """仕訳登録後に Discord 通知を完了マークに更新する"""
     if not draft.discord_message_id or not draft.discord_webhook_url:
