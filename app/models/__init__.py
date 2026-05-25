@@ -10,7 +10,7 @@ from app.models.voucher import Voucher
 from app.models.voucher_audit_log import VoucherAuditLog
 from app.models.api_key import APIKey
 from app.models.oauth import OAuthDevice, OAuthToken
-from app.models.auto_import import WebhookConfig
+from app.models.webhook import WebhookConfig
 from app.models.csv_column_profile import CsvColumnProfile
 from app.models.tax_form import TaxFormField, TaxFormMapping
 from app.models.ai_usage_log import AIUsageLog
