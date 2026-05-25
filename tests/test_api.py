@@ -161,6 +161,147 @@ class TestCreateJournal:
         assert resp.status_code == 400
 
 
+class TestCreateJournalE2EE:
+    """Phase E3: encrypted_blob / blob_iv / fiscal_year 受け付けのテスト。"""
+
+    def _b64(self, n_bytes):
+        from base64 import b64encode
+        return b64encode(b"\x42" * n_bytes).decode("ascii")
+
+    def test_accepts_encrypted_blob_and_iv(
+        self, client, db, user, accounts, auth_header,
+    ):
+        """blob/iv 両方指定で DB に保存される。"""
+        from app.models.journal import JournalEntry
+        resp = client.post("/api/v1/journals", headers=auth_header, json={
+            "date": "2026-02-15", "description": "テスト",
+            "lines": [
+                {"account_code": accounts["5010"].code, "debit": 100,
+                 "encrypted_blob": self._b64(48), "blob_iv": self._b64(12)},
+                {"account_code": accounts["1010"].code, "credit": 100},
+            ],
+            "encrypted_blob": self._b64(48),
+            "blob_iv": self._b64(12),
+            "fiscal_year": 2026,
+        })
+        assert resp.status_code == 201
+        entry = JournalEntry.query.get(resp.get_json()["id"])
+        assert entry.encrypted_blob == b"\x42" * 48
+        assert entry.blob_iv == b"\x42" * 12
+        assert entry.fiscal_year == 2026
+        # line 1 にのみ blob あり
+        lines_by_code = {l.account_code: l for l in entry.lines}
+        assert lines_by_code["5010"].encrypted_blob == b"\x42" * 48
+        assert lines_by_code["5010"].blob_iv == b"\x42" * 12
+        assert lines_by_code["1010"].encrypted_blob is None
+
+    def test_fiscal_year_defaults_to_date_year(
+        self, client, db, user, accounts, auth_header,
+    ):
+        from app.models.journal import JournalEntry
+        resp = client.post("/api/v1/journals", headers=auth_header, json={
+            "date": "2024-08-15", "description": "x",
+            "lines": [
+                {"account_code": accounts["5010"].code, "debit": 100},
+                {"account_code": accounts["1010"].code, "credit": 100},
+            ],
+        })
+        assert resp.status_code == 201
+        entry = JournalEntry.query.get(resp.get_json()["id"])
+        assert entry.fiscal_year == 2024
+
+    def test_blob_without_iv_rejected(
+        self, client, db, user, accounts, auth_header,
+    ):
+        resp = client.post("/api/v1/journals", headers=auth_header, json={
+            "date": "2026-02-15", "description": "x",
+            "lines": [
+                {"account_code": accounts["5010"].code, "debit": 100},
+                {"account_code": accounts["1010"].code, "credit": 100},
+            ],
+            "encrypted_blob": self._b64(48),
+            # blob_iv なし
+        })
+        assert resp.status_code == 400
+        assert "同時に指定" in resp.get_json()["error"]
+
+    def test_invalid_iv_length_rejected(
+        self, client, db, user, accounts, auth_header,
+    ):
+        resp = client.post("/api/v1/journals", headers=auth_header, json={
+            "date": "2026-02-15", "description": "x",
+            "lines": [
+                {"account_code": accounts["5010"].code, "debit": 100},
+                {"account_code": accounts["1010"].code, "credit": 100},
+            ],
+            "encrypted_blob": self._b64(48),
+            "blob_iv": self._b64(8),  # 12B 必須
+        })
+        assert resp.status_code == 400
+        assert "12B" in resp.get_json()["error"]
+
+    def test_oversized_blob_rejected(
+        self, client, db, user, accounts, auth_header,
+    ):
+        resp = client.post("/api/v1/journals", headers=auth_header, json={
+            "date": "2026-02-15", "description": "x",
+            "lines": [
+                {"account_code": accounts["5010"].code, "debit": 100},
+                {"account_code": accounts["1010"].code, "credit": 100},
+            ],
+            "encrypted_blob": self._b64(5000),  # 4KB 上限超え
+            "blob_iv": self._b64(12),
+        })
+        assert resp.status_code == 400
+        assert "大きすぎ" in resp.get_json()["error"]
+
+    def test_invalid_base64_rejected(
+        self, client, db, user, accounts, auth_header,
+    ):
+        resp = client.post("/api/v1/journals", headers=auth_header, json={
+            "date": "2026-02-15", "description": "x",
+            "lines": [
+                {"account_code": accounts["5010"].code, "debit": 100},
+                {"account_code": accounts["1010"].code, "credit": 100},
+            ],
+            "encrypted_blob": "!!!not base64!!!",
+            "blob_iv": self._b64(12),
+        })
+        assert resp.status_code == 400
+        assert "base64" in resp.get_json()["error"]
+
+    def test_get_returns_encrypted_blob_as_base64(
+        self, client, db, user, accounts, auth_header,
+    ):
+        """GET レスポンスに encrypted_blob/blob_iv が base64 で含まれる。"""
+        from base64 import b64decode
+        # まず E2EE 形式で 1 件作成
+        post_resp = client.post("/api/v1/journals", headers=auth_header, json={
+            "date": "2026-02-15", "description": "x",
+            "lines": [
+                {"account_code": accounts["5010"].code, "debit": 100,
+                 "encrypted_blob": self._b64(32), "blob_iv": self._b64(12)},
+                {"account_code": accounts["1010"].code, "credit": 100},
+            ],
+            "encrypted_blob": self._b64(48),
+            "blob_iv": self._b64(12),
+            "fiscal_year": 2026,
+        })
+        eid = post_resp.get_json()["id"]
+        # GET (詳細 API は {"journal": {...}} 形式)
+        resp = client.get(f"/api/v1/journals/{eid}", headers=auth_header)
+        assert resp.status_code == 200
+        body = resp.get_json()["journal"]
+        assert b64decode(body["encrypted_blob"]) == b"\x42" * 48
+        assert b64decode(body["blob_iv"]) == b"\x42" * 12
+        assert body["fiscal_year"] == 2026
+        # blob なしの line は null
+        lines_by_code = {l["account_code"]: l for l in body["lines"]}
+        assert b64decode(lines_by_code["5010"]["encrypted_blob"]) == b"\x42" * 32
+        assert lines_by_code["1010"]["encrypted_blob"] is None
+        assert lines_by_code["1010"]["blob_iv"] is None
+
+
 # --- 仕訳一覧 ---
 
 

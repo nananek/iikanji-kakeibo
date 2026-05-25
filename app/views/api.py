@@ -100,6 +100,49 @@ def api_key_required(scope=None, write=False):
     return decorator
 
 
+# --- Phase E3: record-level 暗号化フィールドのデコード/エンコード ---
+
+
+# blob 上限 (1 entry / line あたり)。Phase E3 設計の妥当な上限 (description 等
+# 平文で 1KB 程度、ヘッダ込みで余裕を持って 4KB)。AAD ではないので大きすぎる
+# blob は単にストレージ負荷になる。
+_MAX_RECORD_BLOB_BYTES = 4096
+_AES_GCM_IV_BYTES = 12
+
+
+def _decode_record_crypto(d: dict, label: str, blob_key: str, iv_key: str):
+    """payload dict から encrypted_blob / blob_iv を base64 decode して返す。
+
+    両方未設定 → (None, None)。片方だけ設定 / base64 不正 / サイズ超過は
+    400 系のエラーを投げる呼び出し側のために `ValueError` を返す。
+    """
+    from base64 import b64decode
+    from binascii import Error as BinasciiError
+
+    blob_b64 = d.get(blob_key)
+    iv_b64 = d.get(iv_key)
+    if blob_b64 is None and iv_b64 is None:
+        return None, None
+    if (blob_b64 is None) != (iv_b64 is None):
+        raise ValueError(
+            f"{label}: {blob_key} と {iv_key} は同時に指定してください。",
+        )
+    try:
+        blob = b64decode(blob_b64, validate=True)
+        iv = b64decode(iv_b64, validate=True)
+    except (BinasciiError, ValueError, TypeError):
+        raise ValueError(f"{label}: {blob_key}/{iv_key} の base64 が不正です。")
+    if len(blob) > _MAX_RECORD_BLOB_BYTES:
+        raise ValueError(
+            f"{label}: {blob_key} が大きすぎます (max {_MAX_RECORD_BLOB_BYTES}B)。",
+        )
+    if len(iv) != _AES_GCM_IV_BYTES:
+        raise ValueError(
+            f"{label}: {iv_key} は {_AES_GCM_IV_BYTES}B (AES-GCM IV) である必要があります。",
+        )
+    return blob, iv
+
+
 # --- 仕訳起票 ---
 
 
@@ -136,17 +179,34 @@ def create_journal():
     if err:
         return jsonify({"error": err}), 400
 
+    # Phase E3: クライアント側で AES-GCM 暗号化された entry 本体 (任意)。
+    # 両方セットされていなければ無視 (= 旧 dual storage の平文保存のみ)。
+    try:
+        entry_blob, entry_iv = _decode_record_crypto(
+            data, "entry", "encrypted_blob", "blob_iv",
+        )
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+
     # lines_data 変換
     lines_data = []
     for i, line in enumerate(lines):
         account_code = line.get("account_code")
         if not account_code:
             return jsonify({"error": f"lines[{i}].account_code は必須です。"}), 400
+        try:
+            line_blob, line_iv = _decode_record_crypto(
+                line, f"lines[{i}]", "encrypted_blob", "blob_iv",
+            )
+        except ValueError as e:
+            return jsonify({"error": str(e)}), 400
         lines_data.append({
             "account_code": account_code,
             "debit_amount": int(line.get("debit", 0) or 0),
             "credit_amount": int(line.get("credit", 0) or 0),
             "description": line.get("description", ""),
+            "encrypted_blob": line_blob,
+            "blob_iv": line_iv,
         })
 
     # 提出済みロック科目チェック
@@ -156,6 +216,12 @@ def create_journal():
         if used_codes & locked_codes:
             return jsonify({"error": "提出済みの税務科目を含むため登録できません。"}), 400
 
+    # Phase E3: fiscal_year は date 暗号化後の年度フィルタ用の平文カラム。
+    # クライアントが明示指定しなければ date.year を採用 (service 側のデフォルト)。
+    fiscal_year = data.get("fiscal_year")
+    if fiscal_year is not None and not isinstance(fiscal_year, int):
+        return jsonify({"error": "fiscal_year は整数で指定してください。"}), 400
+
     try:
         entry = create_journal_entry(
             user_id=user_id,
@@ -163,6 +229,9 @@ def create_journal():
             description=description,
             lines_data=lines_data,
             source=source,
+            encrypted_blob=entry_blob,
+            blob_iv=entry_iv,
+            fiscal_year=fiscal_year,
         )
     except ValueError as e:
         from flask import current_app
@@ -198,19 +267,34 @@ def create_journal():
 
 
 def _entry_to_dict(entry):
-    """JournalEntry を API レスポンス用 dict に変換"""
+    """JournalEntry を API レスポンス用 dict に変換。
+
+    Phase E3: encrypted_blob / blob_iv / fiscal_year を base64 で含める。
+    クライアントは blob/iv がセットされていれば自分の MK で復号、なければ
+    旧平文フィールド (date / description / lines[].account_code 等) を使う。
+    """
+    from base64 import b64encode
+
+    def _b64(b):
+        return b64encode(b).decode("ascii") if b else None
+
     return {
         "id": entry.id,
         "date": entry.date.isoformat(),
         "entry_number": entry.entry_number,
         "description": entry.description,
         "source": entry.source,
+        "fiscal_year": entry.fiscal_year,
+        "encrypted_blob": _b64(entry.encrypted_blob),
+        "blob_iv": _b64(entry.blob_iv),
         "lines": [
             {
                 "account_code": line.account_code,
                 "debit": int(line.debit_amount or 0),
                 "credit": int(line.credit_amount or 0),
                 "description": line.description or "",
+                "encrypted_blob": _b64(line.encrypted_blob),
+                "blob_iv": _b64(line.blob_iv),
             }
             for line in entry.lines
         ],
