@@ -310,6 +310,7 @@ def make_journal(db, user_id, acct_debit_code, acct_credit_code, amount,
         description=description,
         source=source,
         fiscal_period=fiscal_period,
+        fiscal_year=entry_date.year,  # E3 後の年度フィルタ用
     )
     entry.lines = [
         JournalEntryLine(account_user_id=user_id,
