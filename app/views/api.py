@@ -331,6 +331,7 @@ def _entry_to_dict(entry):
 
 @bp.route("/journals", methods=["GET"])
 @auth_required(scope="journals:read")
+@limiter.limit("120 per hour", key_func=rate_limit_key)
 def list_journals():
     """仕訳一覧 API.
 
@@ -339,6 +340,9 @@ def list_journals():
     `@api_key_required` (Bearer only) ではなく `@auth_required` (Bearer +
     session) を使う。`scope="journals:read"` は API キー認証時のみ要求 (OAuth
     トークン・セッション認証は scope 不問)。
+
+    rate-limit 120/hour: ブラウザクライアントが年度別に全件取得するため、
+    1 年 = 数 page (per_page=100) を想定し他 AI 系 (60/h) より緩めに設定。
     """
     user_id = g.auth_user.id
     page = request.args.get("page", 1, type=int)

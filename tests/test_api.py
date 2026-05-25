@@ -422,6 +422,42 @@ class TestListJournals:
         assert resp.status_code == 400
         assert "範囲" in resp.get_json()["error"]
 
+    def test_list_via_session_cookie(
+        self, db, logged_in_client, user, accounts,
+    ):
+        """E3-C-1b: ブラウザ Cookie 認証で GET /api/v1/journals できる。
+        @auth_required (Bearer + session) への置き換えの主目的。"""
+        make_journal(db, user.id, "5010", "1010", 100,
+                     entry_date=date(2026, 5, 1))
+        resp = logged_in_client.get("/api/v1/journals")
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data["total"] == 1
+        # 新フィールド (fiscal_period / line.id) が含まれる
+        e = data["journals"][0]
+        assert "fiscal_period" in e
+        assert "fiscal_year" in e
+        assert all("id" in l for l in e["lines"])
+
+    def test_list_scope_required_for_api_key(
+        self, client, db, user, accounts,
+    ):
+        """auth_required(scope=...) は API キー認証時に scope を要求する。
+        journals:create scope だけの key で GET /journals → 403。"""
+        from app.models.api_key import APIKey
+        from tests.conftest import _auth_header
+        raw, key_hash, key_prefix = APIKey.generate()
+        key = APIKey(
+            user_id=user.id, name="write-only",
+            key_hash=key_hash, key_prefix=key_prefix,
+            scopes="journals:create", is_active=True,
+        )
+        db.session.add(key)
+        db.session.commit()
+        resp = client.get("/api/v1/journals", headers=_auth_header(raw))
+        assert resp.status_code == 403
+        assert "journals:read" in resp.get_json()["error"]
+
     def test_pagination(self, client, db, user, accounts, auth_header):
         for i in range(5):
             make_journal(db, user.id, "5010", "1010",
