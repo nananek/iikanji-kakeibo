@@ -95,6 +95,11 @@ def create_journal_entry(user_id, date, description, lines_data,
 
     if (encrypted_blob is None) != (blob_iv is None):
         raise ValueError("encrypted_blob と blob_iv は同時に指定が必要です。")
+    # 多層防御: API 以外の caller が短い IV で保存しないよう service 層でも検査。
+    if blob_iv is not None and len(blob_iv) != 12:
+        raise ValueError(
+            "blob_iv は 12B (AES-GCM IV) である必要があります。",
+        )
 
     entry = JournalEntry(
         user_id=user_id,
@@ -117,6 +122,10 @@ def create_journal_entry(user_id, date, description, lines_data,
         if (line_blob is None) != (line_iv is None):
             raise ValueError(
                 "line の encrypted_blob と blob_iv は同時に指定が必要です。",
+            )
+        if line_iv is not None and len(line_iv) != 12:
+            raise ValueError(
+                "line の blob_iv は 12B (AES-GCM IV) である必要があります。",
             )
         line = JournalEntryLine(
             journal_entry_id=entry.id,

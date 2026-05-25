@@ -3,6 +3,8 @@
 import functools
 import hashlib
 import json
+from base64 import b64decode, b64encode
+from binascii import Error as BinasciiError
 from datetime import date as date_type, datetime, timezone
 
 from flask import Blueprint, jsonify, request, g
@@ -113,34 +115,41 @@ _AES_GCM_IV_BYTES = 12
 def _decode_record_crypto(d: dict, label: str, blob_key: str, iv_key: str):
     """payload dict から encrypted_blob / blob_iv を base64 decode して返す。
 
-    両方未設定 → (None, None)。片方だけ設定 / base64 不正 / サイズ超過は
-    400 系のエラーを投げる呼び出し側のために `ValueError` を返す。
-    """
-    from base64 import b64decode
-    from binascii import Error as BinasciiError
+    戻り値: (blob_or_None, iv_or_None, error_message_or_None)
+      - 正常で blob/iv 未指定: (None, None, None)
+      - 正常で blob/iv 指定: (bytes, bytes, None)
+      - エラー: (None, None, "ユーザー向け日本語エラー")
 
+    例外を投げず error message を返す設計にしている理由は、呼び出し側で
+    `try/except ValueError as e: return jsonify({"error": str(e)})` を行うと
+    CodeQL が "Information exposure through an exception" を誤検知するため
+    (自分で書いたサニタイズ済みメッセージのみを返していても、stack trace flow
+    解析が flag する)。
+    """
     blob_b64 = d.get(blob_key)
     iv_b64 = d.get(iv_key)
     if blob_b64 is None and iv_b64 is None:
-        return None, None
+        return None, None, None
     if (blob_b64 is None) != (iv_b64 is None):
-        raise ValueError(
-            f"{label}: {blob_key} と {iv_key} は同時に指定してください。",
+        return None, None, (
+            f"{label}: {blob_key} と {iv_key} は同時に指定してください。"
         )
     try:
         blob = b64decode(blob_b64, validate=True)
         iv = b64decode(iv_b64, validate=True)
     except (BinasciiError, ValueError, TypeError):
-        raise ValueError(f"{label}: {blob_key}/{iv_key} の base64 が不正です。")
+        return None, None, (
+            f"{label}: {blob_key}/{iv_key} の base64 が不正です。"
+        )
     if len(blob) > _MAX_RECORD_BLOB_BYTES:
-        raise ValueError(
-            f"{label}: {blob_key} が大きすぎます (max {_MAX_RECORD_BLOB_BYTES}B)。",
+        return None, None, (
+            f"{label}: {blob_key} が大きすぎます (max {_MAX_RECORD_BLOB_BYTES}B)。"
         )
     if len(iv) != _AES_GCM_IV_BYTES:
-        raise ValueError(
-            f"{label}: {iv_key} は {_AES_GCM_IV_BYTES}B (AES-GCM IV) である必要があります。",
+        return None, None, (
+            f"{label}: {iv_key} は {_AES_GCM_IV_BYTES}B (AES-GCM IV) である必要があります。"
         )
-    return blob, iv
+    return blob, iv, None
 
 
 # --- 仕訳起票 ---
@@ -181,12 +190,11 @@ def create_journal():
 
     # Phase E3: クライアント側で AES-GCM 暗号化された entry 本体 (任意)。
     # 両方セットされていなければ無視 (= 旧 dual storage の平文保存のみ)。
-    try:
-        entry_blob, entry_iv = _decode_record_crypto(
-            data, "entry", "encrypted_blob", "blob_iv",
-        )
-    except ValueError as e:
-        return jsonify({"error": str(e)}), 400
+    entry_blob, entry_iv, err = _decode_record_crypto(
+        data, "entry", "encrypted_blob", "blob_iv",
+    )
+    if err:
+        return jsonify({"error": err}), 400
 
     # lines_data 変換
     lines_data = []
@@ -194,12 +202,11 @@ def create_journal():
         account_code = line.get("account_code")
         if not account_code:
             return jsonify({"error": f"lines[{i}].account_code は必須です。"}), 400
-        try:
-            line_blob, line_iv = _decode_record_crypto(
-                line, f"lines[{i}]", "encrypted_blob", "blob_iv",
-            )
-        except ValueError as e:
-            return jsonify({"error": str(e)}), 400
+        line_blob, line_iv, err = _decode_record_crypto(
+            line, f"lines[{i}]", "encrypted_blob", "blob_iv",
+        )
+        if err:
+            return jsonify({"error": err}), 400
         lines_data.append({
             "account_code": account_code,
             "debit_amount": int(line.get("debit", 0) or 0),
@@ -219,8 +226,14 @@ def create_journal():
     # Phase E3: fiscal_year は date 暗号化後の年度フィルタ用の平文カラム。
     # クライアントが明示指定しなければ date.year を採用 (service 側のデフォルト)。
     fiscal_year = data.get("fiscal_year")
-    if fiscal_year is not None and not isinstance(fiscal_year, int):
-        return jsonify({"error": "fiscal_year は整数で指定してください。"}), 400
+    if fiscal_year is not None:
+        # bool は int サブクラスなので isinstance では弾けない。type 直接比較。
+        if type(fiscal_year) is not int:
+            return jsonify({"error": "fiscal_year は整数で指定してください。"}), 400
+        if not (1900 <= fiscal_year <= 2200):
+            return jsonify({
+                "error": "fiscal_year の範囲が不正です (1900〜2200)。",
+            }), 400
 
     try:
         entry = create_journal_entry(
@@ -266,6 +279,11 @@ def create_journal():
 # --- 仕訳閲覧 ---
 
 
+def _b64_or_none(b):
+    """LargeBinary カラム → base64 文字列 (None なら None)。"""
+    return b64encode(b).decode("ascii") if b else None
+
+
 def _entry_to_dict(entry):
     """JournalEntry を API レスポンス用 dict に変換。
 
@@ -273,11 +291,6 @@ def _entry_to_dict(entry):
     クライアントは blob/iv がセットされていれば自分の MK で復号、なければ
     旧平文フィールド (date / description / lines[].account_code 等) を使う。
     """
-    from base64 import b64encode
-
-    def _b64(b):
-        return b64encode(b).decode("ascii") if b else None
-
     return {
         "id": entry.id,
         "date": entry.date.isoformat(),
@@ -285,16 +298,16 @@ def _entry_to_dict(entry):
         "description": entry.description,
         "source": entry.source,
         "fiscal_year": entry.fiscal_year,
-        "encrypted_blob": _b64(entry.encrypted_blob),
-        "blob_iv": _b64(entry.blob_iv),
+        "encrypted_blob": _b64_or_none(entry.encrypted_blob),
+        "blob_iv": _b64_or_none(entry.blob_iv),
         "lines": [
             {
                 "account_code": line.account_code,
                 "debit": int(line.debit_amount or 0),
                 "credit": int(line.credit_amount or 0),
                 "description": line.description or "",
-                "encrypted_blob": _b64(line.encrypted_blob),
-                "blob_iv": _b64(line.blob_iv),
+                "encrypted_blob": _b64_or_none(line.encrypted_blob),
+                "blob_iv": _b64_or_none(line.blob_iv),
             }
             for line in entry.lines
         ],

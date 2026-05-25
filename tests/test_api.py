@@ -225,6 +225,53 @@ class TestCreateJournalE2EE:
         assert resp.status_code == 400
         assert "同時に指定" in resp.get_json()["error"]
 
+    def test_line_blob_without_iv_rejected(
+        self, client, db, user, accounts, auth_header,
+    ):
+        """line[i] レベルでも blob/iv ペアの整合性を要求。"""
+        resp = client.post("/api/v1/journals", headers=auth_header, json={
+            "date": "2026-02-15", "description": "x",
+            "lines": [
+                {"account_code": accounts["5010"].code, "debit": 100,
+                 "encrypted_blob": self._b64(48)},  # blob_iv 欠落
+                {"account_code": accounts["1010"].code, "credit": 100},
+            ],
+        })
+        assert resp.status_code == 400
+        body = resp.get_json()
+        assert "lines[0]" in body["error"]
+        assert "同時に指定" in body["error"]
+
+    def test_fiscal_year_bool_rejected(
+        self, client, db, user, accounts, auth_header,
+    ):
+        """bool は int サブクラスだが fiscal_year としては不正。"""
+        resp = client.post("/api/v1/journals", headers=auth_header, json={
+            "date": "2026-02-15", "description": "x",
+            "lines": [
+                {"account_code": accounts["5010"].code, "debit": 100},
+                {"account_code": accounts["1010"].code, "credit": 100},
+            ],
+            "fiscal_year": True,
+        })
+        assert resp.status_code == 400
+        assert "fiscal_year" in resp.get_json()["error"]
+
+    def test_fiscal_year_out_of_range_rejected(
+        self, client, db, user, accounts, auth_header,
+    ):
+        for bad_year in (1899, 2201, -1, 99999):
+            resp = client.post("/api/v1/journals", headers=auth_header, json={
+                "date": "2026-02-15", "description": "x",
+                "lines": [
+                    {"account_code": accounts["5010"].code, "debit": 100},
+                    {"account_code": accounts["1010"].code, "credit": 100},
+                ],
+                "fiscal_year": bad_year,
+            })
+            assert resp.status_code == 400, f"year={bad_year} should be rejected"
+            assert "範囲" in resp.get_json()["error"]
+
     def test_invalid_iv_length_rejected(
         self, client, db, user, accounts, auth_header,
     ):
