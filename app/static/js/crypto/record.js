@@ -12,7 +12,14 @@
 
 /** uint64 を 8B big-endian Uint8Array に変換。 */
 export function uint64BE(n) {
-  // Number は 53bit までしか安全ではないので BigInt 経由で 64bit 化
+  // Number は 53bit までしか安全ではない。それ超過の Number を受けると
+  // BigInt(n) する前に Number 側で精度が失われ、誤った値で encode される。
+  // 64bit ID を扱うときは BigInt を直接渡してもらう契約。
+  if (typeof n === "number" && !Number.isSafeInteger(n)) {
+    throw new RangeError(
+      `uint64BE: Number precision loss, pass BigInt instead: ${n}`,
+    );
+  }
   const big = typeof n === "bigint" ? n : BigInt(n);
   if (big < 0n || big > 0xFFFF_FFFF_FFFF_FFFFn) {
     throw new RangeError(`uint64BE: out of range: ${n}`);
@@ -42,22 +49,37 @@ const TEXT_ENC = new TextEncoder();
 const NUL = TEXT_ENC.encode("\0");
 
 
+// テーブル種別ごとの ids 個数。間違った数を渡すと別の (しかし有効な) AAD が
+// 生成され、暗号化した BLOB が永遠に復号できなくなるリスクがあるため厳密検査。
+const TABLE_ID_COUNT = {
+  je: 1,    // entry_id
+  jel: 2,   // journal_entry_id + line_id
+  me: 1,    // expense_id
+  bcb: 1,   // balance cache blob id
+};
+
+
 /**
  * AAD バイト列を構築。
  *
  * @param {"je"|"jel"|"me"|"bcb"} tableType  テーブル種別プレフィックス
- *   - "je"  = journal_entries
- *   - "jel" = journal_entry_lines
- *   - "me"  = medical_expenses
- *   - "bcb" = balance_cache_blobs (E3-E で導入予定)
+ *   - "je"  = journal_entries (ids: entry_id)
+ *   - "jel" = journal_entry_lines (ids: journal_entry_id, line_id)
+ *   - "me"  = medical_expenses (ids: expense_id)
+ *   - "bcb" = balance_cache_blobs (E3-E で導入予定、ids: blob_id)
  * @param {number|bigint} userId
  * @param {Array<number|bigint>} ids  識別 ID 列 (entry_id / line_id 等)
  * @returns {Uint8Array}
  */
 export function buildAAD(tableType, userId, ...ids) {
-  const ALLOWED = ["je", "jel", "me", "bcb"];
-  if (!ALLOWED.includes(tableType)) {
+  if (!Object.prototype.hasOwnProperty.call(TABLE_ID_COUNT, tableType)) {
     throw new Error(`buildAAD: unsupported tableType: ${tableType}`);
+  }
+  const expectedCount = TABLE_ID_COUNT[tableType];
+  if (ids.length !== expectedCount) {
+    throw new Error(
+      `buildAAD: ${tableType} expects ${expectedCount} id(s), got ${ids.length}`,
+    );
   }
   const parts = [TEXT_ENC.encode(tableType), NUL, uint64BE(userId)];
   for (const id of ids) {
@@ -110,6 +132,9 @@ export async function decryptRecord(client, blob, iv, aad) {
   }
   const res = await client.decrypt(blob, iv, aad);
   const json = new TextDecoder().decode(res.plaintext);
+  // plaintext Uint8Array は明示的にゼロ埋め (worker 側も Transferable detach 済)。
+  // ただし json (string) は JS の言語仕様上不変でゼロ化不可能なため、GC まで
+  // メモリに残り得る制約がある (これは JS の言語制約で回避手段なし)。
   try { res.plaintext.fill(0); } catch (_e) { /* ignore */ }
   return JSON.parse(json);
 }

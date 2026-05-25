@@ -50,6 +50,14 @@ test("uint64BE: 負数で throw", () => {
   assert.throws(() => uint64BE(-1), /out of range/);
 });
 
+test("uint64BE: 53bit 超え Number は guard で throw (精度ロス防止)", () => {
+  // Number.MAX_SAFE_INTEGER + 1 = 2^53 (Number 上は安全範囲外)
+  assert.throws(
+    () => uint64BE(Number.MAX_SAFE_INTEGER + 1),
+    /precision loss.*pass BigInt/,
+  );
+});
+
 
 // ============ buildAAD ============
 
@@ -111,6 +119,16 @@ test("buildAAD: tableType prefix が異テーブル間で衝突しない", () =>
   const je = buildAAD("je", 1, 100);
   const jel = buildAAD("jel", 1, 100, 100);  // line_id 追加で長さも違う
   assert.notDeepEqual(je, jel);
+});
+
+test("buildAAD: tableType ごとの ids 個数を厳密検証", () => {
+  // je は 1 個必要 (entry_id のみ)
+  assert.throws(() => buildAAD("je", 1), /expects 1 id\(s\), got 0/);
+  assert.throws(() => buildAAD("je", 1, 100, 200), /expects 1 id\(s\), got 2/);
+  // jel は 2 個必要 (entry_id + line_id)
+  assert.throws(() => buildAAD("jel", 1, 100), /expects 2 id\(s\), got 1/);
+  // me は 1 個必要
+  assert.throws(() => buildAAD("me", 1, 1, 2), /expects 1 id\(s\), got 2/);
 });
 
 
