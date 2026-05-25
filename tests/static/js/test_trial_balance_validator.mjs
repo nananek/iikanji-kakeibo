@@ -67,3 +67,12 @@ test("compareTrialBalance: credit のみ不一致でも検出", () => {
 test("compareTrialBalance: 空配列同士は diffs 空", () => {
   assert.deepEqual(compareTrialBalance([], []), []);
 });
+
+test("compareTrialBalance: サーバ側がゼロ行 → missing_in_client に出さない", () => {
+  // B/S 勘定で当期取引なし (period 集計はゼロだが opening balance あり) のケース。
+  // client-side computeTrialBalance はこの科目をスキップするので、
+  // missing_in_client にすると常に偽陽性になる。
+  const server = [{ code: "1010", debit: 0, credit: 0 }];
+  const js = [];
+  assert.deepEqual(compareTrialBalance(server, js), []);
+});

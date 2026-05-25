@@ -11,7 +11,13 @@ export function compareTrialBalance(serverRows, jsRows) {
   for (const sv of serverRows) {
     const js = byJs.get(sv.code);
     if (!js) {
-      diffs.push({ code: sv.code, kind: "missing_in_client" });
+      // Server may emit B/S accounts whose period activity is zero
+      // (opening balance only). Client-side aggregation skips such
+      // accounts, so suppress missing_in_client for zero rows to avoid
+      // false positives.
+      if (sv.debit !== 0 || sv.credit !== 0) {
+        diffs.push({ code: sv.code, kind: "missing_in_client" });
+      }
       continue;
     }
     if (js.debit !== sv.debit || js.credit !== sv.credit) {
@@ -36,6 +42,17 @@ export function compareTrialBalance(serverRows, jsRows) {
 }
 
 
+// SharedWorker は URL でインスタンスを共有するため、他の crypto UI
+// (ウィザード / AI 設定) と完全に同じ URL を使う必要がある。違う URL を
+// 渡すと別 Worker が起きて MK がロードされておらず常に skip になる。
+function getSharedWorkerUrl() {
+  return (
+    globalThis.IIKANJI_SHARED_WORKER_URL ||
+    "/static/js/crypto/shared-worker.js"
+  );
+}
+
+
 async function _run() {
   const paramsEl = document.getElementById("trial-balance-server-params");
   if (!paramsEl) return;
@@ -47,6 +64,11 @@ async function _run() {
     console.warn("trial_balance_validator: failed to parse server params", e);
     return;
   }
+  // GET /api/v1/journals authenticates as current_user (Flask-Login),
+  // not the audited owner. Skipping in audit-proxy mode avoids fetching
+  // the auditor's own ledger and comparing it against the owner's
+  // server-rendered totals, which would always look like a mismatch.
+  if (params.is_audit_proxy) return;
   if (typeof params.user_id !== "number") return;
 
   const serverRows = [];
@@ -67,7 +89,7 @@ async function _run() {
       import("/static/js/crypto/reports/trial_balance.js"),
     ]);
 
-  const client = new SharedCryptoClient("/static/js/crypto/shared-worker.js");
+  const client = new SharedCryptoClient(getSharedWorkerUrl());
   try {
     const status = await client.status();
     if (!status.hasKey) {
