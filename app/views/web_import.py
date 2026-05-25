@@ -30,6 +30,8 @@ bp = Blueprint("web_import", __name__, url_prefix="/web-import")
 
 MAX_TEXT_LENGTH = 200_000
 MAX_PARSED_ROWS = 1000
+MAX_DESC_LENGTH = 500    # 1 行の摘要の上限文字数
+MAX_AMOUNT = 10**12      # 1 兆円上限 (現実的に妥当)
 
 
 def _save_parsed_to_session(parsed_rows, payment_account_code):
@@ -38,6 +40,29 @@ def _save_parsed_to_session(parsed_rows, payment_account_code):
     session["web_data_key"] = key
     session["web_payment_account_code"] = payment_account_code
     return key
+
+
+def _validate_parsed_row(row):
+    """parsed_transactions の 1 行を schema validate。失敗時は error message を返す。"""
+    if not isinstance(row, dict):
+        return "行は dict である必要があります"
+    date_val = row.get("date")
+    if date_val is not None and not isinstance(date_val, str):
+        return "date は文字列または null である必要があります"
+    if isinstance(date_val, str) and len(date_val) > 50:
+        return "date が長すぎます (max 50)"
+    desc = row.get("description")
+    if desc is not None and not isinstance(desc, str):
+        return "description は文字列である必要があります"
+    if isinstance(desc, str) and len(desc) > MAX_DESC_LENGTH:
+        return f"description が長すぎます (max {MAX_DESC_LENGTH})"
+    for amt_key in ("deposit", "withdrawal"):
+        amt = row.get(amt_key)
+        if amt is not None and not isinstance(amt, (int, float)):
+            return f"{amt_key} は数値である必要があります"
+        if isinstance(amt, (int, float)) and (amt < 0 or amt > MAX_AMOUNT):
+            return f"{amt_key} が範囲外です (0〜{MAX_AMOUNT})"
+    return None
 
 
 @bp.route("/", methods=["GET", "POST"])
@@ -56,6 +81,14 @@ def upload():
     grouped_accounts = get_grouped_accounts(user_id)
 
     if request.method == "POST":
+        # E2EE モード未設定ユーザーが直接 POST しても拒否
+        # (UI ではフォームを disabled にしているが、サーバ側でも防御)。
+        if not config_is_e2ee:
+            return jsonify({
+                "error": "E2EE 形式の AI 設定が必要です。"
+                "設定画面で API キーを E2EE 形式で登録してください。",
+            }), 403
+
         if not request.is_json:
             return jsonify({
                 "error": "JSON ボディが必要です。",
@@ -75,6 +108,14 @@ def upload():
             return jsonify({
                 "error": "payment_account_code が必要です。",
             }), 400
+
+        # 各行を schema validate (description 長さ・金額範囲・型)
+        for i, row in enumerate(parsed):
+            err = _validate_parsed_row(row)
+            if err is not None:
+                return jsonify({
+                    "error": f"行 {i + 1}: {err}",
+                }), 400
 
         owner_account = Account.query.filter_by(
             user_id=user_id, code=payment_account_code,

@@ -407,6 +407,82 @@ class TestWebImportUpload:
         assert resp.status_code == 400
         assert "JSON" in resp.get_json()["error"]
 
+    def test_post_rejects_non_e2ee_config_returns_403(
+        self, db, logged_in_client, user, accounts,
+    ):
+        """blob/iv 未保存 (is_e2ee=False) のユーザーが直接 POST しても 403。
+        UI でフォーム無効化される前提だが、サーバ側でも防御。"""
+        _make_non_e2ee_ai_config(db, user.id)
+        resp = logged_in_client.post(
+            "/web-import/",
+            json={
+                "parsed_transactions": [{"date": "2026-02-15"}],
+                "payment_account_code": "1010",
+            },
+        )
+        assert resp.status_code == 403
+        assert "E2EE" in resp.get_json()["error"]
+
+    def test_post_rejects_no_config_returns_403(
+        self, db, logged_in_client, user, accounts,
+    ):
+        """AI 設定なしのユーザーが直接 POST しても 403。"""
+        resp = logged_in_client.post(
+            "/web-import/",
+            json={
+                "parsed_transactions": [{"date": "2026-02-15"}],
+                "payment_account_code": "1010",
+            },
+        )
+        assert resp.status_code == 403
+
+    def test_post_validates_long_description(
+        self, db, logged_in_client, user, accounts,
+    ):
+        _make_e2ee_ai_config(db, user.id)
+        resp = logged_in_client.post(
+            "/web-import/",
+            json={
+                "parsed_transactions": [{
+                    "date": "2026-02-15", "description": "x" * 501,
+                    "deposit": 0, "withdrawal": 100,
+                }],
+                "payment_account_code": "1010",
+            },
+        )
+        assert resp.status_code == 400
+        assert "description" in resp.get_json()["error"]
+
+    def test_post_validates_amount_range(
+        self, db, logged_in_client, user, accounts,
+    ):
+        _make_e2ee_ai_config(db, user.id)
+        resp = logged_in_client.post(
+            "/web-import/",
+            json={
+                "parsed_transactions": [{
+                    "date": "2026-02-15", "description": "x",
+                    "deposit": -1, "withdrawal": 0,
+                }],
+                "payment_account_code": "1010",
+            },
+        )
+        assert resp.status_code == 400
+        assert "deposit" in resp.get_json()["error"]
+
+    def test_post_validates_non_dict_row(
+        self, db, logged_in_client, user, accounts,
+    ):
+        _make_e2ee_ai_config(db, user.id)
+        resp = logged_in_client.post(
+            "/web-import/",
+            json={
+                "parsed_transactions": ["not a dict"],
+                "payment_account_code": "1010",
+            },
+        )
+        assert resp.status_code == 400
+
 
 class TestWebImportConfirm:
     def test_no_data_redirects(self, logged_in_client, accounts):
