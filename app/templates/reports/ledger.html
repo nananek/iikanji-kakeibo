@@ -2,6 +2,19 @@
 {% block title %}総勘定元帳 - いいかんじ™家計簿{% endblock %}
 
 {% block content %}
+{% if selected_account %}
+<script id="ledger-server-params" type="application/json">
+{{ {
+  "year": year, "pf": pf, "pt": pt,
+  "account_code": account_code,
+  "normal_balance": selected_account.account_type.normal_balance,
+  "carry_forward": carry_forward,
+  "sort": sort,
+  "user_id": current_user.id,
+  "is_audit_proxy": session.get('acting_as_user_id') is not none,
+} | tojson }}
+</script>
+{% endif %}
 {% set range_label %}
   {% if pf == pt %}{{ period_labels.get(pf, '') }}{% else %}{{ period_labels.get(pf, '') }}〜{{ period_labels.get(pt, '') }}{% endif %}
 {% endset %}
@@ -149,7 +162,10 @@
           </tr>
           {% endif %}
           {% set ns.prev_period = e.effective_period %}
-          <tr>
+          <tr data-ledger-entry="{{ e.entry_id }}"
+              data-server-debit="{{ e.debit|int }}"
+              data-server-credit="{{ e.credit|int }}"
+              data-server-balance="{{ e.balance|int }}">
             <td>
               {% if not e.is_readonly %}
               <input type="checkbox" class="form-check-input ledger-cb" name="entry_ids" value="{{ e.entry_id }}">
@@ -936,5 +952,11 @@ function refreshVoucherPreview() {
     });
 }
 </script>
+
+<script>
+  globalThis.IIKANJI_SHARED_WORKER_URL =
+    "{{ url_for('static', filename='js/crypto/shared-worker.js') }}";
+</script>
+<script type="module" src="{{ url_for('static', filename='js/reports/ledger_validator.mjs') }}"></script>
 {% endif %}
 {% endblock %}
