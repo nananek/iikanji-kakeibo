@@ -396,11 +396,17 @@ def list_journals():
 
 
 @bp.route("/journals/<int:entry_id>", methods=["GET"])
-@api_key_required(scope="journals:read")
+@auth_required(scope="journals:read")
+@limiter.limit("120 per hour", key_func=rate_limit_key)
 def get_journal(entry_id):
-    """仕訳詳細 API"""
+    """仕訳詳細 API.
+
+    E3-C-1c: list_journals (#185) と同じく Bearer + session 両対応に統一。
+    ブラウザ JS の journals_client.js が個別取得する将来用途に備える。
+    rate-limit はリスト側と揃えて 120/hour。
+    """
     entry = JournalEntry.query.filter_by(
-        id=entry_id, user_id=g.api_user_id
+        id=entry_id, user_id=g.auth_user.id
     ).first()
     if not entry:
         return jsonify({"error": "仕訳が見つかりません。"}), 404
