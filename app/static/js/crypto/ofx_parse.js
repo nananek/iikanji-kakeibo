@@ -102,8 +102,6 @@ function _extractTag(text, tag) {
 // すべて抽出して文字列配列で返す。
 function _extractStmtTrns(text) {
   const result = [];
-  const openRe = /<STMTTRN>/gi;
-  const closeRe = /<\/STMTTRN>/gi;
 
   // 閉じタグ付きを優先 (XML 形式)
   let m;
@@ -114,16 +112,25 @@ function _extractStmtTrns(text) {
   if (result.length > 0) return result;
 
   // 閉じタグなし SGML 形式: <STMTTRN> から次の <STMTTRN> または親閉じタグまで
+  const openRe = /<STMTTRN>/gi;
   const openMatches = [];
   while ((m = openRe.exec(text)) !== null) {
     openMatches.push(m.index);
   }
   for (let i = 0; i < openMatches.length; i++) {
     const start = openMatches[i] + "<STMTTRN>".length;
-    const end = i + 1 < openMatches.length
-      ? openMatches[i + 1]
-      : (text.indexOf("</BANKTRANLIST>", start)
-         || text.indexOf("</STMTRS>", start) || text.length);
+    let end;
+    if (i + 1 < openMatches.length) {
+      end = openMatches[i + 1];
+    } else {
+      // 親閉じタグを探す。indexOf は見つからない時 -1 を返す
+      // (truthy なので `||` で扱うとバグになる、明示的に分岐)。
+      const bankTranEnd = text.indexOf("</BANKTRANLIST>", start);
+      const stmtrsEnd = text.indexOf("</STMTRS>", start);
+      if (bankTranEnd >= 0) end = bankTranEnd;
+      else if (stmtrsEnd >= 0) end = stmtrsEnd;
+      else end = text.length;
+    }
     if (end > start) {
       result.push(text.slice(start, end));
     }

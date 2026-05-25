@@ -267,3 +267,22 @@ test("parseOfx: OFX ヘッダ (KEY:VALUE) 行をスキップ", () => {
   // 'OFXHEADER:100' 等が ACCTID に紛れ込まないこと
   assert.equal(r.account_id, "1234567");
 });
+
+test("parseOfx: SGML 閉じタグなし + 親閉じタグも欠落でも text.length を end に", () => {
+  // </BANKTRANLIST> も </STMTRS> もない異常な OFX。
+  // indexOf == -1 が || で truthy として扱われてしまう旧バグの回帰テスト。
+  // 修正後: 最後の STMTTRN は text.length までを description として取得する。
+  const ofx = `<OFX>
+<STMTTRN>
+<DTPOSTED>20260101
+<TRNAMT>100
+<NAME>FIRST
+<STMTTRN>
+<DTPOSTED>20260102
+<TRNAMT>200
+<NAME>LAST`;
+  const r = parseOfx(ofx);
+  assert.equal(r.rows.length, 2);
+  assert.equal(r.rows[0].description, "FIRST");
+  assert.equal(r.rows[1].description, "LAST");
+});
