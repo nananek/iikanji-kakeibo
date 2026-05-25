@@ -39,9 +39,23 @@ async function _normalizeEntry(client, userId, apiEntry) {
       );
     }
   }
+  // _normalizeLine 内の throw (apiLine.id 欠落等) が Promise.all を突き抜け
+  // て fetchJournalsForYear 全体を reject させないよう、line 単位で catch して
+  // 平文フォールバックに局所化する (entry の try/catch と同じ方針)。
   const lines = await Promise.all(
     (apiEntry.lines || []).map((line) =>
-      _normalizeLine(client, userId, apiEntry.id, line),
+      _normalizeLine(client, userId, apiEntry.id, line).catch((e) => {
+        console.warn(
+          `journals_client: line normalization failed ` +
+          `(entry=${apiEntry.id}): ${e?.message || e}`,
+        );
+        return {
+          account_code: line.account_code ?? null,
+          debit: line.debit ?? 0,
+          credit: line.credit ?? 0,
+          description: line.description ?? "",
+        };
+      }),
     ),
   );
   return {
@@ -51,7 +65,9 @@ async function _normalizeEntry(client, userId, apiEntry) {
     date: body?.date ?? apiEntry.date,
     description: body?.description ?? apiEntry.description,
     source: body?.source ?? apiEntry.source,
-    batch_id: body?.batch_id ?? null,
+    // batch_id も fiscal_period と同じ 3 段フォールバック (将来 API が
+    // batch_id を返した時の dual-read 平文行に備える)
+    batch_id: body?.batch_id ?? apiEntry.batch_id ?? null,
     // fiscal_period: 復号値 → API レスポンスの平文 → null の優先順
     // (API 側 _entry_to_dict が fiscal_period を返却するよう E3-C-1b で拡張)
     fiscal_period: body?.fiscal_period ?? apiEntry.fiscal_period ?? null,

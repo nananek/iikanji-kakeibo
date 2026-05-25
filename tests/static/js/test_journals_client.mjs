@@ -287,28 +287,53 @@ test("AAD すり替え (別 user_id) は平文フォールバックする (全�
   assert.equal(result[0].description, null);
 });
 
-test("encrypted line に id が無いと throw (前方互換性ガード)", async () => {
+test("encrypted line に id が無くても全件取得は成功し、line は平文フォールバック", async () => {
+  // C-1 修正: _normalizeLine の throw が Promise.all を突き抜けて
+  // fetchJournalsForYear 全体を reject させないよう、line 単位で catch して
+  // 平文フォールバックに局所化している。
   const client = makeMockClient();
   const userId = 1;
   const entryId = 100;
-  // 暗号化済 entry + 暗号化済 line だが line に id がない
-  // (古い API 実装でレスポンスに id 含まずのケース)
   const entry = await makeEncryptedEntry(client, userId, entryId, {
-    v: 1, date: "2026-05-22", description: "x", fiscal_year: 2026,
+    v: 1, date: "2026-05-22", description: "test entry", fiscal_year: 2026,
   });
   const lineWithoutId = await makeEncryptedLine(
     client, userId, entryId, 200,
     { account_code: "5010", debit_amount: 100, credit_amount: 0 },
   );
-  delete lineWithoutId.id;  // id 欠落を再現
+  delete lineWithoutId.id;
+  // 平文 fallback 値もセット (本来 dual-read で平文があるはずだが、
+  // ここではテストのため明示的にセット)
+  lineWithoutId.account_code = "PLAINTEXT_5010";
+  lineWithoutId.debit = 999;
+  lineWithoutId.credit = 0;
   entry.lines = [lineWithoutId];
   const fetchImpl = makeFetch([entry]);
-  await assert.rejects(
-    () => fetchJournalsForYear({
-      client, userId, fiscalYear: 2026, fetchImpl,
-    }),
-    /missing apiLine\.id/,
-  );
+  const result = await fetchJournalsForYear({
+    client, userId, fiscalYear: 2026, fetchImpl,
+  });
+  // 全件取得は成功 (1 件)
+  assert.equal(result.length, 1);
+  // entry 自体は復号成功
+  assert.equal(result[0].description, "test entry");
+  // 該当 line は平文フォールバック
+  assert.equal(result[0].lines[0].account_code, "PLAINTEXT_5010");
+  assert.equal(result[0].lines[0].debit, 999);
+});
+
+test("batch_id も dual-read で平文フォールバック (W-1 修正)", async () => {
+  const client = makeMockClient();
+  const fetchImpl = makeFetch([{
+    id: 1, fiscal_year: 2026,
+    date: "2026-01-01", description: "未移行",
+    source: "csv", batch_id: "test-batch-uuid-123",
+    encrypted_blob: null, blob_iv: null,
+    lines: [],
+  }]);
+  const result = await fetchJournalsForYear({
+    client, userId: 1, fiscalYear: 2026, fetchImpl,
+  });
+  assert.equal(result[0].batch_id, "test-batch-uuid-123");
 });
 
 test("fiscal_period が API レスポンスから取れる (dual-read)", async () => {
