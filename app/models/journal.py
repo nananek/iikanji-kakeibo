@@ -16,6 +16,14 @@ class JournalEntry(db.Model):
     source = db.Column(db.String(20), nullable=False, default="journal")
     batch_id = db.Column(db.String(36), nullable=True, index=True)
     fiscal_period = db.Column(db.Integer, nullable=True)  # 0=期首振戻, 1-12=通常月, 13-15=決算月1-3, 16=損益振替
+    # Phase E3: クライアント側 MK で AES-256-GCM 暗号化されたレコード本体。
+    # date / description / source / batch_id / fiscal_period の暗号化版を保持
+    # (旧平文カラムは Phase E7 一斉移行で DROP 予定)。
+    encrypted_blob = db.Column(db.LargeBinary, nullable=True)
+    blob_iv = db.Column(db.LargeBinary, nullable=True)  # AES-GCM IV (12B)
+    # date 暗号化後の年度フィルタ用 (平文)。漏れる情報は「何年度に仕訳が
+    # 何件あるか」のみ。
+    fiscal_year = db.Column(db.SmallInteger, nullable=True)
     created_at = db.Column(
         db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc)
     )
@@ -87,6 +95,10 @@ class JournalEntryLine(db.Model):
     debit_amount = db.Column(db.Numeric(12, 0), nullable=False, default=0)
     credit_amount = db.Column(db.Numeric(12, 0), nullable=False, default=0)
     description = db.Column(db.String(255), default="")
+    # Phase E3: クライアント暗号化された account_code / debit / credit / description
+    # の本体。AAD には user_id + journal_entry_id + line id を含む (§12.2)。
+    encrypted_blob = db.Column(db.LargeBinary, nullable=True)
+    blob_iv = db.Column(db.LargeBinary, nullable=True)  # AES-GCM IV (12B)
 
     __table_args__ = (
         db.ForeignKeyConstraint(

@@ -22,6 +22,11 @@ class MedicalExpense(db.Model):
     provider_type = db.Column(db.String(20), nullable=True)  # hospital/pharmacy/nursing/other
     amount_paid = db.Column(db.Integer, nullable=False)
     insurance_reimbursement = db.Column(db.Integer, nullable=False, default=0)
+    # Phase E3: クライアント暗号化された全フィールド本体 (date / patient_name /
+    # hospital_name / treatment_description / provider_type / amount_paid /
+    # insurance_reimbursement)。AAD には user_id + id を含む (§12.2)。
+    encrypted_blob = db.Column(db.LargeBinary, nullable=True)
+    blob_iv = db.Column(db.LargeBinary, nullable=True)  # AES-GCM IV (12B)
     created_at = db.Column(
         db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc)
     )
