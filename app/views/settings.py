@@ -571,12 +571,16 @@ def fiscal():
                 "can_reopen": p == closed,
             })
 
+    # 監査代理閲覧時は BCB API が current_user.id で動くため、対象ユーザー
+    # ではなく監査者の BCB が作られる。クライアント hook は is_audit_proxy で skip。
+    is_audit_proxy = flask_session.get("acting_as_user_id") is not None
     return render_template(
         "settings/fiscal.html",
         year=year,
         periods=periods,
         closed_period=closed,
         year_open=year_open,
+        is_audit_proxy=is_audit_proxy,
     )
 
 
