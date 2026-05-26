@@ -169,11 +169,13 @@ async function _run() {
       { fetchJournalsForYear },
       { computeBalanceSheet },
       { composeBalanceSheetView },
+      { fetchBalanceCacheBlobs },
     ] = await Promise.all([
       import(getStaticRoot() + "js/crypto/shared-client.js"),
       import(getStaticRoot() + "js/crypto/journals_client.js"),
       import(getStaticRoot() + "js/crypto/reports/balance_sheet.js"),
       import(getStaticRoot() + "js/crypto/reports/balance_sheet_view.js"),
+      import(getStaticRoot() + "js/crypto/balance_cache_blobs_client.js"),
     ]);
 
     client = new SharedCryptoClient(getSharedWorkerUrl());
@@ -213,27 +215,31 @@ async function _run() {
       accountNameByCode[code] = meta.name;
     }
 
-    // B/S は累計のため min_year..year を順次 fetch
-    // 過去年度 closing 仕訳の has_closing 影響は computeBalanceSheet が
-    // 持つので、ここでは何もせずそのまま結合する
-    const allEntries = [];
-    for (let y = params.min_year; y <= params.year; y++) {
-      const ye = await fetchJournalsForYear({
-        client, userId: params.user_id, fiscalYear: y,
-      });
-      for (const e of ye) {
-        // 過去年度 closing は当年度の has_closing 判定から外す
-        // (損益振替前/後判定はあくまで対象年度の closing で決まる)
-        if (e.fiscal_year !== params.year && e.source === "closing") {
-          allEntries.push({ ...e, source: "_closing_past" });
-        } else {
-          allEntries.push(e);
-        }
+    // BCB 統合 (#221): min_year..year-1 の順次 fetch を「前年 BCB period=15」
+    // 1 リクエストに置換。前年末累計を priorCumulative に流し、当年 entries
+    // のみ別途 fetch する。前年 BCB が未確定/欠落の場合は priorCumulative=
+    // 空のまま当年 entries だけで描画する (degraded fallback)。
+    let priorCumulative = {};
+    if (params.year > params.min_year) {
+      try {
+        const blobs = await fetchBalanceCacheBlobs({
+          client, userId: params.user_id, fiscalYear: params.year - 1,
+        });
+        if (blobs[15]) priorCumulative = blobs[15];
+      } catch (e) {
+        console.warn(
+          "balance_sheet_renderer: prior BCB fetch failed, priorCumulative={}",
+          e,
+        );
       }
     }
+    const entries = await fetchJournalsForYear({
+      client, userId: params.user_id, fiscalYear: params.year,
+    });
 
-    const jsResult = computeBalanceSheet(allEntries, {
+    const jsResult = computeBalanceSheet(entries, {
       accountTypeByCode, normalBalanceByCode, accountNameByCode,
+      priorCumulative,
     });
     _renderView(composeBalanceSheetView(jsResult));
   } catch (e) {
