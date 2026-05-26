@@ -58,6 +58,11 @@ function getSharedWorkerUrl() {
 }
 
 
+function getStaticRoot() {
+  return globalThis.IIKANJI_STATIC_ROOT || "/static/";
+}
+
+
 async function _run() {
   const paramsEl = document.getElementById("pl-server-params");
   if (!paramsEl) return;
@@ -90,9 +95,9 @@ async function _run() {
 
   const [{ SharedCryptoClient }, { fetchJournalsForYear }, { computeProfitLoss }]
     = await Promise.all([
-      import("/static/js/crypto/shared-client.js"),
-      import("/static/js/crypto/journals_client.js"),
-      import("/static/js/crypto/reports/profit_loss.js"),
+      import(getStaticRoot() + "js/crypto/shared-client.js"),
+      import(getStaticRoot() + "js/crypto/journals_client.js"),
+      import(getStaticRoot() + "js/crypto/reports/profit_loss.js"),
     ]);
 
   const client = new SharedCryptoClient(getSharedWorkerUrl());

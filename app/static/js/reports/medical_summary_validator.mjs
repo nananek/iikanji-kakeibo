@@ -64,6 +64,11 @@ function getSharedWorkerUrl() {
 }
 
 
+function getStaticRoot() {
+  return globalThis.IIKANJI_STATIC_ROOT || "/static/";
+}
+
+
 async function _run() {
   const paramsEl = document.getElementById("medical-summary-server-params");
   if (!paramsEl) return;
@@ -101,9 +106,9 @@ async function _run() {
 
   const [{ SharedCryptoClient }, { fetchMedicalExpensesForYear }, { computeMedicalSummary }]
     = await Promise.all([
-      import("/static/js/crypto/shared-client.js"),
-      import("/static/js/crypto/medical_expenses_client.js"),
-      import("/static/js/crypto/reports/medical_summary.js"),
+      import(getStaticRoot() + "js/crypto/shared-client.js"),
+      import(getStaticRoot() + "js/crypto/medical_expenses_client.js"),
+      import(getStaticRoot() + "js/crypto/reports/medical_summary.js"),
     ]);
 
   const client = new SharedCryptoClient(getSharedWorkerUrl());

@@ -171,6 +171,14 @@
   <script src="{{ url_for('static', filename='js/alpine-components.js') }}"></script>
   <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.8/dist/cdn.min.js"></script>
   <script>
+    // Crypto/validator グローバル設定。サブパスデプロイ環境でも url_for が
+    // 解決する実際のパスを使うため、validator/wizard 等で動的 import するときの
+    // URL とサーバの実 URL がずれないようにする。
+    globalThis.IIKANJI_STATIC_ROOT =
+      "{{ url_for('static', filename='') }}";
+    globalThis.IIKANJI_SHARED_WORKER_URL =
+      "{{ url_for('static', filename='js/crypto/shared-worker.js') }}";
+
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('/sw.js');
     }

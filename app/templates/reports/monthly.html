@@ -441,9 +441,5 @@
 </script>
 {% endif %}
 
-<script>
-  globalThis.IIKANJI_SHARED_WORKER_URL =
-    "{{ url_for('static', filename='js/crypto/shared-worker.js') }}";
-</script>
 <script type="module" src="{{ url_for('static', filename='js/reports/monthly_comparison_validator.mjs') }}"></script>
 {% endblock %}
