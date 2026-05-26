@@ -56,29 +56,6 @@ function _abort(msg, logArg) {
  * @param {number|null} [options.fiscalYearOnly] 当該 fiscal_year のみ
  * @param {boolean} [options.includeClosing=false]
  */
-/**
- * BCB の {accountCode: [debit_cum, credit_cum]} を、normal_balance 側で
- * netted した {accountCode: amount} に変換する。
- *
- * 期首残高 (bs_opening) を BCB 累計から作るときに使用。BS 以外の科目
- * (revenue/expense) は B/S 表示には使われないので、本関数は accountsMeta
- * に存在し type が指定されている code のみを返す (filter は呼出側で
- * 行わなくて済む)。
- */
-function _netCumulative(cumulative, accountsMeta) {
-  const result = {};
-  for (const [code, pair] of Object.entries(cumulative || {})) {
-    if (!Array.isArray(pair) || pair.length < 2) continue;
-    const meta = accountsMeta[code];
-    if (!meta) continue;
-    const d = pair[0] || 0;
-    const c = pair[1] || 0;
-    result[code] = meta.normal_balance === "debit" ? d - c : c - d;
-  }
-  return result;
-}
-
-
 function _collectAmounts(entries, accountsMeta, options = {}) {
   const fiscalYearOnly = options.fiscalYearOnly ?? null;
   const includeClosing = options.includeClosing ?? false;
@@ -107,6 +84,29 @@ function _collectAmounts(entries, accountsMeta, options = {}) {
     } else {
       result[code] = credit - debit;
     }
+  }
+  return result;
+}
+
+
+/**
+ * BCB の {accountCode: [debit_cum, credit_cum]} を、normal_balance 側で
+ * netted した {accountCode: amount} に変換する。
+ *
+ * 期首残高 (bs_opening) を BCB 累計から作るときに使用。BS 以外の科目
+ * (revenue/expense) は B/S 表示には使われないので、本関数は accountsMeta
+ * に存在し type が指定されている code のみを返す (filter は呼出側で
+ * 行わなくて済む)。
+ */
+function _netCumulative(cumulative, accountsMeta) {
+  const result = {};
+  for (const [code, pair] of Object.entries(cumulative || {})) {
+    if (!Array.isArray(pair) || pair.length < 2) continue;
+    const meta = accountsMeta[code];
+    if (!meta) continue;
+    const d = pair[0] || 0;
+    const c = pair[1] || 0;
+    result[code] = meta.normal_balance === "debit" ? d - c : c - d;
   }
   return result;
 }
