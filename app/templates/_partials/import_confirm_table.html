@@ -42,8 +42,9 @@
     </div>
   </div>
   <div class="card-body">
-    {# submit_handler は呼出側で上書き可能 (例: web_import は SPA バッチ送信に切替) #}
-    {% set _submit_handler = submit_handler|default('serializeRows()') %}
+    {# Phase E3-F-5 で batch API 経由 (submitImportBatch) を default に統一。
+       旧 server POST 経路 (serializeRows) はもう存在しないため fallback も撤去。 #}
+    {% set _submit_handler = submit_handler|default('submitImportBatch($event)') %}
     <form method="POST" @submit="{{ _submit_handler }}">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <input type="hidden" name="import_rows" x-ref="importRows">

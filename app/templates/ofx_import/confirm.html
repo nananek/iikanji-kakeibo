@@ -31,12 +31,7 @@
 {% set import_back_buttons %}
 <a href="{{ url_for('ofx_import.upload') }}" class="btn btn-outline-secondary">最初からやり直す</a>
 {% endset %}
-{# 確定処理を batch API + entries_builder に切替えてクライアント完結化。
-   監査代理閲覧時は IDOR 回避のため旧サーバ POST 経路 (default の
-   serializeRows) に fallback する (E3-F で不要になる予定)。 #}
-{% if not is_audit_proxy %}
-  {% set submit_handler = 'submitImportBatch($event)' %}
-{% endif %}
+{% set submit_handler = 'submitImportBatch($event)' %}
 {% include "_partials/import_confirm_table.html" %}
 
 </div>
