@@ -2,6 +2,21 @@
 {% block title %}貸借対照表 - いいかんじ™家計簿{% endblock %}
 
 {% block content %}
+<script id="bs-server-params" type="application/json">
+{{ {
+  "year": year,
+  "min_year": min_year,
+  "user_id": current_user.id,
+  "is_audit_proxy": session.get('acting_as_user_id') is not none,
+  "has_closing": has_closing,
+  "totals": {
+    "assets": total_assets|int,
+    "liabilities": total_liabilities|int,
+    "equity": total_equity|int,
+    "net_income": net_income|int,
+  },
+} | tojson }}
+</script>
 <h2><i class="bi bi-clipboard-data"></i> 貸借対照表</h2>
 
 <form class="row g-3 mb-4 mt-2" method="GET">
@@ -32,7 +47,10 @@
         <table class="table table-sm mb-0">
           <tbody>
             {% for item in assets %}
-            <tr>
+            <tr data-bs-row="{{ item.account.code }}"
+                data-bs-section="assets"
+                data-bs-normal="{{ item.account.account_type.normal_balance }}"
+                data-server-balance="{{ item.balance|int }}">
               <td>{{ item.account.name }}</td>
               <td class="text-end">&yen;{{ "{:,}".format(item.balance) }}</td>
             </tr>
@@ -60,7 +78,10 @@
         <table class="table table-sm mb-0">
           <tbody>
             {% for item in liabilities %}
-            <tr>
+            <tr data-bs-row="{{ item.account.code }}"
+                data-bs-section="liabilities"
+                data-bs-normal="{{ item.account.account_type.normal_balance }}"
+                data-server-balance="{{ item.balance|int }}">
               <td>{{ item.account.name }}</td>
               <td class="text-end">&yen;{{ "{:,}".format(item.balance) }}</td>
             </tr>
@@ -85,7 +106,10 @@
         <table class="table table-sm mb-0">
           <tbody>
             {% for item in equities %}
-            <tr>
+            <tr data-bs-row="{{ item.account.code }}"
+                data-bs-section="equities"
+                data-bs-normal="{{ item.account.account_type.normal_balance }}"
+                data-server-balance="{{ item.balance|int }}">
               <td>{{ item.account.name }}</td>
               <td class="text-end">&yen;{{ "{:,}".format(item.balance) }}</td>
             </tr>
@@ -125,4 +149,10 @@
     </div>
   </div>
 </div>
+
+<script>
+  globalThis.IIKANJI_SHARED_WORKER_URL =
+    "{{ url_for('static', filename='js/crypto/shared-worker.js') }}";
+</script>
+<script type="module" src="{{ url_for('static', filename='js/reports/balance_sheet_validator.mjs') }}"></script>
 {% endblock %}
