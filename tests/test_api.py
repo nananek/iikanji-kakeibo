@@ -344,6 +344,48 @@ class TestCreateJournalsBatch:
         assert resp.status_code == 400
         assert "255" in resp.get_json()["error"]
 
+    def test_invalid_account_code_rejected(self, client, db, user, accounts, auth_header):
+        """存在しない account_code は FK 違反 (500) ではなく 400 で返す。"""
+        resp = client.post("/api/v1/journals/batch", headers=auth_header, json={
+            "entries": [{
+                "date": "2026-02-01", "description": "x",
+                "lines": [
+                    {"account_code": "9999", "debit": 100},
+                    {"account_code": accounts["1010"].code, "credit": 100},
+                ],
+            }],
+        })
+        assert resp.status_code == 400
+        assert "9999" in resp.get_json()["error"]
+
+    def test_float_amount_rejected(self, client, db, user, accounts, auth_header):
+        """float の debit/credit は切り捨てで貸借不一致を隠すので拒否する。"""
+        resp = client.post("/api/v1/journals/batch", headers=auth_header, json={
+            "entries": [{
+                "date": "2026-02-01", "description": "x",
+                "lines": [
+                    {"account_code": accounts["5010"].code, "debit": 100.5},
+                    {"account_code": accounts["1010"].code, "credit": 100.5},
+                ],
+            }],
+        })
+        assert resp.status_code == 400
+        assert "整数" in resp.get_json()["error"]
+
+    def test_bool_amount_rejected(self, client, db, user, accounts, auth_header):
+        """bool は int サブクラスなので明示的に弾く (True→1 の意図しない仕訳化防止)。"""
+        resp = client.post("/api/v1/journals/batch", headers=auth_header, json={
+            "entries": [{
+                "date": "2026-02-01", "description": "x",
+                "lines": [
+                    {"account_code": accounts["5010"].code, "debit": True},
+                    {"account_code": accounts["1010"].code, "credit": True},
+                ],
+            }],
+        })
+        assert resp.status_code == 400
+        assert "整数" in resp.get_json()["error"]
+
 
 class TestCreateJournalE2EE:
     """Phase E3: encrypted_blob / blob_iv / fiscal_year 受け付けのテスト。"""

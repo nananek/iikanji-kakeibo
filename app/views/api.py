@@ -16,6 +16,7 @@ from app.models.oauth import OAuthToken
 from app.models.ai_config import UserAIConfig
 from app.models.ai_draft import AIDraft
 from app.models.ai_usage_log import AIUsageLog
+from app.models.account import Account
 from app.models.journal import JournalEntry
 from app.services.accounting import create_journal_entry
 from app.services.audit import get_submitted_account_codes, is_entry_locked_for_owner
@@ -281,7 +282,18 @@ def create_journal():
     }), 201
 
 
-def _validate_and_parse_batch_entry(e, idx, locked_codes):
+def _parse_int_amount(raw, label):
+    """金額フィールドを安全に int 化する。float は小数切り捨てで貸借不一致を
+    隠してしまうので明示拒否する (bool は int サブクラスなので先に弾く)。
+    """
+    if raw is None:
+        return 0
+    if isinstance(raw, bool) or not isinstance(raw, int):
+        raise ValueError(f"{label} は整数で指定してください (小数不可)。")
+    return raw
+
+
+def _validate_and_parse_batch_entry(e, idx, user_id, locked_codes):
     """batch API 用: 1 entry 分の入力を validate して create_journal_entry 引数に整形。
 
     エラーは ValueError を raise (caller が一括 rollback + 400 を返す)。
@@ -337,8 +349,12 @@ def _validate_and_parse_batch_entry(e, idx, locked_codes):
             )
         lines_data.append({
             "account_code": account_code,
-            "debit_amount": int(line.get("debit", 0) or 0),
-            "credit_amount": int(line.get("credit", 0) or 0),
+            "debit_amount": _parse_int_amount(
+                line.get("debit"), f"entries[{idx}].lines[{li}].debit",
+            ),
+            "credit_amount": _parse_int_amount(
+                line.get("credit"), f"entries[{idx}].lines[{li}].credit",
+            ),
             "description": line_desc,
             "encrypted_blob": line_blob,
             "blob_iv": line_iv,
@@ -350,6 +366,20 @@ def _validate_and_parse_batch_entry(e, idx, locked_codes):
             raise ValueError(
                 f"entries[{idx}]: 提出済みの税務科目を含むため登録できません。"
             )
+
+    # account_code がそのユーザーに存在するかチェック (FK 違反による 500 を 400 化)
+    codes_in_entry = {ld["account_code"] for ld in lines_data}
+    existing_codes = {
+        a.code for a in Account.query
+        .filter_by(user_id=user_id)
+        .filter(Account.code.in_(codes_in_entry))
+        .all()
+    }
+    missing = codes_in_entry - existing_codes
+    if missing:
+        raise ValueError(
+            f"entries[{idx}]: 科目コード {sorted(missing)} が存在しません。"
+        )
 
     fiscal_year = e.get("fiscal_year")
     if fiscal_year is not None:
@@ -432,7 +462,7 @@ def create_journals_batch():
     created = []
     try:
         for idx, e in enumerate(entries_in):
-            parsed = _validate_and_parse_batch_entry(e, idx, locked_codes)
+            parsed = _validate_and_parse_batch_entry(e, idx, user_id, locked_codes)
 
             # 確定済み期間チェック (validate と分離: date が parsed 後でないと判定不可)
             err = check_period_open_for_new(
