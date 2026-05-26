@@ -52,7 +52,11 @@ const TYPE_NAMES = {
  * @param {Object<string, number>} [options.opening]
  *   {code: opening_amount} (normal_balance 側を正符号、netted)。指定なし
  *   または該当 code がなければ opening=0 として扱う。
- * @returns {{sections: Array<Object>, grandTotal: Object}}
+ * @returns {{
+ *   sections: Array<Object>,
+ *   grandTotal: Object,
+ *   unmappedCodes: string[]
+ * }}
  */
 export function composeTrialBalanceView(jsRows, accountsMeta, options = {}) {
   if (!Array.isArray(jsRows)) {
