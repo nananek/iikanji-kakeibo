@@ -98,6 +98,15 @@ def resolve_bearer_or_session(
             # 権限レベルは DB grant から直接読む (session キャッシュを信頼しない:
             # オーナーの権限変更がリアルタイム反映される、SECRET_KEY 漏洩時の
             # セッション偽造でも grant.permission_level は守られる)。
+            #
+            # Lv1 (集計結果のみ閲覧) は API 経由の代理閲覧を一律遮断する。
+            # API は生の仕訳・証憑データを返すため、Lv1 の仕様 (集計のみ) と
+            # 整合しない。Lv1 監査者は Web UI のサーバ render 集計ページ
+            # のみ利用可能。
+            if grant.permission_level < 2:
+                return None, (jsonify(
+                    error="Lv1 監査アカウントは API 経由の代理閲覧をサポートしません。"
+                ), 403)
             if write and grant.permission_level < 3:
                 return None, (jsonify(
                     error="代理閲覧中の書込操作は権限レベル 3 (full access) のみ可能です。"
