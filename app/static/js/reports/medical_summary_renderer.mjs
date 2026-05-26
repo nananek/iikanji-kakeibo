@@ -70,7 +70,9 @@ function _renderTotals(view) {
 }
 
 
-function _renderCsvLink(year, hasExpenses) {
+function _renderCsvLink(hasExpenses) {
+  // CSV ダウンロード href は server-side で year 入りで生成済み。
+  // ここでは表示/非表示を切り替えるだけ。
   const el = document.getElementById("medical-csv-link");
   if (!el) return;
   el.classList.toggle("d-none", !hasExpenses);
@@ -205,9 +207,9 @@ function _renderExpensesList(view) {
 }
 
 
-function _renderView(view, params) {
+function _renderView(view) {
   _renderTotals(view);
-  _renderCsvLink(params.year, view.expenses_list.length > 0);
+  _renderCsvLink(view.expenses_list.length > 0);
   _renderByPatient(view);
   _renderExpensesList(view);
 }
@@ -216,8 +218,19 @@ function _renderView(view, params) {
 /**
  * journals entries と medical_expenses を merge して
  * computeMedicalSummary に渡せる形に。
+ *
+ * - journal_entry_id が entryMap にあれば entry.description / date と、
+ *   entry 内の medical 科目 line の debit_amount + account_name を採用
+ * - 同 entry に medical 科目 line が複数ある場合は **先頭の 1 件のみ採用**
+ *   (現実には 1 entry 1 medical line が大半。複数 medical line の按分は
+ *    follow-up #221 系で扱う)
+ * - entry が見つからない、または medical line がない場合は
+ *   me.amount_paid (medical_expense 復号値) を fallback
+ *
+ * export しているのは renderer の外からユニットテストするため (E3-F-3g
+ * レビュー指摘対応)。
  */
-function _mergeExpenses(entries, mexpenses, accountsMeta) {
+export function mergeExpenses(entries, mexpenses, accountsMeta) {
   // medical 科目コードの set
   const medicalCodes = new Set();
   for (const [code, meta] of Object.entries(accountsMeta || {})) {
@@ -326,10 +339,10 @@ async function _run() {
         client, userId: params.user_id, fiscalYear: params.year,
       }),
     ]);
-    const merged = _mergeExpenses(entries, mexpenses, accountsMeta);
+    const merged = mergeExpenses(entries, mexpenses, accountsMeta);
     const result = computeMedicalSummary(merged);
     const view = composeMedicalSummaryView(result, merged);
-    _renderView(view, params);
+    _renderView(view);
   } catch (e) {
     _setStatus("医療費集計の取得に失敗しました: " + (e.message || e), "danger");
   } finally {

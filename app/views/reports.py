@@ -11,7 +11,7 @@ from app.extensions import db
 from app.models.account import Account, AccountType
 from app.models.journal import JournalEntry, JournalEntryLine
 from app.services.tax import (
-    get_medical_summary, get_income_expense_summary,
+    get_income_expense_summary,
     get_monthly_comparison, get_month_projection,
 )
 from flask_login import current_user as _current_user
@@ -240,7 +240,13 @@ def tax():
 @bp.route("/tax/medical-csv")
 @login_required
 def medical_csv():
-    """医療費集計フォーム Ver 3.1 準拠CSVダウンロード"""
+    """医療費集計フォーム Ver 3.1 準拠CSVダウンロード。
+
+    E2EE 化が進むと get_medical_summary は復号できなくなるため、
+    clientside CSV 生成に置き換える follow-up が必要 (#221 系)。
+    """
+    from app.services.tax import get_medical_summary
+
     year = request.args.get("year", date.today().year, type=int)
     medical_summary = get_medical_summary(get_effective_user_id(), year)
 
