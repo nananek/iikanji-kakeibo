@@ -706,24 +706,29 @@ def backup_export():
     含めるテーブル:
       accounts, fiscal_closes, journal_entries, journal_entry_lines,
       medical_expenses, balance_cache_blobs (BU-1),
-      vouchers (BU-2a, active のみ。画像本体を base64 で含む)
+      vouchers (BU-2a, active のみ。画像本体を base64 で含む),
+      ai_drafts, user_ai_config (1 行), webhook_configs, tax_form_mappings,
+      csv_column_profiles (BU-2b)
 
-    含めないもの (今 PR では):
-      ai_drafts (画像本体), user_ai_configs (API キー), webhook_configs,
-      tax_form_mappings, csv_column_profiles, webauthn_*
-      → 次の BU-PR で順次対応。
+    含めないもの:
+      webauthn_credentials, api_keys, oauth_tokens, voucher_audit_log
+      → 復元時はユーザーが再登録する想定 (鍵類は災害時に再生成が安全)。
 
     監査代理閲覧では他人のデータを export できない: 監査者の MK ではオーナーの
     encrypted_blob を復号できないため、結果として復号失敗するが、API としては
     監査者自身のデータが返るだけ (acting_as 解決は将来 PR)。
 
-    画像取得失敗 (ストレージ欠落 / I/O エラー) はその voucher の image_data を
-    null にして "_imageError" フィールドにメッセージを記録し、エクスポート全体
-    は継続する (1 枚の欠損で全件失敗を避ける)。
+    画像取得失敗 (ストレージ欠落 / I/O エラー) はその voucher / ai_draft の
+    image_data を null にして "_imageError" フィールドにメッセージを記録し、
+    エクスポート全体は継続する (1 枚の欠損で全件失敗を避ける)。
     """
+    from app.models.ai_config import UserAIConfig
+    from app.models.csv_column_profile import CsvColumnProfile
     from app.models.fiscal import FiscalClose
     from app.models.journal import JournalEntryLine
     from app.models.medical import MedicalExpense
+    from app.models.tax_form import TaxFormMapping
+    from app.models.webhook import WebhookConfig
 
     user_id = g.auth_user.id
 
@@ -744,7 +749,16 @@ def backup_export():
     medical = MedicalExpense.query.filter_by(user_id=user_id).all()
     blobs = BalanceCacheBlob.query.filter_by(user_id=user_id).all()
     vouchers = Voucher.active().filter_by(user_id=user_id).all()
-    storage = get_storage_backend() if vouchers else None
+    drafts = AIDraft.query.filter_by(user_id=user_id).all()
+    storage = get_storage_backend() if (vouchers or drafts) else None
+    ai_config = UserAIConfig.query.filter_by(user_id=user_id).first()
+    webhooks = WebhookConfig.query.filter_by(user_id=user_id).all()
+    tax_mappings = (
+        db.session.query(TaxFormMapping)
+        .filter(TaxFormMapping.user_id == user_id)
+        .all()
+    )
+    csv_profiles = CsvColumnProfile.query.filter_by(user_id=user_id).all()
 
     return jsonify({
         "version": "1.0",
@@ -829,6 +843,46 @@ def backup_export():
                 _voucher_to_backup_dict(v, storage)
                 for v in vouchers
             ],
+            "ai_drafts": [
+                _ai_draft_to_backup_dict(d, storage)
+                for d in drafts
+            ],
+            "user_ai_config": _ai_config_to_backup_dict(ai_config),
+            "webhook_configs": [
+                {
+                    "id": w.id,
+                    "name": w.name,
+                    "provider": w.provider,
+                    "webhook_url": w.webhook_url,
+                    "is_active": w.is_active,
+                    "events_json": w.events_json,
+                    "created_at": w.created_at.isoformat() if w.created_at else None,
+                    "updated_at": w.updated_at.isoformat() if w.updated_at else None,
+                }
+                for w in webhooks
+            ],
+            "tax_form_mappings": [
+                {
+                    "id": t.id,
+                    "account_code": t.account_code,
+                    "field_id": t.field_id,
+                }
+                for t in tax_mappings
+            ],
+            "csv_column_profiles": [
+                {
+                    "id": p.id,
+                    "account_code": p.account_code,
+                    "date_col": p.date_col,
+                    "desc_col": p.desc_col,
+                    "deposit_col": p.deposit_col,
+                    "withdrawal_col": p.withdrawal_col,
+                    "amount_col": p.amount_col,
+                    "date_format": p.date_format,
+                    "amount_mode": p.amount_mode,
+                }
+                for p in csv_profiles
+            ],
         },
     })
 
@@ -863,6 +917,63 @@ def _voucher_to_backup_dict(voucher, storage):
     if image_error is not None:
         out["_imageError"] = image_error
     return out
+
+
+def _ai_draft_to_backup_dict(draft, storage):
+    """AIDraft 1 件を backup 用 dict に変換 (画像本体を base64 で含む)。
+
+    Voucher 化されていない pending/temp/analyzed/done 状態の下書きを保持する。
+    画像取得は Voucher と同じ失敗局所化ポリシー。
+    """
+    image_data_b64 = None
+    image_error = None
+    try:
+        raw = storage.get(draft.image_key)
+        if raw is None:
+            image_error = "storage returned None"
+        else:
+            image_data_b64 = b64encode(raw).decode("ascii")
+    except Exception as e:
+        image_error = f"{type(e).__name__}: {e}"
+    out = {
+        "id": draft.id,
+        "image_key": draft.image_key,
+        "image_mime": draft.image_mime,
+        "file_hash": draft.file_hash,
+        "file_size": draft.file_size,
+        "comment": draft.comment,
+        "suggestions_json": draft.suggestions_json,
+        "status": draft.status,
+        "discord_webhook_url": draft.discord_webhook_url,
+        "discord_message_id": draft.discord_message_id,
+        "created_at": draft.created_at.isoformat() if draft.created_at else None,
+        "updated_at": draft.updated_at.isoformat() if draft.updated_at else None,
+        "image_data": image_data_b64,
+    }
+    if image_error is not None:
+        out["_imageError"] = image_error
+    return out
+
+
+def _ai_config_to_backup_dict(cfg):
+    """UserAIConfig 1 行を backup 用 dict に変換。
+
+    api_key_blob (クライアント MK で暗号化された API キー) を base64 で含める。
+    サーバは復号できないので E2EE 維持。cfg=None なら null を返す。
+    """
+    if cfg is None:
+        return None
+    return {
+        "id": cfg.id,
+        "provider": cfg.provider,
+        "model_name": cfg.model_name,
+        "custom_prompt": cfg.custom_prompt,
+        "compliance_check": cfg.compliance_check,
+        "api_key_blob": _b64_or_none(cfg.api_key_blob),
+        "api_key_iv": _b64_or_none(cfg.api_key_iv),
+        "created_at": cfg.created_at.isoformat() if cfg.created_at else None,
+        "updated_at": cfg.updated_at.isoformat() if cfg.updated_at else None,
+    }
 
 
 # --- 仕訳閲覧 ---

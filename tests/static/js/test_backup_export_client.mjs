@@ -312,3 +312,55 @@ test("vouchers: _imageError が付与されたデータもそのまま通る", a
   assert.equal(r.data.vouchers[0]._imageError, "IOError: disk gone");
   assert.equal(r.data.vouchers[0].image_data, null);
 });
+
+
+// --- BU-2b passthrough tables ---
+
+test("ai_drafts: 配列がそのままパススルー", async () => {
+  const client = makeMockClient();
+  const r = await decryptBackup(client, {
+    user_id: 1, data: {
+      ai_drafts: [
+        {
+          id: 3, image_key: "drafts/p.jpg", image_mime: "image/jpeg",
+          status: "pending", image_data: "abc",
+        },
+      ],
+    },
+  });
+  assert.equal(r.data.ai_drafts.length, 1);
+  assert.equal(r.data.ai_drafts[0].id, 3);
+});
+
+test("user_ai_config: 単一オブジェクトをパススルー", async () => {
+  const client = makeMockClient();
+  const r = await decryptBackup(client, {
+    user_id: 1, data: {
+      user_ai_config: { provider: "openai", api_key_blob: "xx" },
+    },
+  });
+  assert.equal(r.data.user_ai_config.provider, "openai");
+  assert.equal(r.data.user_ai_config.api_key_blob, "xx");
+});
+
+test("user_ai_config: 未設定で null", async () => {
+  const client = makeMockClient();
+  const r = await decryptBackup(client, { user_id: 1, data: {} });
+  assert.equal(r.data.user_ai_config, null);
+});
+
+test("webhook / csv / tax_mappings: 配列がパススルー", async () => {
+  const client = makeMockClient();
+  const r = await decryptBackup(client, {
+    user_id: 1, data: {
+      webhook_configs: [{ id: 1, webhook_url: "https://w" }],
+      csv_column_profiles: [{ id: 2, account_code: "1010" }],
+      tax_form_mappings: [{ id: 3, account_code: "1010", field_id: 5 }],
+    },
+  });
+  assert.deepEqual(r.data.webhook_configs, [{ id: 1, webhook_url: "https://w" }]);
+  assert.deepEqual(r.data.csv_column_profiles, [{ id: 2, account_code: "1010" }]);
+  assert.deepEqual(r.data.tax_form_mappings, [
+    { id: 3, account_code: "1010", field_id: 5 },
+  ]);
+});

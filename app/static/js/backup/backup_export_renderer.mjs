@@ -111,8 +111,10 @@ export async function runBackupExport() {
       }
     }
     let imageFailures = 0;
-    for (const v of decrypted.data.vouchers || []) {
-      if (v._imageError) imageFailures += 1;
+    for (const tbl of ["vouchers", "ai_drafts"]) {
+      for (const v of decrypted.data[tbl] || []) {
+        if (v._imageError) imageFailures += 1;
+      }
     }
     _downloadJSON(decrypted, _filename());
     const warnings = [];
