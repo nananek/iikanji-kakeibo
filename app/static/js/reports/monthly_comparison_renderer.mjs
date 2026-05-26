@@ -136,7 +136,7 @@ function _renderSectionHeader(label) {
 }
 
 
-function _renderBizRow(bizMonthly, currentMonth, taxFormUrl) {
+function _renderBizRow(bizMonthly, currentMonth) {
   const tr = document.createElement("tr");
   tr.className = "table-success fw-bold";
 
@@ -144,13 +144,12 @@ function _renderBizRow(bizMonthly, currentMonth, taxFormUrl) {
   nameTd.className = "sticky-col";
   nameTd.setAttribute("style", "background:#d1e7dd !important;");
   nameTd.appendChild(document.createTextNode("📁 事業所得"));
-  if (taxFormUrl) {
+  // 内訳リンクは template から cloneNode する (href を JS で組み立てると
+  // CodeQL js/xss-through-dom が誤検知するため、URL は server-render に閉じる)
+  const tpl = document.getElementById("monthly-biz-link-template");
+  if (tpl && tpl.content && tpl.content.firstElementChild) {
     nameTd.appendChild(document.createTextNode(" "));
-    const a = document.createElement("a");
-    a.href = taxFormUrl;
-    a.className = "ms-1 small text-decoration-none";
-    a.textContent = "(内訳)";
-    nameTd.appendChild(a);
+    nameTd.appendChild(tpl.content.firstElementChild.cloneNode(true));
   }
   tr.appendChild(nameTd);
 
@@ -236,7 +235,7 @@ function _renderTable(view, params) {
   const cm = params.current_month || null;
 
   if (view.biz_monthly) {
-    tbody.appendChild(_renderBizRow(view.biz_monthly, cm, params.tax_form_url));
+    tbody.appendChild(_renderBizRow(view.biz_monthly, cm));
   }
 
   tbody.appendChild(_renderSectionHeader("収入"));

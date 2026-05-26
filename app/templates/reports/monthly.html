@@ -8,12 +8,16 @@
   "current_month": current_month,
   "user_id": effective_user_id,
   "is_audit_proxy": session.get('acting_as_user_id') is not none,
-  "tax_form_url": url_for('reports.tax_form_report', year=year),
 } | tojson }}
 </script>
 <script id="monthly-accounts-meta" type="application/json">
 {{ accounts_meta | tojson }}
 </script>
+{# tax_form_report への内訳リンク。renderer が cloneNode で biz_monthly 行に挿入する。
+   URL は server で url_for 生成済みなので、renderer が JS 文字列として href を組み立てる必要がない (CodeQL js/xss-through-dom を回避)。 #}
+<template id="monthly-biz-link-template">
+  <a class="ms-1 small text-decoration-none" href="{{ url_for('reports.tax_form_report', year=year) }}">(内訳)</a>
+</template>
 <h2><i class="bi bi-calendar3"></i> 月次比較</h2>
 
 <form class="row g-3 mb-4 mt-2" method="GET">
