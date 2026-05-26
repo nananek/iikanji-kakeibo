@@ -335,6 +335,14 @@ def bs():
     if not has_closing:
         total_equity += net_income
 
+    # client-side validator needs the oldest year to know how many years
+    # to fetch when reproducing the cumulative B/S balance.
+    min_year = (
+        db.session.query(func.min(JournalEntry.fiscal_year))
+        .filter(JournalEntry.user_id == user_id)
+        .scalar()
+    )
+
     return render_template(
         "reports/bs.html",
         year=year,
@@ -346,6 +354,7 @@ def bs():
         total_equity=total_equity,
         net_income=net_income,
         has_closing=has_closing,
+        min_year=min_year,
     )
 
 
