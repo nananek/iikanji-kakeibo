@@ -163,20 +163,21 @@ async function _run() {
     return;
   }
 
-  const [
-    { SharedCryptoClient },
-    { fetchJournalsForYear },
-    { computeTrialBalance },
-    { composeTrialBalanceView },
-  ] = await Promise.all([
-    import(getStaticRoot() + "js/crypto/shared-client.js"),
-    import(getStaticRoot() + "js/crypto/journals_client.js"),
-    import(getStaticRoot() + "js/crypto/reports/trial_balance.js"),
-    import(getStaticRoot() + "js/crypto/reports/trial_balance_view.js"),
-  ]);
-
-  const client = new SharedCryptoClient(getSharedWorkerUrl());
+  let client;
   try {
+    const [
+      { SharedCryptoClient },
+      { fetchJournalsForYear },
+      { computeTrialBalance },
+      { composeTrialBalanceView },
+    ] = await Promise.all([
+      import(getStaticRoot() + "js/crypto/shared-client.js"),
+      import(getStaticRoot() + "js/crypto/journals_client.js"),
+      import(getStaticRoot() + "js/crypto/reports/trial_balance.js"),
+      import(getStaticRoot() + "js/crypto/reports/trial_balance_view.js"),
+    ]);
+
+    client = new SharedCryptoClient(getSharedWorkerUrl());
     const status = await client.status();
     if (!status.hasKey) {
       _setStatusMessage(
@@ -200,7 +201,9 @@ async function _run() {
     _setStatusMessage("試算表の取得に失敗しました: " + (e.message || e), "danger");
     _clearTbody();
   } finally {
-    try { client.close(); } catch (_e) { /* ignore */ }
+    if (client) {
+      try { client.close(); } catch (_e) { /* ignore */ }
+    }
   }
 }
 
