@@ -39,41 +39,50 @@ function _clearStatus() {
 }
 
 
+function _td(text, opts = {}) {
+  const td = document.createElement("td");
+  if (opts.className) td.className = opts.className;
+  if (opts.colSpan) td.colSpan = opts.colSpan;
+  if (opts.bold) {
+    const strong = document.createElement("strong");
+    strong.textContent = text;
+    td.appendChild(strong);
+  } else {
+    td.textContent = text;
+  }
+  return td;
+}
+
+
 function _renderSection(section) {
   const frag = document.createDocumentFragment();
   // 区分ヘッダー
   const header = document.createElement("tr");
   header.className = "table-secondary";
-  const th = document.createElement("td");
-  th.colSpan = 5;
-  th.innerHTML = "<strong>" + section.typeName + "</strong>";
-  header.appendChild(th);
+  header.appendChild(_td(section.typeName, { colSpan: 5, bold: true }));
   frag.appendChild(header);
 
   for (const row of section.rows) {
     const tr = document.createElement("tr");
     tr.setAttribute("data-trial-balance-row", row.code);
-    tr.innerHTML = (
-      '<td class="d-mobile-none">' + row.code + "</td>" +
-      "<td>" + row.name + "</td>" +
-      '<td class="text-end">' + (row.debit ? _fmtYen(row.debit) : "") + "</td>" +
-      '<td class="text-end">' + (row.credit ? _fmtYen(row.credit) : "") + "</td>" +
-      '<td class="text-end ' + (row.balance < 0 ? "text-danger" : "") + '">' +
-        _fmtYen(row.balance) + "</td>"
-    );
+    tr.appendChild(_td(row.code, { className: "d-mobile-none" }));
+    tr.appendChild(_td(row.name));
+    tr.appendChild(_td(row.debit ? _fmtYen(row.debit) : "", { className: "text-end" }));
+    tr.appendChild(_td(row.credit ? _fmtYen(row.credit) : "", { className: "text-end" }));
+    tr.appendChild(_td(_fmtYen(row.balance), {
+      className: "text-end" + (row.balance < 0 ? " text-danger" : ""),
+    }));
     frag.appendChild(tr);
   }
 
   // 小計
   const sub = document.createElement("tr");
   sub.className = "table-info";
-  sub.innerHTML = (
-    '<td class="d-mobile-none"></td>' +
-    '<td class="text-end"><strong>' + section.typeName + " 小計</strong></td>" +
-    '<td class="text-end"><strong>' + _fmtYen(section.subtotal.debit) + "</strong></td>" +
-    '<td class="text-end"><strong>' + _fmtYen(section.subtotal.credit) + "</strong></td>" +
-    '<td class="text-end"><strong>' + _fmtYen(section.subtotal.balance) + "</strong></td>"
-  );
+  sub.appendChild(_td("", { className: "d-mobile-none" }));
+  sub.appendChild(_td(section.typeName + " 小計", { className: "text-end", bold: true }));
+  sub.appendChild(_td(_fmtYen(section.subtotal.debit), { className: "text-end", bold: true }));
+  sub.appendChild(_td(_fmtYen(section.subtotal.credit), { className: "text-end", bold: true }));
+  sub.appendChild(_td(_fmtYen(section.subtotal.balance), { className: "text-end", bold: true }));
   frag.appendChild(sub);
   return frag;
 }
@@ -82,13 +91,12 @@ function _renderSection(section) {
 function _renderView(view) {
   const tbody = document.getElementById("trial-balance-tbody");
   if (!tbody) return;
-  tbody.innerHTML = "";
+  while (tbody.firstChild) tbody.removeChild(tbody.firstChild);
   if (view.sections.length === 0) {
     const tr = document.createElement("tr");
-    tr.innerHTML = (
-      '<td colspan="5" class="text-center text-muted py-4">' +
-      "表示できる仕訳がありません</td>"
-    );
+    tr.appendChild(_td("表示できる仕訳がありません", {
+      colSpan: 5, className: "text-center text-muted py-4",
+    }));
     tbody.appendChild(tr);
     return;
   }
