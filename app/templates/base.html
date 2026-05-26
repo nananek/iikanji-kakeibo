@@ -210,6 +210,20 @@
     </script>
     {% endif %}
   {% endwith %}
+  <script>
+    // クライアント完結フロー (entries_builder + batch API) は server flash を
+    // 経由できないので、sessionStorage に置いた成功メッセージを読み出して
+    // showToast で表示する。importConfirm.submitImportBatch が書き込み元。
+    document.addEventListener('DOMContentLoaded', function() {
+      try {
+        var msg = sessionStorage.getItem('flash:success');
+        if (msg) {
+          sessionStorage.removeItem('flash:success');
+          showToast(msg, 'success');
+        }
+      } catch (_e) { /* ignore */ }
+    });
+  </script>
   <script src="{{ url_for('static', filename='js/app.js') }}"></script>
   {% block scripts %}{% endblock %}
 </body>

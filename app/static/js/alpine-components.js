@@ -1284,6 +1284,17 @@ document.addEventListener('alpine:init', function() {
           try {
             sessionStorage.removeItem(importSource + 'Import:parsed');
           } catch (_e) { /* ignore */ }
+          // ナビゲーション後の cashbook ページで表示する成功フラッシュ。
+          // server flash の代替 (旧 confirm POST が flash していたものを
+          // クライアント完結フローでも維持)。base.html の DOMContentLoaded
+          // hook が読んで showToast を呼ぶ。
+          var importedCount = (body && body.created_count) || validRows.length;
+          try {
+            sessionStorage.setItem(
+              'flash:success',
+              importedCount + '件を取り込みました。',
+            );
+          } catch (_e) { /* ignore */ }
           window.location.href = '/cashbook/';
         } catch (err) {
           if (submitBtn) {
