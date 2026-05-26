@@ -362,32 +362,35 @@ async function _run() {
       || "debit";
 
     const pf = params.pf || 0;
-    // BCB から carry_forward (前期繰越) を取得。pf=0 (期首) のときは 0、
-    // pf>=1 のときは year の period=pf-1 の cumulative を normal_balance
-    // 側で netted した値を openingBalance に流す。
-    let openingBalance = 0;
-    if (pf >= 1) {
-      try {
-        const blobs = await fetchBalanceCacheBlobs({
+    // #230: BCB fetch と journals fetch を並列化。pf=0 (期首) のときは
+    // BCB 不要なので空 dict を即 resolve、pf>=1 で前 period の blob を取る。
+    const bcbPromise = pf >= 1
+      ? fetchBalanceCacheBlobs({
           client, userId: params.user_id, fiscalYear: params.year,
-        });
-        const cacheForPeriod = blobs[pf - 1];
-        if (cacheForPeriod) {
-          const pair = cacheForPeriod[params.account_code];
-          if (Array.isArray(pair) && pair.length >= 2) {
-            const [cumD, cumC] = pair;
-            openingBalance = normalBalance === "debit"
-              ? (cumD - cumC) : (cumC - cumD);
-          }
-        }
-      } catch (e) {
-        console.warn("ledger_renderer: BCB fetch failed, openingBalance=0", e);
-      }
-    }
-
-    const entries = await fetchJournalsForYear({
+        }).catch((e) => {
+          console.warn(
+            "ledger_renderer: BCB fetch failed, openingBalance=0", e,
+          );
+          return {};
+        })
+      : Promise.resolve({});
+    const journalsPromise = fetchJournalsForYear({
       client, userId: params.user_id, fiscalYear: params.year,
     });
+    const [blobs, entries] = await Promise.all([bcbPromise, journalsPromise]);
+
+    let openingBalance = 0;
+    if (pf >= 1) {
+      const cacheForPeriod = blobs[pf - 1];
+      if (cacheForPeriod) {
+        const pair = cacheForPeriod[params.account_code];
+        if (Array.isArray(pair) && pair.length >= 2) {
+          const [cumD, cumC] = pair;
+          openingBalance = normalBalance === "debit"
+            ? (cumD - cumC) : (cumC - cumD);
+        }
+      }
+    }
     const ledgerResult = computeLedger(entries, {
       accountCode: params.account_code,
       normalBalance,

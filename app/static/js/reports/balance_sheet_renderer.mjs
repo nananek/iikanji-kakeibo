@@ -219,23 +219,23 @@ async function _run() {
     // 1 リクエストに置換。前年末累計を priorCumulative に流し、当年 entries
     // のみ別途 fetch する。前年 BCB が未確定/欠落の場合は priorCumulative=
     // 空のまま当年 entries だけで描画する (degraded fallback)。
-    let priorCumulative = {};
-    if (params.year > params.min_year) {
-      try {
-        const blobs = await fetchBalanceCacheBlobs({
+    // #230: 前年 BCB fetch と当年 journals fetch を並列化。
+    const bcbPromise = params.year > params.min_year
+      ? fetchBalanceCacheBlobs({
           client, userId: params.user_id, fiscalYear: params.year - 1,
-        });
-        if (blobs[15]) priorCumulative = blobs[15];
-      } catch (e) {
-        console.warn(
-          "balance_sheet_renderer: prior BCB fetch failed, priorCumulative={}",
-          e,
-        );
-      }
-    }
-    const entries = await fetchJournalsForYear({
+        }).catch((e) => {
+          console.warn(
+            "balance_sheet_renderer: prior BCB fetch failed, priorCumulative={}",
+            e,
+          );
+          return {};
+        })
+      : Promise.resolve({});
+    const journalsPromise = fetchJournalsForYear({
       client, userId: params.user_id, fiscalYear: params.year,
     });
+    const [blobs, entries] = await Promise.all([bcbPromise, journalsPromise]);
+    const priorCumulative = blobs[15] || {};
 
     const jsResult = computeBalanceSheet(entries, {
       accountTypeByCode, normalBalanceByCode, accountNameByCode,
