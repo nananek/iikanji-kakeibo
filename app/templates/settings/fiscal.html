@@ -95,4 +95,14 @@
     </table>
   </div>
 </div>
+
+<script id="bcb-sync-params" type="application/json">
+{{ {
+  "year": year,
+  "closed_period": closed_period,
+  "user_id": current_user.id,
+  "is_audit_proxy": is_audit_proxy,
+} | tojson }}
+</script>
+<script type="module" src="{{ url_for('static', filename='js/reports/bcb_sync_hook.mjs') }}"></script>
 {% endblock %}
