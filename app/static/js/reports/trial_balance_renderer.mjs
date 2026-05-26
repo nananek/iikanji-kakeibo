@@ -54,7 +54,17 @@ function _td(text, opts = {}) {
 }
 
 
-function _renderSection(section) {
+function _ledgerHref(code, params) {
+  const u = new URL("/reports/ledger", globalThis.location.origin);
+  u.searchParams.set("year", String(params.fiscal_year));
+  u.searchParams.set("account_code", code);
+  u.searchParams.set("pf", String(params.fiscal_period_from));
+  u.searchParams.set("pt", String(params.fiscal_period_to));
+  return u.pathname + u.search;
+}
+
+
+function _renderSection(section, params) {
   const frag = document.createDocumentFragment();
   // 区分ヘッダー
   const header = document.createElement("tr");
@@ -66,7 +76,14 @@ function _renderSection(section) {
     const tr = document.createElement("tr");
     tr.setAttribute("data-trial-balance-row", row.code);
     tr.appendChild(_td(row.code, { className: "d-mobile-none" }));
-    tr.appendChild(_td(row.name));
+    // 科目名は元帳へのリンクにする (textContent でユーザー入力を扱う)
+    const nameTd = document.createElement("td");
+    const a = document.createElement("a");
+    a.className = "text-decoration-none";
+    a.href = _ledgerHref(row.code, params);
+    a.textContent = row.name;
+    nameTd.appendChild(a);
+    tr.appendChild(nameTd);
     tr.appendChild(_td(row.debit ? _fmtYen(row.debit) : "", { className: "text-end" }));
     tr.appendChild(_td(row.credit ? _fmtYen(row.credit) : "", { className: "text-end" }));
     tr.appendChild(_td(_fmtYen(row.balance), {
@@ -88,7 +105,7 @@ function _renderSection(section) {
 }
 
 
-function _renderView(view) {
+function _renderView(view, params) {
   const tbody = document.getElementById("trial-balance-tbody");
   if (!tbody) return;
   while (tbody.firstChild) tbody.removeChild(tbody.firstChild);
@@ -101,7 +118,7 @@ function _renderView(view) {
     return;
   }
   for (const section of view.sections) {
-    tbody.appendChild(_renderSection(section));
+    tbody.appendChild(_renderSection(section, params));
   }
 }
 
@@ -160,7 +177,7 @@ async function _run() {
       fiscalPeriodTo: params.fiscal_period_to,
     });
     const view = composeTrialBalanceView(jsRows, accountsMeta);
-    _renderView(view);
+    _renderView(view, params);
   } catch (e) {
     _setStatusMessage("試算表の取得に失敗しました: " + (e.message || e), "danger");
   } finally {
