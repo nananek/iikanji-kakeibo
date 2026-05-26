@@ -82,12 +82,10 @@ export async function runBackupExport() {
     }
 
     _setStatus("サーバから暗号文付きデータを取得しています…", "info");
-    const csrfToken = document.querySelector('meta[name="csrf-token"]')
-      ?.getAttribute("content") || "";
+    // /api/v1/* は CSRF 免除エンドポイント、かつ GET なので CSRFToken は不要。
     const resp = await fetch("/api/v1/backup/export", {
       method: "GET",
       credentials: "same-origin",
-      headers: { "X-CSRFToken": csrfToken },
     });
     if (!resp.ok) {
       const text = await resp.text();

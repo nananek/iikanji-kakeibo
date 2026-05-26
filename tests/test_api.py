@@ -1167,11 +1167,19 @@ class TestBackupExport:
         assert codes == {"5010", "1010"}
 
     def test_other_user_data_excluded(
-        self, app, client, db, user, auth_header,
+        self, app, client, db, user, accounts, auth_header,
     ):
-        """別ユーザーのデータが leak しないこと (IDOR 確認)。"""
+        """別ユーザーのデータが leak しないこと (IDOR 確認)。
+        全テーブルの user 分離を assertion で明示する (PR #243 review
+        follow-up)。"""
+        from datetime import date as d
+        from app.models.account import Account, AccountType
         from app.models.user import User
         from app.models.fiscal import FiscalClose
+        from app.models.journal import JournalEntry, JournalEntryLine
+        from app.models.medical import MedicalExpense
+        from app.models.balance_cache import BalanceCacheBlob
+
         other = User(
             username="other_user_for_backup",
             email="other_backup@example.com",
@@ -1180,17 +1188,59 @@ class TestBackupExport:
         other.set_password("password123")
         db.session.add(other)
         db.session.flush()
-        db.session.add(FiscalClose(user_id=other.id, year=2026, closed_period=5))
+        # 他人の account / fiscal_close / journal / medical / BCB を作る
+        asset_type = AccountType.query.filter_by(code="asset").first()
+        db.session.add(Account(
+            user_id=other.id, code="9999", name="他人の現金",
+            account_type_id=asset_type.id,
+        ))
+        db.session.add(FiscalClose(
+            user_id=other.id, year=2026, closed_period=5,
+        ))
+        je = JournalEntry(
+            user_id=other.id, date=d(2026, 3, 15),
+            entry_number=1, description="他人の仕訳",
+        )
+        db.session.add(je)
+        db.session.flush()
+        db.session.add(JournalEntryLine(
+            journal_entry_id=je.id,
+            account_user_id=other.id, account_code="9999",
+            debit_amount=999, credit_amount=0,
+        ))
+        db.session.add(MedicalExpense(
+            user_id=other.id, date=d(2026, 4, 1),
+            patient_name="他人", hospital_name="他人病院",
+            amount_paid=12345, insurance_reimbursement=0,
+        ))
+        db.session.add(BalanceCacheBlob(
+            user_id=other.id, year=2026, period=5,
+            encrypted_blob=b"\xff\xff", blob_iv=b"\x00" * 12,
+        ))
         db.session.commit()
 
         resp = client.get("/api/v1/backup/export", headers=auth_header)
         assert resp.status_code == 200
         data = resp.get_json()["data"]
-        # 他人の fiscal_close が含まれていないこと
+        # 他人の account
+        assert all(a["code"] != "9999" for a in data["accounts"])
+        # 他人の fiscal_close
         assert all(
             fc["year"] != 2026 or fc["closed_period"] != 5
             for fc in data["fiscal_closes"]
         )
+        # 他人の journal_entries / lines
+        assert all(e["description"] != "他人の仕訳" for e in data["journal_entries"])
+        assert all(
+            l["debit_amount"] != 999 for l in data["journal_entry_lines"]
+        )
+        # 他人の medical_expense
+        assert all(
+            m["amount_paid"] != 12345 for m in data["medical_expenses"]
+        )
+        # 他人の BCB (year/period が同じ組み合わせでも他人のは含まれない)
+        # ※ 自分の BCB が存在しなければ list 自体空
+        assert data["balance_cache_blobs"] == []
 
     def test_encrypted_blob_passthrough(
         self, client, db, user, auth_header,

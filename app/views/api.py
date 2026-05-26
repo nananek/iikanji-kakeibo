@@ -812,8 +812,10 @@ def backup_export():
                 {
                     "year": b.year,
                     "period": b.period,
-                    "encrypted_blob": b64encode(b.encrypted_blob).decode("ascii"),
-                    "blob_iv": b64encode(b.blob_iv).decode("ascii"),
+                    # _b64_or_none に統一 (PR #243 review follow-up): 現状
+                    # nullable=False だが将来カラム追加時の一貫性のため。
+                    "encrypted_blob": _b64_or_none(b.encrypted_blob),
+                    "blob_iv": _b64_or_none(b.blob_iv),
                     "updated_at": b.updated_at.isoformat() if b.updated_at else None,
                 }
                 for b in blobs
