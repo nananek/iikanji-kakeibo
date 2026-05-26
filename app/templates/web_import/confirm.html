@@ -10,15 +10,20 @@
   var _restrictedBefore = {{ restricted_before_year | tojson }};
   var _defaultIncomeId = {{ default_income_id | tojson }};
   var _defaultExpenseId = {{ default_expense_id | tojson }};
+  // x-data 属性内に直接 tojson 結果を埋めるとダブルクォートが衝突して
+  // HTML パースが壊れる。事前に変数化して x-data からは参照だけする。
+  var _paymentCode = {{ payment_account.code | tojson }};
+  var _capitalCode = {{ (capital_code or '') | tojson }};
 </script>
 <div x-data="importConfirm({
   rows: _importRows,
-  paymentAccountCode: {{ payment_account.code | tojson }},
+  paymentAccountCode: _paymentCode,
   defaultIncomeId: _defaultIncomeId,
   defaultExpenseId: _defaultExpenseId,
   closedPeriods: _closedPeriods,
   restrictedBeforeYear: _restrictedBefore,
-  capitalCode: {{ (capital_code or '') | tojson }}
+  capitalCode: _capitalCode,
+  importSource: 'web'
 })" @drag-select-update="_syncFromCheckboxes()">
 
 {% set import_step_label = "Step 2:" %}
@@ -33,7 +38,7 @@
    E3-F で resolve_bearer_or_session が acting_as_user_id を見るようにしたら
    この分岐は不要。 #}
 {% if not is_audit_proxy %}
-  {% set submit_handler = 'submitWebImportBatch($event)' %}
+  {% set submit_handler = 'submitImportBatch($event)' %}
 {% endif %}
 {% include "_partials/import_confirm_table.html" %}
 
