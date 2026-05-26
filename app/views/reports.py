@@ -231,81 +231,50 @@ def bs():
 @bp.route("/pl")
 @login_required
 def pl():
-    """損益計算書"""
+    """損益計算書 (クライアント描画)。サーバ集計は撤去済 (Phase E3-F-3b)。
+    クライアントが /api/v1/journals から自分の MK で復号して集計する。
+    事業所得 (biz_income) は現時点ではサーバ計算結果を JSON で渡す
+    (BCB / tax_form クライアント完結化は後続 PR)。
+    """
     from app.services.tax_form import get_business_account_codes, get_business_income
 
     year = request.args.get("year", date.today().year, type=int)
     month = request.args.get("month", 0, type=int)
     user_id = get_effective_user_id()
 
-    if month:
-        summary = get_income_expense_summary(user_id, year, month)
-    else:
-        summary = get_income_expense_summary(user_id, year)
+    accounts = (
+        Account.query
+        .filter_by(user_id=user_id)
+        .order_by(Account.code)
+        .all()
+    )
+    allowed_codes = get_allowed_account_codes()
+    if allowed_codes is not None:
+        accounts = [a for a in accounts if a.code in allowed_codes]
 
-    # 事業科目の判定
+    # 事業科目セット (TaxFormMapping 経由) — P/L はこれらを除外して集計する
     biz_codes = get_business_account_codes(user_id)
+
+    # accounts_meta: name は allowed_codes フィルタ適用済みのみ (Lv2 非公開は除外)。
+    # is_business は P/L 側で除外用フラグ。
+    accounts_meta = {
+        a.code: {
+            "type": a.account_type.code,
+            "name": mask_account_name(a.name, a.code, allowed_codes),
+            "is_business": a.code in biz_codes,
+        }
+        for a in accounts
+    }
+
     biz_income = get_business_income(user_id, year, month or None)
-
-    # 科目別内訳
-    revenue_type = AccountType.query.filter_by(code="revenue").first()
-    expense_type = AccountType.query.filter_by(code="expense").first()
-
-    start = date(year, month or 1, 1)
-    if month:
-        if month == 12:
-            end = date(year + 1, 1, 1)
-        else:
-            end = date(year, month + 1, 1)
-    else:
-        end = date(year + 1, 1, 1)
-
-    def get_breakdown(type_id, amount_col):
-        q = (
-            db.session.query(
-                Account.name,
-                Account.code,
-                func.coalesce(func.sum(amount_col), 0).label("total"),
-            )
-            .join(JournalEntryLine, db.and_(
-                JournalEntryLine.account_user_id == Account.user_id,
-                JournalEntryLine.account_code == Account.code,
-            ))
-            .join(JournalEntry, JournalEntry.id == JournalEntryLine.journal_entry_id)
-            .filter(
-                Account.user_id == user_id,
-                Account.account_type_id == type_id,
-                JournalEntry.date >= start,
-                JournalEntry.date < end,
-            )
-        )
-        # 事業科目がある場合はP/Lから除外
-        if biz_codes:
-            q = q.filter(Account.code.notin_(biz_codes))
-        return (
-            q.group_by(Account.name, Account.code)
-            .order_by(Account.code)
-            .having(func.sum(amount_col) > 0)
-            .all()
-        )
-
-    income_breakdown = (
-        get_breakdown(revenue_type.id, JournalEntryLine.credit_amount)
-        if revenue_type else []
-    )
-    expense_breakdown = (
-        get_breakdown(expense_type.id, JournalEntryLine.debit_amount)
-        if expense_type else []
-    )
 
     return render_template(
         "reports/pl.html",
         year=year,
         month=month,
-        summary=summary,
-        income_breakdown=income_breakdown,
-        expense_breakdown=expense_breakdown,
+        accounts_meta=accounts_meta,
         biz_income=biz_income,
+        effective_user_id=user_id,
     )
 
 

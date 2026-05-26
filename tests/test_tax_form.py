@@ -432,6 +432,27 @@ class TestTaxFormReport:
 
 
 class TestPLBusinessCollapse:
+    """E3-F-3b 以降、P/L はクライアント描画。テストは accounts_meta JSON の
+    is_business フラグと biz_income JSON の中身を検証する形に変えた。"""
+
+    @staticmethod
+    def _parse_pl(html):
+        import json
+        import re
+        meta_m = re.search(
+            r'<script id="pl-accounts-meta"[^>]*>(.*?)</script>',
+            html, flags=re.DOTALL,
+        )
+        params_m = re.search(
+            r'<script id="pl-server-params"[^>]*>(.*?)</script>',
+            html, flags=re.DOTALL,
+        )
+        assert meta_m and params_m
+        return (
+            json.loads(meta_m.group(1).strip()),
+            json.loads(params_m.group(1).strip()),
+        )
+
     def test_pl_shows_business_income(self, logged_in_client, db, user, accounts, account_types, tax_fields):
         biz_rev = Account(
             user_id=user.id, code="9010", name="売上",
@@ -457,14 +478,17 @@ class TestPLBusinessCollapse:
         db.session.commit()
 
         resp = logged_in_client.get("/reports/pl?year=2026")
-        html = resp.data.decode()
         assert resp.status_code == 200
-        assert "事業所得" in html
-        # 売上（個別科目）は表示されない
-        assert "売上" not in html or "事業所得" in html
+        meta, params = self._parse_pl(resp.data.decode())
+        # 9010 は事業科目フラグ付き
+        assert meta["9010"]["is_business"] is True
+        # biz_income に集計が反映されている
+        assert params["biz_income"]["has_mappings"] is True
+        assert params["biz_income"]["income"] == 200000
 
     def test_pl_without_mappings_shows_all(self, logged_in_client, db, user, accounts, account_types):
-        """マッピングなし時は従来通り全科目表示"""
+        """マッピングなし時は biz_income.has_mappings=False で
+        accounts_meta に is_business=True の科目は出ない"""
         entry = JournalEntry(
             user_id=user.id, date=date(2026, 1, 15),
             entry_number=1, description="給与", source="journal",
@@ -479,13 +503,17 @@ class TestPLBusinessCollapse:
         db.session.commit()
 
         resp = logged_in_client.get("/reports/pl?year=2026")
-        html = resp.data.decode()
         assert resp.status_code == 200
-        assert "給与収入" in html
-        assert "事業所得" not in html
+        meta, params = self._parse_pl(resp.data.decode())
+        # 給与収入 (4010) は通常科目
+        assert "4010" in meta
+        assert meta["4010"]["is_business"] is False
+        # 事業マッピングなし → biz_income.has_mappings=False
+        assert params["biz_income"]["has_mappings"] is False
 
     def test_pl_household_expense_not_hidden(self, logged_in_client, db, user, accounts, account_types, tax_fields):
-        """事業科目をマッピングしても、家計科目はP/Lに残る"""
+        """事業科目をマッピングしても、家計科目は accounts_meta に残り、
+        事業科目は is_business=True で client が除外する"""
         biz_exp = Account(
             user_id=user.id, code="9210", name="租税公課",
             account_type_id=account_types["expense"].id,
@@ -496,7 +524,6 @@ class TestPLBusinessCollapse:
         set_mapping(user.id, "9210", tax_fields["8"].id)
         db.session.commit()
 
-        # 家計費用
         e1 = JournalEntry(
             user_id=user.id, date=date(2026, 1, 10),
             entry_number=1, description="スーパー", source="journal",
@@ -507,7 +534,6 @@ class TestPLBusinessCollapse:
             JournalEntryLine(account_user_id=user.id, account_code="1010",
                              debit_amount=0, credit_amount=5000),
         ]
-        # 事業費用
         e2 = JournalEntry(
             user_id=user.id, date=date(2026, 1, 15),
             entry_number=2, description="税金", source="journal",
@@ -522,9 +548,14 @@ class TestPLBusinessCollapse:
         db.session.commit()
 
         resp = logged_in_client.get("/reports/pl?year=2026")
-        html = resp.data.decode()
-        assert "食費" in html
-        assert "租税公課" not in html  # 事業科目はP/Lに出ない
+        meta, _ = self._parse_pl(resp.data.decode())
+        # 5010 (食費) は accounts_meta に残り、is_business=False
+        assert "5010" in meta
+        assert meta["5010"]["is_business"] is False
+        # 9210 (租税公課) は accounts_meta に存在し is_business=True
+        # (renderer 側で除外する)
+        assert "9210" in meta
+        assert meta["9210"]["is_business"] is True
 
 
 class TestSubtotalCalculation:
