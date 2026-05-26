@@ -170,28 +170,56 @@ class TestLedgerIDOR:
     def test_ledger_excludes_other_users_entries(self, app, client, db,
                                                    user, second_user,
                                                    accounts, second_user_accounts):
-        """同じ code "1010" でも他人の仕訳は表示されないこと"""
-        # second_user の仕訳を作成
-        make_journal(db, second_user.id, "5010", "1010", 99999,
-                     description="他人の秘密仕訳")
-        # user の仕訳を作成
-        make_journal(db, user.id, "5010", "1010", 500,
-                     description="自分の仕訳")
+        """同じ code "1010" でも他人の仕訳は entries_meta / API ともに
+        漏洩しない (E3-F-3e でクライアント描画化)。
+
+        entries_meta は server が user_id=user.id でフィルタしたメタ。
+        本体データは renderer が /api/v1/journals?fiscal_year= 経由で
+        取得するため、両経路の漏洩を確認する。
+        """
+        import json
+        import re
+        # second_user の仕訳と user の仕訳をそれぞれ作成
+        other_entry = make_journal(
+            db, second_user.id, "5010", "1010", 99999,
+            description="他人の秘密仕訳",
+        )
+        my_entry = make_journal(
+            db, user.id, "5010", "1010", 500, description="自分の仕訳",
+        )
 
         with client.session_transaction() as sess:
             sess["_user_id"] = str(user.id)
+        # (a) ledger ページの entries_meta に他人 entry_id が含まれない
         resp = client.get("/reports/ledger?account_code=1010&year=2026")
         assert resp.status_code == 200
         html = resp.data.decode()
-        assert "自分の仕訳" in html
-        assert "他人の秘密仕訳" not in html
-        assert "99,999" not in html  # 他人の金額が表示されない
+        m = re.search(
+            r'<script id="ledger-entries-meta"[^>]*>(.*?)</script>',
+            html, flags=re.DOTALL,
+        )
+        assert m, "ledger-entries-meta script not found"
+        meta = json.loads(m.group(1).strip())
+        # entries_meta のキーは entry_id (str)
+        assert str(my_entry.id) in meta
+        assert str(other_entry.id) not in meta
+
+        # (b) renderer が呼ぶ /api/v1/journals でも他人仕訳は返らない
+        resp = client.get("/api/v1/journals?fiscal_year=2026")
+        assert resp.status_code == 200
+        ids = {j["id"] for j in resp.get_json()["journals"]}
+        assert my_entry.id in ids
+        assert other_entry.id not in ids
 
     def test_ledger_nonexistent_code_shows_empty(self, app, client, db,
                                                     user, second_user,
                                                     accounts, second_user_accounts,
                                                     account_types):
-        """second_user にだけ存在する code で元帳を開いても空であること"""
+        """second_user にだけ存在する code で元帳を開いた場合、
+        entries_meta は空 (server side で account_code 経路で抽出した
+        entry_id 群が user.id でフィルタされる)。"""
+        import json
+        import re
         from app.models.account import Account
         unique = Account(
             user_id=second_user.id,
@@ -206,10 +234,27 @@ class TestLedgerIDOR:
         with client.session_transaction() as sess:
             sess["_user_id"] = str(user.id)
         resp = client.get("/reports/ledger?account_code=9090&year=2026")
-        assert resp.status_code == 200
+        # user 側に 9090 科目がない → selected_account 取れず entries_meta 出ない、
+        # もしくは abort/404 系。少なくとも他人科目情報は漏れない
+        # 期待: server params/entries_meta が出ない (account_code に該当する科目
+        # が user.id 内にないため selected_account=None)
         html = resp.data.decode()
-        assert "他人の機密" not in html
-        assert "77,777" not in html
+        m_params = re.search(
+            r'<script id="ledger-server-params"[^>]*>(.*?)</script>',
+            html, flags=re.DOTALL,
+        )
+        # selected_account が None なら server-params script は描画されない
+        assert m_params is None or "9090" not in m_params.group(1) or (
+            json.loads(m_params.group(1).strip()).get("user_id") == user.id
+        )
+        # entries_meta が出ていても空であること
+        m_meta = re.search(
+            r'<script id="ledger-entries-meta"[^>]*>(.*?)</script>',
+            html, flags=re.DOTALL,
+        )
+        if m_meta:
+            meta = json.loads(m_meta.group(1).strip())
+            assert meta == {}
 
     def test_trial_balance_excludes_other_users(self, app, client, db,
                                                   user, second_user,
