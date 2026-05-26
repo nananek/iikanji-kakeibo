@@ -100,6 +100,23 @@ def passkeys():
     return render_template("settings/passkeys.html", credentials=credentials)
 
 
+@bp.route("/backup")
+@login_required
+def backup():
+    """全データバックアップ (Phase v5 BU-1)。
+
+    クライアントが GET /api/v1/backup/export を叩いて暗号文付き JSON を取り、
+    本人 MK で復号 → 平文 JSON ファイルとしてダウンロードする。サーバは
+    テンプレートを返すだけ。
+
+    監査ユーザーは他人のデータを export できないため対象外。
+    """
+    if current_user.user_type == "auditor":
+        flash("監査アカウントは全データバックアップの対象外です。", "info")
+        return redirect(url_for("settings.index"))
+    return render_template("settings/backup.html")
+
+
 @bp.route("/encryption-keys")
 @login_required
 def encryption_keys():

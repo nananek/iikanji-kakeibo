@@ -1123,6 +1123,94 @@ class TestBalanceCacheBlobs:
         assert resp.status_code == 403
 
 
+# --- 全データバックアップ (v5 BU-1) ---
+
+
+class TestBackupExport:
+    def test_unauthenticated_rejected(self, client):
+        resp = client.get("/api/v1/backup/export")
+        assert resp.status_code == 401
+
+    def test_empty_user_returns_skeleton(self, client, db, user, auth_header):
+        resp = client.get("/api/v1/backup/export", headers=auth_header)
+        assert resp.status_code == 200, resp.get_json()
+        data = resp.get_json()
+        assert data["version"] == "1.0"
+        assert data["user_id"] == user.id
+        assert "exported_at" in data
+        # 空ユーザでも data dict のキーは全部揃う (UI 側で undefined アクセス防止)
+        assert set(data["data"].keys()) >= {
+            "accounts", "fiscal_closes", "journal_entries",
+            "journal_entry_lines", "medical_expenses", "balance_cache_blobs",
+        }
+
+    def test_user_data_included(
+        self, client, db, user, accounts, auth_header,
+    ):
+        from tests.conftest import make_journal
+        from datetime import date as d
+        make_journal(
+            db, user.id, "5010", "1010", 1000,
+            entry_date=d(2026, 2, 15), source="cashbook",
+            description="食費",
+        )
+        resp = client.get("/api/v1/backup/export", headers=auth_header)
+        assert resp.status_code == 200
+        data = resp.get_json()["data"]
+        # 自分のアカウントが含まれる
+        assert any(a["code"] == "5010" for a in data["accounts"])
+        # 仕訳が含まれる
+        assert len(data["journal_entries"]) == 1
+        assert data["journal_entries"][0]["description"] == "食費"
+        # ライン (借方=5010, 貸方=1010) が両方とも含まれる
+        codes = {l["account_code"] for l in data["journal_entry_lines"]}
+        assert codes == {"5010", "1010"}
+
+    def test_other_user_data_excluded(
+        self, app, client, db, user, auth_header,
+    ):
+        """別ユーザーのデータが leak しないこと (IDOR 確認)。"""
+        from app.models.user import User
+        from app.models.fiscal import FiscalClose
+        other = User(
+            username="other_user_for_backup",
+            email="other_backup@example.com",
+            user_type="personal",
+        )
+        other.set_password("password123")
+        db.session.add(other)
+        db.session.flush()
+        db.session.add(FiscalClose(user_id=other.id, year=2026, closed_period=5))
+        db.session.commit()
+
+        resp = client.get("/api/v1/backup/export", headers=auth_header)
+        assert resp.status_code == 200
+        data = resp.get_json()["data"]
+        # 他人の fiscal_close が含まれていないこと
+        assert all(
+            fc["year"] != 2026 or fc["closed_period"] != 5
+            for fc in data["fiscal_closes"]
+        )
+
+    def test_encrypted_blob_passthrough(
+        self, client, db, user, auth_header,
+    ):
+        """encrypted_blob / blob_iv が base64 で含まれる (BCB 経由)。"""
+        import base64
+        from app.models.balance_cache import BalanceCacheBlob
+        db.session.add(BalanceCacheBlob(
+            user_id=user.id, year=2026, period=12,
+            encrypted_blob=b"\x01\x02\x03",
+            blob_iv=b"\x00" * 12,
+        ))
+        db.session.commit()
+        resp = client.get("/api/v1/backup/export", headers=auth_header)
+        assert resp.status_code == 200
+        blobs = resp.get_json()["data"]["balance_cache_blobs"]
+        assert len(blobs) == 1
+        assert blobs[0]["encrypted_blob"] == base64.b64encode(b"\x01\x02\x03").decode()
+
+
 # --- 下書き一覧 ---
 
 

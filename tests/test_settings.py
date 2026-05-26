@@ -72,6 +72,30 @@ class TestSettingsIndex:
         assert "監査アクセス管理" not in html
 
 
+class TestBackupView:
+    """GET /settings/backup — 全データバックアップ (Phase v5 BU-1)"""
+
+    def test_unauthenticated_redirects(self, client):
+        resp = client.get("/settings/backup")
+        assert resp.status_code == 302
+        assert "/login" in resp.headers["Location"]
+
+    def test_personal_user_200(self, db, logged_in_client):
+        resp = logged_in_client.get("/settings/backup")
+        assert resp.status_code == 200
+        html = resp.data.decode()
+        assert "全データバックアップ" in html
+        # クライアント JS が読み込まれている
+        assert "backup_export_renderer.mjs" in html
+
+    def test_auditor_redirects_to_settings_index(self, app, client, auditor):
+        with client.session_transaction() as sess:
+            sess["_user_id"] = str(auditor.id)
+        resp = client.get("/settings/backup", follow_redirects=False)
+        assert resp.status_code == 302
+        assert "/settings/" in resp.headers["Location"]
+
+
 class TestEncryptionKeysView:
     """GET /settings/encryption-keys — E2EE 鍵管理ウィザード (v5.0 準備)"""
 

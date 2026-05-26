@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}全データバックアップ - いいかんじ™家計簿{% endblock %}
+
+{% block content %}
+<h2 class="mb-3"><i class="bi bi-download"></i> 全データバックアップ</h2>
+
+<div class="alert alert-info small">
+  <i class="bi bi-info-circle"></i>
+  <strong>プレビュー機能 (BU-1):</strong>
+  仕訳・科目・医療費・月次確定・残高キャッシュを平文 JSON ファイルとして
+  ダウンロードします。暗号化アーカイブ (.ikbackup) 形式や、復元 (リストア)
+  機能は今後の PR で追加予定です。
+</div>
+
+<div class="card shadow-sm mb-4">
+  <div class="card-body">
+    <h5 class="card-title mb-3">エクスポート対象</h5>
+    <ul class="small mb-3">
+      <li>勘定科目 (accounts)</li>
+      <li>仕訳伝票・仕訳明細 (journal_entries, journal_entry_lines)</li>
+      <li>医療費 (medical_expenses)</li>
+      <li>月次確定 (fiscal_closes)</li>
+      <li>残高キャッシュ (balance_cache_blobs)</li>
+    </ul>
+    <p class="small text-muted mb-3">
+      <i class="bi bi-shield-check"></i>
+      サーバは暗号文のまま返します。本ブラウザの暗号鍵 (MK) で復号して
+      平文 JSON を生成するので、サーバ管理者からは中身が見えません。
+    </p>
+
+    <div id="backup-status" class="alert alert-warning small d-none"></div>
+
+    <button id="backup-export-btn" class="btn btn-primary">
+      <i class="bi bi-download"></i> 平文 JSON でダウンロード
+    </button>
+  </div>
+</div>
+
+<script id="backup-static-root" type="application/json">
+  {{ {"static_root": url_for('static', filename='')} | tojson }}
+</script>
+
+<script type="module">
+  const sr = JSON.parse(document.getElementById("backup-static-root").textContent);
+  globalThis.IIKANJI_STATIC_ROOT = sr.static_root;
+  const { runBackupExport } = await import(sr.static_root + "js/backup/backup_export_renderer.mjs");
+
+  const btn = document.getElementById("backup-export-btn");
+  btn.addEventListener("click", () => runBackupExport());
+</script>
+{% endblock %}
