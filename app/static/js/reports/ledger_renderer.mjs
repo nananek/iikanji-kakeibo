@@ -329,11 +329,13 @@ async function _run() {
       { fetchJournalsForYear },
       { computeLedger },
       { composeLedgerView },
+      { fetchBalanceCacheBlobs },
     ] = await Promise.all([
       import(getStaticRoot() + "js/crypto/shared-client.js"),
       import(getStaticRoot() + "js/crypto/journals_client.js"),
       import(getStaticRoot() + "js/crypto/reports/ledger.js"),
       import(getStaticRoot() + "js/crypto/reports/ledger_view.js"),
+      import(getStaticRoot() + "js/crypto/balance_cache_blobs_client.js"),
     ]);
 
     client = new SharedCryptoClient(getSharedWorkerUrl());
@@ -359,15 +361,38 @@ async function _run() {
       || params.normal_balance
       || "debit";
 
+    const pf = params.pf || 0;
+    // BCB から carry_forward (前期繰越) を取得。pf=0 (期首) のときは 0、
+    // pf>=1 のときは year の period=pf-1 の cumulative を normal_balance
+    // 側で netted した値を openingBalance に流す。
+    let openingBalance = 0;
+    if (pf >= 1) {
+      try {
+        const blobs = await fetchBalanceCacheBlobs({
+          client, userId: params.user_id, fiscalYear: params.year,
+        });
+        const cacheForPeriod = blobs[pf - 1];
+        if (cacheForPeriod) {
+          const pair = cacheForPeriod[params.account_code];
+          if (Array.isArray(pair) && pair.length >= 2) {
+            const [cumD, cumC] = pair;
+            openingBalance = normalBalance === "debit"
+              ? (cumD - cumC) : (cumC - cumD);
+          }
+        }
+      } catch (e) {
+        console.warn("ledger_renderer: BCB fetch failed, openingBalance=0", e);
+      }
+    }
+
     const entries = await fetchJournalsForYear({
       client, userId: params.user_id, fiscalYear: params.year,
     });
     const ledgerResult = computeLedger(entries, {
       accountCode: params.account_code,
       normalBalance,
-      // carry_forward は当面 0 (BCB 統合 follow-up #221)
-      openingBalance: 0,
-      fiscalPeriodFrom: params.pf || 0,
+      openingBalance,
+      fiscalPeriodFrom: pf,
       fiscalPeriodTo: params.pt || 15,
       includeClosing: true,
     });

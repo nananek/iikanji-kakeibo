@@ -72,10 +72,6 @@
 
 {% if selected_account %}
 <div id="ledger-status" class="d-none" role="status" aria-live="polite"></div>
-<div class="alert alert-warning py-2 small mb-2" role="note">
-  <i class="bi bi-info-circle"></i>
-  前期繰越は現在 0 として表示されます。次期バージョンで暗号化された期末残高キャッシュとの統合により修正予定です。
-</div>
 <form id="ledgerBulkForm" method="POST" action="{{ url_for('journal.bulk_delete') }}"
       onsubmit="return confirm('選択した仕訳を削除しますか？この操作は取り消せません。');">
   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
