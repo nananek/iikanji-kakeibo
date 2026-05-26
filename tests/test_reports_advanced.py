@@ -11,7 +11,6 @@ from datetime import date
 import pytest
 
 from app.models.audit import AuditGrant, AuditGrantAccount
-from app.models.balance_cache import BalanceCache
 from app.models.fiscal import FiscalClose
 from tests.conftest import make_journal
 
@@ -89,9 +88,8 @@ class TestBalanceWithPref:
         resp = logged_in_client.get("/reports/balance?pf=0&pt=16&year=2026")
         assert resp.status_code == 200
 
-    def test_with_balance_cache_fallback(self, db, logged_in_client, user, accounts):
-        """残高キャッシュが pf-1 まで未到達なら非キャッシュ計算"""
-        # pf=3 だが closed_period=1 (pf-1=2 に届かず)
+    def test_with_partial_close(self, db, logged_in_client, user, accounts):
+        """E3-F-6: サーバ側残高集計は撤去済。確定期間が pf-1 に未到達でも 200。"""
         db.session.add(FiscalClose(user_id=user.id, year=2026, closed_period=1))
         db.session.commit()
         resp = logged_in_client.get("/reports/balance?pf=3&pt=8&year=2026")
@@ -275,14 +273,10 @@ class TestLedgerAdvanced:
         resp = logged_in_client.get("/reports/ledger?account_code=5010&sort=BAD")
         assert resp.status_code == 200
 
-    def test_with_account_and_carry_forward_cache(self, db, logged_in_client, user, accounts):
-        # pf=3 で 1-2 月の合計をキャッシュから取る (closed=2)
+    def test_with_account_and_period_filter(self, db, logged_in_client, user, accounts):
+        # E3-F-6: 旧 BalanceCache 経由の carry_forward テストは BCB クライアント
+        # 描画に移行済 (#270)。サーバ側は HTML テンプレ + accountsMeta JSON を返すだけ。
         db.session.add(FiscalClose(user_id=user.id, year=2026, closed_period=2))
-        db.session.add(BalanceCache(
-            user_id=user.id, year=2026, period=2,
-            account_code="5010",
-            cumulative_debit=3000, cumulative_credit=0,
-        ))
         db.session.commit()
         resp = logged_in_client.get(
             "/reports/ledger?account_code=5010&pf=3&pt=8&year=2026"

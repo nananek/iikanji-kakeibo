@@ -1,7 +1,7 @@
 """レポートビュー (reports.py) のテスト
 
-各レポートページの GET をカバー。集計ロジック自体は test_tax.py /
-test_monthly_report.py / test_balance_cache.py で詳細に扱う。
+各レポートページの GET をカバー。集計ロジックはクライアント側 JS の
+test_*_view.mjs / test_*_renderer.mjs で網羅。
 こちらはルート到達性とフィルタ動作を確認。
 """
 

@@ -173,9 +173,13 @@ def get_capital_account_code(user_id):
 
 
 def close_period(user_id, year, period):
-    """月次確定を実行。成功時はNone、エラー時はメッセージを返す"""
-    from app.services.balance_cache import compute_balance_cache
+    """月次確定を実行。成功時はNone、エラー時はメッセージを返す。
 
+    Phase E3-F-6 で旧 balance_caches テーブル更新は撤去 (BCB に統合)。
+    BCB の sync はクライアント側 `bcb_sync_hook.mjs` が月次確定 UI から
+    自動起動するので、サーバ側でやることは FiscalClose の更新と
+    closing 仕訳生成のみ。
+    """
     fc = FiscalClose.query.filter_by(user_id=user_id, year=year).first()
     current = fc.closed_period if fc else -1
 
@@ -198,17 +202,16 @@ def close_period(user_id, year, period):
             db.session.rollback()
             return err
 
-    # 残高キャッシュを計算
-    compute_balance_cache(user_id, year, period)
-
     db.session.commit()
     return None
 
 
 def reopen_period(user_id, year, period):
-    """月次確定を解除。成功時はNone、エラー時はメッセージを返す"""
-    from app.services.balance_cache import invalidate_balance_cache
+    """月次確定を解除。成功時はNone、エラー時はメッセージを返す。
 
+    Phase E3-F-6 で旧 balance_caches テーブル無効化は撤去 (BCB に統合)。
+    BCB のクリーンアップはクライアント側で行う。
+    """
     fc = FiscalClose.query.filter_by(user_id=user_id, year=year).first()
     if not fc or fc.closed_period < period:
         return "この期間は確定されていません。"
@@ -231,9 +234,6 @@ def reopen_period(user_id, year, period):
     # 決算月3解除 → 損益振替仕訳を削除
     if period == 15:
         delete_closing_entries(user_id, year)
-
-    # 残高キャッシュを無効化
-    invalidate_balance_cache(user_id, year, period)
 
     fc.closed_period = period - 1
     db.session.commit()

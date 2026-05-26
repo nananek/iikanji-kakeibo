@@ -7,6 +7,7 @@ import pytest
 
 from app.models.account import Account
 from app.models.api_key import APIKey
+from app.models.balance_cache import BalanceCacheBlob
 from app.models.fiscal import FiscalClose
 from app.models.journal import JournalEntry, JournalEntryLine
 from app.models.storage import StorageUsage
@@ -91,6 +92,13 @@ def _make_user_with_data(db, *, username, email):
     # StorageUsage
     db.session.add(StorageUsage(user_id=user.id, used_bytes=100))
 
+    # BalanceCacheBlob (E3 月次確定 BCB sync で書かれる暗号文)
+    db.session.add(BalanceCacheBlob(
+        user_id=user.id, year=2026, period=12,
+        encrypted_blob=b"dummy-ciphertext",
+        blob_iv=b"0" * 12,
+    ))
+
     db.session.commit()
     return user, voucher, log, entry
 
@@ -128,6 +136,8 @@ class TestDeleteUserAccountService:
         assert db.session.get(JournalEntry, entry_id) is None
         assert APIKey.query.filter_by(user_id=user_id).count() == 0
         assert db.session.get(StorageUsage, user_id) is None
+        # E3-F-6: BCB も削除されないと FK violation で退会自体が失敗する
+        assert BalanceCacheBlob.query.filter_by(user_id=user_id).count() == 0
 
     def test_voucher_audit_log_preserved_anonymized(self, db, mock_storage):
         """電帳法保管: VoucherAuditLog は user_id / voucher_id を NULL 化して残る."""

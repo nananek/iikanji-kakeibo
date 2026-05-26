@@ -18,7 +18,7 @@ from app.models.ai_usage_log import AIUsageLog
 from app.models.api_key import APIKey
 from app.models.audit import AuditGrant, AuditGrantAccount
 from app.models.webhook import WebhookConfig
-from app.models.balance_cache import BalanceCache
+from app.models.balance_cache import BalanceCacheBlob
 from app.models.csv_column_profile import CsvColumnProfile
 from app.models.fiscal import FiscalClose
 from app.models.journal import JournalEntry, JournalEntryLine
@@ -121,9 +121,12 @@ def delete_user_account(user_id: int) -> None:
     db.session.flush()
 
     # 5. user_id を持つ各テーブルを削除
+    # BalanceCacheBlob は FK nullable=False で ON DELETE CASCADE 未設定なので
+    # ここで明示的に削除しないと最後の users.delete で FK violation になる。
     for model in (
         UserAIConfig, AIUsageLog, APIKey,
-        BalanceCache, CsvColumnProfile,
+        BalanceCacheBlob,
+        CsvColumnProfile,
         FiscalClose, MedicalExpense,
         OAuthDevice, OAuthToken,
         StorageUsage, Account, WebAuthnCredential,
