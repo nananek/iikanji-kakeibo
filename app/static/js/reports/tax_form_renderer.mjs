@@ -93,17 +93,23 @@ function _collectAmounts(entries, accountsMeta, options = {}) {
  * BCB の {accountCode: [debit_cum, credit_cum]} を、normal_balance 側で
  * netted した {accountCode: amount} に変換する。
  *
- * 期首残高 (bs_opening) を BCB 累計から作るときに使用。BS 以外の科目
- * (revenue/expense) は B/S 表示には使われないので、本関数は accountsMeta
- * に存在し type が指定されている code のみを返す (filter は呼出側で
- * 行わなくて済む)。
+ * 期首残高 (bs_opening) を BCB 累計から作るときに使用。BS 科目
+ * (asset/liability/equity) のみを返し、P/L 科目 (revenue/expense) は
+ * 除外する (旧サーバ実装の B/S 集計と挙動を一致させるため。BCB には
+ * 全科目の累計が含まれる)。
+ *
+ * export している理由: テスト容易性 (test_tax_form_net_cumulative.mjs
+ * から呼び出す。renderer 全体のモックは複雑なため)。
  */
-function _netCumulative(cumulative, accountsMeta) {
+const _BS_TYPES = new Set(["asset", "liability", "equity"]);
+
+export function _netCumulative(cumulative, accountsMeta) {
   const result = {};
   for (const [code, pair] of Object.entries(cumulative || {})) {
     if (!Array.isArray(pair) || pair.length < 2) continue;
     const meta = accountsMeta[code];
     if (!meta) continue;
+    if (meta.type && !_BS_TYPES.has(meta.type)) continue;
     const d = pair[0] || 0;
     const c = pair[1] || 0;
     result[code] = meta.normal_balance === "debit" ? d - c : c - d;
@@ -357,7 +363,7 @@ async function _run() {
         if (blobs[15]) priorCumulative = blobs[15];
       } catch (e) {
         console.warn(
-          "tax_form_renderer: prior BCB fetch failed, priorCumulative={}",
+          "tax_form_renderer: prior BCB fetch failed (前年が月次確定済かを確認してください), priorCumulative={}",
           e,
         );
       }
