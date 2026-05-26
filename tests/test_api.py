@@ -935,7 +935,9 @@ class TestBalanceCacheBlobs:
         assert resp.status_code == 200, resp.get_json()
         data = resp.get_json()
         assert data["ok"] is True
-        assert "updated_at" in data
+        assert data["updated_at"] is not None
+        # ISO 8601 形式である
+        assert "T" in data["updated_at"]
 
     def test_put_upserts_existing(self, client, db, user, accounts, auth_header):
         import base64
@@ -999,6 +1001,16 @@ class TestBalanceCacheBlobs:
         big = base64.b64encode(b"\x00" * (33 * 1024)).decode()
         resp = self._put(client, auth_header, 2026, 3, blob_b64=big)
         assert resp.status_code == 400
+        # エラーメッセージに 32KB の上限が示されている (record 4KB ではない)
+        err = resp.get_json()["error"]
+        assert str(32 * 1024) in err
+
+    def test_put_blob_just_under_limit_passes(self, client, db, user, accounts, auth_header):
+        """30KB blob は通る (32KB 上限の確認)。"""
+        import base64
+        ok_size = base64.b64encode(b"\x00" * (30 * 1024)).decode()
+        resp = self._put(client, auth_header, 2026, 3, blob_b64=ok_size)
+        assert resp.status_code == 200, resp.get_json()
 
     def test_delete_year(self, client, db, user, accounts, auth_header):
         self._put(client, auth_header, 2026, 3)
@@ -1026,9 +1038,7 @@ class TestBalanceCacheBlobs:
         assert len(remaining) == 1
         assert remaining[0].period == 3
 
-    def test_idor_other_user_invisible(self, client, db, user, accounts, auth_header):
-        # 別ユーザーの blob を作って、auth_header (= user の API key) からは
-        # 見えないことを確認
+    def _make_other_user_with_blob(self, db, year=2026, period=3, blob=b"other"):
         from app.models.balance_cache import BalanceCacheBlob
         from app.models.user import User
         from werkzeug.security import generate_password_hash
@@ -1038,15 +1048,62 @@ class TestBalanceCacheBlobs:
         )
         db.session.add(u2); db.session.commit()
         db.session.add(BalanceCacheBlob(
-            user_id=u2.id, year=2026, period=3,
-            encrypted_blob=b"other", blob_iv=b"\x00" * 12,
+            user_id=u2.id, year=year, period=period,
+            encrypted_blob=blob, blob_iv=b"\x00" * 12,
         ))
         db.session.commit()
+        return u2
+
+    def test_idor_other_user_invisible(self, client, db, user, accounts, auth_header):
+        """別ユーザーの blob は GET で見えない。"""
+        self._make_other_user_with_blob(db)
         resp = client.get(
             "/api/v1/balance-cache-blobs?year=2026", headers=auth_header,
         )
         assert resp.status_code == 200
         assert resp.get_json()["blobs"] == []
+
+    def test_idor_put_does_not_overwrite_other_user(
+            self, client, db, user, accounts, auth_header):
+        """別ユーザーの (year, period) を PUT しても、その人の blob は壊れない。"""
+        from app.models.balance_cache import BalanceCacheBlob
+        u2 = self._make_other_user_with_blob(db, blob=b"u2original")
+        # user の auth_header で同 (year, period) に PUT
+        self._put(client, auth_header, 2026, 3)
+        # u2 の blob は残っている
+        u2_blob = BalanceCacheBlob.query.filter_by(
+            user_id=u2.id, year=2026, period=3,
+        ).first()
+        assert u2_blob is not None
+        assert u2_blob.encrypted_blob == b"u2original"
+
+    def test_idor_delete_does_not_delete_other_user(
+            self, client, db, user, accounts, auth_header):
+        """他ユーザーの blob は DELETE で消えない。"""
+        from app.models.balance_cache import BalanceCacheBlob
+        u2 = self._make_other_user_with_blob(db)
+        resp = client.delete(
+            "/api/v1/balance-cache-blobs/2026", headers=auth_header,
+        )
+        assert resp.status_code == 200
+        assert resp.get_json()["deleted"] == 0
+        u2_blob = BalanceCacheBlob.query.filter_by(user_id=u2.id).first()
+        assert u2_blob is not None
+
+    def test_delete_requires_delete_scope(self, client, db, user, accounts):
+        """journals:create だけのキーでは DELETE 不可 (delete scope 必須)。"""
+        raw_key, key_hash, key_prefix = APIKey.generate()
+        key = APIKey(
+            user_id=user.id, name="create-only",
+            key_hash=key_hash, key_prefix=key_prefix,
+            scopes="journals:create", is_active=True,
+        )
+        db.session.add(key)
+        db.session.commit()
+        resp = client.delete(
+            "/api/v1/balance-cache-blobs/2026", headers=_auth_header(raw_key),
+        )
+        assert resp.status_code == 403
 
     def test_no_auth(self, client, db, user, accounts):
         resp = client.get("/api/v1/balance-cache-blobs?year=2026")
