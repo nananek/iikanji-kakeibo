@@ -896,6 +896,10 @@ document.addEventListener('alpine:init', function() {
     var paymentAccountCode = config.paymentAccountCode;
     var defaultIncomeId = config.defaultIncomeId || 0;
     var defaultExpenseId = config.defaultExpenseId || 0;
+    // E3-D-3b: web_import で old_year_action=capital を扱うときに必要な
+    // 元入金 (capital) 科目コード。未開設年度の行を当年 1/1 / 元入金科目に
+    // 差替えてから batch API に送る。
+    var capitalCode = config.capitalCode || '';
 
     function getStatus(row) {
       if (!row.date) return { cls: 'bg-warning text-dark', text: '日付なし', icon: '', problem: false };
@@ -1177,6 +1181,109 @@ document.addEventListener('alpine:init', function() {
           });
         }
         this.$refs.importRows.value = JSON.stringify(result);
+      },
+
+      /**
+       * E3-D-3b: web_import 専用の確定処理。
+       *
+       * server (web_import.confirm POST) で仕訳化していた処理を
+       * クライアント entries_builder + batch API に切替える。
+       *
+       * 振替判定はサーバの create_transfer_entry と等価だが、生成される仕訳は
+       * cashbook (income/expense) と借方/貸方が同一になるため、buildCashbookEntry
+       * のみを使う (transactionType を deposit/withdrawal で決定)。
+       *
+       * 確定済み期間 / 未開設年度 / 提出済み科目 のチェックは batch API 側で
+       * 実行されエラー時は 400 が返るので、ここではユーザーに表示するだけ。
+       */
+      submitWebImportBatch: async function(event) {
+        event.preventDefault();
+        // 未開設年度の扱い: ラジオボタン (skip / capital) の値を読む
+        var oldYearActionEl = this.$el.querySelector(
+          'input[name="old_year_action"]:checked',
+        );
+        var oldYearAction = oldYearActionEl ? oldYearActionEl.value : 'skip';
+        var todayYear = new Date().getFullYear();
+        // 取込対象行をフィルタ + 未開設年度の処理 (skip or capital 変換)
+        var validRows = [];
+        for (var i = 0; i < this.rows.length; i++) {
+          var r = this.rows[i];
+          if (!r.enabled || !r.date) continue;
+          var amt = (r.deposit && r.deposit > 0) ? r.deposit : r.withdrawal;
+          if (!amt || amt <= 0 || !r.category_code) continue;
+
+          var year = parseInt(r.date.substring(0, 4), 10);
+          var isClosedYear = restrictedBefore && year < restrictedBefore
+              && closedPeriods[year] === undefined;
+          if (isClosedYear) {
+            if (oldYearAction === 'capital' && capitalCode) {
+              // 当年 1/1 / 元入金科目に変換 (server 旧フローと同等)
+              validRows.push({
+                date: todayYear + '-01-01',
+                description: '(' + r.date + ') ' + (r.description || ''),
+                deposit: r.deposit, withdrawal: r.withdrawal,
+                category_code: capitalCode,
+              });
+            }
+            // 'skip' or capitalCode 未定義 → 除外
+            continue;
+          }
+          validRows.push(r);
+        }
+        if (validRows.length === 0) {
+          alert('取込可能な行がありません (日付・金額・費目が揃った行が対象)。');
+          return;
+        }
+        var submitBtn = this.$el.querySelector('button[type="submit"]');
+        var originalLabel = submitBtn ? submitBtn.innerHTML : '';
+        if (submitBtn) {
+          submitBtn.disabled = true;
+          submitBtn.innerHTML =
+            '<span class="spinner-border spinner-border-sm" role="status"></span> 取込中...';
+        }
+        try {
+          var builderMod = await import("/static/js/crypto/entries_builder.js");
+          var entries = validRows.map(function(r) {
+            var amount = (r.deposit && r.deposit > 0) ? r.deposit : r.withdrawal;
+            return builderMod.buildCashbookEntry({
+              date: r.date,
+              // batch API は空 description を 400 で弾くため、AI 抽出結果が
+              // 空のときはフォールバック文字列で補う (旧サーバ confirm POST
+              // は空文字を許容していたデグレ回避)
+              description: r.description || '(摘要なし)',
+              transactionType: (r.deposit && r.deposit > 0) ? 'income' : 'expense',
+              paymentAccountCode: paymentAccountCode,
+              categoryAccountCode: r.category_code,
+              amount: amount,
+              source: 'web',
+            });
+          });
+
+          var csrfMeta = document.querySelector('meta[name="csrf-token"]');
+          var csrfToken = csrfMeta ? csrfMeta.getAttribute('content') : '';
+          var res = await fetch('/api/v1/journals/batch', {
+            method: 'POST',
+            credentials: 'include',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-CSRFToken': csrfToken,
+            },
+            body: JSON.stringify({ entries: entries }),
+          });
+          var body = await res.json().catch(function() { return {}; });
+          if (!res.ok) {
+            throw new Error(body.error || ('HTTP ' + res.status));
+          }
+          // sessionStorage の parsed をクリア (将来 E3-D-3b で upload→sessionStorage 化したとき用)
+          try { sessionStorage.removeItem('webImport:parsed'); } catch (_e) { /* ignore */ }
+          window.location.href = '/cashbook/';
+        } catch (err) {
+          if (submitBtn) {
+            submitBtn.disabled = false;
+            submitBtn.innerHTML = originalLabel;
+          }
+          alert('取込に失敗しました: ' + (err.message || err));
+        }
       },
 
       _syncFromCheckboxes: function() {

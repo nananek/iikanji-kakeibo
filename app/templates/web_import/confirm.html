@@ -13,11 +13,12 @@
 </script>
 <div x-data="importConfirm({
   rows: _importRows,
-  paymentAccountCode: '{{ payment_account.code }}',
+  paymentAccountCode: {{ payment_account.code | tojson }},
   defaultIncomeId: _defaultIncomeId,
   defaultExpenseId: _defaultExpenseId,
   closedPeriods: _closedPeriods,
-  restrictedBeforeYear: _restrictedBefore
+  restrictedBeforeYear: _restrictedBefore,
+  capitalCode: {{ (capital_code or '') | tojson }}
 })" @drag-select-update="_syncFromCheckboxes()">
 
 {% set import_step_label = "Step 2:" %}
@@ -25,6 +26,15 @@
 {% set import_back_buttons %}
 <a href="{{ url_for('web_import.upload') }}" class="btn btn-outline-secondary">最初からやり直す</a>
 {% endset %}
+{# E3-D-3b: 確定処理を server (web_import.confirm POST) ではなく
+   batch API + entries_builder に切替えてクライアント完結化。
+   ただし監査代理閲覧 (acting_as_user_id) 時は batch API が current_user.id を
+   使うため IDOR / 機能デグレになるので、旧サーバ POST 経路に fallback する。
+   E3-F で resolve_bearer_or_session が acting_as_user_id を見るようにしたら
+   この分岐は不要。 #}
+{% if not is_audit_proxy %}
+  {% set submit_handler = 'submitWebImportBatch($event)' %}
+{% endif %}
 {% include "_partials/import_confirm_table.html" %}
 
 </div>
