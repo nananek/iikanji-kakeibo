@@ -39,6 +39,13 @@ function _clearStatus() {
 }
 
 
+function _clearTbody() {
+  const tbody = document.getElementById("trial-balance-tbody");
+  if (!tbody) return;
+  while (tbody.firstChild) tbody.removeChild(tbody.firstChild);
+}
+
+
 function _td(text, opts = {}) {
   const td = document.createElement("td");
   if (opts.className) td.className = opts.className;
@@ -166,6 +173,7 @@ async function _run() {
         "暗号鍵 (MK) がロックされています。設定 → 暗号鍵管理 で解除してください。",
         "warning",
       );
+      _clearTbody();
       return;
     }
     _clearStatus();
@@ -180,6 +188,7 @@ async function _run() {
     _renderView(view, params);
   } catch (e) {
     _setStatusMessage("試算表の取得に失敗しました: " + (e.message || e), "danger");
+    _clearTbody();
   } finally {
     try { client.close(); } catch (_e) { /* ignore */ }
   }
