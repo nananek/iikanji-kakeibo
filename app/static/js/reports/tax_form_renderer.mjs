@@ -354,23 +354,23 @@ async function _run() {
     // BCB 統合 (#221): 前年 BCB period=15 + 当年 entries の 2 リクエストに
     // 削減。bs_opening は前年末累計を netted した値、bs_amounts は
     // bs_opening + 当年 BS 累計 (closing 含む) で計算する。
-    let priorCumulative = {};
-    if (params.year > params.min_year) {
-      try {
-        const blobs = await fetchBalanceCacheBlobs({
+    // #230: 前年 BCB fetch と当年 journals fetch を並列化。
+    const bcbPromise = params.year > params.min_year
+      ? fetchBalanceCacheBlobs({
           client, userId: params.user_id, fiscalYear: params.year - 1,
-        });
-        if (blobs[15]) priorCumulative = blobs[15];
-      } catch (e) {
-        console.warn(
-          "tax_form_renderer: prior BCB fetch failed (前年が月次確定済かを確認してください), priorCumulative={}",
-          e,
-        );
-      }
-    }
-    const entries = await fetchJournalsForYear({
+        }).catch((e) => {
+          console.warn(
+            "tax_form_renderer: prior BCB fetch failed (前年が月次確定済かを確認してください), priorCumulative={}",
+            e,
+          );
+          return {};
+        })
+      : Promise.resolve({});
+    const journalsPromise = fetchJournalsForYear({
       client, userId: params.user_id, fiscalYear: params.year,
     });
+    const [blobs, entries] = await Promise.all([bcbPromise, journalsPromise]);
+    const priorCumulative = blobs[15] || {};
 
     // pl_amounts は当年 fiscal_year のみ + closing 除外
     const pl_amounts = _collectAmounts(entries, accountsMeta, {

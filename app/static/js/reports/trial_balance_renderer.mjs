@@ -255,31 +255,34 @@ async function _run() {
     _clearStatus();
     const pf = params.fiscal_period_from;
     const pt = params.fiscal_period_to;
-    // BCB から opening (前期繰越) を構築。pf=0 (期首から) のときは 0、
-    // pf>=1 のときは年度の period=pf-1 の cumulative を opening として使う。
-    let opening = {};
-    if (pf >= 1) {
-      try {
-        const blobs = await fetchBalanceCacheBlobs({
+    // #230: BCB fetch と journals fetch を並列化。pf=0 (期首から) のときは
+    // BCB 不要なので空 dict を即 resolve、pf>=1 で前 period の blob を取る。
+    const bcbPromise = pf >= 1
+      ? fetchBalanceCacheBlobs({
           client, userId: params.user_id, fiscalYear: params.fiscal_year,
-        });
-        const cacheForPeriod = blobs[pf - 1];
-        if (cacheForPeriod) {
-          for (const [code, pair] of Object.entries(cacheForPeriod)) {
-            const meta = accountsMeta[code];
-            if (!meta || !Array.isArray(pair) || pair.length < 2) continue;
-            const [cumD, cumC] = pair;
-            opening[code] = meta.normal_balance === "debit"
-              ? (cumD - cumC) : (cumC - cumD);
-          }
-        }
-      } catch (e) {
-        console.warn("trial_balance_renderer: BCB fetch failed, opening=0", e);
-      }
-    }
-    const entries = await fetchJournalsForYear({
+        }).catch((e) => {
+          console.warn("trial_balance_renderer: BCB fetch failed, opening=0", e);
+          return {};
+        })
+      : Promise.resolve({});
+    const journalsPromise = fetchJournalsForYear({
       client, userId: params.user_id, fiscalYear: params.fiscal_year,
     });
+    const [blobs, entries] = await Promise.all([bcbPromise, journalsPromise]);
+
+    const opening = {};
+    if (pf >= 1) {
+      const cacheForPeriod = blobs[pf - 1];
+      if (cacheForPeriod) {
+        for (const [code, pair] of Object.entries(cacheForPeriod)) {
+          const meta = accountsMeta[code];
+          if (!meta || !Array.isArray(pair) || pair.length < 2) continue;
+          const [cumD, cumC] = pair;
+          opening[code] = meta.normal_balance === "debit"
+            ? (cumD - cumC) : (cumC - cumD);
+        }
+      }
+    }
     const jsRows = computeTrialBalance(entries, {
       fiscalPeriodFrom: pf,
       fiscalPeriodTo: pt,
