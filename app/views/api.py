@@ -8,7 +8,7 @@ from base64 import b64decode, b64encode
 from binascii import Error as BinasciiError
 from datetime import date as date_type, datetime, timezone
 
-from flask import Blueprint, jsonify, request, g
+from flask import Blueprint, current_app, jsonify, request, g
 
 from app.extensions import db, limiter
 from app.models.api_key import APIKey
@@ -293,8 +293,11 @@ def _parse_int_amount(raw, label):
     return raw
 
 
-def _validate_and_parse_batch_entry(e, idx, user_id, locked_codes):
+def _validate_and_parse_batch_entry(e, idx, user_account_codes, locked_codes):
     """batch API 用: 1 entry 分の入力を validate して create_journal_entry 引数に整形。
+
+    user_account_codes: そのユーザーの全 account.code を含む set。caller が
+    バッチ処理前に 1 回だけ取得して N+1 を避ける。
 
     エラーは ValueError を raise (caller が一括 rollback + 400 を返す)。
     """
@@ -367,15 +370,11 @@ def _validate_and_parse_batch_entry(e, idx, user_id, locked_codes):
                 f"entries[{idx}]: 提出済みの税務科目を含むため登録できません。"
             )
 
-    # account_code がそのユーザーに存在するかチェック (FK 違反による 500 を 400 化)
+    # account_code がそのユーザーに存在するかチェック (FK 違反による 500 を 400 化)。
+    # 全 entry の lines で使う code を caller が事前に 1 クエリで取得した
+    # user_account_codes に対して set 差分で判定するため N+1 にならない。
     codes_in_entry = {ld["account_code"] for ld in lines_data}
-    existing_codes = {
-        a.code for a in Account.query
-        .filter_by(user_id=user_id)
-        .filter(Account.code.in_(codes_in_entry))
-        .all()
-    }
-    missing = codes_in_entry - existing_codes
+    missing = codes_in_entry - user_account_codes
     if missing:
         raise ValueError(
             f"entries[{idx}]: 科目コード {sorted(missing)} が存在しません。"
@@ -420,9 +419,27 @@ def _validate_and_parse_batch_entry(e, idx, user_id, locked_codes):
     }
 
 
+def _batch_entries_cost():
+    """レート制限: entries 件数で重み付けする (1 リクエスト最大 500 = cost 500)。
+
+    リクエスト本体を 2 回 parse しないよう request.get_json(cache=True) に
+    依存する (Flask が body bytes をキャッシュ)。parse できない場合は cost=1
+    として既存の per-request 制限に任せる。
+    """
+    try:
+        data = request.get_json(silent=True, cache=True) or {}
+        entries = data.get("entries")
+        if isinstance(entries, list):
+            return max(1, len(entries))
+    except Exception:
+        pass
+    return 1
+
+
 @bp.route("/journals/batch", methods=["POST"])
 @auth_required(write=True, scope="journals:create", allow_session=True)
 @limiter.limit("30 per minute", key_func=rate_limit_key)
+@limiter.limit("1500 per minute", key_func=rate_limit_key, cost=_batch_entries_cost)
 def create_journals_batch():
     """複数仕訳の一括起票 API。
 
@@ -458,11 +475,18 @@ def create_journals_batch():
 
     user_id = g.auth_user.id
     locked_codes = get_submitted_account_codes(user_id)
+    # N+1 回避: ユーザーの全 account.code を一括取得して set 集合演算で
+    # _validate_and_parse_batch_entry の存在チェックに使い回す。
+    user_account_codes = {
+        a.code for a in Account.query.filter_by(user_id=user_id).all()
+    }
 
     created = []
     try:
         for idx, e in enumerate(entries_in):
-            parsed = _validate_and_parse_batch_entry(e, idx, user_id, locked_codes)
+            parsed = _validate_and_parse_batch_entry(
+                e, idx, user_account_codes, locked_codes,
+            )
 
             # 確定済み期間チェック (validate と分離: date が parsed 後でないと判定不可)
             err = check_period_open_for_new(
@@ -492,7 +516,6 @@ def create_journals_batch():
         return jsonify({"error": safe_user_error(ve)}), 400
     except Exception:
         db.session.rollback()
-        from flask import current_app
         current_app.logger.exception("create_journals_batch failed")
         return jsonify({"error": "一括登録に失敗しました。"}), 500
 
