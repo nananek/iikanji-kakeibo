@@ -113,7 +113,7 @@ function buildMedicalCsv(view) {
       e.insurance_reimbursement ? e.insurance_reimbursement : "",
     ].map(_csvEscape).join(","));
   }
-  return "﻿" + lines.join("\r\n") + "\r\n";
+  return "\uFEFF" + lines.join("\r\n") + "\r\n";
 }
 
 
