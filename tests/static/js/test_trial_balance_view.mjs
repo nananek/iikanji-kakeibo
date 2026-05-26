@@ -39,9 +39,10 @@ test("accountsMeta が object でないと TypeError", () => {
 
 // --- empty ---
 
-test("空 jsRows で sections=[]", () => {
+test("空 jsRows で sections=[] + grandTotal=0", () => {
   const v = composeTrialBalanceView([], META);
-  assert.deepEqual(v, { sections: [] });
+  assert.deepEqual(v.sections, []);
+  assert.deepEqual(v.grandTotal, { debit: 0, credit: 0, is_balanced: true });
 });
 
 
@@ -149,12 +150,60 @@ test("meta.name が空のとき code を fallback", () => {
 });
 
 
-// --- opening は当面 0 (BCB 統合は後続 PR) ---
+// --- opening (Issue #221) ---
 
-test("opening は当面 0 (BCB 統合前)", () => {
+test("opening 未指定なら 0", () => {
   const v = composeTrialBalanceView([
     { account_code: "1010", debit: 1000, credit: 0 },
   ], META);
   assert.equal(v.sections[0].rows[0].opening, 0);
   assert.equal(v.sections[0].subtotal.opening, 0);
+});
+
+test("opening 指定で balance に加算 (debit normal)", () => {
+  const v = composeTrialBalanceView([
+    { account_code: "1010", debit: 1000, credit: 0 },
+  ], META, { opening: { "1010": 5000 } });
+  assert.equal(v.sections[0].rows[0].opening, 5000);
+  // balance = 5000 + 1000 - 0 = 6000
+  assert.equal(v.sections[0].rows[0].balance, 6000);
+  assert.equal(v.sections[0].subtotal.opening, 5000);
+});
+
+test("opening 指定で balance に加算 (credit normal)", () => {
+  const v = composeTrialBalanceView([
+    { account_code: "2010", debit: 200, credit: 500 },
+  ], META, { opening: { "2010": 1000 } });
+  // 負債 (credit normal): 1000 + (500 - 200) = 1300
+  assert.equal(v.sections[0].rows[0].balance, 1300);
+});
+
+test("opening のみの code (期中 0 だが前期繰越あり) も拾う", () => {
+  const v = composeTrialBalanceView([], META, {
+    opening: { "1010": 8000 },
+  });
+  assert.equal(v.sections.length, 1);
+  assert.equal(v.sections[0].rows[0].code, "1010");
+  assert.equal(v.sections[0].rows[0].balance, 8000);
+});
+
+
+// --- grandTotal (Issue #221) ---
+
+test("grandTotal: 借方/貸方合計 + is_balanced", () => {
+  const v = composeTrialBalanceView([
+    { account_code: "1010", debit: 1000, credit: 0 },
+    { account_code: "4010", debit: 0, credit: 1000 },
+  ], META);
+  assert.equal(v.grandTotal.debit, 1000);
+  assert.equal(v.grandTotal.credit, 1000);
+  assert.equal(v.grandTotal.is_balanced, true);
+});
+
+test("grandTotal: 不均衡なら is_balanced=false", () => {
+  const v = composeTrialBalanceView([
+    { account_code: "1010", debit: 1000, credit: 0 },
+    { account_code: "4010", debit: 0, credit: 800 },
+  ], META);
+  assert.equal(v.grandTotal.is_balanced, false);
 });

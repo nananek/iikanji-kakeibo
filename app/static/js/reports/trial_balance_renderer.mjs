@@ -112,6 +112,37 @@ function _renderSection(section, params) {
 }
 
 
+function _renderGrandTotalRow(view) {
+  const tr = document.createElement("tr");
+  tr.className = view.grandTotal.is_balanced ? "table-success" : "table-warning";
+  tr.appendChild(_td("", { className: "d-mobile-none" }));
+  tr.appendChild(_td("総合計 (借方 = 貸方)", {
+    className: "text-end", bold: true,
+  }));
+  tr.appendChild(_td(_fmtYen(view.grandTotal.debit), {
+    className: "text-end", bold: true,
+  }));
+  tr.appendChild(_td(_fmtYen(view.grandTotal.credit), {
+    className: "text-end", bold: true,
+  }));
+  const checkTd = document.createElement("td");
+  checkTd.className = "text-end";
+  const icon = document.createElement("i");
+  icon.className = view.grandTotal.is_balanced
+    ? "bi bi-check-circle text-success"
+    : "bi bi-exclamation-triangle text-danger";
+  checkTd.appendChild(icon);
+  if (!view.grandTotal.is_balanced) {
+    checkTd.appendChild(document.createTextNode(" 差額 "));
+    const diffStrong = document.createElement("strong");
+    diffStrong.textContent = _fmtYen(view.grandTotal.debit - view.grandTotal.credit);
+    checkTd.appendChild(diffStrong);
+  }
+  tr.appendChild(checkTd);
+  return tr;
+}
+
+
 function _renderView(view, params) {
   const tbody = document.getElementById("trial-balance-tbody");
   if (!tbody) return;
@@ -127,6 +158,7 @@ function _renderView(view, params) {
   for (const section of view.sections) {
     tbody.appendChild(_renderSection(section, params));
   }
+  tbody.appendChild(_renderGrandTotalRow(view));
 }
 
 
@@ -170,11 +202,13 @@ async function _run() {
       { fetchJournalsForYear },
       { computeTrialBalance },
       { composeTrialBalanceView },
+      { fetchBalanceCacheBlobs },
     ] = await Promise.all([
       import(getStaticRoot() + "js/crypto/shared-client.js"),
       import(getStaticRoot() + "js/crypto/journals_client.js"),
       import(getStaticRoot() + "js/crypto/reports/trial_balance.js"),
       import(getStaticRoot() + "js/crypto/reports/trial_balance_view.js"),
+      import(getStaticRoot() + "js/crypto/balance_cache_blobs_client.js"),
     ]);
 
     client = new SharedCryptoClient(getSharedWorkerUrl());
@@ -196,16 +230,40 @@ async function _run() {
       return;
     }
     _clearStatus();
+    const pf = params.fiscal_period_from;
+    const pt = params.fiscal_period_to;
+    // BCB から opening (前期繰越) を構築。pf=0 (期首から) のときは 0、
+    // pf>=1 のときは年度の period=pf-1 の cumulative を opening として使う。
+    let opening = {};
+    if (pf >= 1) {
+      try {
+        const blobs = await fetchBalanceCacheBlobs({
+          client, userId: params.user_id, fiscalYear: params.fiscal_year,
+        });
+        const cacheForPeriod = blobs[pf - 1];
+        if (cacheForPeriod) {
+          for (const [code, pair] of Object.entries(cacheForPeriod)) {
+            const meta = accountsMeta[code];
+            if (!meta || !Array.isArray(pair) || pair.length < 2) continue;
+            const [cumD, cumC] = pair;
+            opening[code] = meta.normal_balance === "debit"
+              ? (cumD - cumC) : (cumC - cumD);
+          }
+        }
+      } catch (e) {
+        console.warn("trial_balance_renderer: BCB fetch failed, opening=0", e);
+      }
+    }
     const entries = await fetchJournalsForYear({
       client, userId: params.user_id, fiscalYear: params.fiscal_year,
     });
     const jsRows = computeTrialBalance(entries, {
-      fiscalPeriodFrom: params.fiscal_period_from,
-      fiscalPeriodTo: params.fiscal_period_to,
+      fiscalPeriodFrom: pf,
+      fiscalPeriodTo: pt,
       // 振替期間 (period 16) を含む場合は損益振替仕訳も集計対象とする
-      includeClosing: params.fiscal_period_to >= 16,
+      includeClosing: pt >= 16,
     });
-    const view = composeTrialBalanceView(jsRows, accountsMeta);
+    const view = composeTrialBalanceView(jsRows, accountsMeta, { opening });
     _renderView(view, params);
   } catch (e) {
     _setStatusMessage("試算表の取得に失敗しました: " + (e.message || e), "danger");
