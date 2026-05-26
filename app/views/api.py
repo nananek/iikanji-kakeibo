@@ -3,6 +3,7 @@
 import functools
 import hashlib
 import json
+import uuid
 from base64 import b64decode, b64encode
 from binascii import Error as BinasciiError
 from datetime import date as date_type, datetime, timezone
@@ -109,6 +110,7 @@ def api_key_required(scope=None, write=False):
 # 平文で 1KB 程度、ヘッダ込みで余裕を持って 4KB)。AAD ではないので大きすぎる
 # blob は単にストレージ負荷になる。
 _MAX_RECORD_BLOB_BYTES = 4096
+_MAX_BATCH_ENTRIES = 500
 _AES_GCM_IV_BYTES = 12
 
 
@@ -273,6 +275,181 @@ def create_journal():
         "ok": True,
         "id": entry.id,
         "entry_number": entry.entry_number,
+    }), 201
+
+
+def _validate_and_parse_batch_entry(e, idx, locked_codes):
+    """batch API 用: 1 entry 分の入力を validate して create_journal_entry 引数に整形。
+
+    エラーは ValueError を raise (caller が一括 rollback + 400 を返す)。
+    """
+    if not isinstance(e, dict):
+        raise ValueError(f"entries[{idx}] は dict である必要があります")
+
+    date_str = e.get("date")
+    if not date_str:
+        raise ValueError(f"entries[{idx}].date は必須です")
+    try:
+        entry_date = date_type.fromisoformat(date_str)
+    except (TypeError, ValueError):
+        raise ValueError(f"entries[{idx}].date の形式が不正です (YYYY-MM-DD)")
+
+    description = (e.get("description") or "").strip()
+    if not description:
+        raise ValueError(f"entries[{idx}].description は必須です")
+
+    lines = e.get("lines")
+    if not lines or not isinstance(lines, list):
+        raise ValueError(f"entries[{idx}].lines は必須です (配列)")
+
+    entry_blob, entry_iv, err = _decode_record_crypto(
+        e, f"entries[{idx}]", "encrypted_blob", "blob_iv",
+    )
+    if err:
+        raise ValueError(err)
+
+    lines_data = []
+    for li, line in enumerate(lines):
+        account_code = line.get("account_code")
+        if not account_code:
+            raise ValueError(
+                f"entries[{idx}].lines[{li}].account_code は必須です"
+            )
+        line_blob, line_iv, err = _decode_record_crypto(
+            line, f"entries[{idx}].lines[{li}]",
+            "encrypted_blob", "blob_iv",
+        )
+        if err:
+            raise ValueError(err)
+        lines_data.append({
+            "account_code": account_code,
+            "debit_amount": int(line.get("debit", 0) or 0),
+            "credit_amount": int(line.get("credit", 0) or 0),
+            "description": line.get("description", ""),
+            "encrypted_blob": line_blob,
+            "blob_iv": line_iv,
+        })
+
+    if locked_codes:
+        used_codes = {ld["account_code"] for ld in lines_data}
+        if used_codes & locked_codes:
+            raise ValueError(
+                f"entries[{idx}]: 提出済みの税務科目を含むため登録できません。"
+            )
+
+    fiscal_year = e.get("fiscal_year")
+    if fiscal_year is not None:
+        if type(fiscal_year) is not int:
+            raise ValueError(
+                f"entries[{idx}].fiscal_year は整数で指定してください。"
+            )
+        if not (1900 <= fiscal_year <= 2200):
+            raise ValueError(
+                f"entries[{idx}].fiscal_year の範囲が不正です (1900〜2200)。"
+            )
+
+    fiscal_period = e.get("fiscal_period")
+    if fiscal_period is not None:
+        if type(fiscal_period) is not int or not (0 <= fiscal_period <= 16):
+            raise ValueError(
+                f"entries[{idx}].fiscal_period は 0〜16 の整数です。"
+            )
+
+    return {
+        "date": entry_date,
+        "description": description,
+        "lines_data": lines_data,
+        "source": e.get("source", "api"),
+        "encrypted_blob": entry_blob,
+        "blob_iv": entry_iv,
+        "fiscal_year": fiscal_year,
+        "fiscal_period": fiscal_period,
+    }
+
+
+@bp.route("/journals/batch", methods=["POST"])
+@auth_required(write=True, scope="journals:create", allow_session=True)
+@limiter.limit("30 per minute", key_func=rate_limit_key)
+def create_journals_batch():
+    """複数仕訳の一括起票 API。
+
+    web/CSV/OFX クライアント完結 E2EE 取込で使う共通エンドポイント。
+    1 リクエストの全 entry を 1 トランザクションで保存する: 1 件でも
+    schema validate / 確定済み期間 / 提出済みロック / 貸借不一致に
+    失敗すれば全 rollback して 400 を返す。
+
+    リクエスト:
+        {
+          "batch_id": "...",          // 任意、省略時は uuid4 を採番
+          "entries": [{date, description, lines, ...}, ...]   // 最大 500
+        }
+
+    レスポンス:
+        201 {ok, batch_id, created_count, entries: [{id, entry_number}, ...]}
+    """
+    data = request.get_json(silent=True)
+    if not data:
+        return jsonify({"error": "JSON ボディが必要です。"}), 400
+
+    entries_in = data.get("entries")
+    if not isinstance(entries_in, list) or not entries_in:
+        return jsonify({"error": "entries は必須です（非空配列）。"}), 400
+    if len(entries_in) > _MAX_BATCH_ENTRIES:
+        return jsonify({
+            "error": f"entries が多すぎます (上限 {_MAX_BATCH_ENTRIES})。",
+        }), 400
+
+    batch_id = data.get("batch_id") or str(uuid.uuid4())
+    if not isinstance(batch_id, str) or len(batch_id) > 64:
+        return jsonify({"error": "batch_id は文字列 (max 64) です。"}), 400
+
+    user_id = g.auth_user.id
+    locked_codes = get_submitted_account_codes(user_id)
+
+    created = []
+    try:
+        for idx, e in enumerate(entries_in):
+            parsed = _validate_and_parse_batch_entry(e, idx, locked_codes)
+
+            # 確定済み期間チェック (validate と分離: date が pasrsed 後でないと判定不可)
+            err = check_period_open_for_new(
+                user_id, parsed["date"].year, parsed["date"].month,
+            )
+            if err:
+                raise ValueError(f"entries[{idx}]: {err}")
+
+            entry = create_journal_entry(
+                user_id=user_id,
+                date=parsed["date"],
+                description=parsed["description"],
+                lines_data=parsed["lines_data"],
+                source=parsed["source"],
+                batch_id=batch_id,
+                fiscal_period=parsed["fiscal_period"],
+                encrypted_blob=parsed["encrypted_blob"],
+                blob_iv=parsed["blob_iv"],
+                fiscal_year=parsed["fiscal_year"],
+                commit=False,
+            )
+            created.append(entry)
+
+        db.session.commit()
+    except ValueError as ve:
+        db.session.rollback()
+        return jsonify({"error": safe_user_error(ve)}), 400
+    except Exception:
+        db.session.rollback()
+        from flask import current_app
+        current_app.logger.exception("create_journals_batch failed")
+        return jsonify({"error": "一括登録に失敗しました。"}), 500
+
+    return jsonify({
+        "ok": True,
+        "batch_id": batch_id,
+        "created_count": len(created),
+        "entries": [
+            {"id": e.id, "entry_number": e.entry_number} for e in created
+        ],
     }), 201
 
 
