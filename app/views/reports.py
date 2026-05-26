@@ -8,10 +8,7 @@ from sqlalchemy import func
 from app.extensions import db
 from app.models.account import Account, AccountType
 from app.models.journal import JournalEntry, JournalEntryLine
-from app.services.tax import (
-    get_income_expense_summary,
-    get_monthly_comparison, get_month_projection,
-)
+from app.services.tax import get_monthly_comparison, get_month_projection
 from flask_login import current_user as _current_user
 from app.services.audit import get_effective_user_id, get_allowed_account_codes, mask_account_name, is_entry_locked_for_owner
 from app.services.fiscal import check_entry_modifiable, period_range_filter, get_closed_period
