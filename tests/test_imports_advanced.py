@@ -109,18 +109,11 @@ class TestMedicalEdgeCases:
 
 class TestReportsBalanceWithCache:
     def test_with_balance_cache(self, db, logged_in_client, user, accounts):
-        """残高キャッシュが効いている年度のレポート表示"""
-        from app.models.balance_cache import BalanceCache
+        """E3-F-6: サーバ側残高集計は撤去済 (HTML テンプレ + accountsMeta のみ返却)。
+        確定済期間でも HTTP 200 が返ること。"""
         from app.models.fiscal import FiscalClose
-        # 2024-2 を確定 + キャッシュ
         db.session.add(FiscalClose(user_id=user.id, year=2024, closed_period=2))
-        db.session.add(BalanceCache(
-            user_id=user.id, year=2024, period=2,
-            account_code="5010",
-            cumulative_debit=10000, cumulative_credit=0,
-        ))
         db.session.commit()
-        # 2024 年 3 月のレポートを表示 (period_from=3 → cache 利用)
         resp = logged_in_client.get("/reports/balance?year=2024&period=3")
         assert resp.status_code == 200
 
@@ -163,15 +156,9 @@ class TestReportsBalanceWithCache:
         assert resp.status_code == 200
 
     def test_monthly_with_cache(self, db, logged_in_client, user, accounts):
+        """E3-F-6: 月次比較もクライアント集計に移行済。HTTP 200 のみ確認。"""
         from app.models.fiscal import FiscalClose
-        from app.models.balance_cache import BalanceCache
-        # 2026-1 を確定 + キャッシュ
         db.session.add(FiscalClose(user_id=user.id, year=2026, closed_period=1))
-        db.session.add(BalanceCache(
-            user_id=user.id, year=2026, period=1,
-            account_code="5010",
-            cumulative_debit=5000, cumulative_credit=0,
-        ))
         db.session.commit()
         resp = logged_in_client.get("/reports/monthly?year=2026")
         assert resp.status_code == 200

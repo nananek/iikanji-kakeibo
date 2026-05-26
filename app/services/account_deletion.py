@@ -18,7 +18,6 @@ from app.models.ai_usage_log import AIUsageLog
 from app.models.api_key import APIKey
 from app.models.audit import AuditGrant, AuditGrantAccount
 from app.models.webhook import WebhookConfig
-from app.models.balance_cache import BalanceCache
 from app.models.csv_column_profile import CsvColumnProfile
 from app.models.fiscal import FiscalClose
 from app.models.journal import JournalEntry, JournalEntryLine
@@ -123,7 +122,7 @@ def delete_user_account(user_id: int) -> None:
     # 5. user_id を持つ各テーブルを削除
     for model in (
         UserAIConfig, AIUsageLog, APIKey,
-        BalanceCache, CsvColumnProfile,
+        CsvColumnProfile,
         FiscalClose, MedicalExpense,
         OAuthDevice, OAuthToken,
         StorageUsage, Account, WebAuthnCredential,

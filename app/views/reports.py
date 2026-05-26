@@ -12,7 +12,6 @@ from app.models.journal import JournalEntry, JournalEntryLine
 from flask_login import current_user as _current_user
 from app.services.audit import get_effective_user_id, get_allowed_account_codes, mask_account_name, is_entry_locked_for_owner
 from app.services.fiscal import check_entry_modifiable, period_range_filter, get_closed_period
-from app.services.balance_cache import get_cached_balances
 from app.views.helpers import get_grouped_accounts
 
 bp = Blueprint("reports", __name__, url_prefix="/reports")
