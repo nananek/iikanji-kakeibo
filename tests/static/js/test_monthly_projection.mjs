@@ -170,6 +170,95 @@ test("rolling28: daily データなしなら pro_rata fallback", () => {
 });
 
 
+// --- dow28 ---
+
+test("dow28: 28 日均一データなら rolling28 と同値", () => {
+  // 5/15 視点、過去 28 日に毎日 1000 → 各曜日 4 日 × 1000 = 4000、
+  // dow_avg=1000、remaining 16 日 → 16000、projected=actual+16000=31000
+  const entries = [];
+  for (let i = 0; i < 28; i++) {
+    const ms = Date.UTC(2026, 4, 14) - i * 86400000;
+    const d = new Date(ms);
+    const ds = d.getUTCFullYear() + "-"
+      + String(d.getUTCMonth() + 1).padStart(2, "0") + "-"
+      + String(d.getUTCDate()).padStart(2, "0");
+    entries.push(entry(ds, [
+      { account_code: "5010", debit: 1000, credit: 0 },
+      { account_code: "1010", debit: 0, credit: 1000 },
+    ]));
+  }
+  const months = emptyMonths();
+  months[4] = 15000;
+  const view = makeView({
+    expense_accounts: [{
+      code: "5010", name: "食費", cost_type: "variable",
+      months, total: 15000,
+    }],
+    expense_totals: months,
+  });
+  const r = computeProjection(view, entries, {
+    method: "dow28", year: 2026, month: 5,
+    today: new Date(Date.UTC(2026, 4, 15)),
+    accountsMeta: META,
+  });
+  assert.equal(r.expense_projected[0].projected, 31000);
+});
+
+test("dow28: 曜日別データで曜日が反映される", () => {
+  // 月曜のみ 7000、それ以外 0 を 28 日分。
+  // 過去 28 日 (4/17..5/14) に月曜は 4 回 → dow_avg[月曜] = 28000/4 = 7000
+  // 5/15 視点で 5/16..5/31 (= 16 日) のうち月曜は何回?
+  // 5/16=土, 5/17=日, 5/18=月, 5/25=月 → 月曜 = 2 回 → remaining_sum = 14000
+  // actual=0, projected = 0 + 14000 = 14000
+  const entries = [];
+  for (let i = 0; i < 28; i++) {
+    const ms = Date.UTC(2026, 4, 14) - i * 86400000;
+    const d = new Date(ms);
+    if (d.getUTCDay() !== 1) continue;  // 月曜のみ
+    const ds = d.getUTCFullYear() + "-"
+      + String(d.getUTCMonth() + 1).padStart(2, "0") + "-"
+      + String(d.getUTCDate()).padStart(2, "0");
+    entries.push(entry(ds, [
+      { account_code: "5010", debit: 7000, credit: 0 },
+      { account_code: "1010", debit: 0, credit: 7000 },
+    ]));
+  }
+  const months = emptyMonths();
+  const view = makeView({
+    expense_accounts: [{
+      code: "5010", name: "食費", cost_type: "variable",
+      months, total: 0,
+    }],
+    expense_totals: months,
+  });
+  const r = computeProjection(view, entries, {
+    method: "dow28", year: 2026, month: 5,
+    today: new Date(Date.UTC(2026, 4, 15)),
+    accountsMeta: META,
+  });
+  assert.equal(r.expense_projected[0].projected, 14000);
+});
+
+test("dow28: daily データなしなら pro_rata fallback", () => {
+  const months = emptyMonths();
+  months[4] = 15000;
+  const view = makeView({
+    expense_accounts: [{
+      code: "5010", name: "食費", cost_type: "variable",
+      months, total: 15000,
+    }],
+    expense_totals: months,
+  });
+  const r = computeProjection(view, [], {
+    method: "dow28", year: 2026, month: 5,
+    today: new Date(Date.UTC(2026, 4, 15)),
+    accountsMeta: META,
+  });
+  // pro_rata と同じ: 31000
+  assert.equal(r.expense_projected[0].projected, 31000);
+});
+
+
 // --- method label / totals ---
 
 test("総合計 income_total_projected / expense_total_projected を返す", () => {

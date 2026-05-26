@@ -367,6 +367,14 @@ function _renderProjectionCard(projection) {
   setText("projection-days", projection.days_elapsed + "日経過 / "
     + projection.days_in_month + "日");
   setText("projection-method", METHOD_LABELS[projection.method] || "日割按分");
+  // 1 月の rolling28/dow28 は 28 日ウィンドウが前年に跨り当該前年データを
+  // fetch していないため、partial データ警告を表示
+  const partialNote = document.getElementById("projection-partial-data-note");
+  if (partialNote) {
+    const isPartial = projection.month === 1
+      && (projection.method === "rolling28" || projection.method === "dow28");
+    partialNote.classList.toggle("d-none", !isPartial);
+  }
   const progress = document.getElementById("projection-progress-bar");
   if (progress) {
     const pct = projection.days_in_month > 0
