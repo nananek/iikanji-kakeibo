@@ -24,24 +24,30 @@ def index():
     year = today.year
     month = today.month
     user_id = get_effective_user_id()
+    is_audit_proxy = session.get("acting_as_user_id") is not None
 
-    allowed_codes = get_allowed_account_codes()
-    accounts = (
-        Account.query
-        .filter_by(user_id=user_id)
-        .order_by(Account.code)
-        .all()
-    )
-    if allowed_codes is not None:
-        accounts = [a for a in accounts if a.code in allowed_codes]
-
-    accounts_meta = {
-        a.code: {
-            "type": a.account_type.code,
-            "name": mask_account_name(a.name, a.code, allowed_codes),
+    # 監査代理閲覧時はオーナーの MK で復号できず renderer が早期 return
+    # するため、accounts_meta 経由でオーナーの科目名を HTML に埋め込まない
+    # (Lv1 「集計結果のみ閲覧」仕様との整合性確保)。
+    if is_audit_proxy:
+        accounts_meta = {}
+    else:
+        allowed_codes = get_allowed_account_codes()
+        accounts = (
+            Account.query
+            .filter_by(user_id=user_id)
+            .order_by(Account.code)
+            .all()
+        )
+        if allowed_codes is not None:
+            accounts = [a for a in accounts if a.code in allowed_codes]
+        accounts_meta = {
+            a.code: {
+                "type": a.account_type.code,
+                "name": mask_account_name(a.name, a.code, allowed_codes),
+            }
+            for a in accounts
         }
-        for a in accounts
-    }
 
     return render_template(
         "dashboard.html",
@@ -49,5 +55,5 @@ def index():
         month=month,
         accounts_meta=accounts_meta,
         effective_user_id=user_id,
-        is_audit_proxy=session.get("acting_as_user_id") is not None,
+        is_audit_proxy=is_audit_proxy,
     )
