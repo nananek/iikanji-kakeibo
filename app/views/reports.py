@@ -429,8 +429,12 @@ def ledger():
 @bp.route("/tax-form")
 @login_required
 def tax_form_report():
-    """青色申告決算書レポート"""
-    from app.services.tax_form import get_tax_form_report
+    """青色申告決算書 (クライアント描画)。サーバ集計は撤去済 (Phase E3-F-3h)。
+
+    クライアントが min_year..year を MK で復号して P/L 当年発生額 / B/S 期末 /
+    B/S 期首を組み立て、`composeTaxFormView` で field_data を計算する。
+    """
+    from app.services.tax_form import get_form_fields, get_user_mappings
 
     year = request.args.get("year", date.today().year, type=int)
     form_type = request.args.get("form_type", "general")
@@ -438,23 +442,64 @@ def tax_form_report():
         form_type = "general"
     user_id = get_effective_user_id()
 
-    field_data = get_tax_form_report(user_id, year, form_type=form_type)
+    fields = get_form_fields(form_type)
+    field_mappings = get_user_mappings(user_id, form_type)
 
-    section_labels = {
-        "revenue": "売上（収入）",
-        "cost_of_sales": "売上原価",
-        "expenses": "経費",
-        "income": "所得金額",
-        "bs_assets": "資産の部",
-        "bs_liabilities": "負債・資本の部",
+    # 仕訳累計のため最古年度を取得 (BS 期首/期末計算用)。仕訳ゼロなら None
+    min_year = (
+        db.session.query(func.min(JournalEntry.fiscal_year))
+        .filter(JournalEntry.user_id == user_id)
+        .scalar()
+    )
+
+    # form_structure JSON: fields は配列、mappings は {field_id: [code, ...]}
+    form_structure = {
+        "fields": [
+            {
+                "id": f.id,
+                "page": f.page,
+                "section": f.section,
+                "row_code": f.row_code,
+                "name": f.name,
+                "is_subtotal": bool(f.is_subtotal),
+                "is_user_defined": bool(f.is_user_defined),
+                "display_order": f.display_order,
+            }
+            for f in fields
+        ],
+        "mappings": {
+            int(field_id): list(codes)
+            for field_id, codes in field_mappings.items()
+        },
+    }
+
+    # accounts_meta: normal_balance を client が必要とする
+    allowed_codes = get_allowed_account_codes()
+    accounts = (
+        Account.query
+        .filter_by(user_id=user_id)
+        .order_by(Account.code)
+        .all()
+    )
+    if allowed_codes is not None:
+        accounts = [a for a in accounts if a.code in allowed_codes]
+    accounts_meta = {
+        a.code: {
+            "type": a.account_type.code,
+            "normal_balance": a.account_type.normal_balance,
+            "name": mask_account_name(a.name, a.code, allowed_codes),
+        }
+        for a in accounts
     }
 
     return render_template(
         "reports/tax_form.html",
         year=year,
         form_type=form_type,
-        field_data=field_data,
-        section_labels=section_labels,
+        form_structure=form_structure,
+        accounts_meta=accounts_meta,
+        min_year=min_year,
+        effective_user_id=user_id,
     )
 
 

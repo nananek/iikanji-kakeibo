@@ -2,6 +2,20 @@
 {% block title %}青色申告決算書 - いいかんじ™家計簿{% endblock %}
 
 {% block content %}
+<script id="tax-form-server-params" type="application/json">
+{{ {
+  "year": year, "form_type": form_type,
+  "user_id": effective_user_id,
+  "min_year": min_year,
+  "is_audit_proxy": session.get('acting_as_user_id') is not none,
+} | tojson }}
+</script>
+<script id="tax-form-accounts-meta" type="application/json">
+{{ accounts_meta | tojson }}
+</script>
+<script id="tax-form-structure" type="application/json">
+{{ form_structure | tojson }}
+</script>
 <h2><i class="bi bi-file-earmark-text"></i> 青色申告決算書
   <small class="text-muted">{{ year }}年</small>
 </h2>
@@ -40,6 +54,8 @@
   </div>
 </form>
 
+<div id="tax-form-status" class="d-none" role="status" aria-live="polite"></div>
+
 {# --- P1: 損益計算書 --- #}
 <div class="card shadow-sm mb-4">
   <div class="card-header"><strong>損益計算書</strong>（第1面）</div>
@@ -52,40 +68,7 @@
           <th class="text-end" style="width:140px">金額</th>
         </tr>
       </thead>
-      <tbody>
-        {% set current_section = [None] %}
-        {% for item in field_data %}
-          {% if item.field.page == 1 %}
-            {% if item.field.section != current_section[0] %}
-              {% if current_section.append(item.field.section) %}{% endif %}
-              {% if current_section.pop(0) is not none or true %}{% endif %}
-              <tr class="table-secondary">
-                <td colspan="3"><strong>{{ section_labels.get(item.field.section, item.field.section) }}</strong></td>
-              </tr>
-            {% endif %}
-            {% if item.field.is_subtotal %}
-            <tr class="table-info fw-bold">
-              <td class="text-muted"><small>{{ item.field.row_code }}</small></td>
-              <td>{{ item.field.name }}</td>
-              <td class="text-end">&yen;{{ "{:,}".format(item.amount) }}</td>
-            </tr>
-            {% else %}
-            <tr{% if item.field.is_user_defined and not item.codes %} class="text-muted"{% endif %}>
-              <td class="text-muted"><small>{{ item.field.row_code }}</small></td>
-              <td>
-                {{ item.field.name }}
-                {% if not item.codes and not item.field.is_subtotal %}
-                  <small class="text-muted">(未設定)</small>
-                {% endif %}
-              </td>
-              <td class="text-end">
-                {% if item.amount %}&yen;{{ "{:,}".format(item.amount) }}{% else %}-{% endif %}
-              </td>
-            </tr>
-            {% endif %}
-          {% endif %}
-        {% endfor %}
-      </tbody>
+      <tbody id="tax-form-pl-tbody"></tbody>
     </table>
   </div>
 </div>
@@ -103,45 +86,10 @@
           <th class="text-end" style="width:140px">期末</th>
         </tr>
       </thead>
-      <tbody>
-        {% set current_section = [None] %}
-        {% for item in field_data %}
-          {% if item.field.page == 4 %}
-            {% if item.field.section != current_section[0] %}
-              {% if current_section.append(item.field.section) %}{% endif %}
-              {% if current_section.pop(0) is not none or true %}{% endif %}
-              <tr class="table-secondary">
-                <td colspan="4"><strong>{{ section_labels.get(item.field.section, item.field.section) }}</strong></td>
-              </tr>
-            {% endif %}
-            {% if item.field.is_subtotal %}
-            <tr class="table-info fw-bold">
-              <td class="text-muted"><small>{{ item.field.row_code }}</small></td>
-              <td>{{ item.field.name }}</td>
-              <td class="text-end">&yen;{{ "{:,}".format(item.opening|default(0)) }}</td>
-              <td class="text-end">&yen;{{ "{:,}".format(item.amount) }}</td>
-            </tr>
-            {% else %}
-            <tr{% if item.field.is_user_defined and not item.codes %} class="text-muted"{% endif %}>
-              <td class="text-muted"><small>{{ item.field.row_code }}</small></td>
-              <td>
-                {{ item.field.name }}
-                {% if not item.codes and not item.field.is_subtotal %}
-                  <small class="text-muted">(未設定)</small>
-                {% endif %}
-              </td>
-              <td class="text-end">
-                {% if item.opening %}&yen;{{ "{:,}".format(item.opening) }}{% else %}-{% endif %}
-              </td>
-              <td class="text-end">
-                {% if item.amount %}&yen;{{ "{:,}".format(item.amount) }}{% else %}-{% endif %}
-              </td>
-            </tr>
-            {% endif %}
-          {% endif %}
-        {% endfor %}
-      </tbody>
+      <tbody id="tax-form-bs-tbody"></tbody>
     </table>
   </div>
 </div>
+
+<script type="module" src="{{ url_for('static', filename='js/reports/tax_form_renderer.mjs') }}"></script>
 {% endblock %}
