@@ -111,6 +111,9 @@ def api_key_required(scope=None, write=False):
 # blob は単にストレージ負荷になる。
 _MAX_RECORD_BLOB_BYTES = 4096
 _MAX_BATCH_ENTRIES = 500
+_ALLOWED_BATCH_SOURCES = {
+    "journal", "cashbook", "ai_receipt", "csv", "ofx", "web", "api",
+}
 _AES_GCM_IV_BYTES = 12
 
 
@@ -350,16 +353,25 @@ def _validate_and_parse_batch_entry(e, idx, locked_codes):
 
     fiscal_period = e.get("fiscal_period")
     if fiscal_period is not None:
-        if type(fiscal_period) is not int or not (0 <= fiscal_period <= 16):
+        # fiscal_period=16 (損益振替) は自動生成専用 (CLAUDE.md 参照)。
+        # 手動 API から指定できないように 0〜15 に制限する。
+        if type(fiscal_period) is not int or not (0 <= fiscal_period <= 15):
             raise ValueError(
-                f"entries[{idx}].fiscal_period は 0〜16 の整数です。"
+                f"entries[{idx}].fiscal_period は 0〜15 の整数です "
+                "(16=損益振替は自動生成専用)。"
             )
+
+    source = e.get("source", "api")
+    if source not in _ALLOWED_BATCH_SOURCES:
+        raise ValueError(
+            f"entries[{idx}].source の値が不正です: {source!r}"
+        )
 
     return {
         "date": entry_date,
         "description": description,
         "lines_data": lines_data,
-        "source": e.get("source", "api"),
+        "source": source,
         "encrypted_blob": entry_blob,
         "blob_iv": entry_iv,
         "fiscal_year": fiscal_year,
@@ -411,7 +423,7 @@ def create_journals_batch():
         for idx, e in enumerate(entries_in):
             parsed = _validate_and_parse_batch_entry(e, idx, locked_codes)
 
-            # 確定済み期間チェック (validate と分離: date が pasrsed 後でないと判定不可)
+            # 確定済み期間チェック (validate と分離: date が parsed 後でないと判定不可)
             err = check_period_open_for_new(
                 user_id, parsed["date"].year, parsed["date"].month,
             )

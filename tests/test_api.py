@@ -302,6 +302,34 @@ class TestCreateJournalsBatch:
         resp = client.post("/api/v1/journals/batch", json={"entries": []})
         assert resp.status_code == 401
 
+    def test_fiscal_period_16_rejected(self, client, db, user, accounts, auth_header):
+        """fp=16 (損益振替) は自動生成専用なので batch から起票できない。"""
+        resp = client.post("/api/v1/journals/batch", headers=auth_header, json={
+            "entries": [{
+                "date": "2026-02-01", "description": "損益振替",
+                "fiscal_period": 16,
+                "lines": [
+                    {"account_code": accounts["5010"].code, "debit": 100},
+                    {"account_code": accounts["1010"].code, "credit": 100},
+                ],
+            }],
+        })
+        assert resp.status_code == 400
+        assert "損益振替" in resp.get_json()["error"]
+
+    def test_invalid_source_rejected(self, client, db, user, accounts, auth_header):
+        resp = client.post("/api/v1/journals/batch", headers=auth_header, json={
+            "entries": [{
+                "date": "2026-02-01", "description": "x", "source": "malicious",
+                "lines": [
+                    {"account_code": accounts["5010"].code, "debit": 1},
+                    {"account_code": accounts["1010"].code, "credit": 1},
+                ],
+            }],
+        })
+        assert resp.status_code == 400
+        assert "source" in resp.get_json()["error"]
+
 
 class TestCreateJournalE2EE:
     """Phase E3: encrypted_blob / blob_iv / fiscal_year 受け付けのテスト。"""
