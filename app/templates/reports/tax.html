@@ -5,11 +5,14 @@
 <script id="medical-summary-server-params" type="application/json">
 {{ {"year": year, "user_id": effective_user_id, "is_audit_proxy": session.get('acting_as_user_id') is not none} | tojson }}
 </script>
+<script id="medical-summary-accounts-meta" type="application/json">
+{{ medical_accounts_meta | tojson }}
+</script>
 <script id="tax-summary-server-params" type="application/json">
 {{ {"year": year, "user_id": effective_user_id, "is_audit_proxy": session.get('acting_as_user_id') is not none} | tojson }}
 </script>
 <script id="tax-summary-accounts-meta" type="application/json">
-{{ accounts_meta | tojson }}
+{{ tax_accounts_meta | tojson }}
 </script>
 <h2><i class="bi bi-file-earmark-text"></i> 確定申告用集計</h2>
 
@@ -34,90 +37,36 @@
 
 <div class="d-flex justify-content-between align-items-center mt-5">
   <h4>医療費控除</h4>
-  {% if medical_summary.expenses %}
-  <a href="{{ url_for('reports.medical_csv', year=year) }}" class="btn btn-outline-success btn-sm">
+  <a id="medical-csv-link" href="{{ url_for('reports.medical_csv', year=year) }}" class="btn btn-outline-success btn-sm d-none">
     <i class="bi bi-download"></i> 医療費集計フォームCSV
   </a>
-  {% endif %}
 </div>
 
-<div class="card shadow-sm mb-3"
-     data-medical-summary-totals
-     data-server-paid="{{ medical_summary.total_paid|int }}"
-     data-server-reimbursed="{{ medical_summary.total_reimbursed|int }}"
-     data-server-net="{{ medical_summary.net_total|int }}">
+<div id="medical-summary-status" class="d-none" role="status" aria-live="polite"></div>
+
+<div data-medical-summary-totals class="card shadow-sm mb-3">
   <div class="card-body">
     <div class="row text-center">
       <div class="col-md-4">
         <h6 class="text-muted">支払医療費合計</h6>
-        <h4>&yen;{{ "{:,}".format(medical_summary.total_paid) }}</h4>
+        <h4 id="medical-total-paid">¥0</h4>
       </div>
       <div class="col-md-4">
         <h6 class="text-muted">保険補填額</h6>
-        <h4>&yen;{{ "{:,}".format(medical_summary.total_reimbursed) }}</h4>
+        <h4 id="medical-total-reimbursed">¥0</h4>
       </div>
       <div class="col-md-4">
         <h6 class="text-muted">自己負担額</h6>
-        <h4>&yen;{{ "{:,}".format(medical_summary.net_total) }}</h4>
+        <h4 id="medical-total-net">¥0</h4>
       </div>
     </div>
   </div>
 </div>
 
-{% if medical_summary.by_patient %}
-{% for p in medical_summary.by_patient %}
-<div class="card shadow-sm mb-3"
-     data-medical-patient="{{ p.name }}"
-     data-server-paid="{{ p.paid|int }}"
-     data-server-reimbursed="{{ p.reimbursed|int }}"
-     data-server-net="{{ p.net|int }}">
-  <div class="card-header d-flex justify-content-between">
-    <strong><i class="bi bi-person"></i> {{ p.name }}</strong>
-    <span>
-      支払 &yen;{{ "{:,}".format(p.paid) }}
-      {% if p.reimbursed %} / 補填 &yen;{{ "{:,}".format(p.reimbursed) }}{% endif %}
-      / 自己負担 <strong>&yen;{{ "{:,}".format(p.net) }}</strong>
-    </span>
-  </div>
-  <div class="card-body p-0">
-    <table class="table table-sm mb-0">
-      <thead class="table-light">
-        <tr>
-          <th>医療機関</th>
-          <th>区分</th>
-          <th class="text-end">支払額</th>
-          <th class="text-end">補填額</th>
-          <th class="text-end">自己負担</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for h in p.hospitals %}
-        <tr>
-          <td>{{ h.name }}</td>
-          <td>
-            {% if h.provider_type == 'hospital' %}病院
-            {% elif h.provider_type == 'pharmacy' %}薬局
-            {% elif h.provider_type == 'nursing' %}介護
-            {% elif h.provider_type == 'other' %}その他
-            {% endif %}
-          </td>
-          <td class="text-end">&yen;{{ "{:,}".format(h.paid) }}</td>
-          <td class="text-end">
-            {% if h.reimbursed %}&yen;{{ "{:,}".format(h.reimbursed) }}{% endif %}
-          </td>
-          <td class="text-end">&yen;{{ "{:,}".format(h.net) }}</td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
-</div>
-{% endfor %}
-{% endif %}
+<div id="medical-by-patient"></div>
 
-{% if medical_summary.expenses %}
-<details>
-  <summary class="mb-2"><strong>明細一覧</strong> ({{ medical_summary.expenses|length }}件)</summary>
+<details id="medical-expenses-details" class="d-none">
+  <summary class="mb-2"><strong>明細一覧</strong> (<span id="medical-expenses-count">0</span>件)</summary>
   <div class="table-responsive">
     <table class="table table-sm">
       <thead class="table-light">
@@ -131,34 +80,11 @@
           <th class="text-end">保険補填</th>
         </tr>
       </thead>
-      <tbody>
-        {% for e in medical_summary.expenses %}
-        <tr>
-          <td>{{ e.date.strftime('%Y/%m/%d') }}</td>
-          <td>{{ e.description }}</td>
-          <td>{{ e.patient_name }}</td>
-          <td>{{ e.hospital_name }}</td>
-          <td>
-            {% if e.provider_type == 'hospital' %}病院
-            {% elif e.provider_type == 'pharmacy' %}薬局
-            {% elif e.provider_type == 'nursing' %}介護
-            {% elif e.provider_type == 'other' %}その他
-            {% endif %}
-          </td>
-          <td class="text-end">&yen;{{ "{:,}".format(e.amount) }}</td>
-          <td class="text-end">
-            {% if e.insurance_reimbursement %}
-            &yen;{{ "{:,}".format(e.insurance_reimbursement) }}
-            {% endif %}
-          </td>
-        </tr>
-        {% endfor %}
-      </tbody>
+      <tbody id="medical-expenses-tbody"></tbody>
     </table>
   </div>
 </details>
-{% endif %}
 
-<script type="module" src="{{ url_for('static', filename='js/reports/medical_summary_validator.mjs') }}"></script>
+<script type="module" src="{{ url_for('static', filename='js/reports/medical_summary_renderer.mjs') }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/reports/tax_summary_renderer.mjs') }}"></script>
 {% endblock %}
