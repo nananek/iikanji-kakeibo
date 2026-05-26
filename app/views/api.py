@@ -690,6 +690,138 @@ def delete_balance_cache_blobs(year):
     return jsonify({"ok": True, "deleted": deleted})
 
 
+# --- 全データバックアップ (v5 BU-1) ---
+
+
+@bp.route("/backup/export", methods=["GET"])
+@auth_required(scope="journals:read", allow_session=True)
+@limiter.limit("5 per hour", key_func=rate_limit_key)
+def backup_export():
+    """全データバックアップ。
+
+    本人 (g.auth_user.id) の全テーブルのレコードを ciphertext のまま JSON で
+    返す。サーバは平文を一切組立てない (E2EE 維持)。クライアントは自分の MK
+    で各 encrypted_blob を復号してから平文 JSON ファイルとして保存する。
+
+    含めるテーブル (Phase BU-1):
+      accounts, fiscal_closes, journal_entries, journal_entry_lines,
+      medical_expenses, balance_cache_blobs
+
+    含めないもの (今 PR では):
+      vouchers (画像本体), ai_drafts (画像本体), user_ai_configs (API キー),
+      webhook_configs, tax_form_mappings, csv_column_profiles, webauthn_*
+      → 次の BU-PR で順次対応。
+
+    監査代理閲覧では他人のデータを export できない: 監査者の MK ではオーナーの
+    encrypted_blob を復号できないため、結果として復号失敗するが、API としては
+    監査者自身のデータが返るだけ (acting_as 解決は将来 PR)。
+    """
+    from app.models.fiscal import FiscalClose
+    from app.models.journal import JournalEntryLine
+    from app.models.medical import MedicalExpense
+
+    user_id = g.auth_user.id
+
+    accounts = Account.query.filter_by(user_id=user_id).all()
+    fiscal_closes = FiscalClose.query.filter_by(user_id=user_id).all()
+    entries = (
+        JournalEntry.query
+        .filter_by(user_id=user_id)
+        .order_by(JournalEntry.entry_number)
+        .all()
+    )
+    entry_ids = [e.id for e in entries]
+    lines = (
+        JournalEntryLine.query
+        .filter(JournalEntryLine.journal_entry_id.in_(entry_ids))
+        .all()
+    ) if entry_ids else []
+    medical = MedicalExpense.query.filter_by(user_id=user_id).all()
+    blobs = BalanceCacheBlob.query.filter_by(user_id=user_id).all()
+
+    return jsonify({
+        "version": "1.0",
+        "exported_at": datetime.now(timezone.utc).isoformat(),
+        "user_id": user_id,
+        "data": {
+            "accounts": [
+                {
+                    "code": a.code,
+                    "account_type_id": a.account_type_id,
+                    "name": a.name,
+                    "description": a.description,
+                    "tax_category": a.tax_category,
+                    "cost_type": a.cost_type,
+                    "system_role": a.system_role,
+                    "is_system": a.is_system,
+                    "is_active": a.is_active,
+                    "deactivated_year": a.deactivated_year,
+                    "display_order": a.display_order,
+                }
+                for a in accounts
+            ],
+            "fiscal_closes": [
+                {"year": f.year, "closed_period": f.closed_period}
+                for f in fiscal_closes
+            ],
+            "journal_entries": [
+                {
+                    "id": e.id,
+                    "date": e.date.isoformat() if e.date else None,
+                    "entry_number": e.entry_number,
+                    "description": e.description,
+                    "source": e.source,
+                    "batch_id": e.batch_id,
+                    "fiscal_period": e.fiscal_period,
+                    "fiscal_year": e.fiscal_year,
+                    "encrypted_blob": _b64_or_none(e.encrypted_blob),
+                    "blob_iv": _b64_or_none(e.blob_iv),
+                }
+                for e in entries
+            ],
+            "journal_entry_lines": [
+                {
+                    "id": l.id,
+                    "journal_entry_id": l.journal_entry_id,
+                    "account_code": l.account_code,
+                    "debit_amount": int(l.debit_amount or 0),
+                    "credit_amount": int(l.credit_amount or 0),
+                    "description": l.description,
+                    "encrypted_blob": _b64_or_none(l.encrypted_blob),
+                    "blob_iv": _b64_or_none(l.blob_iv),
+                }
+                for l in lines
+            ],
+            "medical_expenses": [
+                {
+                    "id": m.id,
+                    "journal_entry_id": m.journal_entry_id,
+                    "date": m.date.isoformat() if m.date else None,
+                    "patient_name": m.patient_name,
+                    "hospital_name": m.hospital_name,
+                    "treatment_description": m.treatment_description,
+                    "provider_type": m.provider_type,
+                    "amount_paid": int(m.amount_paid or 0),
+                    "insurance_reimbursement": int(m.insurance_reimbursement or 0),
+                    "encrypted_blob": _b64_or_none(m.encrypted_blob),
+                    "blob_iv": _b64_or_none(m.blob_iv),
+                }
+                for m in medical
+            ],
+            "balance_cache_blobs": [
+                {
+                    "year": b.year,
+                    "period": b.period,
+                    "encrypted_blob": b64encode(b.encrypted_blob).decode("ascii"),
+                    "blob_iv": b64encode(b.blob_iv).decode("ascii"),
+                    "updated_at": b.updated_at.isoformat() if b.updated_at else None,
+                }
+                for b in blobs
+            ],
+        },
+    })
+
+
 # --- 仕訳閲覧 ---
 
 
