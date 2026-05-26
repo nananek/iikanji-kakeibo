@@ -21,6 +21,42 @@ function getStaticRoot() {
 }
 
 
+/**
+ * sync すべき period と削除すべき stale period の起点を計算する純粋関数。
+ *
+ * - 確定済 (0..closedPeriod) のうち existing にないものを toSync に列挙
+ * - closedPeriod >= 15 で 16 (損益振替済の累計) が existing にないなら追加
+ * - closedPeriod < 15 のとき closedPeriod+1 以降に existing があれば
+ *   staleFromPeriod に closedPeriod+1 を設定 (DELETE 対象)
+ * - closedPeriod >= 15 のときは 16 を保持するため stale 削除しない
+ *
+ * @param {Set<number>} existingPeriods
+ * @param {number} closedPeriod  -1=未確定, 0..15
+ * @returns {{ toSync: number[], staleFromPeriod: (number|null) }}
+ */
+export function planBcbSync(existingPeriods, closedPeriod) {
+  const toSync = [];
+  if (closedPeriod >= 0) {
+    for (let p = 0; p <= closedPeriod; p++) {
+      if (!existingPeriods.has(p)) toSync.push(p);
+    }
+    if (closedPeriod >= 15 && !existingPeriods.has(16)) {
+      toSync.push(16);
+    }
+  }
+
+  let staleFromPeriod = null;
+  if (closedPeriod < 15) {
+    const candidate = (closedPeriod < 0) ? 0 : closedPeriod + 1;
+    if ([...existingPeriods].some((p) => p >= candidate)) {
+      staleFromPeriod = candidate;
+    }
+  }
+
+  return { toSync, staleFromPeriod };
+}
+
+
 async function _run() {
   const paramsEl = document.getElementById("bcb-sync-params");
   if (!paramsEl) return;
@@ -62,28 +98,17 @@ async function _run() {
       Object.keys(existing).map((k) => Number.parseInt(k, 10)),
     );
 
-    // 確定済 period 0..closed_period (+ 15 まで確定なら 16 = 損益振替済)
-    const toSync = [];
-    for (let p = 0; p <= params.closed_period; p++) {
-      if (!existingPeriods.has(p)) toSync.push(p);
-    }
-    if (params.closed_period >= 15 && !existingPeriods.has(16)) {
-      toSync.push(16);
-    }
+    // どの period を sync / DELETE するかは planBcbSync で決定 (純粋関数)
+    const { toSync, staleFromPeriod } = planBcbSync(
+      existingPeriods, params.closed_period,
+    );
 
-    // 確定解除に伴い stale になった BCB を削除。closed_period < 15 のときは
-    // closed_period+1 以降を削除 (16 含む)。closed_period >= 15 のときは
-    // 16 (損益振替済の累計) を保持するため削除しない。
     let stalePruned = 0;
-    if (params.closed_period < 15) {
-      const staleFromPeriod = params.closed_period + 1;
-      const hasStale = [...existingPeriods].some((p) => p >= staleFromPeriod);
-      if (hasStale) {
-        const res = await deleteBalanceCacheBlobs({
-          year: params.year, fromPeriod: staleFromPeriod,
-        });
-        stalePruned = res.deleted || 0;
-      }
+    if (staleFromPeriod !== null) {
+      const res = await deleteBalanceCacheBlobs({
+        year: params.year, fromPeriod: staleFromPeriod,
+      });
+      stalePruned = res.deleted || 0;
     }
 
     if (toSync.length === 0 && stalePruned === 0) {
