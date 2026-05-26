@@ -194,7 +194,7 @@ def create_app(config_class=Config):
                 return redirect(url_for("auditor.dashboard"))
         # Lv1: only tax report
         if perm == 1:
-            if endpoint not in ("reports.tax", "reports.medical_csv"):
+            if endpoint != "reports.tax":
                 return redirect(url_for("reports.tax"))
         # Lv2: block import/AI/account changes/fiscal settings
         elif perm == 2:

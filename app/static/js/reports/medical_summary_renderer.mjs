@@ -70,12 +70,74 @@ function _renderTotals(view) {
 }
 
 
-function _renderCsvLink(hasExpenses) {
-  // CSV ダウンロード href は server-side で year 入りで生成済み。
-  // ここでは表示/非表示を切り替えるだけ。
-  const el = document.getElementById("medical-csv-link");
-  if (!el) return;
-  el.classList.toggle("d-none", !hasExpenses);
+// CSV エスケープと組み立てロジックは renderer 外からテストできるよう
+// export する (E3-F-4c)。
+export { buildMedicalCsv };
+
+function _csvEscape(value) {
+  // RFC4180: フィールドに " , 改行 が含まれるなら double-quote で囲み " は "" にエスケープ
+  const s = value == null ? "" : String(value);
+  if (/[",\r\n]/.test(s)) {
+    return '"' + s.replace(/"/g, '""') + '"';
+  }
+  return s;
+}
+
+
+/**
+ * Ver 3.1 準拠の医療費集計フォーム CSV を生成。BOM 付き UTF-8 で
+ * Excel 互換にする。
+ */
+function buildMedicalCsv(view) {
+  const headerRow = [
+    "医療を受けた人",
+    "病院・薬局などの名称",
+    "診療・治療",
+    "医薬品購入",
+    "介護保険サービス",
+    "その他の医療費",
+    "支払った医療費の金額",
+    "左のうち、補てんされる金額",
+  ];
+  const lines = [headerRow.map(_csvEscape).join(",")];
+  for (const e of view.expenses_list) {
+    const pt = e.provider_type || "";
+    lines.push([
+      e.patient_name,
+      e.hospital_name,
+      pt === "hospital" || !pt ? "該当する" : "",
+      pt === "pharmacy" ? "該当する" : "",
+      pt === "nursing" ? "該当する" : "",
+      pt === "other" ? "該当する" : "",
+      e.amount || 0,
+      e.insurance_reimbursement ? e.insurance_reimbursement : "",
+    ].map(_csvEscape).join(","));
+  }
+  return "\uFEFF" + lines.join("\r\n") + "\r\n";
+}
+
+
+function _downloadCsv(view, year) {
+  const csv = buildMedicalCsv(view);
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "iryouhi_" + year + ".csv";
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
+
+function _wireCsvButton(view, year) {
+  const btn = document.getElementById("medical-csv-button");
+  const hasExpenses = view.expenses_list.length > 0;
+  if (!btn) return;
+  btn.classList.toggle("d-none", !hasExpenses);
+  if (!hasExpenses) return;
+  btn.onclick = () => _downloadCsv(view, year);
 }
 
 
@@ -207,9 +269,9 @@ function _renderExpensesList(view) {
 }
 
 
-function _renderView(view) {
+function _renderView(view, params) {
   _renderTotals(view);
-  _renderCsvLink(view.expenses_list.length > 0);
+  _wireCsvButton(view, params.year);
   _renderByPatient(view);
   _renderExpensesList(view);
 }
@@ -342,7 +404,7 @@ async function _run() {
     const merged = mergeExpenses(entries, mexpenses, accountsMeta);
     const result = computeMedicalSummary(merged);
     const view = composeMedicalSummaryView(result, merged);
-    _renderView(view);
+    _renderView(view, params);
   } catch (e) {
     _setStatus("医療費集計の取得に失敗しました: " + (e.message || e), "danger");
   } finally {

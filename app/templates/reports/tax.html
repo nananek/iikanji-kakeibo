@@ -37,9 +37,9 @@
 
 <div class="d-flex justify-content-between align-items-center mt-5">
   <h4>医療費控除</h4>
-  <a id="medical-csv-link" href="{{ url_for('reports.medical_csv', year=year) }}" class="btn btn-outline-success btn-sm d-none">
+  <button type="button" id="medical-csv-button" class="btn btn-outline-success btn-sm d-none">
     <i class="bi bi-download"></i> 医療費集計フォームCSV
-  </a>
+  </button>
 </div>
 
 <div id="medical-summary-status" class="d-none" role="status" aria-live="polite"></div>

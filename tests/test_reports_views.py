@@ -96,17 +96,8 @@ class TestTax:
         assert resp.status_code == 200
 
 
-class TestMedicalCsv:
-    def test_unauthenticated(self, client):
-        resp = client.get("/reports/tax/medical-csv")
-        assert resp.status_code in (302, 401)
-
-    def test_csv_download(self, logged_in_client, accounts):
-        resp = logged_in_client.get("/reports/tax/medical-csv?year=2026")
-        # CSV download - status 200
-        assert resp.status_code == 200
-        assert "csv" in resp.content_type.lower() or \
-               resp.headers.get("Content-Disposition", "")
+# /reports/tax/medical-csv は Phase E3-F-4c で撤去。CSV 生成は
+# `tests/static/js/test_medical_csv.mjs` でクライアント側を検証する。
 
 
 class TestLedger:
