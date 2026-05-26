@@ -171,6 +171,36 @@ test("date 欠落で TypeError (cashbook / transfer 両方)", () => {
   }), TypeError);
 });
 
+test("fiscalPeriod=16 (損益振替) は TypeError (cashbook / transfer 両方)", () => {
+  // サーバ batch API も拒否するが、クライアントでも fail-loud で早期検知
+  assert.throws(() => buildCashbookEntry({
+    date: "2026-02-15", description: "x",
+    transactionType: "expense",
+    paymentAccountCode: "1010", categoryAccountCode: "5010", amount: 100,
+    fiscalPeriod: 16,
+  }), TypeError);
+  assert.throws(() => buildTransferEntry({
+    date: "2026-02-20", description: "x",
+    fromAccountCode: "1010", toAccountCode: "1020", amount: 100,
+    fiscalPeriod: 16,
+  }), TypeError);
+});
+
+test("fiscalPeriod が範囲外 / 非整数で TypeError", () => {
+  assert.throws(() => buildCashbookEntry({
+    date: "2026-02-15", description: "x",
+    transactionType: "expense",
+    paymentAccountCode: "1010", categoryAccountCode: "5010", amount: 100,
+    fiscalPeriod: -1,
+  }), TypeError);
+  assert.throws(() => buildCashbookEntry({
+    date: "2026-02-15", description: "x",
+    transactionType: "expense",
+    paymentAccountCode: "1010", categoryAccountCode: "5010", amount: 100,
+    fiscalPeriod: 1.5,
+  }), TypeError);
+});
+
 test("description 省略時は空文字", () => {
   const e = buildCashbookEntry({
     date: "2026-02-15",

@@ -37,6 +37,18 @@ function _assertNonEmptyString(value, label) {
 }
 
 
+function _assertFiscalPeriod(fiscalPeriod) {
+  if (fiscalPeriod === null || fiscalPeriod === undefined) return;
+  // 16 (損益振替) は自動生成専用 (CLAUDE.md)、batch API も拒否する。
+  // クライアント側でも fail-loud で早期に弾く。
+  if (!Number.isInteger(fiscalPeriod) || fiscalPeriod < 0 || fiscalPeriod > 15) {
+    throw new TypeError(
+      `fiscalPeriod must be an integer 0-15 or null (got ${fiscalPeriod})`,
+    );
+  }
+}
+
+
 /**
  * 出納帳の入力から仕訳 entry を生成する純粋関数。
  *
@@ -70,6 +82,7 @@ export function buildCashbookEntry({
   _assertNonEmptyString(paymentAccountCode, "paymentAccountCode");
   _assertNonEmptyString(categoryAccountCode, "categoryAccountCode");
   _assertIntAmount(amount, "amount");
+  _assertFiscalPeriod(fiscalPeriod);
 
   const absAmount = Math.abs(amount);
   let debitCode, creditCode;
@@ -125,6 +138,7 @@ export function buildTransferEntry({
   _assertNonEmptyString(fromAccountCode, "fromAccountCode");
   _assertNonEmptyString(toAccountCode, "toAccountCode");
   _assertIntAmount(amount, "amount");
+  _assertFiscalPeriod(fiscalPeriod);
   if (fromAccountCode === toAccountCode) {
     throw new TypeError(
       "fromAccountCode and toAccountCode must differ",
