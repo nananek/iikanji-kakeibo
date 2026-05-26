@@ -90,141 +90,51 @@ def balance():
 @bp.route("/bs")
 @login_required
 def bs():
-    """貸借対照表"""
+    """貸借対照表 (クライアント描画)。サーバ集計は撤去済 (Phase E3-F-3c)。
+    クライアントが min_year..year の全 entries を MK で復号して累計集計。
+    """
     year = request.args.get("year", date.today().year, type=int)
     user_id = get_effective_user_id()
-    start_of_year = date(year, 1, 1)
-    end_of_year = date(year + 1, 1, 1)
 
     allowed_codes = get_allowed_account_codes()
-
-    # B/S科目区分
-    bs_type_codes = {"asset", "liability", "equity"}
-    pl_type_codes = {"revenue", "expense"}
-
     all_accounts = (
         Account.query
         .filter_by(user_id=user_id)
         .order_by(Account.code)
         .all()
     )
-    # 有効 OR 無効化年 >= 表示年
-    all_accounts = [a for a in all_accounts if a.is_active or (a.deactivated_year and a.deactivated_year >= year)]
-
+    all_accounts = [
+        a for a in all_accounts
+        if a.is_active or (a.deactivated_year and a.deactivated_year >= year)
+    ]
     if allowed_codes is not None:
         all_accounts = [a for a in all_accounts if a.code in allowed_codes]
 
-    def _sum(acct_code, filters, include_closing=False):
-        q = (
-            db.session.query(
-                func.coalesce(func.sum(JournalEntryLine.debit_amount), 0),
-                func.coalesce(func.sum(JournalEntryLine.credit_amount), 0),
-            )
-            .join(JournalEntry, JournalEntry.id == JournalEntryLine.journal_entry_id)
-            .filter(
-                JournalEntryLine.account_user_id == user_id,
-                JournalEntryLine.account_code == acct_code,
-            )
-        )
-        if not include_closing:
-            q = q.filter(JournalEntry.source != "closing")
-        for f in filters:
-            q = q.filter(f)
-        return q.first()
-
-    # 当年のP/L合計（当期純利益算出用）
-    # 損益振替前: 収益・費用の当年発生額から計算
-    # 損益振替後: 繰越利益に含まれるので別途加算しない
-    # → 振替有無を判定: 当年にsource=closingの仕訳があるか
-    has_closing = (
-        db.session.query(JournalEntry.id)
-        .filter(
-            JournalEntry.user_id == user_id,
-            JournalEntry.source == "closing",
-            JournalEntry.date >= start_of_year,
-            JournalEntry.date < end_of_year,
-        )
-        .first()
-    ) is not None
-
-    net_income = 0
-    if not has_closing:
-        # 損益振替前: P/L科目から当期純利益を計算
-        for acct in all_accounts:
-            if acct.account_type.code not in pl_type_codes:
-                continue
-            result = _sum(acct.code, [
-                JournalEntry.date >= start_of_year,
-                JournalEntry.date < end_of_year,
-            ])
-            d, c = int(result[0]), int(result[1])
-            if acct.account_type.code == "revenue":
-                net_income += c - d
-            else:
-                net_income -= d - c
-
-    # B/S科目の残高を計算（全期間累計）
-    assets = []
-    liabilities = []
-    equities = []
-    total_assets = 0
-    total_liabilities = 0
-    total_equity = 0
-
-    for acct in all_accounts:
-        if acct.account_type.code not in bs_type_codes:
-            continue
-
-        is_debit_normal = acct.account_type.normal_balance == "debit"
-
-        # 全期間の合計（closing含む）
-        result = _sum(acct.code, [JournalEntry.date < end_of_year], include_closing=True)
-        d, c = int(result[0]), int(result[1])
-
-        if is_debit_normal:
-            balance = d - c
-        else:
-            balance = c - d
-
-        if balance == 0:
-            continue
-
-        item = {"account": acct, "balance": balance}
-
-        if acct.account_type.code == "asset":
-            assets.append(item)
-            total_assets += balance
-        elif acct.account_type.code == "liability":
-            liabilities.append(item)
-            total_liabilities += balance
-        elif acct.account_type.code == "equity":
-            equities.append(item)
-            total_equity += balance
-
-    # 損益振替前なら当期純利益を純資産に加算
-    if not has_closing:
-        total_equity += net_income
-
-    # client-side validator needs the oldest year to know how many years
-    # to fetch when reproducing the cumulative B/S balance.
+    # B/S 累計の最古年度。仕訳ゼロなら None で fetch ループを skip
     min_year = (
         db.session.query(func.min(JournalEntry.fiscal_year))
         .filter(JournalEntry.user_id == user_id)
         .scalar()
     )
 
+    # accounts_meta: name は allowed_codes フィルタ適用済のみ含む
+    # (Lv2 非公開はここに含まれない)。type/normal_balance はクライアント
+    # 側 computeBalanceSheet が必要とする情報。
+    accounts_meta = {
+        a.code: {
+            "type": a.account_type.code,
+            "normal_balance": a.account_type.normal_balance,
+            "name": mask_account_name(a.name, a.code, allowed_codes),
+        }
+        for a in all_accounts
+    }
+
     return render_template(
         "reports/bs.html",
         year=year,
-        assets=assets,
-        liabilities=liabilities,
-        equities=equities,
-        total_assets=total_assets,
-        total_liabilities=total_liabilities,
-        total_equity=total_equity,
-        net_income=net_income,
-        has_closing=has_closing,
+        accounts_meta=accounts_meta,
         min_year=min_year,
+        effective_user_id=user_id,
     )
 
 
