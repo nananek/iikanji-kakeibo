@@ -17,6 +17,7 @@ from app.models.ai_config import UserAIConfig
 from app.models.ai_draft import AIDraft
 from app.models.ai_usage_log import AIUsageLog
 from app.models.account import Account
+from app.models.balance_cache import BalanceCacheBlob
 from app.models.journal import JournalEntry
 from app.services.accounting import create_journal_entry
 from app.services.audit import get_submitted_account_codes, is_entry_locked_for_owner
@@ -112,6 +113,10 @@ def api_key_required(scope=None, write=False):
 # blob は単にストレージ負荷になる。
 _MAX_RECORD_BLOB_BYTES = 4096
 _MAX_BATCH_ENTRIES = 500
+# balance_cache_blobs は 1 (user, year, period) で全 P/L+B/S 科目を含むため
+# record blob より大きい。標準ユーザーで数十科目 × 10〜20 byte → 1〜2KB 想定、
+# 余裕を見て上限 32KB に設定 (DoS 防止)。
+_MAX_BCB_BLOB_BYTES = 32 * 1024
 _ALLOWED_BATCH_SOURCES = {
     "journal", "cashbook", "ai_receipt", "csv", "ofx", "web", "api",
 }
@@ -527,6 +532,149 @@ def create_journals_batch():
             {"id": e.id, "entry_number": e.entry_number} for e in created
         ],
     }), 201
+
+
+# --- 残高キャッシュ blob (E3-E-1) ---
+
+
+def _validate_period(period):
+    """0-16 を受け付ける (16=損益振替済の累計、確定処理後にクライアントが
+    保存しうる)。範囲外なら ValueError。"""
+    if type(period) is not int or not (0 <= period <= 16):
+        raise ValueError(
+            f"period は 0〜16 の整数で指定してください (got {period!r})"
+        )
+
+
+def _validate_year(year):
+    if type(year) is not int or not (1900 <= year <= 2200):
+        raise ValueError(
+            f"year は 1900〜2200 の整数で指定してください (got {year!r})"
+        )
+
+
+@bp.route("/balance-cache-blobs", methods=["GET"])
+@auth_required(scope="journals:read", allow_session=True)
+@limiter.limit("120 per hour", key_func=rate_limit_key)
+def list_balance_cache_blobs():
+    """指定年の残高キャッシュ blob を一覧取得。
+
+    Query: year=YYYY (必須)
+    Response: {blobs: [{year, period, encrypted_blob, blob_iv, updated_at}]}
+    クライアントが起動時に自分の MK で復号して IndexedDB に展開する。
+    """
+    year_str = request.args.get("year")
+    if not year_str:
+        return jsonify({"error": "year は必須です。"}), 400
+    try:
+        year = int(year_str)
+        _validate_year(year)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+
+    user_id = g.auth_user.id
+    blobs = (
+        BalanceCacheBlob.query
+        .filter_by(user_id=user_id, year=year)
+        .order_by(BalanceCacheBlob.period)
+        .all()
+    )
+    return jsonify({
+        "blobs": [
+            {
+                "year": b.year,
+                "period": b.period,
+                "encrypted_blob": b64encode(b.encrypted_blob).decode("ascii"),
+                "blob_iv": b64encode(b.blob_iv).decode("ascii"),
+                "updated_at": b.updated_at.isoformat() if b.updated_at else None,
+            }
+            for b in blobs
+        ],
+    })
+
+
+@bp.route("/balance-cache-blobs/<int:year>/<int:period>", methods=["PUT"])
+@auth_required(write=True, scope="journals:create", allow_session=True)
+@limiter.limit("60 per hour", key_func=rate_limit_key)
+def upsert_balance_cache_blob(year, period):
+    """(year, period) の blob を upsert する。
+
+    Body: {encrypted_blob: base64, blob_iv: base64}
+    Response: {ok, updated_at}
+    """
+    try:
+        _validate_year(year)
+        _validate_period(period)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+
+    data = request.get_json(silent=True)
+    if not data:
+        return jsonify({"error": "JSON ボディが必要です。"}), 400
+
+    blob, iv, err = _decode_record_crypto(
+        data, "blob", "encrypted_blob", "blob_iv",
+    )
+    if err:
+        return jsonify({"error": err}), 400
+    if blob is None:
+        return jsonify({
+            "error": "encrypted_blob と blob_iv は必須です。",
+        }), 400
+    if len(blob) > _MAX_BCB_BLOB_BYTES:
+        return jsonify({
+            "error": (
+                f"encrypted_blob が大きすぎます (max {_MAX_BCB_BLOB_BYTES}B)。"
+            ),
+        }), 400
+
+    user_id = g.auth_user.id
+    existing = BalanceCacheBlob.query.filter_by(
+        user_id=user_id, year=year, period=period,
+    ).first()
+    if existing:
+        existing.encrypted_blob = blob
+        existing.blob_iv = iv
+        existing.updated_at = datetime.now(timezone.utc)
+        target = existing
+    else:
+        target = BalanceCacheBlob(
+            user_id=user_id, year=year, period=period,
+            encrypted_blob=blob, blob_iv=iv,
+        )
+        db.session.add(target)
+    db.session.commit()
+    return jsonify({
+        "ok": True,
+        "updated_at": target.updated_at.isoformat() if target.updated_at else None,
+    })
+
+
+@bp.route("/balance-cache-blobs/<int:year>", methods=["DELETE"])
+@auth_required(write=True, scope="journals:create", allow_session=True)
+@limiter.limit("60 per hour", key_func=rate_limit_key)
+def delete_balance_cache_blobs(year):
+    """指定年の blob を削除。確定解除時にクライアントから呼ぶ想定。
+    Query: from_period=N (任意、N 以降のみ削除。省略時は year 全部)
+    """
+    try:
+        _validate_year(year)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+
+    user_id = g.auth_user.id
+    q = BalanceCacheBlob.query.filter_by(user_id=user_id, year=year)
+    from_period_str = request.args.get("from_period")
+    if from_period_str:
+        try:
+            from_period = int(from_period_str)
+            _validate_period(from_period)
+        except ValueError as e:
+            return jsonify({"error": str(e)}), 400
+        q = q.filter(BalanceCacheBlob.period >= from_period)
+    deleted = q.delete(synchronize_session=False)
+    db.session.commit()
+    return jsonify({"ok": True, "deleted": deleted})
 
 
 # --- 仕訳閲覧 ---
