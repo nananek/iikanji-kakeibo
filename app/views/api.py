@@ -300,6 +300,12 @@ def _validate_and_parse_batch_entry(e, idx, locked_codes):
     description = (e.get("description") or "").strip()
     if not description:
         raise ValueError(f"entries[{idx}].description は必須です")
+    # JournalEntry.description は String(255)。超過すると DB エラー (500) になる
+    # ので API 層で 400 として返す。
+    if len(description) > 255:
+        raise ValueError(
+            f"entries[{idx}].description は 255 文字以内で指定してください"
+        )
 
     lines = e.get("lines")
     if not lines or not isinstance(lines, list):
@@ -324,11 +330,16 @@ def _validate_and_parse_batch_entry(e, idx, locked_codes):
         )
         if err:
             raise ValueError(err)
+        line_desc = line.get("description", "") or ""
+        if len(line_desc) > 255:
+            raise ValueError(
+                f"entries[{idx}].lines[{li}].description は 255 文字以内で指定してください"
+            )
         lines_data.append({
             "account_code": account_code,
             "debit_amount": int(line.get("debit", 0) or 0),
             "credit_amount": int(line.get("credit", 0) or 0),
-            "description": line.get("description", ""),
+            "description": line_desc,
             "encrypted_blob": line_blob,
             "blob_iv": line_iv,
         })

@@ -330,6 +330,20 @@ class TestCreateJournalsBatch:
         assert resp.status_code == 400
         assert "source" in resp.get_json()["error"]
 
+    def test_description_too_long_rejected(self, client, db, user, accounts, auth_header):
+        """description が 256 文字以上だと DB エラー (500) になるので 400 で弾く。"""
+        resp = client.post("/api/v1/journals/batch", headers=auth_header, json={
+            "entries": [{
+                "date": "2026-02-01", "description": "x" * 256,
+                "lines": [
+                    {"account_code": accounts["5010"].code, "debit": 1},
+                    {"account_code": accounts["1010"].code, "credit": 1},
+                ],
+            }],
+        })
+        assert resp.status_code == 400
+        assert "255" in resp.get_json()["error"]
+
 
 class TestCreateJournalE2EE:
     """Phase E3: encrypted_blob / blob_iv / fiscal_year 受け付けのテスト。"""
