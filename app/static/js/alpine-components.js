@@ -896,9 +896,11 @@ document.addEventListener('alpine:init', function() {
     var paymentAccountCode = config.paymentAccountCode;
     var defaultIncomeId = config.defaultIncomeId || 0;
     var defaultExpenseId = config.defaultExpenseId || 0;
-    // E3-D-3b: web_import で old_year_action=capital を扱うときに必要な
-    // 元入金 (capital) 科目コード。未開設年度の行を当年 1/1 / 元入金科目に
-    // 差替えてから batch API に送る。
+    // E3-D-3b: 取込種別 (cashbook 仕訳の source 列に入る値)。
+    // 'web' / 'csv' / 'ofx' のいずれかを呼出側 (confirm.html) から渡す。
+    var importSource = config.importSource || 'web';
+    // old_year_action=capital を扱うときに必要な元入金 (capital) 科目コード。
+    // 未開設年度の行を当年 1/1 / 元入金科目に差替えてから batch API に送る。
     var capitalCode = config.capitalCode || '';
 
     function getStatus(row) {
@@ -1184,9 +1186,9 @@ document.addEventListener('alpine:init', function() {
       },
 
       /**
-       * E3-D-3b: web_import 専用の確定処理。
+       * E3-D-3b: 取込確認画面の汎用バッチ確定処理 (web/csv/ofx 共通)。
        *
-       * server (web_import.confirm POST) で仕訳化していた処理を
+       * server (xxx_import.confirm POST) で仕訳化していた処理を
        * クライアント entries_builder + batch API に切替える。
        *
        * 振替判定はサーバの create_transfer_entry と等価だが、生成される仕訳は
@@ -1195,8 +1197,11 @@ document.addEventListener('alpine:init', function() {
        *
        * 確定済み期間 / 未開設年度 / 提出済み科目 のチェックは batch API 側で
        * 実行されエラー時は 400 が返るので、ここではユーザーに表示するだけ。
+       *
+       * 監査代理閲覧時は呼出側 confirm.html で submit_handler 上書きをスキップ
+       * して旧サーバ POST 経路にフォールバックする (本メソッドは呼ばれない)。
        */
-      submitWebImportBatch: async function(event) {
+      submitImportBatch: async function(event) {
         event.preventDefault();
         // 未開設年度の扱い: ラジオボタン (skip / capital) の値を読む
         var oldYearActionEl = this.$el.querySelector(
@@ -1255,7 +1260,7 @@ document.addEventListener('alpine:init', function() {
               paymentAccountCode: paymentAccountCode,
               categoryAccountCode: r.category_code,
               amount: amount,
-              source: 'web',
+              source: importSource,
             });
           });
 
@@ -1274,8 +1279,11 @@ document.addEventListener('alpine:init', function() {
           if (!res.ok) {
             throw new Error(body.error || ('HTTP ' + res.status));
           }
-          // sessionStorage の parsed をクリア (将来 E3-D-3b で upload→sessionStorage 化したとき用)
-          try { sessionStorage.removeItem('webImport:parsed'); } catch (_e) { /* ignore */ }
+          // 将来 upload→sessionStorage 化したときに parsed を掃除する想定の
+          // hook (現状は server session でのみ保持されるので空 op)
+          try {
+            sessionStorage.removeItem(importSource + 'Import:parsed');
+          } catch (_e) { /* ignore */ }
           window.location.href = '/cashbook/';
         } catch (err) {
           if (submitBtn) {

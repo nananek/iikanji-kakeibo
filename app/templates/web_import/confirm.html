@@ -18,7 +18,8 @@
   defaultExpenseId: _defaultExpenseId,
   closedPeriods: _closedPeriods,
   restrictedBeforeYear: _restrictedBefore,
-  capitalCode: {{ (capital_code or '') | tojson }}
+  capitalCode: {{ (capital_code or '') | tojson }},
+  importSource: 'web'
 })" @drag-select-update="_syncFromCheckboxes()">
 
 {% set import_step_label = "Step 2:" %}
@@ -33,7 +34,7 @@
    E3-F で resolve_bearer_or_session が acting_as_user_id を見るようにしたら
    この分岐は不要。 #}
 {% if not is_audit_proxy %}
-  {% set submit_handler = 'submitWebImportBatch($event)' %}
+  {% set submit_handler = 'submitImportBatch($event)' %}
 {% endif %}
 {% include "_partials/import_confirm_table.html" %}
 
