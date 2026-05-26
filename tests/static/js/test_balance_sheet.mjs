@@ -199,3 +199,96 @@ test("account_code 不明・null は無視", () => {
   assert.equal(r.assets.length, 1);
   assert.equal(r.assets[0].balance, 300);
 });
+
+
+// --- priorCumulative (Issue #221 BCB 統合) ---
+
+test("priorCumulative: 前年累計を初期値として加算", () => {
+  // 前年 累計: 1010 (現金) +5000, 2010 (未払金) +1000
+  // 当年 entries: 1010 +2000
+  const entries = [
+    {id: 1, fiscal_period: 5, source: "journal", lines: [
+      {account_code: "1010", debit: 2000, credit: 0},
+      {account_code: "3010", debit: 0, credit: 2000},
+    ]},
+  ];
+  const r = computeBalanceSheet(entries, {
+    accountTypeByCode: TYPES,
+    normalBalanceByCode: NORMAL,
+    accountNameByCode: NAMES,
+    priorCumulative: {
+      "1010": [5000, 0],
+      "2010": [0, 1000],
+    },
+  });
+  // 1010 (asset, debit normal): 5000 + 2000 - 0 = 7000
+  const cash = r.assets.find((a) => a.account_code === "1010");
+  assert.equal(cash.balance, 7000);
+  // 2010 (liability, credit normal): 1000 - 0 = 1000
+  const liab = r.liabilities.find((a) => a.account_code === "2010");
+  assert.equal(liab.balance, 1000);
+});
+
+test("priorCumulative: 当年 closing で has_closing=true (priorCumulative は無関係)", () => {
+  const entries = [
+    {id: 1, fiscal_period: 16, source: "closing", lines: [
+      {account_code: "3020", debit: 0, credit: 1000},
+    ]},
+  ];
+  const r = computeBalanceSheet(entries, {
+    accountTypeByCode: TYPES,
+    normalBalanceByCode: NORMAL,
+    accountNameByCode: NAMES,
+    priorCumulative: { "3010": [0, 5000] },
+  });
+  assert.equal(r.has_closing, true);
+});
+
+test("priorCumulative 未指定なら従来挙動 (空 = 初期値 0)", () => {
+  const entries = [
+    {id: 1, fiscal_period: 5, source: "journal", lines: [
+      {account_code: "1010", debit: 1000, credit: 0},
+      {account_code: "3010", debit: 0, credit: 1000},
+    ]},
+  ];
+  const r = computeBalanceSheet(entries, {
+    accountTypeByCode: TYPES,
+    normalBalanceByCode: NORMAL,
+    accountNameByCode: NAMES,
+  });
+  assert.equal(r.assets[0].balance, 1000);
+});
+
+test("priorCumulative: BS 以外の科目 (revenue/expense) は無視", () => {
+  const r = computeBalanceSheet([], {
+    accountTypeByCode: TYPES,
+    normalBalanceByCode: NORMAL,
+    accountNameByCode: NAMES,
+    priorCumulative: {
+      "1010": [3000, 0],         // asset → 採用
+      "4010": [0, 999999],       // revenue → 無視
+      "5010": [99999, 0],        // expense → 無視
+    },
+  });
+  assert.equal(r.assets[0].account_code, "1010");
+  assert.equal(r.assets[0].balance, 3000);
+  // revenue/expense は entries に出てこないので balance=0 で breakdown 外
+  assert.equal(r.assets.length, 1);
+  assert.equal(r.liabilities.length, 0);
+  assert.equal(r.equities.length, 0);
+});
+
+test("priorCumulative: 不正値 (配列でない / 短い配列) は skip", () => {
+  const r = computeBalanceSheet([], {
+    accountTypeByCode: TYPES,
+    normalBalanceByCode: NORMAL,
+    accountNameByCode: NAMES,
+    priorCumulative: {
+      "1010": "invalid",
+      "1020": [100],          // 長さ不足
+      "3010": [0, 5000],      // 正しい
+    },
+  });
+  assert.equal(r.equities.length, 1);
+  assert.equal(r.equities[0].balance, 5000);
+});

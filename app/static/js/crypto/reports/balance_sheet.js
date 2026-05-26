@@ -61,12 +61,29 @@ export function computeBalanceSheet(entries, options) {
     accountTypeByCode,
     normalBalanceByCode,
     accountNameByCode = {},
+    // priorCumulative: 前年以前の B/S 累計 (closing 含む)。
+    //   {accountCode: [debit_cumulative, credit_cumulative]}
+    //   BCB 統合 (#221) で呼出側が「(year-1, period=15)」の blob を渡す。
+    //   computeBalanceSheet は累計に直接加算し、当年 closing 判定は entries
+    //   のみで行う (priorCumulative には closing が既に畳み込まれている)。
+    priorCumulative = {},
   } = options;
 
   // BS 科目別の debit/credit 累計 (closing 仕訳も含む = include_closing=true 相当)
+  // priorCumulative で前年以前の累計を初期値として注入する。
   const sums = new Map();  // code → {debit, credit, type}
-  let hasClosing = false;
+  for (const [code, pair] of Object.entries(priorCumulative)) {
+    if (!Array.isArray(pair) || pair.length < 2) continue;
+    const type = accountTypeByCode[code];
+    if (type !== "asset" && type !== "liability" && type !== "equity") {
+      continue;
+    }
+    sums.set(code, {
+      debit: pair[0] || 0, credit: pair[1] || 0, type,
+    });
+  }
 
+  let hasClosing = false;
   for (const entry of entries) {
     if (entry.source === "closing") hasClosing = true;
     for (const line of entry.lines || []) {
