@@ -1,6 +1,10 @@
 // 青色申告決算書 (tax form) のクライアント描画。
-// MK 復号 → min_year..year の entries を fetch → P/L/B/S 期末/期首の
-// code→amount マップを構築 → composeTaxFormView → DOM 構築。
+// MK 復号 → 前年 BCB period=15 (bs_opening) + 当年 entries を fetch →
+// P/L/B/S 期末/期首の code→amount マップを構築 → composeTaxFormView →
+// DOM 構築。
+//
+// #221 BCB 統合: 旧来は min_year..year を順次 fetch していたが、前年末
+// 累計を BCB 1 リクエストで取得して当年 entries に加算する形に変更。
 
 
 function getSharedWorkerUrl() {
@@ -52,6 +56,29 @@ function _abort(msg, logArg) {
  * @param {number|null} [options.fiscalYearOnly] 当該 fiscal_year のみ
  * @param {boolean} [options.includeClosing=false]
  */
+/**
+ * BCB の {accountCode: [debit_cum, credit_cum]} を、normal_balance 側で
+ * netted した {accountCode: amount} に変換する。
+ *
+ * 期首残高 (bs_opening) を BCB 累計から作るときに使用。BS 以外の科目
+ * (revenue/expense) は B/S 表示には使われないので、本関数は accountsMeta
+ * に存在し type が指定されている code のみを返す (filter は呼出側で
+ * 行わなくて済む)。
+ */
+function _netCumulative(cumulative, accountsMeta) {
+  const result = {};
+  for (const [code, pair] of Object.entries(cumulative || {})) {
+    if (!Array.isArray(pair) || pair.length < 2) continue;
+    const meta = accountsMeta[code];
+    if (!meta) continue;
+    const d = pair[0] || 0;
+    const c = pair[1] || 0;
+    result[code] = meta.normal_balance === "debit" ? d - c : c - d;
+  }
+  return result;
+}
+
+
 function _collectAmounts(entries, accountsMeta, options = {}) {
   const fiscalYearOnly = options.fiscalYearOnly ?? null;
   const includeClosing = options.includeClosing ?? false;
@@ -282,10 +309,12 @@ async function _run() {
       { SharedCryptoClient },
       { fetchJournalsForYear },
       { composeTaxFormView },
+      { fetchBalanceCacheBlobs },
     ] = await Promise.all([
       import(getStaticRoot() + "js/crypto/shared-client.js"),
       import(getStaticRoot() + "js/crypto/journals_client.js"),
       import(getStaticRoot() + "js/crypto/reports/tax_form_view.js"),
+      import(getStaticRoot() + "js/crypto/balance_cache_blobs_client.js"),
     ]);
 
     client = new SharedCryptoClient(getSharedWorkerUrl());
@@ -316,28 +345,42 @@ async function _run() {
       return;
     }
 
-    // min_year..year を順次 fetch (BS の累計のため)
-    const allEntries = [];
-    for (let y = params.min_year; y <= params.year; y++) {
-      const ye = await fetchJournalsForYear({
-        client, userId: params.user_id, fiscalYear: y,
-      });
-      for (const e of ye) allEntries.push(e);
+    // BCB 統合 (#221): 前年 BCB period=15 + 当年 entries の 2 リクエストに
+    // 削減。bs_opening は前年末累計を netted した値、bs_amounts は
+    // bs_opening + 当年 BS 累計 (closing 含む) で計算する。
+    let priorCumulative = {};
+    if (params.year > params.min_year) {
+      try {
+        const blobs = await fetchBalanceCacheBlobs({
+          client, userId: params.user_id, fiscalYear: params.year - 1,
+        });
+        if (blobs[15]) priorCumulative = blobs[15];
+      } catch (e) {
+        console.warn(
+          "tax_form_renderer: prior BCB fetch failed, priorCumulative={}",
+          e,
+        );
+      }
     }
-    // 当年エントリ + 前年以前
-    const beforeYearEntries = allEntries.filter(
-      (e) => e.fiscal_year < params.year,
-    );
+    const entries = await fetchJournalsForYear({
+      client, userId: params.user_id, fiscalYear: params.year,
+    });
 
-    const pl_amounts = _collectAmounts(allEntries, accountsMeta, {
+    // pl_amounts は当年 fiscal_year のみ + closing 除外
+    const pl_amounts = _collectAmounts(entries, accountsMeta, {
       fiscalYearOnly: params.year, includeClosing: false,
     });
-    const bs_amounts = _collectAmounts(allEntries, accountsMeta, {
+    // bs_opening = 前年末累計を normal_balance 側で netted
+    const bs_opening = _netCumulative(priorCumulative, accountsMeta);
+    // 当年の BS 系科目累計 (closing 含む)
+    const currentBs = _collectAmounts(entries, accountsMeta, {
       includeClosing: true,
     });
-    const bs_opening = _collectAmounts(beforeYearEntries, accountsMeta, {
-      includeClosing: true,
-    });
+    // bs_amounts = bs_opening + 当年 BS 累計
+    const bs_amounts = { ...bs_opening };
+    for (const [code, amt] of Object.entries(currentBs)) {
+      bs_amounts[code] = (bs_amounts[code] || 0) + amt;
+    }
 
     const view = composeTaxFormView(
       { pl_amounts, bs_amounts, bs_opening },
