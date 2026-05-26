@@ -320,4 +320,5 @@ def confirm():
         restricted_before_year=restricted_before,
         closed_periods=closed_periods,
         has_ai_config=has_ai_config,
+        capital_code=capital_code,
     )

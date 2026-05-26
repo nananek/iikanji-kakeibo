@@ -896,6 +896,10 @@ document.addEventListener('alpine:init', function() {
     var paymentAccountCode = config.paymentAccountCode;
     var defaultIncomeId = config.defaultIncomeId || 0;
     var defaultExpenseId = config.defaultExpenseId || 0;
+    // E3-D-3b: web_import で old_year_action=capital を扱うときに必要な
+    // 元入金 (capital) 科目コード。未開設年度の行を当年 1/1 / 元入金科目に
+    // 差替えてから batch API に送る。
+    var capitalCode = config.capitalCode || '';
 
     function getStatus(row) {
       if (!row.date) return { cls: 'bg-warning text-dark', text: '日付なし', icon: '', problem: false };
@@ -1194,13 +1198,38 @@ document.addEventListener('alpine:init', function() {
        */
       submitWebImportBatch: async function(event) {
         event.preventDefault();
-        var self = this;
-        // 取込対象行をフィルタ
-        var validRows = this.rows.filter(function(r) {
-          return r.enabled && r.date
-              && ((r.deposit && r.deposit > 0) || (r.withdrawal && r.withdrawal > 0))
-              && r.category_code;
-        });
+        // 未開設年度の扱い: ラジオボタン (skip / capital) の値を読む
+        var oldYearActionEl = this.$el.querySelector(
+          'input[name="old_year_action"]:checked',
+        );
+        var oldYearAction = oldYearActionEl ? oldYearActionEl.value : 'skip';
+        var todayYear = new Date().getFullYear();
+        // 取込対象行をフィルタ + 未開設年度の処理 (skip or capital 変換)
+        var validRows = [];
+        for (var i = 0; i < this.rows.length; i++) {
+          var r = this.rows[i];
+          if (!r.enabled || !r.date) continue;
+          var amt = (r.deposit && r.deposit > 0) ? r.deposit : r.withdrawal;
+          if (!amt || amt <= 0 || !r.category_code) continue;
+
+          var year = parseInt(r.date.substring(0, 4), 10);
+          var isClosedYear = restrictedBefore && year < restrictedBefore
+              && closedPeriods[year] === undefined;
+          if (isClosedYear) {
+            if (oldYearAction === 'capital' && capitalCode) {
+              // 当年 1/1 / 元入金科目に変換 (server 旧フローと同等)
+              validRows.push({
+                date: todayYear + '-01-01',
+                description: '(' + r.date + ') ' + (r.description || ''),
+                deposit: r.deposit, withdrawal: r.withdrawal,
+                category_code: capitalCode,
+              });
+            }
+            // 'skip' or capitalCode 未定義 → 除外
+            continue;
+          }
+          validRows.push(r);
+        }
         if (validRows.length === 0) {
           alert('取込可能な行がありません (日付・金額・費目が揃った行が対象)。');
           return;
@@ -1218,7 +1247,10 @@ document.addEventListener('alpine:init', function() {
             var amount = (r.deposit && r.deposit > 0) ? r.deposit : r.withdrawal;
             return builderMod.buildCashbookEntry({
               date: r.date,
-              description: r.description || '',
+              // batch API は空 description を 400 で弾くため、AI 抽出結果が
+              // 空のときはフォールバック文字列で補う (旧サーバ confirm POST
+              // は空文字を許容していたデグレ回避)
+              description: r.description || '(摘要なし)',
               transactionType: (r.deposit && r.deposit > 0) ? 'income' : 'expense',
               paymentAccountCode: paymentAccountCode,
               categoryAccountCode: r.category_code,

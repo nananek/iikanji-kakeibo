@@ -17,7 +17,8 @@
   defaultIncomeId: _defaultIncomeId,
   defaultExpenseId: _defaultExpenseId,
   closedPeriods: _closedPeriods,
-  restrictedBeforeYear: _restrictedBefore
+  restrictedBeforeYear: _restrictedBefore,
+  capitalCode: '{{ capital_code or '' }}'
 })" @drag-select-update="_syncFromCheckboxes()">
 
 {% set import_step_label = "Step 2:" %}
