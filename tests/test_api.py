@@ -916,6 +916,213 @@ class TestMedicalExpenses:
         assert body["total"] == 0
 
 
+# --- 残高キャッシュ blob (E3-E-1) ---
+
+
+class TestBalanceCacheBlobs:
+    def _put(self, client, headers, year, period, blob_b64="aGVsbG8=", iv_b64=None):
+        # AES-GCM IV は 12 byte。"AAAAAAAAAAAAAAAA" = 12 zero bytes の base64
+        import base64
+        iv_b64 = iv_b64 or base64.b64encode(b"\x00" * 12).decode()
+        return client.put(
+            f"/api/v1/balance-cache-blobs/{year}/{period}",
+            headers=headers,
+            json={"encrypted_blob": blob_b64, "blob_iv": iv_b64},
+        )
+
+    def test_put_creates_new_blob(self, client, db, user, accounts, auth_header):
+        resp = self._put(client, auth_header, 2026, 3)
+        assert resp.status_code == 200, resp.get_json()
+        data = resp.get_json()
+        assert data["ok"] is True
+        assert data["updated_at"] is not None
+        # ISO 8601 形式である
+        assert "T" in data["updated_at"]
+
+    def test_put_upserts_existing(self, client, db, user, accounts, auth_header):
+        import base64
+        self._put(client, auth_header, 2026, 3)
+        r2 = self._put(
+            client, auth_header, 2026, 3,
+            blob_b64=base64.b64encode(b"updated").decode(),
+        )
+        assert r2.status_code == 200
+        from app.models.balance_cache import BalanceCacheBlob
+        rows = BalanceCacheBlob.query.filter_by(
+            user_id=user.id, year=2026, period=3,
+        ).all()
+        assert len(rows) == 1
+        assert rows[0].encrypted_blob == b"updated"
+
+    def test_get_list_filters_by_year(self, client, db, user, accounts, auth_header):
+        self._put(client, auth_header, 2026, 3)
+        self._put(client, auth_header, 2026, 12)
+        self._put(client, auth_header, 2025, 12)
+        resp = client.get(
+            "/api/v1/balance-cache-blobs?year=2026", headers=auth_header,
+        )
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert len(data["blobs"]) == 2
+        # period 順
+        assert [b["period"] for b in data["blobs"]] == [3, 12]
+        # 必要フィールドが揃っている
+        for b in data["blobs"]:
+            assert "encrypted_blob" in b
+            assert "blob_iv" in b
+            assert "year" in b
+            assert "period" in b
+
+    def test_get_requires_year(self, client, db, user, accounts, auth_header):
+        resp = client.get("/api/v1/balance-cache-blobs", headers=auth_header)
+        assert resp.status_code == 400
+
+    def test_put_period_validation(self, client, db, user, accounts, auth_header):
+        # period=17 (16=損益振替済まで許容、17 は範囲外) → 400
+        resp = self._put(client, auth_header, 2026, 17)
+        assert resp.status_code == 400
+
+    def test_put_year_out_of_range(self, client, db, user, accounts, auth_header):
+        resp = self._put(client, auth_header, 1800, 3)
+        assert resp.status_code == 400
+
+    def test_put_invalid_iv_length(self, client, db, user, accounts, auth_header):
+        import base64
+        # 11 byte IV (12 必須) → 400
+        resp = self._put(
+            client, auth_header, 2026, 3,
+            iv_b64=base64.b64encode(b"\x00" * 11).decode(),
+        )
+        assert resp.status_code == 400
+
+    def test_put_blob_too_large(self, client, db, user, accounts, auth_header):
+        import base64
+        # 33KB blob → 400 (上限 32KB)
+        big = base64.b64encode(b"\x00" * (33 * 1024)).decode()
+        resp = self._put(client, auth_header, 2026, 3, blob_b64=big)
+        assert resp.status_code == 400
+        # エラーメッセージに 32KB の上限が示されている (record 4KB ではない)
+        err = resp.get_json()["error"]
+        assert str(32 * 1024) in err
+
+    def test_put_blob_just_under_limit_passes(self, client, db, user, accounts, auth_header):
+        """30KB blob は通る (32KB 上限の確認)。"""
+        import base64
+        ok_size = base64.b64encode(b"\x00" * (30 * 1024)).decode()
+        resp = self._put(client, auth_header, 2026, 3, blob_b64=ok_size)
+        assert resp.status_code == 200, resp.get_json()
+
+    def test_delete_year(self, client, db, user, accounts, auth_header):
+        self._put(client, auth_header, 2026, 3)
+        self._put(client, auth_header, 2026, 12)
+        resp = client.delete(
+            "/api/v1/balance-cache-blobs/2026", headers=auth_header,
+        )
+        assert resp.status_code == 200
+        assert resp.get_json()["deleted"] == 2
+
+    def test_delete_from_period(self, client, db, user, accounts, auth_header):
+        self._put(client, auth_header, 2026, 3)
+        self._put(client, auth_header, 2026, 12)
+        # from_period=6 → 12 だけ削除 (3 は残る)
+        resp = client.delete(
+            "/api/v1/balance-cache-blobs/2026?from_period=6",
+            headers=auth_header,
+        )
+        assert resp.status_code == 200
+        assert resp.get_json()["deleted"] == 1
+        from app.models.balance_cache import BalanceCacheBlob
+        remaining = BalanceCacheBlob.query.filter_by(
+            user_id=user.id, year=2026,
+        ).all()
+        assert len(remaining) == 1
+        assert remaining[0].period == 3
+
+    def _make_other_user_with_blob(self, db, year=2026, period=3, blob=b"other"):
+        from app.models.balance_cache import BalanceCacheBlob
+        from app.models.user import User
+        from werkzeug.security import generate_password_hash
+        u2 = User(
+            username="other", email="o@example.com",
+            password_hash=generate_password_hash("pw"),
+        )
+        db.session.add(u2); db.session.commit()
+        db.session.add(BalanceCacheBlob(
+            user_id=u2.id, year=year, period=period,
+            encrypted_blob=blob, blob_iv=b"\x00" * 12,
+        ))
+        db.session.commit()
+        return u2
+
+    def test_idor_other_user_invisible(self, client, db, user, accounts, auth_header):
+        """別ユーザーの blob は GET で見えない。"""
+        self._make_other_user_with_blob(db)
+        resp = client.get(
+            "/api/v1/balance-cache-blobs?year=2026", headers=auth_header,
+        )
+        assert resp.status_code == 200
+        assert resp.get_json()["blobs"] == []
+
+    def test_idor_put_does_not_overwrite_other_user(
+            self, client, db, user, accounts, auth_header):
+        """別ユーザーの (year, period) を PUT しても、その人の blob は壊れない。"""
+        from app.models.balance_cache import BalanceCacheBlob
+        u2 = self._make_other_user_with_blob(db, blob=b"u2original")
+        # user の auth_header で同 (year, period) に PUT
+        self._put(client, auth_header, 2026, 3)
+        # u2 の blob は残っている
+        u2_blob = BalanceCacheBlob.query.filter_by(
+            user_id=u2.id, year=2026, period=3,
+        ).first()
+        assert u2_blob is not None
+        assert u2_blob.encrypted_blob == b"u2original"
+
+    def test_idor_delete_does_not_delete_other_user(
+            self, client, db, user, accounts, auth_header):
+        """他ユーザーの blob は DELETE で消えない。"""
+        from app.models.balance_cache import BalanceCacheBlob
+        u2 = self._make_other_user_with_blob(db)
+        resp = client.delete(
+            "/api/v1/balance-cache-blobs/2026", headers=auth_header,
+        )
+        assert resp.status_code == 200
+        assert resp.get_json()["deleted"] == 0
+        u2_blob = BalanceCacheBlob.query.filter_by(user_id=u2.id).first()
+        assert u2_blob is not None
+
+    def test_delete_requires_delete_scope(self, client, db, user, accounts):
+        """journals:create だけのキーでは DELETE 不可 (delete scope 必須)。"""
+        raw_key, key_hash, key_prefix = APIKey.generate()
+        key = APIKey(
+            user_id=user.id, name="create-only",
+            key_hash=key_hash, key_prefix=key_prefix,
+            scopes="journals:create", is_active=True,
+        )
+        db.session.add(key)
+        db.session.commit()
+        resp = client.delete(
+            "/api/v1/balance-cache-blobs/2026", headers=_auth_header(raw_key),
+        )
+        assert resp.status_code == 403
+
+    def test_no_auth(self, client, db, user, accounts):
+        resp = client.get("/api/v1/balance-cache-blobs?year=2026")
+        assert resp.status_code == 401
+
+    def test_put_requires_write_scope(self, client, db, user, accounts):
+        # journals:read だけのキーでは PUT 不可
+        raw_key, key_hash, key_prefix = APIKey.generate()
+        key = APIKey(
+            user_id=user.id, name="readonly",
+            key_hash=key_hash, key_prefix=key_prefix,
+            scopes="journals:read", is_active=True,
+        )
+        db.session.add(key)
+        db.session.commit()
+        resp = self._put(client, _auth_header(raw_key), 2026, 3)
+        assert resp.status_code == 403
+
+
 # --- 下書き一覧 ---
 
 

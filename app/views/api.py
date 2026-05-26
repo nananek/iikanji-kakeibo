@@ -17,6 +17,7 @@ from app.models.ai_config import UserAIConfig
 from app.models.ai_draft import AIDraft
 from app.models.ai_usage_log import AIUsageLog
 from app.models.account import Account
+from app.models.balance_cache import BalanceCacheBlob
 from app.models.journal import JournalEntry
 from app.services.accounting import create_journal_entry
 from app.services.audit import get_submitted_account_codes, is_entry_locked_for_owner
@@ -112,19 +113,28 @@ def api_key_required(scope=None, write=False):
 # blob は単にストレージ負荷になる。
 _MAX_RECORD_BLOB_BYTES = 4096
 _MAX_BATCH_ENTRIES = 500
+# balance_cache_blobs は 1 (user, year, period) で全 P/L+B/S 科目を含むため
+# record blob より大きい。標準ユーザーで数十科目 × 10〜20 byte → 1〜2KB 想定、
+# 余裕を見て上限 32KB に設定 (DoS 防止)。
+_MAX_BCB_BLOB_BYTES = 32 * 1024
 _ALLOWED_BATCH_SOURCES = {
     "journal", "cashbook", "ai_receipt", "csv", "ofx", "web", "api",
 }
 _AES_GCM_IV_BYTES = 12
 
 
-def _decode_record_crypto(d: dict, label: str, blob_key: str, iv_key: str):
+def _decode_record_crypto(d: dict, label: str, blob_key: str, iv_key: str,
+                          max_blob_bytes: int = None):
     """payload dict から encrypted_blob / blob_iv を base64 decode して返す。
 
     戻り値: (blob_or_None, iv_or_None, error_message_or_None)
       - 正常で blob/iv 未指定: (None, None, None)
       - 正常で blob/iv 指定: (bytes, bytes, None)
       - エラー: (None, None, "ユーザー向け日本語エラー")
+
+    max_blob_bytes: blob のサイズ上限 (省略時は record (4KB) 用 default)。
+      balance_cache_blobs など record より大きい blob を扱う caller が
+      上書きできるようにしている。
 
     例外を投げず error message を返す設計にしている理由は、呼び出し側で
     `try/except ValueError as e: return jsonify({"error": str(e)})` を行うと
@@ -147,9 +157,10 @@ def _decode_record_crypto(d: dict, label: str, blob_key: str, iv_key: str):
         return None, None, (
             f"{label}: {blob_key}/{iv_key} の base64 が不正です。"
         )
-    if len(blob) > _MAX_RECORD_BLOB_BYTES:
+    cap = max_blob_bytes if max_blob_bytes is not None else _MAX_RECORD_BLOB_BYTES
+    if len(blob) > cap:
         return None, None, (
-            f"{label}: {blob_key} が大きすぎます (max {_MAX_RECORD_BLOB_BYTES}B)。"
+            f"{label}: {blob_key} が大きすぎます (max {cap}B)。"
         )
     if len(iv) != _AES_GCM_IV_BYTES:
         return None, None, (
@@ -527,6 +538,156 @@ def create_journals_batch():
             {"id": e.id, "entry_number": e.entry_number} for e in created
         ],
     }), 201
+
+
+# --- 残高キャッシュ blob (E3-E-1) ---
+
+
+def _validate_period(period):
+    """0-16 を受け付ける (16=損益振替済の累計、確定処理後にクライアントが
+    保存しうる)。範囲外なら ValueError。"""
+    if type(period) is not int or not (0 <= period <= 16):
+        raise ValueError(
+            f"period は 0〜16 の整数で指定してください (got {period!r})"
+        )
+
+
+def _validate_year(year):
+    if type(year) is not int or not (1900 <= year <= 2200):
+        raise ValueError(
+            f"year は 1900〜2200 の整数で指定してください (got {year!r})"
+        )
+
+
+@bp.route("/balance-cache-blobs", methods=["GET"])
+@auth_required(scope="journals:read", allow_session=True)
+@limiter.limit("120 per hour", key_func=rate_limit_key)
+def list_balance_cache_blobs():
+    """指定年の残高キャッシュ blob を一覧取得。
+
+    Query: year=YYYY (必須)
+    Response: {blobs: [{year, period, encrypted_blob, blob_iv, updated_at}]}
+    クライアントが起動時に自分の MK で復号して IndexedDB に展開する。
+
+    TODO(E3-F): 監査代理閲覧 (session["acting_as_user_id"]) に未対応。
+    resolve_bearer_or_session が acting_as_user_id を見るようになったら、
+    Lv3 監査員のセッションでも対象ユーザーの blob が返るようになる。
+    """
+    year_str = request.args.get("year")
+    if not year_str:
+        return jsonify({"error": "year は必須です。"}), 400
+    try:
+        year = int(year_str)
+        _validate_year(year)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+
+    user_id = g.auth_user.id
+    blobs = (
+        BalanceCacheBlob.query
+        .filter_by(user_id=user_id, year=year)
+        .order_by(BalanceCacheBlob.period)
+        .all()
+    )
+    return jsonify({
+        "blobs": [
+            {
+                "year": b.year,
+                "period": b.period,
+                "encrypted_blob": b64encode(b.encrypted_blob).decode("ascii"),
+                "blob_iv": b64encode(b.blob_iv).decode("ascii"),
+                "updated_at": b.updated_at.isoformat() if b.updated_at else None,
+            }
+            for b in blobs
+        ],
+    })
+
+
+@bp.route("/balance-cache-blobs/<int:year>/<int:period>", methods=["PUT"])
+@auth_required(write=True, scope="journals:create", allow_session=True)
+@limiter.limit("60 per hour", key_func=rate_limit_key)
+# TODO(E3-F): 監査代理閲覧 (acting_as_user_id) 対応は resolve_bearer_or_session
+# 側の改修待ち。代理閲覧中に PUT すると現状は監査員自身の blob を更新する。
+def upsert_balance_cache_blob(year, period):
+    """(year, period) の blob を upsert する。
+
+    Body: {encrypted_blob: base64, blob_iv: base64}
+    Response: {ok, updated_at}
+    """
+    try:
+        _validate_year(year)
+        _validate_period(period)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+
+    data = request.get_json(silent=True)
+    if not data:
+        return jsonify({"error": "JSON ボディが必要です。"}), 400
+
+    # _decode_record_crypto は default で 4KB 上限を持つので、BCB 用の 32KB
+    # 上限を明示的に渡して上書きする (default のままだと record の 4KB が
+    # 効いて BCB の 32KB が dead code になる)。
+    blob, iv, err = _decode_record_crypto(
+        data, "blob", "encrypted_blob", "blob_iv",
+        max_blob_bytes=_MAX_BCB_BLOB_BYTES,
+    )
+    if err:
+        return jsonify({"error": err}), 400
+    if blob is None:
+        return jsonify({
+            "error": "encrypted_blob と blob_iv は必須です。",
+        }), 400
+
+    user_id = g.auth_user.id
+    existing = BalanceCacheBlob.query.filter_by(
+        user_id=user_id, year=year, period=period,
+    ).first()
+    if existing:
+        existing.encrypted_blob = blob
+        existing.blob_iv = iv
+        existing.updated_at = datetime.now(timezone.utc)
+        target = existing
+    else:
+        target = BalanceCacheBlob(
+            user_id=user_id, year=year, period=period,
+            encrypted_blob=blob, blob_iv=iv,
+        )
+        db.session.add(target)
+    db.session.commit()
+    return jsonify({
+        "ok": True,
+        "updated_at": target.updated_at.isoformat() if target.updated_at else None,
+    })
+
+
+@bp.route("/balance-cache-blobs/<int:year>", methods=["DELETE"])
+@auth_required(write=True, scope="journals:delete", allow_session=True)
+@limiter.limit("60 per hour", key_func=rate_limit_key)
+# TODO(E3-F): 監査代理閲覧 (acting_as_user_id) 対応は resolve_bearer_or_session
+# 側の改修待ち。
+def delete_balance_cache_blobs(year):
+    """指定年の blob を削除。確定解除時にクライアントから呼ぶ想定。
+    Query: from_period=N (任意、N 以降のみ削除。省略時は year 全部)
+    scope は journals:delete (既存 delete_journal と統一)。
+    """
+    try:
+        _validate_year(year)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+
+    user_id = g.auth_user.id
+    q = BalanceCacheBlob.query.filter_by(user_id=user_id, year=year)
+    from_period_str = request.args.get("from_period")
+    if from_period_str:
+        try:
+            from_period = int(from_period_str)
+            _validate_period(from_period)
+        except ValueError as e:
+            return jsonify({"error": str(e)}), 400
+        q = q.filter(BalanceCacheBlob.period >= from_period)
+    deleted = q.delete(synchronize_session=False)
+    db.session.commit()
+    return jsonify({"ok": True, "deleted": deleted})
 
 
 # --- 仕訳閲覧 ---
