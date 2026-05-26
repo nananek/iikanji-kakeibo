@@ -8,7 +8,7 @@ from sqlalchemy import func
 from app.extensions import db
 from app.models.account import Account, AccountType
 from app.models.journal import JournalEntry, JournalEntryLine
-from app.services.tax import get_monthly_comparison, get_month_projection
+# app.services.tax のサーバ集計関数は Phase E3-F-4a/c/d/e で撤去済
 from flask_login import current_user as _current_user
 from app.services.audit import get_effective_user_id, get_allowed_account_codes, mask_account_name, is_entry_locked_for_owner
 from app.services.fiscal import check_entry_modifiable, period_range_filter, get_closed_period
@@ -448,9 +448,12 @@ def tax_form_report():
 @bp.route("/monthly")
 @login_required
 def monthly():
-    """月次比較レポート (クライアント描画)。サーバ集計は撤去済 (Phase E3-F-3d)。
-    accounts_meta (cost_type / is_business 含む) と projection (現状サーバ
-    計算) を JSON で渡す。
+    """月次比較レポート (クライアント描画 / Phase E3-F-4e)。
+
+    projection (当月着地予想 = pro_rata / rolling28 / dow28) も
+    `crypto/reports/monthly_projection.computeProjection` でクライアント
+    計算する。サーバは projection_method 設定値だけ params に乗せて
+    渡す。
     """
     from app.services.tax_form import get_business_account_codes
 
@@ -459,18 +462,7 @@ def monthly():
 
     today = date.today()
     current_month = today.month if year == today.year else None
-
-    # projection (当月着地予想) は当面サーバ側で計算する (clientside 化は follow-up)。
-    # ただし render に必要な comparison を tax service 経由で取り直す。
-    projection = None
-    if current_month and today.day <= \
-            __import__("calendar").monthrange(year, today.month)[1]:
-        from app.services.tax import get_monthly_comparison as _gmc
-        comparison = _gmc(user_id, year)
-        method = current_user.get_pref("projection_method", "pro_rata")
-        projection = get_month_projection(
-            user_id, year, today.month, comparison, method=method,
-        )
+    projection_method = current_user.get_pref("projection_method", "pro_rata")
 
     allowed_codes = get_allowed_account_codes()
     accounts = (
@@ -498,8 +490,7 @@ def monthly():
         "reports/monthly.html",
         year=year,
         current_month=current_month,
+        projection_method=projection_method,
         accounts_meta=accounts_meta,
-        projection=projection,
         effective_user_id=user_id,
-        tax_form_url=None,  # Jinja で url_for を呼ぶ
     )
