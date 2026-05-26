@@ -80,6 +80,7 @@ def balance():
         pt=pt,
         period_labels=PERIOD_LABELS,
         accounts_meta=accounts_meta,
+        effective_user_id=user_id,
     )
 
 
