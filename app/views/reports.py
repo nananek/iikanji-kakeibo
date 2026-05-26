@@ -11,7 +11,7 @@ from app.extensions import db
 from app.models.account import Account, AccountType
 from app.models.journal import JournalEntry, JournalEntryLine
 from app.services.tax import (
-    get_tax_summary, get_medical_summary, get_income_expense_summary,
+    get_medical_summary, get_income_expense_summary,
     get_monthly_comparison, get_month_projection,
 )
 from flask_login import current_user as _current_user
