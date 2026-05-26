@@ -364,10 +364,13 @@ def ledger():
                     .all()
                 )
             ]
+            # defence-in-depth: entry_ids は account_user_id でフィルタ済だが
+                # JournalEntry にも user_id 制約を重ねる
             entry_objs = {
                 eo.id: eo
                 for eo in JournalEntry.query.filter(
-                    JournalEntry.id.in_(entry_ids)
+                    JournalEntry.id.in_(entry_ids),
+                    JournalEntry.user_id == user_id,
                 ).all()
             }
             from app.models.voucher import Voucher

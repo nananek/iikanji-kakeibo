@@ -23,7 +23,7 @@
 <template id="ledger-voucher-link-template">
   <a href="#" class="text-success" title="証憑画像"><i class="bi bi-image"></i></a>
 </template>
-<script id="ledger-voucher-image-url-template" type="text/plain">{{ url_for('ai_journal.voucher_image', voucher_id=0) | replace('/0', '/__VOUCHER_ID__') }}</script>
+<script id="ledger-voucher-image-url-template" type="text/plain">{{ url_for('ai_journal.voucher_image', voucher_id=0) | replace('/0', '/__VOUCHER_ID__', 1) }}</script>
 {% endif %}
 {% set range_label %}
   {% if pf == pt %}{{ period_labels.get(pf, '') }}{% else %}{{ period_labels.get(pf, '') }}〜{{ period_labels.get(pt, '') }}{% endif %}
