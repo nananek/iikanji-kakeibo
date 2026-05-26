@@ -23,49 +23,9 @@ TAX_CATEGORY_LABELS = {
 }
 
 
-def get_tax_summary(user_id, year):
-    """確定申告用の年間控除額集計"""
-    start = date(year, 1, 1)
-    end = date(year, 12, 31)
-
-    results = (
-        db.session.query(
-            Account.tax_category,
-            Account.name,
-            Account.code,
-            (func.coalesce(func.sum(JournalEntryLine.debit_amount), 0)
-             - func.coalesce(func.sum(JournalEntryLine.credit_amount), 0)).label("total"),
-        )
-        .join(JournalEntryLine, db.and_(JournalEntryLine.account_user_id == Account.user_id, JournalEntryLine.account_code == Account.code))
-        .join(JournalEntry, JournalEntry.id == JournalEntryLine.journal_entry_id)
-        .filter(
-            Account.user_id == user_id,
-            Account.tax_category.isnot(None),
-            Account.tax_category.notin_(["medical", "resident_tax"]),
-            JournalEntry.date >= start,
-            JournalEntry.date <= end,
-            JournalEntry.source != "closing",
-        )
-        .group_by(Account.tax_category, Account.name, Account.code)
-        .order_by(Account.tax_category, Account.name)
-        .all()
-    )
-
-    summary = {}
-    for tax_cat, account_name, account_code, total in results:
-        if tax_cat not in summary:
-            summary[tax_cat] = {
-                "label": TAX_CATEGORY_LABELS.get(tax_cat, tax_cat),
-                "accounts": [],
-                "total": Decimal(0),
-            }
-        amount = total or Decimal(0)
-        summary[tax_cat]["accounts"].append(
-            {"name": account_name, "code": account_code, "amount": amount}
-        )
-        summary[tax_cat]["total"] += amount
-
-    return summary
+# get_tax_summary は Phase E3-F-4a で撤去 (E2EE 化により server 側で
+# 復号できなくなるため意味を成さない)。tax_summary 集計は
+# crypto/reports/tax_summary.js + composeTaxSummaryView (client) が担う。
 
 
 def get_medical_summary(user_id, year):
