@@ -124,9 +124,9 @@ test("section 内の行は code 昇順に整列", () => {
 });
 
 
-// --- unknown account ---
+// --- unknown account (#221 unmappedCodes) ---
 
-test("accountsMeta にない code は無視 (skip)", () => {
+test("accountsMeta にない code は unmappedCodes に積まれて sections から除外", () => {
   const v = composeTrialBalanceView([
     { account_code: "9999", debit: 100, credit: 0 },
     { account_code: "1010", debit: 200, credit: 0 },
@@ -134,13 +134,52 @@ test("accountsMeta にない code は無視 (skip)", () => {
   assert.equal(v.sections.length, 1);
   assert.equal(v.sections[0].rows.length, 1);
   assert.equal(v.sections[0].rows[0].code, "1010");
+  assert.deepEqual(v.unmappedCodes, ["9999"]);
 });
 
-test("不明な type の科目も無視", () => {
+test("不明な type の科目も unmappedCodes に積まれて除外", () => {
   const v = composeTrialBalanceView([
     { account_code: "9000", debit: 100, credit: 0 },
   ], { "9000": { type: "unknown_type", normal_balance: "debit", name: "?" } });
   assert.deepEqual(v.sections, []);
+  assert.deepEqual(v.unmappedCodes, ["9000"]);
+});
+
+test("マップ可能な科目だけなら unmappedCodes=[]", () => {
+  const v = composeTrialBalanceView([
+    { account_code: "1010", debit: 100, credit: 0 },
+  ], META);
+  assert.deepEqual(v.unmappedCodes, []);
+});
+
+test("opening の code が accountsMeta にない場合も unmappedCodes に積まれる", () => {
+  // BCB から復元した opening に、現在の accountsMeta に存在しない
+  // (例: 削除済みの) 科目コードが入っていた場合の安全網。
+  const v = composeTrialBalanceView([], META, {
+    opening: { "9999": 5000 },
+  });
+  assert.deepEqual(v.unmappedCodes, ["9999"]);
+});
+
+test("空入力で unmappedCodes=[]", () => {
+  const v = composeTrialBalanceView([], META);
+  assert.deepEqual(v.unmappedCodes, []);
+});
+
+test("unmappedCodes は code 昇順", () => {
+  const v = composeTrialBalanceView([
+    { account_code: "9020", debit: 10, credit: 0 },
+    { account_code: "9001", debit: 20, credit: 0 },
+    { account_code: "9015", debit: 30, credit: 0 },
+  ], META);
+  assert.deepEqual(v.unmappedCodes, ["9001", "9015", "9020"]);
+});
+
+test("jsRows と opening 両方に同じ未マップ code が出ても重複しない", () => {
+  const v = composeTrialBalanceView([
+    { account_code: "9999", debit: 100, credit: 0 },
+  ], META, { opening: { "9999": 500 } });
+  assert.deepEqual(v.unmappedCodes, ["9999"]);
 });
 
 
