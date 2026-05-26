@@ -191,15 +191,14 @@ def pl():
 @bp.route("/tax")
 @login_required
 def tax():
-    """確定申告用集計 (tax_summary はクライアント描画 / Phase E3-F-3f)。
-    medical_summary は現状サーバ render を維持 (clientside 化は別 PR)。
+    """確定申告用集計 (tax_summary / medical_summary 共にクライアント描画)。
+
+    - tax_summary: Phase E3-F-3f でクライアント完結化済
+    - medical_summary: Phase E3-F-3g でクライアント完結化
     """
     year = request.args.get("year", date.today().year, type=int)
     user_id = get_effective_user_id()
 
-    medical_summary = get_medical_summary(user_id, year)
-
-    # accounts_meta: tax_category と name を含む (medical/resident_tax は除外)
     allowed_codes = get_allowed_account_codes()
     accounts = (
         Account.query
@@ -210,7 +209,8 @@ def tax():
     if allowed_codes is not None:
         accounts = [a for a in accounts if a.code in allowed_codes]
 
-    accounts_meta = {
+    # tax_summary 用 (medical/resident_tax は除外)
+    tax_accounts_meta = {
         a.code: {
             "name": mask_account_name(a.name, a.code, allowed_codes),
             "tax_category": a.tax_category,
@@ -218,13 +218,22 @@ def tax():
         for a in accounts
         if a.tax_category is not None and a.tax_category not in ("medical", "resident_tax")
     }
+    # medical_summary 用 (medical 科目のみ)
+    medical_accounts_meta = {
+        a.code: {
+            "name": mask_account_name(a.name, a.code, allowed_codes),
+            "tax_category": a.tax_category,
+        }
+        for a in accounts
+        if a.tax_category == "medical"
+    }
 
     return render_template(
         "reports/tax.html",
         year=year,
-        accounts_meta=accounts_meta,
+        tax_accounts_meta=tax_accounts_meta,
+        medical_accounts_meta=medical_accounts_meta,
         effective_user_id=user_id,
-        medical_summary=medical_summary,
     )
 
 
