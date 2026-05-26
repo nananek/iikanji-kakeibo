@@ -1,5 +1,12 @@
-"""月次比較レポート — 区分分析グラフの出力テスト"""
+"""月次比較レポート — 区分分析グラフの出力テスト
 
+E3-F-3d 以降、月次比較はクライアント描画。サーバ HTML には canvas が
+常時含まれ d-none で表示制御されるため、テストは accounts_meta JSON 内の
+cost_type / is_business を検証する。
+"""
+
+import json
+import re
 from datetime import date
 
 import pytest
@@ -15,83 +22,60 @@ def logged_in_client(app, client, user):
     return client
 
 
+def _parse_meta(html):
+    m = re.search(
+        r'<script id="monthly-accounts-meta"[^>]*>(.*?)</script>',
+        html, flags=re.DOTALL,
+    )
+    assert m, "monthly-accounts-meta script not found"
+    return json.loads(m.group(1).strip())
+
+
 class TestIncomeTypeChart:
-    """収入区分分析の canvas が正しく出力される"""
+    """収入区分分析: accounts_meta JSON に必要な cost_type が含まれる。
+    canvas 要素自体は常に DOM に存在し、表示は client が d-none を toggle する。"""
 
-    def test_no_income_hides_chart(self, db, logged_in_client, accounts):
-        """収入がなければ incomeTypeChart は出力されない"""
-        resp = logged_in_client.get("/reports/monthly?year=2026")
-        html = resp.data.decode()
-        assert "incomeTypeChart" not in html
-
-    def test_income_shows_canvas(self, db, logged_in_client, accounts):
-        """収入があれば incomeTypeChart canvas が出力される"""
-        make_journal(db, accounts["4010"].user_id,
-                     "1020", "4010",
-                     300000, entry_date=date(2026, 1, 25))
+    def test_canvas_always_present(self, db, logged_in_client, accounts):
+        """canvas は HTML に常時含まれる (renderer が d-none を切り替える)"""
         resp = logged_in_client.get("/reports/monthly?year=2026")
         html = resp.data.decode()
         assert 'id="incomeTypeChart"' in html
         assert 'id="incomeTypeTrendChart"' in html
 
-    def test_income_chart_js_initialized(self, db, logged_in_client, accounts):
-        """Chart.js の初期化コードが出力される"""
-        make_journal(db, accounts["4010"].user_id,
-                     "1020", "4010",
-                     300000, entry_date=date(2026, 1, 25))
+    def test_renderer_module_loaded(self, db, logged_in_client, accounts):
+        """monthly_comparison_renderer.mjs が script として読み込まれる"""
         resp = logged_in_client.get("/reports/monthly?year=2026")
         html = resp.data.decode()
-        assert "incomeTypeChart" in html
-        assert "incomeTypeTrendChart" in html
-        assert "buildMonthlyData" in html
+        assert "monthly_comparison_renderer.mjs" in html
 
-    def test_income_cost_type_in_json(self, db, logged_in_client, accounts):
-        """income_accounts の tojson 出力に cost_type が含まれる"""
+    def test_income_cost_type_in_meta(self, db, logged_in_client, accounts):
+        """cost_type=fixed 設定が accounts_meta に反映される"""
         accounts["4010"].cost_type = "fixed"
         db.session.commit()
-        make_journal(db, accounts["4010"].user_id,
-                     "1020", "4010",
-                     300000, entry_date=date(2026, 1, 25))
         resp = logged_in_client.get("/reports/monthly?year=2026")
-        html = resp.data.decode()
-        assert '"cost_type": "fixed"' in html
+        meta = _parse_meta(resp.data.decode())
+        assert meta["4010"]["cost_type"] == "fixed"
 
-    def test_income_cost_type_null_in_json(self, db, logged_in_client, accounts):
-        """cost_type 未設定の場合 null が出力される"""
-        make_journal(db, accounts["4010"].user_id,
-                     "1020", "4010",
-                     300000, entry_date=date(2026, 1, 25))
+    def test_income_cost_type_default_occasional(self, db, logged_in_client, accounts):
+        """cost_type 未設定なら 'occasional' を default で埋める"""
         resp = logged_in_client.get("/reports/monthly?year=2026")
-        html = resp.data.decode()
-        assert '"cost_type": null' in html
+        meta = _parse_meta(resp.data.decode())
+        # accounts["4010"] は cost_type 未設定 (None)
+        assert meta["4010"]["cost_type"] == "occasional"
 
-    def test_income_breakdown_table(self, db, logged_in_client, accounts):
-        """固定収入・変動収入・臨時収入の内訳表が出力される"""
-        accounts["4010"].cost_type = "fixed"
-        db.session.commit()
-        make_journal(db, accounts["4010"].user_id,
-                     "1020", "4010",
-                     300000, entry_date=date(2026, 1, 25))
+    def test_breakdown_labels_in_template(self, db, logged_in_client, accounts):
+        """固定収入・変動収入・臨時収入のラベルは template に常時含まれる"""
         resp = logged_in_client.get("/reports/monthly?year=2026")
         html = resp.data.decode()
         assert "固定収入" in html
         assert "変動収入" in html
         assert "臨時収入" in html
-        assert "300,000" in html
 
 
 class TestExpenseTypeChart:
-    """支出区分分析の canvas テスト（対照用）"""
+    """支出区分分析の canvas テスト (対照用)"""
 
-    def test_no_expense_hides_chart(self, db, logged_in_client, accounts):
-        resp = logged_in_client.get("/reports/monthly?year=2026")
-        html = resp.data.decode()
-        assert "costTypeChart" not in html
-
-    def test_expense_shows_canvas(self, db, logged_in_client, accounts):
-        make_journal(db, accounts["5010"].user_id,
-                     "5010", "1010",
-                     5000, entry_date=date(2026, 1, 15))
+    def test_canvas_always_present(self, db, logged_in_client, accounts):
         resp = logged_in_client.get("/reports/monthly?year=2026")
         html = resp.data.decode()
         assert 'id="costTypeChart"' in html
