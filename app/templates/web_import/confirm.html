@@ -25,6 +25,9 @@
 {% set import_back_buttons %}
 <a href="{{ url_for('web_import.upload') }}" class="btn btn-outline-secondary">最初からやり直す</a>
 {% endset %}
+{# E3-D-3b: 確定処理を server (web_import.confirm POST) ではなく
+   batch API + entries_builder に切替えてクライアント完結化 #}
+{% set submit_handler = 'submitWebImportBatch($event)' %}
 {% include "_partials/import_confirm_table.html" %}
 
 </div>

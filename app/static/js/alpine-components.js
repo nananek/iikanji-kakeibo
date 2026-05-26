@@ -1179,6 +1179,81 @@ document.addEventListener('alpine:init', function() {
         this.$refs.importRows.value = JSON.stringify(result);
       },
 
+      /**
+       * E3-D-3b: web_import 専用の確定処理。
+       *
+       * server (web_import.confirm POST) で仕訳化していた処理を
+       * クライアント entries_builder + batch API に切替える。
+       *
+       * 振替判定はサーバの create_transfer_entry と等価だが、生成される仕訳は
+       * cashbook (income/expense) と借方/貸方が同一になるため、buildCashbookEntry
+       * のみを使う (transactionType を deposit/withdrawal で決定)。
+       *
+       * 確定済み期間 / 未開設年度 / 提出済み科目 のチェックは batch API 側で
+       * 実行されエラー時は 400 が返るので、ここではユーザーに表示するだけ。
+       */
+      submitWebImportBatch: async function(event) {
+        event.preventDefault();
+        var self = this;
+        // 取込対象行をフィルタ
+        var validRows = this.rows.filter(function(r) {
+          return r.enabled && r.date
+              && ((r.deposit && r.deposit > 0) || (r.withdrawal && r.withdrawal > 0))
+              && r.category_code;
+        });
+        if (validRows.length === 0) {
+          alert('取込可能な行がありません (日付・金額・費目が揃った行が対象)。');
+          return;
+        }
+        var submitBtn = this.$el.querySelector('button[type="submit"]');
+        var originalLabel = submitBtn ? submitBtn.innerHTML : '';
+        if (submitBtn) {
+          submitBtn.disabled = true;
+          submitBtn.innerHTML =
+            '<span class="spinner-border spinner-border-sm" role="status"></span> 取込中...';
+        }
+        try {
+          var builderMod = await import("/static/js/crypto/entries_builder.js");
+          var entries = validRows.map(function(r) {
+            var amount = (r.deposit && r.deposit > 0) ? r.deposit : r.withdrawal;
+            return builderMod.buildCashbookEntry({
+              date: r.date,
+              description: r.description || '',
+              transactionType: (r.deposit && r.deposit > 0) ? 'income' : 'expense',
+              paymentAccountCode: paymentAccountCode,
+              categoryAccountCode: r.category_code,
+              amount: amount,
+              source: 'web',
+            });
+          });
+
+          var csrfMeta = document.querySelector('meta[name="csrf-token"]');
+          var csrfToken = csrfMeta ? csrfMeta.getAttribute('content') : '';
+          var res = await fetch('/api/v1/journals/batch', {
+            method: 'POST',
+            credentials: 'include',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-CSRFToken': csrfToken,
+            },
+            body: JSON.stringify({ entries: entries }),
+          });
+          var body = await res.json().catch(function() { return {}; });
+          if (!res.ok) {
+            throw new Error(body.error || ('HTTP ' + res.status));
+          }
+          // sessionStorage の parsed をクリア (将来 E3-D-3b で upload→sessionStorage 化したとき用)
+          try { sessionStorage.removeItem('webImport:parsed'); } catch (_e) { /* ignore */ }
+          window.location.href = '/cashbook/';
+        } catch (err) {
+          if (submitBtn) {
+            submitBtn.disabled = false;
+            submitBtn.innerHTML = originalLabel;
+          }
+          alert('取込に失敗しました: ' + (err.message || err));
+        }
+      },
+
       _syncFromCheckboxes: function() {
         var cbs = this.$el.querySelectorAll('.row-check');
         for (var j = 0; j < cbs.length; j++) {
