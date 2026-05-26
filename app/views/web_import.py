@@ -310,6 +310,12 @@ def confirm():
     )
     grouped_accounts = get_grouped_accounts(user_id)
     has_ai_config = UserAIConfig.query.filter_by(user_id=user_id).first() is not None
+    # 監査代理閲覧時は batch API (current_user.id ベース) を使うと仕訳が
+    # 監査者アカウントに混入する (= IDOR + 機能デグレ) ため、旧サーバ
+    # confirm POST 経路 (get_effective_user_id ベース) を使う。
+    # E3-F で resolve_bearer_or_session に acting_as_user_id 対応を入れたら
+    # この分岐は不要になる。
+    is_audit_proxy = session.get("acting_as_user_id") is not None
     return render_template(
         "web_import/confirm.html",
         parsed=parsed,
@@ -321,4 +327,5 @@ def confirm():
         closed_periods=closed_periods,
         has_ai_config=has_ai_config,
         capital_code=capital_code,
+        is_audit_proxy=is_audit_proxy,
     )
