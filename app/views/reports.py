@@ -191,16 +191,39 @@ def pl():
 @bp.route("/tax")
 @login_required
 def tax():
-    """確定申告用集計"""
+    """確定申告用集計 (tax_summary はクライアント描画 / Phase E3-F-3f)。
+    medical_summary は現状サーバ render を維持 (clientside 化は別 PR)。
+    """
     year = request.args.get("year", date.today().year, type=int)
+    user_id = get_effective_user_id()
 
-    tax_summary = get_tax_summary(get_effective_user_id(), year)
-    medical_summary = get_medical_summary(get_effective_user_id(), year)
+    medical_summary = get_medical_summary(user_id, year)
+
+    # accounts_meta: tax_category と name を含む (medical/resident_tax は除外)
+    allowed_codes = get_allowed_account_codes()
+    accounts = (
+        Account.query
+        .filter_by(user_id=user_id)
+        .order_by(Account.code)
+        .all()
+    )
+    if allowed_codes is not None:
+        accounts = [a for a in accounts if a.code in allowed_codes]
+
+    accounts_meta = {
+        a.code: {
+            "name": mask_account_name(a.name, a.code, allowed_codes),
+            "tax_category": a.tax_category,
+        }
+        for a in accounts
+        if a.tax_category is not None and a.tax_category not in ("medical", "resident_tax")
+    }
 
     return render_template(
         "reports/tax.html",
         year=year,
-        tax_summary=tax_summary,
+        accounts_meta=accounts_meta,
+        effective_user_id=user_id,
         medical_summary=medical_summary,
     )
 

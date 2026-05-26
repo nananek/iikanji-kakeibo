@@ -6,7 +6,10 @@
 {{ {"year": year, "user_id": current_user.id, "is_audit_proxy": session.get('acting_as_user_id') is not none} | tojson }}
 </script>
 <script id="tax-summary-server-params" type="application/json">
-{{ {"year": year, "user_id": current_user.id, "is_audit_proxy": session.get('acting_as_user_id') is not none} | tojson }}
+{{ {"year": year, "user_id": effective_user_id, "is_audit_proxy": session.get('acting_as_user_id') is not none} | tojson }}
+</script>
+<script id="tax-summary-accounts-meta" type="application/json">
+{{ accounts_meta | tojson }}
 </script>
 <h2><i class="bi bi-file-earmark-text"></i> 確定申告用集計</h2>
 
@@ -25,34 +28,9 @@
 
 <h4 class="mt-4">控除対象の支出</h4>
 
-{% if tax_summary %}
-{% for cat_code, cat_data in tax_summary.items() %}
-<div class="card shadow-sm mb-3"
-     data-tax-category="{{ cat_code }}"
-     data-server-total="{{ cat_data.total|int }}">
-  <div class="card-header d-flex justify-content-between">
-    <strong>{{ cat_data.label }}</strong>
-    <span class="badge bg-dark fs-6">&yen;{{ "{:,}".format(cat_data.total|int) }}</span>
-  </div>
-  <div class="card-body p-0">
-    <table class="table table-sm mb-0">
-      <tbody>
-        {% for account in cat_data.accounts %}
-        <tr data-tax-row="{{ account.code }}"
-            data-tax-row-category="{{ cat_code }}"
-            data-server-amount="{{ account.amount|int }}">
-          <td>{{ account.name }}</td>
-          <td class="text-end">&yen;{{ "{:,}".format(account.amount|int) }}</td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
-</div>
-{% endfor %}
-{% else %}
-<div class="text-muted py-3">控除対象の支出データがありません。</div>
-{% endif %}
+<div id="tax-summary-status" class="d-none" role="status" aria-live="polite"></div>
+<div id="tax-summary-cards"></div>
+<div id="tax-summary-empty" class="text-muted py-3 d-none">控除対象の支出データがありません。</div>
 
 <div class="d-flex justify-content-between align-items-center mt-5">
   <h4>医療費控除</h4>
@@ -182,5 +160,5 @@
 {% endif %}
 
 <script type="module" src="{{ url_for('static', filename='js/reports/medical_summary_validator.mjs') }}"></script>
-<script type="module" src="{{ url_for('static', filename='js/reports/tax_summary_validator.mjs') }}"></script>
+<script type="module" src="{{ url_for('static', filename='js/reports/tax_summary_renderer.mjs') }}"></script>
 {% endblock %}
