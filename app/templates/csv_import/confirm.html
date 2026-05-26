@@ -10,6 +10,10 @@
   var _restrictedBefore = {{ restricted_before_year | tojson }};
   var _defaultIncomeId = {{ default_income_id | tojson }};
   var _defaultExpenseId = {{ default_expense_id | tojson }};
+  // x-data 属性内に直接 {{ ... | tojson }} を埋めるとダブルクォートが衝突
+  // して HTML パースが壊れる。事前に変数化して x-data からは参照だけする。
+  var _paymentCode = {{ payment_account.code | tojson }};
+  var _capitalCode = {{ (capital_code or '') | tojson }};
 </script>
 
 <div x-data="reconcileMode({
@@ -43,12 +47,12 @@
 <div x-show="activeTab === 'import'">
   <div x-data="importConfirm({
     rows: _importRows,
-    paymentAccountCode: {{ payment_account.code | tojson }},
+    paymentAccountCode: _paymentCode,
     defaultIncomeId: _defaultIncomeId,
     defaultExpenseId: _defaultExpenseId,
     closedPeriods: _closedPeriods,
     restrictedBeforeYear: _restrictedBefore,
-    capitalCode: {{ (capital_code or '') | tojson }},
+    capitalCode: _capitalCode,
     importSource: 'csv'
   })" @drag-select-update="_syncFromCheckboxes()">
 
