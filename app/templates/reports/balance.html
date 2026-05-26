@@ -3,7 +3,7 @@
 
 {% block content %}
 <script id="trial-balance-server-params" type="application/json">
-{{ {"fiscal_year": year, "fiscal_period_from": pf, "fiscal_period_to": pt, "user_id": current_user.id, "is_audit_proxy": session.get('acting_as_user_id') is not none} | tojson }}
+{{ {"fiscal_year": year, "fiscal_period_from": pf, "fiscal_period_to": pt, "user_id": effective_user_id, "is_audit_proxy": session.get('acting_as_user_id') is not none} | tojson }}
 </script>
 {% set range_label %}
   {% if pf == pt %}{{ period_labels.get(pf, '') }}{% else %}{{ period_labels.get(pf, '') }}〜{{ period_labels.get(pt, '') }}{% endif %}
@@ -33,200 +33,38 @@
   </div>
 </div>
 
-{% if balances %}
-{% set ns = namespace(
-  current_type='', current_type_code='',
-  type_opening=0, type_debit=0, type_credit=0, type_balance=0,
-  grand_debit=0, grand_credit=0,
-  asset_balance=0, liability_balance=0, equity_balance=0
-) %}
+<script id="trial-balance-accounts-meta" type="application/json">
+{{ accounts_meta | tojson }}
+</script>
+
+<div class="alert alert-warning py-2 small mb-2" role="note">
+  <i class="bi bi-info-circle"></i>
+  開始残高（前期繰越）は現在 0 として表示されます。次期バージョンで暗号化された期末残高キャッシュとの統合により修正予定です。
+</div>
+
+<div id="trial-balance-status" class="d-none" role="status" aria-live="polite"></div>
+
 <div class="table-responsive">
   <table class="table table-hover">
     <thead class="table-dark">
       <tr>
         <th class="d-mobile-none">コード</th>
         <th>勘定科目</th>
-        <th class="text-end d-mobile-none">開始残高</th>
         <th class="text-end">借方合計</th>
         <th class="text-end">貸方合計</th>
         <th class="text-end">残高</th>
       </tr>
     </thead>
-    <tbody>
-      {% for item in balances %}
-        {% if item.account.account_type.name != ns.current_type %}
-          {% if ns.current_type %}
-          <tr class="table-info">
-            <td class="d-mobile-none"></td>
-            <td class="text-end"><strong>{{ ns.current_type }} 小計</strong></td>
-            <td class="text-end d-mobile-none">{% if ns.type_opening %}<strong>&yen;{{ "{:,}".format(ns.type_opening) }}</strong>{% endif %}</td>
-            <td class="text-end"><strong>&yen;{{ "{:,}".format(ns.type_debit) }}</strong></td>
-            <td class="text-end"><strong>&yen;{{ "{:,}".format(ns.type_credit) }}</strong></td>
-            <td class="text-end"><strong>&yen;{{ "{:,}".format(ns.type_balance) }}</strong></td>
-          </tr>
-          {% if ns.current_type_code == 'asset' %}
-            {% set ns.asset_balance = ns.type_balance %}
-          {% elif ns.current_type_code == 'liability' %}
-            {% set ns.liability_balance = ns.type_balance %}
-          {% elif ns.current_type_code == 'equity' %}
-            {% set ns.equity_balance = ns.type_balance %}
-            {% if not has_closing and ytd_net_income != 0 %}
-            {% set prior_ni = ytd_net_income - net_income %}
-            <tr class="fst-italic">
-              <td class="d-mobile-none"></td>
-              <td>（当期純利益）</td>
-              <td class="text-end d-mobile-none">{% if prior_ni %}&yen;{{ "{:,}".format(prior_ni|int) }}{% endif %}</td>
-              <td class="text-end">{% if net_income < 0 %}&yen;{{ "{:,}".format((-net_income)|int) }}{% endif %}</td>
-              <td class="text-end">{% if net_income > 0 %}&yen;{{ "{:,}".format(net_income|int) }}{% endif %}</td>
-              <td class="text-end">&yen;{{ "{:,}".format(ytd_net_income|int) }}</td>
-            </tr>
-            {% endif %}
-            <tr class="table-warning">
-              <td class="d-mobile-none"></td>
-              <td class="text-end"><strong>負債・純資産合計</strong></td>
-              <td class="text-end d-mobile-none"></td>
-              <td class="text-end" colspan="3">
-                {% set le_total = ns.liability_balance + ns.equity_balance + (ytd_net_income if not has_closing else 0) %}
-                <strong>&yen;{{ "{:,}".format(le_total) }}</strong>
-                {% if ns.asset_balance == le_total %}
-                <i class="bi bi-check-circle text-success ms-1"></i>
-                {% else %}
-                <i class="bi bi-exclamation-triangle text-danger ms-1"></i>
-                {% endif %}
-              </td>
-            </tr>
-          {% endif %}
-          {% endif %}
-          {% set ns.current_type = item.account.account_type.name %}
-          {% set ns.current_type_code = item.account.account_type.code %}
-          {% set ns.type_opening = 0 %}
-          {% set ns.type_debit = 0 %}
-          {% set ns.type_credit = 0 %}
-          {% set ns.type_balance = 0 %}
-          <tr class="table-secondary">
-            <td colspan="6"><strong>{{ ns.current_type }}</strong></td>
-          </tr>
-        {% endif %}
-        <tr data-trial-balance-row="{{ item.account.code }}"
-            data-server-debit="{{ item.debit|int }}"
-            data-server-credit="{{ item.credit|int }}">
-          <td class="d-mobile-none">{{ item.account.code }}</td>
-          <td>
-            <a href="{{ url_for('reports.ledger', year=year, account_code=item.account.code, pf=pf, pt=pt) }}"
-               class="text-decoration-none">
-              {{ item.account.name }}
-            </a>
-          </td>
-          <td class="text-end d-mobile-none {% if item.opening < 0 %}text-danger{% endif %}">
-            {% if item.opening %}&yen;{{ "{:,}".format(item.opening|int) }}{% endif %}
-          </td>
-          <td class="text-end">&yen;{{ "{:,}".format(item.debit|int) }}</td>
-          <td class="text-end">&yen;{{ "{:,}".format(item.credit|int) }}</td>
-          <td class="text-end {% if item.balance < 0 %}text-danger{% endif %}">
-            &yen;{{ "{:,}".format(item.balance|int) }}
-          </td>
-        </tr>
-        {% set ns.type_opening = ns.type_opening + item.opening|int %}
-        {% set ns.type_debit = ns.type_debit + item.debit|int %}
-        {% set ns.type_credit = ns.type_credit + item.credit|int %}
-        {% set ns.type_balance = ns.type_balance + item.balance|int %}
-        {% set ns.grand_debit = ns.grand_debit + item.debit|int %}
-        {% set ns.grand_credit = ns.grand_credit + item.credit|int %}
-      {% endfor %}
-      {% if ns.current_type %}
-      <tr class="table-info">
-        <td class="d-mobile-none"></td>
-        <td class="text-end"><strong>{{ ns.current_type }} 小計</strong></td>
-        <td class="text-end d-mobile-none">{% if ns.type_opening %}<strong>&yen;{{ "{:,}".format(ns.type_opening) }}</strong>{% endif %}</td>
-        <td class="text-end"><strong>&yen;{{ "{:,}".format(ns.type_debit) }}</strong></td>
-        <td class="text-end"><strong>&yen;{{ "{:,}".format(ns.type_credit) }}</strong></td>
-        <td class="text-end"><strong>&yen;{{ "{:,}".format(ns.type_balance) }}</strong></td>
+    <tbody id="trial-balance-tbody">
+      <tr>
+        <td colspan="5" class="text-center text-muted py-4">
+          <span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
+          集計を読み込んでいます…
+        </td>
       </tr>
-      {% if ns.current_type_code == 'asset' %}
-        {% set ns.asset_balance = ns.type_balance %}
-      {% elif ns.current_type_code == 'liability' %}
-        {% set ns.liability_balance = ns.type_balance %}
-      {% elif ns.current_type_code == 'equity' %}
-        {% set ns.equity_balance = ns.type_balance %}
-        {% if not has_closing %}
-        {% set prior_ni = ytd_net_income - net_income %}
-        {% if prior_ni != 0 %}
-        <tr class="fst-italic text-muted">
-          <td class="d-mobile-none"></td>
-          <td class="text-end">（純利益 前月繰越）</td>
-          <td class="text-end d-mobile-none"></td>
-          <td class="text-end" colspan="3">&yen;{{ "{:,}".format(prior_ni|int) }}</td>
-        </tr>
-        {% endif %}
-        {% if net_income != 0 %}
-        <tr class="fst-italic text-muted">
-          <td class="d-mobile-none"></td>
-          <td class="text-end">（純利益 当月損益）</td>
-          <td class="text-end d-mobile-none"></td>
-          <td class="text-end" colspan="3">&yen;{{ "{:,}".format(net_income|int) }}</td>
-        </tr>
-        {% endif %}
-        {% if ytd_net_income != 0 %}
-        <tr class="table-info fst-italic">
-          <td class="d-mobile-none"></td>
-          <td class="text-end">（当期純利益 累計）</td>
-          <td class="text-end d-mobile-none"></td>
-          <td class="text-end" colspan="3">&yen;{{ "{:,}".format(ytd_net_income|int) }}</td>
-        </tr>
-        {% endif %}
-        {% endif %}
-        <tr class="table-warning">
-          <td class="d-mobile-none"></td>
-          <td class="text-end"><strong>負債・純資産合計</strong></td>
-          <td class="text-end d-mobile-none"></td>
-          <td class="text-end" colspan="3">
-            {% set le_total = ns.liability_balance + ns.equity_balance + (ytd_net_income if not has_closing else 0) %}
-            <strong>&yen;{{ "{:,}".format(le_total) }}</strong>
-            {% if ns.asset_balance == le_total %}
-            <i class="bi bi-check-circle text-success ms-1"></i>
-            {% else %}
-            <i class="bi bi-exclamation-triangle text-danger ms-1"></i>
-            {% endif %}
-          </td>
-        </tr>
-      {% endif %}
-      {% endif %}
     </tbody>
-    <tfoot>
-      <tr class="table-dark">
-        <td class="d-mobile-none"></td>
-        <td><strong>総合計</strong></td>
-        <td class="d-mobile-none"></td>
-        <td class="text-end"><strong>&yen;{{ "{:,}".format(ns.grand_debit) }}</strong></td>
-        <td class="text-end"><strong>&yen;{{ "{:,}".format(ns.grand_credit) }}</strong></td>
-        <td></td>
-      </tr>
-      <tr class="{% if net_income >= 0 %}table-success{% else %}table-danger{% endif %}">
-        <td class="d-mobile-none"></td>
-        <td>
-          <strong><i class="bi bi-graph-up-arrow"></i>
-            {{ year }}年 {{ range_label }} の損益
-            {% if net_income >= 0 %}（利益）{% else %}（損失）{% endif %}
-          </strong>
-        </td>
-        <td class="d-mobile-none"></td>
-        <td class="text-end">
-          {% if net_income > 0 %}<strong>&yen;{{ "{:,}".format(net_income|int) }}</strong>{% endif %}
-        </td>
-        <td class="text-end">
-          {% if net_income < 0 %}<strong>&yen;{{ "{:,}".format((-net_income)|int) }}</strong>{% endif %}
-        </td>
-        <td></td>
-        </td>
-      </tr>
-    </tfoot>
   </table>
 </div>
-{% else %}
-<div class="text-center text-muted py-5">
-  <p>{{ year }}年 {{ range_label }} の仕訳データがありません。</p>
-</div>
-{% endif %}
 {% endblock %}
 
 {% block scripts %}
@@ -319,5 +157,5 @@
 })();
 </script>
 
-<script type="module" src="{{ url_for('static', filename='js/reports/trial_balance_validator.mjs') }}"></script>
+<script type="module" src="{{ url_for('static', filename='js/reports/trial_balance_renderer.mjs') }}"></script>
 {% endblock %}

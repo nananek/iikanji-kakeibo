@@ -32,7 +32,9 @@ def index():
 @bp.route("/balance")
 @login_required
 def balance():
-    """残高試算表（期間範囲指定対応）"""
+    """残高試算表 (クライアント描画)。サーバ集計は撤去済 (Phase E3-F-3a)。
+    クライアントが /api/v1/journals から自分の MK で復号して集計する。
+    """
     from app.services.fiscal import PERIOD_LABELS
 
     year = request.args.get("year", date.today().year, type=int)
@@ -45,163 +47,34 @@ def balance():
     else:
         pf = request.args.get("pf", 0, type=int)
         pt = request.args.get("pt", 15, type=int)
-
-    # 範囲の正規化
     pf = max(0, min(16, pf))
     pt = max(pf, min(16, pt))
 
     user_id = get_effective_user_id()
-    account_types = AccountType.query.order_by(AccountType.display_order).all()
     accounts = (
         Account.query
         .filter_by(user_id=user_id)
         .order_by(Account.code)
         .all()
     )
-    # 有効 OR 無効化年 >= 表示年
     accounts = [a for a in accounts if a.is_active or (a.deactivated_year and a.deactivated_year >= year)]
-
-    # Lv2: 公開科目のみに絞る
     allowed_codes = get_allowed_account_codes()
     if allowed_codes is not None:
         accounts = [a for a in accounts if a.code in allowed_codes]
 
-    start_of_year = date(year, 1, 1)
-    pl_type_codes = {"revenue", "expense"}
-    bs_type_codes = {"asset", "liability", "equity"}
-
-    def _query_sum(acct_code, filters, include_closing=False):
-        """指定条件での借方・貸方合計を返す"""
-        q = (
-            db.session.query(
-                func.coalesce(func.sum(JournalEntryLine.debit_amount), 0),
-                func.coalesce(func.sum(JournalEntryLine.credit_amount), 0),
-            )
-            .join(JournalEntry, JournalEntry.id == JournalEntryLine.journal_entry_id)
-            .filter(
-                JournalEntryLine.account_user_id == user_id,
-                JournalEntryLine.account_code == acct_code,
-            )
-        )
-        if not include_closing:
-            q = q.filter(JournalEntry.source != "closing")
-        for f in filters:
-            q = q.filter(f)
-        return q.first()
-
-    balances = []
-    total_revenue = 0
-    total_expense = 0
-    ytd_revenue = 0
-    ytd_expense = 0
-
-    incl_closing = pt >= 16
-    current_filter = period_range_filter(year, pf, pt)
-
-    # 開始残高のキャッシュ活用
-    closed = get_closed_period(user_id, year)
-    cache = {}
-    use_cache = pf > 0 and closed >= pf - 1
-    if use_cache:
-        cache = get_cached_balances(user_id, year, pf - 1)
-
-    for account in accounts:
-        is_pl = account.account_type.code in pl_type_codes
-        is_bs = account.account_type.code in bs_type_codes
-        is_debit_normal = account.account_type.normal_balance == "debit"
-
-        # 当期発生額
-        result = _query_sum(account.code, [current_filter], include_closing=incl_closing)
-        period_debit = int(result[0])
-        period_credit = int(result[1])
-
-        # 開始残高
-        opening = 0
-        if pf > 0 and use_cache and account.code in cache:
-            # キャッシュから当年累計を取得
-            year_d, year_c = cache[account.code]
-            if is_bs:
-                # B/S: キャッシュ(当年) + 前年以前
-                before_result = _query_sum(account.code, [JournalEntry.date < start_of_year], include_closing=True)
-                before_d, before_c = int(before_result[0]), int(before_result[1])
-                if is_debit_normal:
-                    opening = (year_d + before_d) - (year_c + before_c)
-                else:
-                    opening = (year_c + before_c) - (year_d + before_d)
-            else:
-                # P/L: 当年キャッシュのみ
-                if is_debit_normal:
-                    opening = year_d - year_c
-                else:
-                    opening = year_c - year_d
-        elif pf > 0:
-            # フォールバック: 従来の全計算
-            prior_filter = period_range_filter(year, 0, pf - 1)
-            if is_bs:
-                if prior_filter is not None:
-                    ob_result = _query_sum(account.code, [prior_filter])
-                    prior_d, prior_c = int(ob_result[0]), int(ob_result[1])
-                else:
-                    prior_d, prior_c = 0, 0
-                before_result = _query_sum(account.code, [JournalEntry.date < start_of_year], include_closing=True)
-                before_d, before_c = int(before_result[0]), int(before_result[1])
-                if is_debit_normal:
-                    opening = (prior_d + before_d) - (prior_c + before_c)
-                else:
-                    opening = (prior_c + before_c) - (prior_d + before_d)
-            elif is_pl and prior_filter is not None:
-                ob_result = _query_sum(account.code, [prior_filter])
-                if is_debit_normal:
-                    opening = int(ob_result[0]) - int(ob_result[1])
-                else:
-                    opening = int(ob_result[1]) - int(ob_result[0])
-        elif is_bs:
-            # pf==0 でも前年以前のB/S残高は必要
-            before_result = _query_sum(account.code, [JournalEntry.date < start_of_year], include_closing=True)
-            before_d, before_c = int(before_result[0]), int(before_result[1])
-            if is_debit_normal:
-                opening = before_d - before_c
-            else:
-                opening = before_c - before_d
-
-        # 残高
-        if is_debit_normal:
-            balance_amount = opening + period_debit - period_credit
-        else:
-            balance_amount = opening + period_credit - period_debit
-
-        # 損益集計（P/L科目）
-        if account.account_type.code == "revenue":
-            total_revenue += period_credit - period_debit
-            ytd_revenue += balance_amount
-        elif account.account_type.code == "expense":
-            total_expense += period_debit - period_credit
-            ytd_expense += balance_amount
-
-        if period_debit != 0 or period_credit != 0 or opening != 0:
-            balances.append({
-                "account": account,
-                "opening": opening,
-                "debit": period_debit,
-                "credit": period_credit,
-                "balance": balance_amount,
-            })
-
-    net_income = total_revenue - total_expense
-    ytd_net_income = ytd_revenue - ytd_expense
-
-    # 損益振替済みか判定（振替後は純利益が繰越利益に含まれている）
-    end_of_year = date(year + 1, 1, 1)
-    has_closing = (
-        db.session.query(JournalEntry.id)
-        .filter(
-            JournalEntry.user_id == user_id,
-            JournalEntry.source == "closing",
-            JournalEntry.date >= start_of_year,
-            JournalEntry.date < end_of_year,
-        )
-        .first()
-    ) is not None
+    # クライアント描画用に accountsMeta を JSON で渡す。
+    # `accounts` は line 62-63 で allowed_codes フィルタ適用済みのため
+    # Lv2 で非公開の科目はここに含まれない (= 監査者に名前が漏れない)。
+    # mask_account_name は防御的多層化のための残置 (allowed_codes フィルタを
+    # 将来うっかり外しても「事業主」マスクは効く)。
+    accounts_meta = {
+        a.code: {
+            "type": a.account_type.code,
+            "normal_balance": a.account_type.normal_balance,
+            "name": mask_account_name(a.name, a.code, allowed_codes),
+        }
+        for a in accounts
+    }
 
     return render_template(
         "reports/balance.html",
@@ -209,11 +82,8 @@ def balance():
         pf=pf,
         pt=pt,
         period_labels=PERIOD_LABELS,
-        balances=balances,
-        account_types=account_types,
-        net_income=net_income,
-        ytd_net_income=ytd_net_income,
-        has_closing=has_closing,
+        accounts_meta=accounts_meta,
+        effective_user_id=user_id,
     )
 
 

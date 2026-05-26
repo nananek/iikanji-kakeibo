@@ -106,9 +106,43 @@ class TestBalanceWithPref:
 
 
 class TestBalanceLv2:
-    def test_filtered_by_allowed_codes(self, lv2_setup, client):
+    def test_filtered_by_allowed_codes(self, lv2_setup, client, user):
+        """Lv2 監査者の代理閲覧時、accounts_meta JSON にオーナーの非公開科目が
+        含まれず、effective_user_id がオーナーの ID であることを検証する。
+
+        E3-F-3a 以降は試算表をクライアントが描画するので、サーバが渡す
+        accounts_meta / effective_user_id の中身そのものが Lv2 隠蔽の
+        要となる。HTTP 200 だけでは回帰検出できない。
+        """
+        import json
+        import re
         resp = client.get("/reports/balance")
         assert resp.status_code == 200
+        html = resp.data.decode()
+
+        # accounts_meta は allowed_codes でフィルタ済みであるべき
+        m = re.search(
+            r'<script id="trial-balance-accounts-meta"[^>]*>(.*?)</script>',
+            html, flags=re.DOTALL,
+        )
+        assert m, "accounts_meta script not found"
+        meta = json.loads(m.group(1).strip())
+        # lv2_setup fixture が公開した科目: 5010, 3030
+        assert "5010" in meta
+        assert "3030" in meta
+        # 公開していない科目 (1010 等) は含まれない
+        assert "1010" not in meta
+        assert "4010" not in meta
+
+        # effective_user_id (= 試算表 server params の user_id) はオーナーの ID
+        m2 = re.search(
+            r'<script id="trial-balance-server-params"[^>]*>(.*?)</script>',
+            html, flags=re.DOTALL,
+        )
+        assert m2, "server-params script not found"
+        params = json.loads(m2.group(1).strip())
+        assert params["user_id"] == user.id
+        assert params["is_audit_proxy"] is True
 
 
 class TestBsAdvanced:

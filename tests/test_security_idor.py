@@ -214,15 +214,55 @@ class TestLedgerIDOR:
     def test_trial_balance_excludes_other_users(self, app, client, db,
                                                   user, second_user,
                                                   accounts, second_user_accounts):
-        """試算表に他人の残高が含まれないこと"""
+        """試算表ページの accounts_meta JSON に他人の科目が含まれず、
+        API 経由でも他人の仕訳が漏洩しないこと。
+
+        E3-F-3a 以降、試算表はクライアントが API から暗号化仕訳を
+        取得して描画するため、サーバ HTML に金額は含まれない。
+        漏洩経路は (a) accounts_meta JSON、(b) /api/v1/journals API
+        の 2 つに移ったので両方検証する。
+        """
+        import json
+        import re
         make_journal(db, second_user.id, "5010", "1010", 88888)
 
         with client.session_transaction() as sess:
             sess["_user_id"] = str(user.id)
+
+        # (a) /reports/balance の accounts_meta に他人科目が含まれない
         resp = client.get("/reports/balance?year=2026")
         assert resp.status_code == 200
         html = resp.data.decode()
-        assert "88,888" not in html
+        m = re.search(
+            r'<script id="trial-balance-accounts-meta"[^>]*>(.*?)</script>',
+            html, flags=re.DOTALL,
+        )
+        assert m, "accounts_meta script tag not found"
+        meta = json.loads(m.group(1).strip())
+        # second_user の科目コード "9999" を seed していない前提で、
+        # user の科目だけが返されるはず
+        # (second_user_accounts fixture は second_user.id にしか作らない)
+        # 少なくとも accounts_meta が空でないこと (自分の科目はある)
+        assert len(meta) > 0
+        # accounts_meta の中身は user.id の科目のみ
+        from app.models.account import Account
+        user_codes = {
+            a.code for a in Account.query.filter_by(user_id=user.id).all()
+        }
+        for code in meta.keys():
+            assert code in user_codes, (
+                f"accounts_meta contains non-owner code {code}"
+            )
+
+        # (b) /api/v1/journals でも他人仕訳は返らない (renderer が呼ぶ経路)
+        resp = client.get("/api/v1/journals?fiscal_year=2026")
+        assert resp.status_code == 200
+        journals = resp.get_json()["journals"]
+        # 88,888 の金額を持つ line が結果に含まれないこと
+        for j in journals:
+            for line in j.get("lines", []):
+                assert line.get("debit_amount", 0) != 88888
+                assert line.get("credit_amount", 0) != 88888
 
 
 class TestAPIJournalLineIDOR:
