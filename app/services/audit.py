@@ -140,8 +140,8 @@ def check_auditor_redirect():
     if perm is None:
         return None
     endpoint = request.endpoint or ""
-    # Lv1: reports.tax と reports.medical_csv 以外はリダイレクト
-    if perm == 1 and endpoint not in ("reports.tax", "reports.medical_csv", "auditor.exit_acting"):
+    # Lv1: reports.tax 以外はリダイレクト (E3-F-4c で medical_csv 撤去)
+    if perm == 1 and endpoint not in ("reports.tax", "auditor.exit_acting"):
         return True
     return None
 

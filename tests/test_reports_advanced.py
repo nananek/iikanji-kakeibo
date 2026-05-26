@@ -366,38 +366,3 @@ class TestTaxFormReportAdvanced:
         assert resp.status_code == 200
 
 
-class TestMedicalCsvDownload:
-    def test_download_with_data(self, db, logged_in_client, user, accounts):
-        from app.models.account import Account, AccountType
-        from app.models.medical import MedicalExpense
-        from app.services.accounting import create_cashbook_entry
-        # 6010 (医療費) を作る
-        expense_type = AccountType.query.filter_by(code="expense").first()
-        a = Account(
-            user_id=user.id, account_type_id=expense_type.id,
-            code="6010", name="医療費",
-            tax_category="medical",
-            is_active=True, display_order=100,
-        )
-        db.session.add(a)
-        db.session.commit()
-        entry = create_cashbook_entry(
-            user_id=user.id, date=date(2026, 5, 15),
-            transaction_type="expense",
-            payment_account_code="1010",
-            category_account_code="6010",
-            amount=5000, description="医療費",
-        )
-        db.session.add(MedicalExpense(
-            user_id=user.id, journal_entry_id=entry.id,
-            date=date(2026, 5, 15),
-            patient_name="本人", hospital_name="○病院",
-            treatment_description="風邪",
-            provider_type="hospital",
-            amount_paid=5000, insurance_reimbursement=1000,
-        ))
-        db.session.commit()
-        resp = logged_in_client.get("/reports/tax/medical-csv?year=2026")
-        assert resp.status_code == 200
-        body = resp.get_data(as_text=True)
-        assert "本人" in body or "5000" in body

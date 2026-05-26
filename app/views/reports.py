@@ -1,9 +1,7 @@
-import csv
-import io
 from datetime import date, timedelta
 from decimal import Decimal
 
-from flask import Blueprint, render_template, request, Response
+from flask import Blueprint, render_template, request
 from flask_login import login_required, current_user
 from sqlalchemy import func
 
@@ -237,59 +235,6 @@ def tax():
     )
 
 
-@bp.route("/tax/medical-csv")
-@login_required
-def medical_csv():
-    """医療費集計フォーム Ver 3.1 準拠CSVダウンロード。
-
-    E2EE 化が進むと get_medical_summary は復号できなくなるため、
-    clientside CSV 生成に置き換える follow-up が必要 (#221 系)。
-    """
-    from app.services.tax import get_medical_summary
-
-    year = request.args.get("year", date.today().year, type=int)
-    medical_summary = get_medical_summary(get_effective_user_id(), year)
-
-    output = io.StringIO()
-    writer = csv.writer(output)
-
-    # ヘッダー行（Ver 3.1 準拠: A〜H列）
-    writer.writerow([
-        "医療を受けた人",
-        "病院・薬局などの名称",
-        "診療・治療",
-        "医薬品購入",
-        "介護保険サービス",
-        "その他の医療費",
-        "支払った医療費の金額",
-        "左のうち、補てんされる金額",
-    ])
-
-    for e in medical_summary["expenses"]:
-        pt = e["provider_type"]
-        writer.writerow([
-            e["patient_name"],
-            e["hospital_name"],
-            "該当する" if pt == "hospital" or not pt else "",
-            "該当する" if pt == "pharmacy" else "",
-            "該当する" if pt == "nursing" else "",
-            "該当する" if pt == "other" else "",
-            e["amount"],
-            e["insurance_reimbursement"] if e["insurance_reimbursement"] else "",
-        ])
-
-    csv_data = output.getvalue()
-    output.close()
-
-    # BOM付きUTF-8でExcel互換
-    bom = "\ufeff"
-    return Response(
-        bom + csv_data,
-        mimetype="text/csv; charset=utf-8",
-        headers={
-            "Content-Disposition": f'attachment; filename="iryouhi_{year}.csv"',
-        },
-    )
 
 
 @bp.route("/ledger")
