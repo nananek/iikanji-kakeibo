@@ -1,37 +1,47 @@
 name: Notify Discord when CI completes
 
 # PR に紐づく全 GitHub Actions check が完了した瞬間に Discord webhook へ
-# 1 通だけ通知する。GitHub は各 workflow ごとに check_suite を発火するため
-# 12 workflows なら 12 回 job が起動するが、`pending` 件数が 0 になった
-# 最後の 1 回だけが実際に通知を投稿する設計。
+# 1 通だけ通知する。
+#
+# 注意: 当初は `check_suite: completed` を使ったが、GitHub の仕様で
+# 「GitHub Actions が作成した check_suite では check_suite イベントが発火しない」
+# (無限ループ防止) ため、CI の各 workflow 完了では発火しなかった。
+# 代わりに `workflow_run: completed` で対象 workflow を列挙して監視する。
 #
 # 必要な repo secret:
 #   DISCORD_REVIEW_WEBHOOK_URL  ... claude-review verdict と共用する
 #                                   Discord チャンネルの Webhook URL
 #
-# 注意:
-# - PR に紐づかない commit (push to develop / master) は無視
-# - PENDING > 0 (まだ走ってる check がある) なら exit 0 で通知しない
-# - DISCORD_REVIEW_WEBHOOK_URL 未設定なら skip (fork PR 等)
+# 新しい workflow を追加したら、ここの workflows 列挙にも足すこと。
 
 on:
-  check_suite:
-    types: [completed]
+  workflow_run:
+    workflows:
+      - Tests
+      - Security
+      - Claude PR review
+      - Dependency Review
+    types:
+      - completed
 
 permissions:
   contents: read
   pull-requests: read
   checks: read
+  actions: read
 
 jobs:
   notify:
     runs-on: ubuntu-latest
+    # PR commit (= head_branch がデフォルトブランチ以外) のみ対象。
+    # develop / master への直 push 後の workflow_run には反応しない。
+    if: github.event.workflow_run.head_branch != 'develop' && github.event.workflow_run.head_branch != 'master'
     steps:
       - name: Aggregate status and post to Discord
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           DISCORD_WEBHOOK: ${{ secrets.DISCORD_REVIEW_WEBHOOK_URL }}
-          HEAD_SHA: ${{ github.event.check_suite.head_sha }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
