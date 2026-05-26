@@ -87,6 +87,14 @@ export async function decryptBackup(client, backup) {
       balance_cache_blobs: [],
       // 画像はサーバ側ストレージに平文保存、復号不要のためそのまま通す
       vouchers: backup.data.vouchers || [],
+      // AIDraft も画像 + メタをそのまま (BU-2b)
+      ai_drafts: backup.data.ai_drafts || [],
+      // UserAIConfig は api_key_blob (暗号文) を含む。本クライアントでは
+      // 復号せずパススルー (リストア時に MK が必要なため)。
+      user_ai_config: backup.data.user_ai_config || null,
+      webhook_configs: backup.data.webhook_configs || [],
+      tax_form_mappings: backup.data.tax_form_mappings || [],
+      csv_column_profiles: backup.data.csv_column_profiles || [],
     },
   };
 

@@ -1142,7 +1142,8 @@ class TestBackupExport:
         assert set(data["data"].keys()) >= {
             "accounts", "fiscal_closes", "journal_entries",
             "journal_entry_lines", "medical_expenses", "balance_cache_blobs",
-            "vouchers",
+            "vouchers", "ai_drafts", "user_ai_config", "webhook_configs",
+            "tax_form_mappings", "csv_column_profiles",
         }
 
     def test_user_data_included(
@@ -1381,6 +1382,169 @@ class TestBackupExportVouchers:
         assert resp.status_code == 200
         keys = [v["image_key"] for v in resp.get_json()["data"]["vouchers"]]
         assert "vouchers/gone.jpg" not in keys
+
+
+class TestBackupExportRemainingTables:
+    """v5 BU-2b: AIDraft / UserAIConfig / WebhookConfig / TaxFormMapping /
+    CsvColumnProfile のエクスポート。"""
+
+    def _stub_storage(self, monkeypatch, payload=b"\x01\x02"):
+        from app.services import storage as storage_module
+        from app.views import api as api_module
+        backend = type("S", (), {"get": lambda self, k: payload})()
+        monkeypatch.setattr(storage_module, "get_storage_backend", lambda: backend)
+        monkeypatch.setattr(api_module, "get_storage_backend", lambda: backend)
+
+    def test_ai_draft_included_with_image(
+        self, app, client, db, user, auth_header, monkeypatch,
+    ):
+        import base64
+        from app.models.ai_draft import AIDraft
+        self._stub_storage(monkeypatch, b"\xff\xd8FAKE")
+        db.session.add(AIDraft(
+            user_id=user.id, image_key="drafts/p.jpg", image_mime="image/jpeg",
+            status="pending", comment="メモ",
+        ))
+        db.session.commit()
+        resp = client.get("/api/v1/backup/export", headers=auth_header)
+        assert resp.status_code == 200
+        drafts = resp.get_json()["data"]["ai_drafts"]
+        assert len(drafts) == 1
+        assert drafts[0]["image_key"] == "drafts/p.jpg"
+        assert drafts[0]["status"] == "pending"
+        assert drafts[0]["image_data"] == base64.b64encode(b"\xff\xd8FAKE").decode()
+
+    def test_ai_config_included_with_blob(
+        self, app, client, db, user, auth_header,
+    ):
+        import base64
+        from app.models.ai_config import UserAIConfig
+        db.session.add(UserAIConfig(
+            user_id=user.id, provider="openai", model_name="gpt-4",
+            api_key_blob=b"\xaa\xbb", api_key_iv=b"\x00" * 12,
+        ))
+        db.session.commit()
+        resp = client.get("/api/v1/backup/export", headers=auth_header)
+        assert resp.status_code == 200
+        cfg = resp.get_json()["data"]["user_ai_config"]
+        assert cfg["provider"] == "openai"
+        assert cfg["model_name"] == "gpt-4"
+        assert cfg["api_key_blob"] == base64.b64encode(b"\xaa\xbb").decode()
+
+    def test_ai_config_null_when_unset(
+        self, app, client, db, user, auth_header,
+    ):
+        resp = client.get("/api/v1/backup/export", headers=auth_header)
+        assert resp.status_code == 200
+        assert resp.get_json()["data"]["user_ai_config"] is None
+
+    def test_webhook_csv_tax_included(
+        self, app, client, db, user, accounts, auth_header,
+    ):
+        from app.models.webhook import WebhookConfig
+        from app.models.csv_column_profile import CsvColumnProfile
+        from app.models.tax_form import TaxFormField, TaxFormMapping
+        db.session.add(WebhookConfig(
+            user_id=user.id, name="Discord", provider="discord",
+            webhook_url="https://example.com/wh",
+            events_json='["import_success"]',
+        ))
+        db.session.add(CsvColumnProfile(
+            user_id=user.id, account_code="1010",
+            date_col=0, desc_col=1, deposit_col=2, withdrawal_col=3,
+            date_format="%Y/%m/%d",
+        ))
+        f = TaxFormField(
+            form_type="general", page=1, section="revenue",
+            row_code="1", name="売上",
+            account_type_code="revenue", display_order=1,
+        )
+        db.session.add(f)
+        db.session.flush()
+        db.session.add(TaxFormMapping(
+            user_id=user.id, account_code="1010", field_id=f.id,
+        ))
+        db.session.commit()
+        resp = client.get("/api/v1/backup/export", headers=auth_header)
+        assert resp.status_code == 200
+        data = resp.get_json()["data"]
+        assert len(data["webhook_configs"]) == 1
+        assert data["webhook_configs"][0]["webhook_url"] == "https://example.com/wh"
+        assert len(data["csv_column_profiles"]) == 1
+        assert data["csv_column_profiles"][0]["account_code"] == "1010"
+        assert len(data["tax_form_mappings"]) == 1
+        assert data["tax_form_mappings"][0]["account_code"] == "1010"
+
+    def test_remaining_tables_isolated_per_user(
+        self, app, client, db, user, accounts, auth_header,
+    ):
+        """他人の WebhookConfig / CsvColumnProfile / TaxFormMapping /
+        UserAIConfig / AIDraft が含まれないこと。"""
+        from app.models.account import Account, AccountType
+        from app.models.ai_config import UserAIConfig
+        from app.models.ai_draft import AIDraft
+        from app.models.csv_column_profile import CsvColumnProfile
+        from app.models.tax_form import TaxFormField, TaxFormMapping
+        from app.models.user import User
+        from app.models.webhook import WebhookConfig
+        other = User(
+            username="other_b", email="other_b@example.com", user_type="personal",
+        )
+        other.set_password("password123")
+        db.session.add(other)
+        db.session.flush()
+        # 他人の科目 (TaxFormMapping FK の都合)
+        asset_type = AccountType.query.filter_by(code="asset").first()
+        db.session.add(Account(
+            user_id=other.id, code="8888", name="他人科目",
+            account_type_id=asset_type.id,
+        ))
+        db.session.flush()
+        db.session.add(UserAIConfig(
+            user_id=other.id, provider="anthropic", model_name="claude-x",
+        ))
+        db.session.add(WebhookConfig(
+            user_id=other.id, name="OtherWh", provider="discord",
+            webhook_url="https://leak.example/x",
+            events_json='["import_success"]',
+        ))
+        db.session.add(CsvColumnProfile(
+            user_id=other.id, account_code="8888",
+            date_col=0, desc_col=1, amount_col=2,
+            amount_mode="single",
+        ))
+        db.session.add(AIDraft(
+            user_id=other.id, image_key="drafts/other.jpg",
+            image_mime="image/jpeg", status="pending",
+        ))
+        f = TaxFormField(
+            form_type="general", page=1, section="revenue",
+            row_code="9", name="他人欄",
+            account_type_code="asset", display_order=99,
+        )
+        db.session.add(f)
+        db.session.flush()
+        db.session.add(TaxFormMapping(
+            user_id=other.id, account_code="8888", field_id=f.id,
+        ))
+        db.session.commit()
+
+        resp = client.get("/api/v1/backup/export", headers=auth_header)
+        assert resp.status_code == 200
+        data = resp.get_json()["data"]
+        # AI 設定は本人のみ (= None or 本人のもの)
+        if data["user_ai_config"] is not None:
+            assert data["user_ai_config"]["model_name"] != "claude-x"
+        # Webhook / CSV / TaxMapping / AIDraft の他人エントリが混じらない
+        assert all(
+            w["webhook_url"] != "https://leak.example/x"
+            for w in data["webhook_configs"]
+        )
+        assert all(p["account_code"] != "8888" for p in data["csv_column_profiles"])
+        assert all(t["account_code"] != "8888" for t in data["tax_form_mappings"])
+        assert all(
+            d["image_key"] != "drafts/other.jpg" for d in data["ai_drafts"]
+        )
 
 
 # --- 下書き一覧 ---
