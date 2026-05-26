@@ -130,26 +130,36 @@ function _renderView(view, params) {
 }
 
 
+function _abort(msg, logArg) {
+  if (logArg !== undefined) console.warn("trial_balance_renderer: " + msg, logArg);
+  _setStatusMessage("試算表ページの初期化に失敗しました: " + msg, "danger");
+  _clearTbody();
+}
+
+
 async function _run() {
   const paramsEl = document.getElementById("trial-balance-server-params");
-  if (!paramsEl) return;
+  if (!paramsEl) { _abort("server params script not found"); return; }
   let params;
   try {
     params = JSON.parse(paramsEl.textContent);
   } catch (e) {
-    console.warn("trial_balance_renderer: failed to parse params", e);
+    _abort("failed to parse params", e);
     return;
   }
-  if (typeof params.user_id !== "number") return;
-  if (typeof params.fiscal_year !== "number") return;
+  if (typeof params.user_id !== "number"
+      || typeof params.fiscal_year !== "number") {
+    _abort("invalid params (user_id/fiscal_year)");
+    return;
+  }
 
   const accountsEl = document.getElementById("trial-balance-accounts-meta");
-  if (!accountsEl) return;
+  if (!accountsEl) { _abort("accounts meta script not found"); return; }
   let accountsMeta;
   try {
     accountsMeta = JSON.parse(accountsEl.textContent);
   } catch (e) {
-    console.warn("trial_balance_renderer: failed to parse accounts meta", e);
+    _abort("failed to parse accounts meta", e);
     return;
   }
 
