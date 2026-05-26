@@ -544,74 +544,58 @@ def tax_form_report():
 @bp.route("/monthly")
 @login_required
 def monthly():
-    """月次比較レポート"""
+    """月次比較レポート (クライアント描画)。サーバ集計は撤去済 (Phase E3-F-3d)。
+    accounts_meta (cost_type / is_business 含む) と projection (現状サーバ
+    計算) を JSON で渡す。
+    """
     from app.services.tax_form import get_business_account_codes
 
     year = request.args.get("year", date.today().year, type=int)
     user_id = get_effective_user_id()
-    comparison = get_monthly_comparison(user_id, year)
 
-    # 事業科目を折りたたみ
-    biz_codes = get_business_account_codes(user_id)
-    biz_monthly = None
-    if biz_codes:
-        biz_monthly = _collapse_business_accounts(comparison, biz_codes)
-
-    projection = None
     today = date.today()
-    if year == today.year and today.day <= \
+    current_month = today.month if year == today.year else None
+
+    # projection (当月着地予想) は当面サーバ側で計算する (clientside 化は follow-up)。
+    # ただし render に必要な comparison を tax service 経由で取り直す。
+    projection = None
+    if current_month and today.day <= \
             __import__("calendar").monthrange(year, today.month)[1]:
+        from app.services.tax import get_monthly_comparison as _gmc
+        comparison = _gmc(user_id, year)
         method = current_user.get_pref("projection_method", "pro_rata")
         projection = get_month_projection(
-            user_id, year, today.month, comparison,
-            method=method,
+            user_id, year, today.month, comparison, method=method,
         )
+
+    allowed_codes = get_allowed_account_codes()
+    accounts = (
+        Account.query
+        .filter_by(user_id=user_id)
+        .order_by(Account.code)
+        .all()
+    )
+    if allowed_codes is not None:
+        accounts = [a for a in accounts if a.code in allowed_codes]
+
+    biz_codes = get_business_account_codes(user_id)
+
+    accounts_meta = {
+        a.code: {
+            "type": a.account_type.code,
+            "name": mask_account_name(a.name, a.code, allowed_codes),
+            "cost_type": a.cost_type or "occasional",
+            "is_business": a.code in biz_codes,
+        }
+        for a in accounts
+    }
 
     return render_template(
         "reports/monthly.html",
         year=year,
-        current_month=today.month if year == today.year else None,
-        comparison=comparison,
+        current_month=current_month,
+        accounts_meta=accounts_meta,
         projection=projection,
-        biz_monthly=biz_monthly,
+        effective_user_id=user_id,
+        tax_form_url=None,  # Jinja で url_for を呼ぶ
     )
-
-
-def _collapse_business_accounts(comparison, biz_codes):
-    """事業科目を comparison から除外し、事業所得の月次データを返す"""
-    biz_revenue_months = [0] * 12
-    biz_expense_months = [0] * 12
-
-    # 事業科目を抽出して除外
-    household_income = []
-    household_expense = []
-
-    for a in comparison["income_accounts"]:
-        if a["code"] in biz_codes:
-            for i in range(12):
-                biz_revenue_months[i] += a["months"][i]
-        else:
-            household_income.append(a)
-
-    for a in comparison["expense_accounts"]:
-        if a["code"] in biz_codes:
-            for i in range(12):
-                biz_expense_months[i] += a["months"][i]
-        else:
-            household_expense.append(a)
-
-    # comparison を家計簿科目のみに差し替え
-    comparison["income_accounts"] = household_income
-    comparison["expense_accounts"] = household_expense
-
-    # 合計も再計算
-    for i in range(12):
-        comparison["income_totals"][i] = sum(a["months"][i] for a in household_income)
-        comparison["expense_totals"][i] = sum(a["months"][i] for a in household_expense)
-
-    biz_income_months = [biz_revenue_months[i] - biz_expense_months[i] for i in range(12)]
-
-    return {
-        "months": biz_income_months,
-        "total": sum(biz_income_months),
-    }

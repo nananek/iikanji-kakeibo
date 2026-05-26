@@ -885,8 +885,24 @@ class TestUserIsolation:
 
 
 class TestMonthlyCollapse:
+    """E3-F-3d 以降、月次比較はクライアント描画。テストは accounts_meta JSON
+    内の is_business フラグを検証する形に変えた (renderer が is_business=true
+    の科目を biz_monthly 行として描画する)。"""
+
+    @staticmethod
+    def _parse_meta(html):
+        import json
+        import re
+        m = re.search(
+            r'<script id="monthly-accounts-meta"[^>]*>(.*?)</script>',
+            html, flags=re.DOTALL,
+        )
+        assert m
+        return json.loads(m.group(1).strip())
+
     def test_monthly_shows_biz_income_row(self, logged_in_client, db, user, accounts, account_types, tax_fields):
-        """月次比較で事業所得行が表示される"""
+        """事業科目は accounts_meta に is_business=true で出る (renderer が
+        biz_monthly 行を描画する)"""
         biz_rev = Account(
             user_id=user.id, code="9010", name="売上",
             account_type_id=account_types["revenue"].id,
@@ -897,28 +913,17 @@ class TestMonthlyCollapse:
         set_mapping(user.id, "9010", tax_fields["1"].id)
         db.session.commit()
 
-        e1 = JournalEntry(user_id=user.id, date=date(2026, 1, 15),
-                          entry_number=1, description="売上", source="journal")
-        e1.lines = [
-            JournalEntryLine(account_user_id=user.id, account_code="1010",
-                             debit_amount=100000, credit_amount=0),
-            JournalEntryLine(account_user_id=user.id, account_code="9010",
-                             debit_amount=0, credit_amount=100000),
-        ]
-        db.session.add(e1)
-        db.session.commit()
-
         resp = logged_in_client.get("/reports/monthly?year=2026")
-        html = resp.data.decode()
         assert resp.status_code == 200
-        assert "事業所得" in html
+        meta = self._parse_meta(resp.data.decode())
+        assert meta["9010"]["is_business"] is True
 
     def test_monthly_without_mappings(self, logged_in_client, db, user, accounts, account_types):
-        """マッピングなし時は事業所得行なし"""
+        """マッピングなし時は accounts_meta に is_business=true の科目がない"""
         resp = logged_in_client.get("/reports/monthly?year=2026")
-        html = resp.data.decode()
         assert resp.status_code == 200
-        assert "事業所得" not in html
+        meta = self._parse_meta(resp.data.decode())
+        assert not any(m.get("is_business") for m in meta.values())
 
 
 class TestMultiFormTypeMapping:
