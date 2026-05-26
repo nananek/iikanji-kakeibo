@@ -10,8 +10,8 @@
   var _restrictedBefore = {{ restricted_before_year | tojson }};
   var _defaultIncomeId = {{ default_income_id | tojson }};
   var _defaultExpenseId = {{ default_expense_id | tojson }};
-  // x-data 属性内に直接 {{ ... | tojson }} を埋めるとダブルクォートが衝突
-  // して HTML パースが壊れる。事前に変数化して x-data からは参照だけする。
+  // x-data 属性内に直接 tojson 結果を埋めるとダブルクォートが衝突して
+  // HTML パースが壊れる。事前に変数化して x-data からは参照だけする。
   var _paymentCode = {{ payment_account.code | tojson }};
   var _capitalCode = {{ (capital_code or '') | tojson }};
 </script>
