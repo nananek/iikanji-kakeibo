@@ -42,6 +42,11 @@ function getSharedWorkerUrl() {
 }
 
 
+function getStaticRoot() {
+  return globalThis.IIKANJI_STATIC_ROOT || "/static/";
+}
+
+
 async function _run() {
   const paramsEl = document.getElementById("ledger-server-params");
   if (!paramsEl) return;  // 科目未選択時はそもそも JSON が出ない
@@ -73,9 +78,9 @@ async function _run() {
 
   const [{ SharedCryptoClient }, { fetchJournalsForYear }, { computeLedger }]
     = await Promise.all([
-      import("/static/js/crypto/shared-client.js"),
-      import("/static/js/crypto/journals_client.js"),
-      import("/static/js/crypto/reports/ledger.js"),
+      import(getStaticRoot() + "js/crypto/shared-client.js"),
+      import(getStaticRoot() + "js/crypto/journals_client.js"),
+      import(getStaticRoot() + "js/crypto/reports/ledger.js"),
     ]);
 
   const client = new SharedCryptoClient(getSharedWorkerUrl());

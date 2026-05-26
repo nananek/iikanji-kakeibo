@@ -53,6 +53,14 @@ function getSharedWorkerUrl() {
 }
 
 
+// base.html が globalThis.IIKANJI_STATIC_ROOT に Flask の url_for で
+// 解決した static の絶対パスを設定する。サブパスデプロイ環境でも
+// 動的 import の URL が実際の static URL と一致するようになる。
+function getStaticRoot() {
+  return globalThis.IIKANJI_STATIC_ROOT || "/static/";
+}
+
+
 async function _run() {
   const paramsEl = document.getElementById("trial-balance-server-params");
   if (!paramsEl) return;
@@ -84,9 +92,9 @@ async function _run() {
   // 動的 import で画面表示のクリティカルパスから外す
   const [{ SharedCryptoClient }, { fetchJournalsForYear }, { computeTrialBalance }]
     = await Promise.all([
-      import("/static/js/crypto/shared-client.js"),
-      import("/static/js/crypto/journals_client.js"),
-      import("/static/js/crypto/reports/trial_balance.js"),
+      import(getStaticRoot() + "js/crypto/shared-client.js"),
+      import(getStaticRoot() + "js/crypto/journals_client.js"),
+      import(getStaticRoot() + "js/crypto/reports/trial_balance.js"),
     ]);
 
   const client = new SharedCryptoClient(getSharedWorkerUrl());

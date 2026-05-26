@@ -953,10 +953,6 @@ function refreshVoucherPreview() {
 }
 </script>
 
-<script>
-  globalThis.IIKANJI_SHARED_WORKER_URL =
-    "{{ url_for('static', filename='js/crypto/shared-worker.js') }}";
-</script>
 <script type="module" src="{{ url_for('static', filename='js/reports/ledger_validator.mjs') }}"></script>
 {% endif %}
 {% endblock %}

@@ -111,9 +111,5 @@
   </div>
 </div>
 
-<script>
-  globalThis.IIKANJI_SHARED_WORKER_URL =
-    "{{ url_for('static', filename='js/crypto/shared-worker.js') }}";
-</script>
 <script type="module" src="{{ url_for('static', filename='js/reports/profit_loss_validator.mjs') }}"></script>
 {% endblock %}
