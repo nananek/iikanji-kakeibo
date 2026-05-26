@@ -8,12 +8,22 @@
   "year": year, "pf": pf, "pt": pt,
   "account_code": account_code,
   "normal_balance": selected_account.account_type.normal_balance,
-  "carry_forward": carry_forward,
   "sort": sort,
-  "user_id": current_user.id,
+  "user_id": effective_user_id,
   "is_audit_proxy": session.get('acting_as_user_id') is not none,
 } | tojson }}
 </script>
+<script id="ledger-accounts-meta" type="application/json">
+{{ accounts_meta | tojson }}
+</script>
+<script id="ledger-entries-meta" type="application/json">
+{{ entries_meta | tojson }}
+</script>
+{# 証憑画像 URL の placeholder 入りテンプレート (renderer が VOUCHER_ID 置換) #}
+<template id="ledger-voucher-link-template">
+  <a href="#" class="text-success" title="証憑画像"><i class="bi bi-image"></i></a>
+</template>
+<script id="ledger-voucher-image-url-template" type="text/plain">{{ url_for('ai_journal.voucher_image', voucher_id=0) | replace('/0', '/__VOUCHER_ID__', 1) }}</script>
 {% endif %}
 {% set range_label %}
   {% if pf == pt %}{{ period_labels.get(pf, '') }}{% else %}{{ period_labels.get(pf, '') }}〜{{ period_labels.get(pt, '') }}{% endif %}
@@ -61,6 +71,11 @@
 </div>
 
 {% if selected_account %}
+<div id="ledger-status" class="d-none" role="status" aria-live="polite"></div>
+<div class="alert alert-warning py-2 small mb-2" role="note">
+  <i class="bi bi-info-circle"></i>
+  前期繰越は現在 0 として表示されます。次期バージョンで暗号化された期末残高キャッシュとの統合により修正予定です。
+</div>
 <form id="ledgerBulkForm" method="POST" action="{{ url_for('journal.bulk_delete') }}"
       onsubmit="return confirm('選択した仕訳を削除しますか？この操作は取り消せません。');">
   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -88,124 +103,7 @@
             <th style="width:4%"></th>
           </tr>
         </thead>
-        <tbody>
-          {# --- 集計用 namespace --- #}
-          {% set ns = namespace(total_debit=0, total_credit=0, prev_period=-1, last_balance=carry_forward) %}
-          {% for e in entries %}
-          {% set ns.total_debit = ns.total_debit + e.debit %}
-          {% set ns.total_credit = ns.total_credit + e.credit %}
-          {% endfor %}
-
-          {# --- 合計行マクロ --- #}
-          {% macro summary_row() %}
-          <tr class="table-dark">
-            <td></td>
-            <td><strong>合計</strong></td>
-            <td class="d-mobile-none"></td>
-            <td></td>
-            <td class="d-mobile-none"></td>
-            <td class="text-end"><strong>&yen;{{ "{:,}".format(ns.total_debit) }}</strong></td>
-            <td class="text-end"><strong>&yen;{{ "{:,}".format(ns.total_credit) }}</strong></td>
-            <td class="text-end d-mobile-none">
-              {% if entries %}
-              <strong>&yen;{{ "{:,}".format(entries[0].balance if sort == 'desc' else entries[-1].balance) }}</strong>
-              {% else %}
-              <strong>&yen;{{ "{:,}".format(carry_forward) }}</strong>
-              {% endif %}
-            </td>
-            <td></td>
-          </tr>
-          {% endmacro %}
-
-          {# --- 前期繰越行マクロ --- #}
-          {% macro carry_forward_row() %}
-          <tr class="table-secondary">
-            <td></td>
-            <td></td>
-            <td class="d-mobile-none"></td>
-            <td><strong>前期繰越</strong></td>
-            <td class="d-mobile-none"></td>
-            <td></td>
-            <td></td>
-            <td class="text-end d-mobile-none {% if carry_forward < 0 %}text-danger{% endif %}">
-              <strong>&yen;{{ "{:,}".format(carry_forward) }}</strong>
-            </td>
-            <td></td>
-          </tr>
-          <tr class="d-mobile-row table-light">
-            <td colspan="6" class="text-end py-1 border-0">
-              <small class="text-muted">繰越残高</small>
-              <strong class="ms-2 {% if carry_forward < 0 %}text-danger{% endif %}">&yen;{{ "{:,}".format(carry_forward) }}</strong>
-            </td>
-          </tr>
-          {% endmacro %}
-
-          {# --- desc: 合計→明細→前期繰越 / asc: 前期繰越→明細→合計 --- #}
-          {% if sort == 'desc' %}
-          {{ summary_row() }}
-          {% else %}
-          {{ carry_forward_row() }}
-          {% endif %}
-
-          {% set ns.prev_period = -1 %}
-          {% set ns.last_balance = carry_forward %}
-          {% for e in entries %}
-          {% if e.effective_period != ns.prev_period and ns.prev_period != -1 %}
-          <tr class="d-mobile-row table-light">
-            <td colspan="6" class="text-end py-1 border-0">
-              <small class="text-muted">残高</small>
-              <strong class="ms-2 {% if ns.last_balance < 0 %}text-danger{% endif %}">&yen;{{ "{:,}".format(ns.last_balance) }}</strong>
-            </td>
-          </tr>
-          <tr class="border-0">
-            <td colspan="9" class="py-1 border-0"></td>
-          </tr>
-          {% endif %}
-          {% set ns.prev_period = e.effective_period %}
-          <tr data-ledger-entry="{{ e.entry_id }}"
-              data-server-debit="{{ e.debit|int }}"
-              data-server-credit="{{ e.credit|int }}"
-              data-server-balance="{{ e.balance|int }}">
-            <td>
-              {% if not e.is_readonly %}
-              <input type="checkbox" class="form-check-input ledger-cb" name="entry_ids" value="{{ e.entry_id }}">
-              {% endif %}
-            </td>
-            <td>{{ e.date.strftime('%m/%d') }}</td>
-            <td class="d-mobile-none"><small class="text-muted">#{{ e.entry_number }}</small></td>
-            <td>{{ e.description }}{% if e.voucher_id %} <a href="#" onclick="openImagePreview('{{ url_for('ai_journal.voucher_image', voucher_id=e.voucher_id) }}');return false" title="証憑画像" class="text-success"><i class="bi bi-image"></i></a>{% endif %}</td>
-            <td class="d-mobile-none"><small>{{ e.counter_account }}</small></td>
-            <td class="text-end">
-              {% if e.debit %}&yen;{{ "{:,}".format(e.debit) }}{% endif %}
-            </td>
-            <td class="text-end">
-              {% if e.credit %}&yen;{{ "{:,}".format(e.credit) }}{% endif %}
-            </td>
-            <td class="text-end d-mobile-none {% if e.balance < 0 %}text-danger{% endif %}">
-              &yen;{{ "{:,}".format(e.balance) }}
-            </td>
-            <td>
-              <button type="button" class="btn btn-outline-secondary btn-sm py-0"
-                      title="{{ '仕訳を閲覧' if e.is_readonly else '仕訳を編集' }}" onclick="openEditModal({{ e.entry_id }})">
-                <i class="bi {{ 'bi-eye' if e.is_readonly else 'bi-pencil' }}"></i>
-              </button>
-            </td>
-          </tr>
-          {% set ns.last_balance = e.balance %}
-          {% endfor %}
-          <tr class="d-mobile-row table-light">
-            <td colspan="6" class="text-end py-1 border-0">
-              <small class="text-muted">残高</small>
-              <strong class="ms-2 {% if ns.last_balance < 0 %}text-danger{% endif %}">&yen;{{ "{:,}".format(ns.last_balance) }}</strong>
-            </td>
-          </tr>
-
-          {% if sort == 'desc' %}
-          {{ carry_forward_row() }}
-          {% else %}
-          {{ summary_row() }}
-          {% endif %}
-        </tbody>
+        <tbody id="ledger-tbody"></tbody>
       </table>
     </div>
   </div>
@@ -953,6 +851,6 @@ function refreshVoucherPreview() {
 }
 </script>
 
-<script type="module" src="{{ url_for('static', filename='js/reports/ledger_validator.mjs') }}"></script>
+<script type="module" src="{{ url_for('static', filename='js/reports/ledger_renderer.mjs') }}"></script>
 {% endif %}
 {% endblock %}

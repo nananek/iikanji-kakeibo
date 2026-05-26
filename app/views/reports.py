@@ -280,9 +280,15 @@ def medical_csv():
 @bp.route("/ledger")
 @login_required
 def ledger():
-    """総勘定元帳（期間範囲指定対応）"""
+    """総勘定元帳 (クライアント描画)。サーバ集計は撤去済 (Phase E3-F-3e)。
+    クライアントが /api/v1/journals から MK 復号 → computeLedger →
+    DOM 構築まで完結する。
+
+    entries_meta (entry_id → {is_readonly, voucher_id, entry_number}) は
+    JournalEntry / Voucher テーブルの非暗号化カラム経由でサーバ側で算出。
+    carry_forward (前期繰越) は当面 0。BCB 統合後 follow-up #221 で復元。
+    """
     from app.services.fiscal import PERIOD_LABELS
-    from sqlalchemy import case
 
     year = request.args.get("year", date.today().year, type=int)
     if "pf" not in request.args and "pt" not in request.args:
@@ -312,45 +318,31 @@ def ledger():
         .order_by(Account.code)
         .all()
     )
-    # 有効 OR 無効化年 >= 表示年
     accounts = [a for a in accounts if a.is_active or (a.deactivated_year and a.deactivated_year >= year)]
-
-    # Lv2: 公開科目のみ
     if allowed_codes is not None:
         accounts = [a for a in accounts if a.code in allowed_codes]
 
-    # 科目区分ごとにグルーピング
     grouped_accounts = {}
     for at in account_types:
         group = [a for a in accounts if a.account_type_id == at.id]
         if group:
             grouped_accounts[at] = group
 
-    selected_account = None
-    entries = []
-    carry_forward = 0
+    # accounts_meta は client が name / normal_balance / type を参照する
+    accounts_meta = {
+        a.code: {
+            "name": mask_account_name(a.name, a.code, allowed_codes),
+            "type": a.account_type.code,
+            "normal_balance": a.account_type.normal_balance,
+        }
+        for a in accounts
+    }
 
-    def _query_sum_ledger(acct_code, filter_cond, include_closing=False):
-        """元帳用: 借方・貸方合計を返す"""
-        q = (
-            db.session.query(
-                func.coalesce(func.sum(JournalEntryLine.debit_amount), 0),
-                func.coalesce(func.sum(JournalEntryLine.credit_amount), 0),
-            )
-            .join(JournalEntry, JournalEntry.id == JournalEntryLine.journal_entry_id)
-            .filter(
-                JournalEntryLine.account_user_id == user_id,
-                JournalEntryLine.account_code == acct_code,
-            )
-        )
-        if not include_closing:
-            q = q.filter(JournalEntry.source != "closing")
-        if filter_cond is not None:
-            q = q.filter(filter_cond)
-        return q.first()
+    selected_account = None
+    entries_meta = {}
 
     if account_code:
-        # Lv2: 非公開科目へのアクセスをブロック
+        # Lv2: 非公開科目アクセスを 403 で遮断
         if allowed_codes is not None and account_code not in allowed_codes:
             from flask import abort
             abort(403)
@@ -360,160 +352,46 @@ def ledger():
         ).first()
 
         if selected_account:
-            is_bs = selected_account.account_type.code in {"asset", "liability", "equity"}
-            is_debit_normal = selected_account.account_type.normal_balance == "debit"
-            start_of_year = date(year, 1, 1)
-
-            # 前期繰越の計算（キャッシュ活用）
-            carry_forward = 0
-            closed = get_closed_period(user_id, year)
-            use_cache = pf > 0 and closed >= pf - 1
-            cache = get_cached_balances(user_id, year, pf - 1) if use_cache else {}
-
-            if pf > 0 and use_cache and account_code in cache:
-                year_d, year_c = cache[account_code]
-                if is_bs:
-                    before_result = _query_sum_ledger(account_code, JournalEntry.date < start_of_year, include_closing=True)
-                    before_d, before_c = int(before_result[0]), int(before_result[1])
-                    carry_forward = (year_d + before_d - year_c - before_c) if is_debit_normal else (year_c + before_c - year_d - before_d)
-                else:
-                    carry_forward = (year_d - year_c) if is_debit_normal else (year_c - year_d)
-            elif pf > 0:
-                # フォールバック: 従来の全計算
-                prior_filter = period_range_filter(year, 0, pf - 1)
-                if is_bs:
-                    if prior_filter is not None:
-                        cf_result = _query_sum_ledger(account_code, prior_filter)
-                        prior_d, prior_c = int(cf_result[0]), int(cf_result[1])
-                    else:
-                        prior_d, prior_c = 0, 0
-                    before_result = _query_sum_ledger(account_code, JournalEntry.date < start_of_year, include_closing=True)
-                    before_d, before_c = int(before_result[0]), int(before_result[1])
-                    total_d, total_c = prior_d + before_d, prior_c + before_c
-                    carry_forward = (total_d - total_c) if is_debit_normal else (total_c - total_d)
-                else:
-                    if prior_filter is not None:
-                        cf_result = _query_sum_ledger(account_code, prior_filter)
-                        d, c = int(cf_result[0]), int(cf_result[1])
-                        carry_forward = (d - c) if is_debit_normal else (c - d)
-            elif is_bs:
-                before_result = _query_sum_ledger(account_code, JournalEntry.date < start_of_year, include_closing=True)
-                before_d, before_c = int(before_result[0]), int(before_result[1])
-                carry_forward = (before_d - before_c) if is_debit_normal else (before_c - before_d)
-
-            # 当期の仕訳明細を取得
-            current_filter = period_range_filter(year, pf, pt)
-
-            # effective_period: fiscal_period が NULL なら date の月を使う
-            effective_period = case(
-                (JournalEntry.fiscal_period.isnot(None), JournalEntry.fiscal_period),
-                else_=func.extract("month", JournalEntry.date).cast(db.Integer),
-            )
-
-            lines = (
-                db.session.query(
-                    JournalEntry.date,
-                    JournalEntry.entry_number,
-                    JournalEntry.description,
-                    JournalEntryLine.debit_amount,
-                    JournalEntryLine.credit_amount,
-                    JournalEntryLine.journal_entry_id,
-                    JournalEntry.id.label("entry_id"),
-                    JournalEntry.fiscal_period,
-                    effective_period.label("effective_period"),
-                )
-                .join(JournalEntry, JournalEntry.id == JournalEntryLine.journal_entry_id)
-                .filter(
-                    JournalEntryLine.account_user_id == user_id,
-                    JournalEntryLine.account_code == account_code,
-                    current_filter,
-                )
-                .order_by(
-                    effective_period.desc() if sort_order == "desc" else effective_period,
-                    JournalEntry.date.desc() if sort_order == "desc" else JournalEntry.date,
-                    JournalEntry.entry_number.desc() if sort_order == "desc" else JournalEntry.entry_number,
-                )
-                .all()
-            )
-
-            if sort_order == "desc":
-                # desc: 期末残高から逆算
-                total_delta = sum(
-                    (int(l.debit_amount) - int(l.credit_amount)) if is_debit_normal
-                    else (int(l.credit_amount) - int(l.debit_amount))
-                    for l in lines
-                )
-                running_balance = carry_forward + total_delta
-            else:
-                running_balance = carry_forward
-
-            for line in lines:
-                debit = int(line.debit_amount)
-                credit = int(line.credit_amount)
-                delta = (debit - credit) if is_debit_normal else (credit - debit)
-                if sort_order == "desc":
-                    # desc: この行の残高を表示してから引く
-                    pass  # running_balance is already the balance after this line
-                else:
-                    running_balance += delta
-
-                # 相手科目を取得
-                counter_lines = (
-                    JournalEntryLine.query
+            # 該当科目を含む journal_entries の id を取得
+            entry_ids = [
+                eid for (eid,) in (
+                    db.session.query(JournalEntryLine.journal_entry_id)
                     .filter(
-                        JournalEntryLine.journal_entry_id == line.journal_entry_id,
-                        JournalEntryLine.account_code != account_code,
+                        JournalEntryLine.account_user_id == user_id,
+                        JournalEntryLine.account_code == account_code,
                     )
+                    .distinct()
                     .all()
                 )
-                counter_names = ", ".join(
-                    mask_account_name(a.account.name, a.account_code, allowed_codes)
-                    for a in counter_lines
-                ) if counter_lines else ""
-
-                entries.append({
-                    "date": line.date,
-                    "entry_number": line.entry_number,
-                    "description": line.description,
-                    "counter_account": counter_names,
-                    "debit": debit,
-                    "credit": credit,
-                    "balance": running_balance,
-                    "entry_id": line.entry_id,
-                    "effective_period": line.effective_period,
-                })
-                if sort_order == "desc":
-                    running_balance -= delta
-
-    # 各エントリの編集可否・証憑を判定
-    if entries:
-        entry_ids = list({e["entry_id"] for e in entries})
-        entry_objs = {
-            eo.id: eo
-            for eo in JournalEntry.query.filter(JournalEntry.id.in_(entry_ids)).all()
-        }
-        from app.models.voucher import Voucher
-        voucher_map = {}
-        # 論理削除済は除外 (一覧表示や is_readonly 判定で「証憑あり」と
-        # 誤判定されないように)
-        voucher_rows = Voucher.active().filter(
-            Voucher.journal_entry_id.in_(entry_ids)
-        ).all()
-        for v in voucher_rows:
-            voucher_map.setdefault(v.journal_entry_id, []).append(v)
-        for e in entries:
-            eo = entry_objs.get(e["entry_id"])
-            if eo:
-                e["is_readonly"] = (
+            ]
+            # defence-in-depth: entry_ids は account_user_id でフィルタ済だが
+                # JournalEntry にも user_id 制約を重ねる
+            entry_objs = {
+                eo.id: eo
+                for eo in JournalEntry.query.filter(
+                    JournalEntry.id.in_(entry_ids),
+                    JournalEntry.user_id == user_id,
+                ).all()
+            }
+            from app.models.voucher import Voucher
+            voucher_map = {}
+            voucher_rows = Voucher.active().filter(
+                Voucher.journal_entry_id.in_(entry_ids)
+            ).all()
+            for v in voucher_rows:
+                voucher_map.setdefault(v.journal_entry_id, []).append(v)
+            for eid, eo in entry_objs.items():
+                is_readonly = bool(
                     check_entry_modifiable(user_id, eo) is not None
                     or is_entry_locked_for_owner(user_id, eo)
                 )
-            else:
-                e["is_readonly"] = True
-            vlist = voucher_map.get(e["entry_id"])
-            e["voucher_id"] = vlist[0].id if vlist else None
+                vlist = voucher_map.get(eid, [])
+                entries_meta[eid] = {
+                    "is_readonly": is_readonly,
+                    "voucher_id": vlist[0].id if vlist else None,
+                    "entry_number": eo.entry_number,
+                }
 
-    # モーダル用: 全科目データ（Lv2なら公開科目のみ）
     all_grouped = get_grouped_accounts(user_id, allowed_codes)
 
     return render_template(
@@ -526,8 +404,9 @@ def ledger():
         grouped_accounts=grouped_accounts,
         selected_account=selected_account,
         account_code=account_code,
-        entries=entries,
-        carry_forward=carry_forward,
+        accounts_meta=accounts_meta,
+        entries_meta=entries_meta,
+        effective_user_id=user_id,
         all_grouped_accounts=all_grouped,
     )
 
