@@ -12,11 +12,12 @@ from __future__ import annotations
 import functools
 from datetime import datetime, timezone
 
-from flask import g, jsonify, request
+from flask import g, jsonify, request, session
 from flask_login import current_user
 
 from app.extensions import db
 from app.models.api_key import APIKey
+from app.models.audit import AuditGrant
 from app.models.oauth import OAuthToken
 from app.models.user import User
 
@@ -78,6 +79,42 @@ def resolve_bearer_or_session(
 
     # Web セッション
     if allow_session and current_user.is_authenticated:
+        # 監査代理閲覧中なら effective user (= 対象オーナー) を返す。
+        # write 操作は permission_level=3 (full access) のみ許可。
+        acting_as = session.get("acting_as_user_id")
+        if acting_as:
+            grant = AuditGrant.query.filter_by(
+                owner_user_id=acting_as,
+                auditor_user_id=current_user.id,
+            ).first()
+            # Lv2 grant が submitted 状態でなくなった (オーナーが提出取消した)
+            # 場合もアクセス遮断する。auditor.switch() ビューと同じ条件。
+            if not grant or (
+                grant.permission_level == 2 and grant.status != "submitted"
+            ):
+                session.pop("acting_as_user_id", None)
+                session.pop("acting_as_permission_level", None)
+                return current_user._get_current_object(), None
+            # 権限レベルは DB grant から直接読む (session キャッシュを信頼しない:
+            # オーナーの権限変更がリアルタイム反映される、SECRET_KEY 漏洩時の
+            # セッション偽造でも grant.permission_level は守られる)。
+            #
+            # Lv1 (集計結果のみ閲覧) は API 経由の代理閲覧を一律遮断する。
+            # API は生の仕訳・証憑データを返すため、Lv1 の仕様 (集計のみ) と
+            # 整合しない。Lv1 監査者は Web UI のサーバ render 集計ページ
+            # のみ利用可能。
+            if grant.permission_level < 2:
+                return None, (jsonify(
+                    error="Lv1 監査アカウントは API 経由の代理閲覧をサポートしません。"
+                ), 403)
+            if write and grant.permission_level < 3:
+                return None, (jsonify(
+                    error="代理閲覧中の書込操作は権限レベル 3 (full access) のみ可能です。"
+                ), 403)
+            effective_user = db.session.get(User, acting_as)
+            if effective_user is None:
+                return None, (jsonify(error="User not found"), 401)
+            return effective_user, None
         return current_user._get_current_object(), None
     return None, (jsonify(error="Authentication required"), 401)
 
