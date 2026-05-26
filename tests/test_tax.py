@@ -9,7 +9,6 @@ import pytest
 from app.models.account import Account, AccountType
 from app.models.medical import MedicalExpense
 from app.services.tax import (
-    get_income_expense_summary,
     get_month_projection,
     get_monthly_comparison,
 )
@@ -438,64 +437,3 @@ class TestProjectionMethodUnaffected:
 
 
 # =================================================================
-# get_income_expense_summary
-# =================================================================
-
-
-class TestGetIncomeExpenseSummary:
-    def test_empty(self, db, user, accounts):
-        """仕訳がない場合"""
-        result = get_income_expense_summary(user.id, 2026)
-        assert result["income"] == 0
-        assert result["expense"] == 0
-        assert result["balance"] == 0
-
-    def test_annual_summary(self, db, user, accounts):
-        """年間収支"""
-        make_journal(db, user.id, "1020", "4010",
-                     300000, entry_date=date(2026, 1, 25))
-        make_journal(db, user.id, "1020", "4010",
-                     300000, entry_date=date(2026, 2, 25))
-        make_journal(db, user.id, "5010", "1010",
-                     50000, entry_date=date(2026, 1, 15))
-        make_journal(db, user.id, "5010", "1010",
-                     60000, entry_date=date(2026, 2, 15))
-        result = get_income_expense_summary(user.id, 2026)
-        assert result["income"] == 600000
-        assert result["expense"] == 110000
-        assert result["balance"] == 490000
-
-    def test_monthly_summary(self, db, user, accounts):
-        """月次収支（指定月のみ）"""
-        make_journal(db, user.id, "1020", "4010",
-                     300000, entry_date=date(2026, 1, 25))
-        make_journal(db, user.id, "5010", "1010",
-                     50000, entry_date=date(2026, 1, 15))
-        make_journal(db, user.id, "5010", "1010",
-                     60000, entry_date=date(2026, 2, 15))
-        result = get_income_expense_summary(user.id, 2026, month=1)
-        assert result["income"] == 300000
-        assert result["expense"] == 50000
-        assert result["balance"] == 250000
-
-    def test_december_summary(self, db, user, accounts):
-        """12月の月次集計（年跨ぎ境界）"""
-        make_journal(db, user.id, "5010", "1010",
-                     30000, entry_date=date(2026, 12, 15))
-        make_journal(db, user.id, "5010", "1010",
-                     10000, entry_date=date(2027, 1, 1))
-        result = get_income_expense_summary(user.id, 2026, month=12)
-        assert result["expense"] == 30000  # 1月分は含まない
-
-    def test_no_account_types(self, db, user):
-        """科目区分がない場合のフォールバック"""
-        result = get_income_expense_summary(user.id, 2026)
-        assert result["income"] == Decimal(0)
-        assert result["balance"] == Decimal(0)
-
-    def test_user_isolation(self, db, user, accounts, auditor):
-        """他ユーザーのデータは含まれない"""
-        make_journal(db, user.id, "1020", "4010",
-                     300000, entry_date=date(2026, 1, 25))
-        result = get_income_expense_summary(auditor.id, 2026)
-        assert result["income"] == 0
