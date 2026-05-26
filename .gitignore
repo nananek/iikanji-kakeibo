@@ -33,3 +33,6 @@ test-results/
 .coverage
 .pytest_cache/
 playwright-report/
+
+# Claude Code ローカル設定 (許可リスト等は個人ごと)
+.claude/
