@@ -82,3 +82,12 @@ test("closed_period=3、existing は 0..3 のみ: stale なし", () => {
   const r = planBcbSync(new Set([0, 1, 2, 3]), 3);
   assert.equal(r.staleFromPeriod, null);
 });
+
+
+test("closed_period<15 で existing に 16 が含まれる: 16 も stale として削除対象", () => {
+  // 例: 一度全期間確定して 16 (損益振替済 BCB) ができた後、reopen で 2 まで戻された
+  // → staleFromPeriod=3 → DELETE from_period=3 で 16 も消える
+  const r = planBcbSync(new Set([0, 1, 2, 16]), 2);
+  assert.deepEqual(r.toSync, []);
+  assert.equal(r.staleFromPeriod, 3);
+});

@@ -571,8 +571,8 @@ def fiscal():
                 "can_reopen": p == closed,
             })
 
-    # BCB sync hook 用 (E3-E-4)。監査代理閲覧時は BCB API が current_user.id で
-    # 動くため、対象ユーザーではなく監査者の BCB が作られてしまう。skip する。
+    # 監査代理閲覧時は BCB API が current_user.id で動くため、対象ユーザー
+    # ではなく監査者の BCB が作られる。クライアント hook は is_audit_proxy で skip。
     is_audit_proxy = flask_session.get("acting_as_user_id") is not None
     return render_template(
         "settings/fiscal.html",
