@@ -573,8 +573,7 @@ def fiscal():
 
     # BCB sync hook 用 (E3-E-4)。監査代理閲覧時は BCB API が current_user.id で
     # 動くため、対象ユーザーではなく監査者の BCB が作られてしまう。skip する。
-    from flask import session
-    is_audit_proxy = session.get("acting_as_user_id") is not None
+    is_audit_proxy = flask_session.get("acting_as_user_id") is not None
     return render_template(
         "settings/fiscal.html",
         year=year,
