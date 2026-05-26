@@ -187,6 +187,14 @@ async function _run() {
       _clearTbody();
       return;
     }
+    if (params.is_audit_proxy) {
+      _setStatusMessage(
+        "監査代理閲覧中です。オーナーの暗号化された仕訳はあなたの暗号鍵では復号できないため、試算表は空表示になります (E2EE アーキテクチャ仕様)。",
+        "info",
+      );
+      _clearTbody();
+      return;
+    }
     _clearStatus();
     const entries = await fetchJournalsForYear({
       client, userId: params.user_id, fiscalYear: params.fiscal_year,
@@ -194,6 +202,8 @@ async function _run() {
     const jsRows = computeTrialBalance(entries, {
       fiscalPeriodFrom: params.fiscal_period_from,
       fiscalPeriodTo: params.fiscal_period_to,
+      // 振替期間 (period 16) を含む場合は損益振替仕訳も集計対象とする
+      includeClosing: params.fiscal_period_to >= 16,
     });
     const view = composeTrialBalanceView(jsRows, accountsMeta);
     _renderView(view, params);

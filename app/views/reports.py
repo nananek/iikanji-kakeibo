@@ -62,8 +62,11 @@ def balance():
     if allowed_codes is not None:
         accounts = [a for a in accounts if a.code in allowed_codes]
 
-    # クライアント描画用に accountsMeta を JSON で渡す。name は mask_account_name
-    # で Lv2 監査時の隠蔽を適用済。
+    # クライアント描画用に accountsMeta を JSON で渡す。
+    # `accounts` は line 62-63 で allowed_codes フィルタ適用済みのため
+    # Lv2 で非公開の科目はここに含まれない (= 監査者に名前が漏れない)。
+    # mask_account_name は防御的多層化のための残置 (allowed_codes フィルタを
+    # 将来うっかり外しても「事業主」マスクは効く)。
     accounts_meta = {
         a.code: {
             "type": a.account_type.code,
