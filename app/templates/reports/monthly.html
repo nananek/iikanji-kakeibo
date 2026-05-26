@@ -6,6 +6,7 @@
 {{ {
   "year": year,
   "current_month": current_month,
+  "projection_method": projection_method,
   "user_id": effective_user_id,
   "is_audit_proxy": session.get('acting_as_user_id') is not none,
 } | tojson }}
@@ -35,26 +36,24 @@
 
 <div id="monthly-status" class="d-none" role="status" aria-live="polite"></div>
 
-{# 当月着地予想は当面サーバ側で計算してそのまま描画する #}
-{% if projection %}
-<div class="card shadow-sm mb-4">
+{# 当月着地予想 (クライアント描画、当年表示時のみ renderer が d-none を外す) #}
+<div id="monthly-projection-card" class="card shadow-sm mb-4 d-none">
   <div class="card-header">
-    <strong><i class="bi bi-bullseye"></i> {{ projection.month }}月 着地予想</strong>
-    <span class="text-muted ms-2">{{ projection.days_elapsed }}日経過 / {{ projection.days_in_month }}日</span>
-    {% set method_labels = {'pro_rata': '日割按分', 'rolling28': '28日移動平均', 'dow28': '曜日別平均'} %}
-    <span class="badge bg-secondary ms-2">{{ method_labels.get(projection.method, '日割按分') }}</span>
+    <strong><i class="bi bi-bullseye"></i> <span id="projection-month"></span> 着地予想</strong>
+    <span class="text-muted ms-2" id="projection-days"></span>
+    <span class="badge bg-secondary ms-2" id="projection-method"></span>
   </div>
   <div class="card-body">
     <div class="progress mb-3" style="height: 6px;">
-      <div class="progress-bar" style="width: {{ (projection.days_elapsed / projection.days_in_month * 100)|round }}%"></div>
+      <div id="projection-progress-bar" class="progress-bar" style="width: 0%"></div>
     </div>
     <div class="row">
       <div class="col-md-4">
         <div class="card text-bg-primary shadow-sm">
           <div class="card-body text-center py-2">
             <h6 class="mb-1">収入予想</h6>
-            <div class="small">&yen;{{ "{:,}".format(projection.income_total_actual) }}</div>
-            <h4 class="mb-0">&rarr; &yen;{{ "{:,}".format(projection.income_total_projected) }}</h4>
+            <div class="small" id="projection-income-actual">¥0</div>
+            <h4 class="mb-0">&rarr; <span id="projection-income-projected">¥0</span></h4>
           </div>
         </div>
       </div>
@@ -62,25 +61,23 @@
         <div class="card text-bg-danger shadow-sm">
           <div class="card-body text-center py-2">
             <h6 class="mb-1">支出予想</h6>
-            <div class="small">&yen;{{ "{:,}".format(projection.expense_total_actual) }}</div>
-            <h4 class="mb-0">&rarr; &yen;{{ "{:,}".format(projection.expense_total_projected) }}</h4>
+            <div class="small" id="projection-expense-actual">¥0</div>
+            <h4 class="mb-0">&rarr; <span id="projection-expense-projected">¥0</span></h4>
           </div>
         </div>
       </div>
       <div class="col-md-4">
-        {% set proj_balance = projection.income_total_projected - projection.expense_total_projected %}
-        <div class="card {% if proj_balance >= 0 %}text-bg-success{% else %}text-bg-warning{% endif %} shadow-sm">
+        <div id="projection-balance-card" class="card text-bg-success shadow-sm">
           <div class="card-body text-center py-2">
             <h6 class="mb-1">収支予想</h6>
-            <div class="small">&yen;{{ "{:,}".format(projection.income_total_actual - projection.expense_total_actual) }}</div>
-            <h4 class="mb-0">&rarr; &yen;{{ "{:,}".format(proj_balance) }}</h4>
+            <div class="small" id="projection-balance-actual">¥0</div>
+            <h4 class="mb-0">&rarr; <span id="projection-balance-projected">¥0</span></h4>
           </div>
         </div>
       </div>
     </div>
   </div>
 </div>
-{% endif %}
 
 <div class="card shadow-sm mb-4">
   <div class="card-header"><strong><i class="bi bi-table"></i> 科目別月次推移</strong></div>

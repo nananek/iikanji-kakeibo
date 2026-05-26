@@ -344,7 +344,54 @@ function _renderBreakdownCard(side, bd) {
 }
 
 
-function _renderView(view, params) {
+const METHOD_LABELS = {
+  pro_rata: "日割按分",
+  rolling28: "28日移動平均",
+  dow28: "曜日別平均",
+};
+
+
+function _renderProjectionCard(projection) {
+  const card = document.getElementById("monthly-projection-card");
+  if (!card) return;
+  if (!projection) {
+    card.classList.add("d-none");
+    return;
+  }
+  card.classList.remove("d-none");
+  const setText = (id, text) => {
+    const el = document.getElementById(id);
+    if (el) el.textContent = text;
+  };
+  setText("projection-month", projection.month + "月");
+  setText("projection-days", projection.days_elapsed + "日経過 / "
+    + projection.days_in_month + "日");
+  setText("projection-method", METHOD_LABELS[projection.method] || "日割按分");
+  const progress = document.getElementById("projection-progress-bar");
+  if (progress) {
+    const pct = projection.days_in_month > 0
+      ? Math.round(projection.days_elapsed / projection.days_in_month * 100)
+      : 0;
+    progress.style.width = pct + "%";
+  }
+  setText("projection-income-actual", _fmtYen(projection.income_total_actual));
+  setText("projection-income-projected", _fmtYen(projection.income_total_projected));
+  setText("projection-expense-actual", _fmtYen(projection.expense_total_actual));
+  setText("projection-expense-projected", _fmtYen(projection.expense_total_projected));
+  const balActual = projection.income_total_actual - projection.expense_total_actual;
+  const balProjected = projection.income_total_projected - projection.expense_total_projected;
+  setText("projection-balance-actual", _fmtYen(balActual));
+  setText("projection-balance-projected", _fmtYen(balProjected));
+  const balCard = document.getElementById("projection-balance-card");
+  if (balCard) {
+    balCard.classList.remove("text-bg-success", "text-bg-warning");
+    balCard.classList.add(balProjected >= 0 ? "text-bg-success" : "text-bg-warning");
+  }
+}
+
+
+function _renderView(view, params, projection) {
+  _renderProjectionCard(projection);
   _renderTable(view, params);
   _renderBreakdownCard("income", view.breakdown);
   _renderBreakdownCard("expense", view.breakdown);
@@ -383,11 +430,13 @@ async function _run() {
       { fetchJournalsForYear },
       { computeMonthlyComparison },
       { composeMonthlyComparisonView },
+      { computeProjection },
     ] = await Promise.all([
       import(getStaticRoot() + "js/crypto/shared-client.js"),
       import(getStaticRoot() + "js/crypto/journals_client.js"),
       import(getStaticRoot() + "js/crypto/reports/monthly_comparison.js"),
       import(getStaticRoot() + "js/crypto/reports/monthly_comparison_view.js"),
+      import(getStaticRoot() + "js/crypto/reports/monthly_projection.js"),
     ]);
 
     client = new SharedCryptoClient(getSharedWorkerUrl());
@@ -422,7 +471,23 @@ async function _run() {
       accountTypeByCode, accountNameByCode,
     });
     const view = composeMonthlyComparisonView(jsResult, accountsMeta);
-    _renderView(view, params);
+
+    // 当月が今年の場合のみ projection を計算
+    let projection = null;
+    const today = new Date();
+    if (params.current_month
+        && today.getUTCFullYear() === params.year) {
+      const method = params.projection_method || "pro_rata";
+      projection = computeProjection(view, entries, {
+        method,
+        year: params.year,
+        month: params.current_month,
+        today,
+        accountsMeta,
+      });
+    }
+
+    _renderView(view, params, projection);
   } catch (e) {
     _setStatus("月次比較の取得に失敗しました: " + (e.message || e), "danger");
   } finally {
