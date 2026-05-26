@@ -23,7 +23,12 @@
 //     grandTotal: {
 //       debit, credit, is_balanced  // 借方合計 === 貸方合計
 //     },
+//     unmappedCodes: string[]   // accountsMeta で解決できなかった科目コード
 //   }
+//
+// unmappedCodes は #221 の安全網: 復号した entries / BCB に含まれる科目コードが
+// accountsMeta に無い場合 (科目削除 / 暗号化スキーマ変更 / 監査 Lv2 隠蔽の組合せ
+// 等) に空気のように消えるとデバッグ困難なため、呼出側で warning ログに出す。
 
 
 const TYPE_ORDER = ["asset", "liability", "equity", "revenue", "expense"];
@@ -72,11 +77,18 @@ export function composeTrialBalanceView(jsRows, accountsMeta, options = {}) {
   const rowsByCode = new Map();
   for (const r of jsRows) rowsByCode.set(r.account_code, r);
 
+  const unmappedCodes = [];
   for (const code of codes) {
     const meta = accountsMeta[code];
-    if (!meta) continue;
+    if (!meta) {
+      unmappedCodes.push(code);
+      continue;
+    }
     const typeCode = meta.type;
-    if (!(typeCode in buckets)) continue;
+    if (!(typeCode in buckets)) {
+      unmappedCodes.push(code);
+      continue;
+    }
     const r = rowsByCode.get(code) || { debit: 0, credit: 0 };
     const isDebitNormal = meta.normal_balance === "debit";
     const op = opening[code] || 0;
@@ -123,6 +135,8 @@ export function composeTrialBalanceView(jsRows, accountsMeta, options = {}) {
     }
   }
 
+  unmappedCodes.sort();
+
   return {
     sections,
     grandTotal: {
@@ -136,5 +150,6 @@ export function composeTrialBalanceView(jsRows, accountsMeta, options = {}) {
       // するため、check の意味があるのは残高ベースのみ)
       is_balanced: balanceDebitSide === balanceCreditSide,
     },
+    unmappedCodes,
   };
 }

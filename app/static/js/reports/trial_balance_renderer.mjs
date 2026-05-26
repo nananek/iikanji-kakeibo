@@ -287,6 +287,14 @@ async function _run() {
       includeClosing: pt >= 16,
     });
     const view = composeTrialBalanceView(jsRows, accountsMeta, { opening });
+    if (view.unmappedCodes && view.unmappedCodes.length > 0) {
+      // #221 安全網: accountsMeta で解決できなかった科目コードを記録する。
+      // 暗号化スキーマ変更 / 科目削除 / Lv2 隠蔽の組合せ等で発生し得る。
+      console.warn(
+        "trial_balance_renderer: 未マップ科目コードがありました (試算表から除外)",
+        view.unmappedCodes,
+      );
+    }
     _renderView(view, params);
   } catch (e) {
     _setStatusMessage("試算表の取得に失敗しました: " + (e.message || e), "danger");
