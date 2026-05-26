@@ -4,6 +4,8 @@
 キャッシュ vs 非キャッシュ、closing entries、事業科目折りたたみ等を網羅。
 """
 
+import json
+import re
 from datetime import date
 
 import pytest
@@ -140,6 +142,73 @@ class TestBalanceLv2:
             html, flags=re.DOTALL,
         )
         assert m2, "server-params script not found"
+        params = json.loads(m2.group(1).strip())
+        assert params["user_id"] == user.id
+        assert params["is_audit_proxy"] is True
+
+
+class TestTaxLv2:
+    """Lv2 監査代理閲覧時、tax page の accounts_meta / server-params が
+    オーナーの状態を正しく反映していることを検証する (E3-F-3f 後)。
+
+    accounts_meta は tax_category が設定された科目のみ含むため、
+    `accounts` fixture の科目 (1010 現金 / 4010 給与収入 / 5010 食費 等) は
+    通常 tax_category=None で含まれない。tax_category 付きの科目をテスト
+    用に追加し、Lv2 公開リストと突合する形にする。"""
+
+    def test_accounts_meta_filtered_by_allowed_codes(
+            self, lv2_setup, client, user, db, account_types,
+    ):
+        """Lv2 で公開した科目 (5310) は accounts_meta に含まれるが、
+        公開していない科目 (5311) は除外される。effective_user_id も
+        オーナー ID が入る。"""
+        from app.models.account import Account
+        from app.models.audit import AuditGrant, AuditGrantAccount
+        # tax_category 付きの 2 科目をオーナーに作成
+        public_acc = Account(
+            user_id=user.id, code="5310", name="社会保険料 (公開)",
+            account_type_id=account_types["expense"].id,
+            is_active=True, tax_category="social_insurance",
+        )
+        private_acc = Account(
+            user_id=user.id, code="5311", name="生命保険料 (非公開)",
+            account_type_id=account_types["expense"].id,
+            is_active=True, tax_category="life_insurance",
+        )
+        db.session.add_all([public_acc, private_acc])
+        db.session.flush()
+        # lv2 grant の AuditGrantAccount に 5310 だけ追加
+        grant = AuditGrant.query.filter_by(
+            owner_user_id=user.id, permission_level=2,
+        ).first()
+        assert grant is not None
+        db.session.add(AuditGrantAccount(
+            audit_grant_id=grant.id,
+            account_user_id=user.id, account_code="5310",
+        ))
+        db.session.commit()
+
+        resp = client.get("/reports/tax?year=2026")
+        assert resp.status_code == 200
+        html = resp.data.decode()
+
+        m = re.search(
+            r'<script id="tax-summary-accounts-meta"[^>]*>(.*?)</script>',
+            html, flags=re.DOTALL,
+        )
+        assert m, "tax-summary-accounts-meta script not found"
+        meta = json.loads(m.group(1).strip())
+        # 公開した tax_category 付き科目は含まれる
+        assert "5310" in meta
+        assert meta["5310"]["tax_category"] == "social_insurance"
+        # 非公開科目は含まれない
+        assert "5311" not in meta
+
+        m2 = re.search(
+            r'<script id="tax-summary-server-params"[^>]*>(.*?)</script>',
+            html, flags=re.DOTALL,
+        )
+        assert m2
         params = json.loads(m2.group(1).strip())
         assert params["user_id"] == user.id
         assert params["is_audit_proxy"] is True
