@@ -71,7 +71,7 @@ def create_cashbook_entry(user_id, date, transaction_type, payment_account_code,
 def create_journal_entry(user_id, date, description, lines_data,
                          source="journal", batch_id=None, fiscal_period=None,
                          *, encrypted_blob=None, blob_iv=None,
-                         fiscal_year=None):
+                         fiscal_year=None, commit=True):
     """仕訳伝票を直接作成する
 
     Args:
@@ -85,6 +85,8 @@ def create_journal_entry(user_id, date, description, lines_data,
             暗号化版)。両方セット or 両方 None。
         fiscal_year: Phase E3 - 平文の年度フィルタ用 (date 暗号化後の代替)。
             None なら date.year を使用。
+        commit: False を指定するとセッションを commit せず flush のみ行う。
+            複数 entry をまとめて 1 トランザクションにする batch API 用。
     """
     total_debit = sum(l["debit_amount"] for l in lines_data)
     total_credit = sum(l["credit_amount"] for l in lines_data)
@@ -139,7 +141,10 @@ def create_journal_entry(user_id, date, description, lines_data,
         )
         db.session.add(line)
 
-    db.session.commit()
+    if commit:
+        db.session.commit()
+    else:
+        db.session.flush()
     return entry
 
 

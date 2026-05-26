@@ -161,6 +161,232 @@ class TestCreateJournal:
         assert resp.status_code == 400
 
 
+class TestCreateJournalsBatch:
+    def test_success_multiple_entries(self, client, db, user, accounts, auth_header):
+        resp = client.post("/api/v1/journals/batch", headers=auth_header, json={
+            "entries": [
+                {
+                    "date": "2026-02-01", "description": "ランチ",
+                    "lines": [
+                        {"account_code": accounts["5010"].code, "debit": 800},
+                        {"account_code": accounts["1010"].code, "credit": 800},
+                    ],
+                },
+                {
+                    "date": "2026-02-02", "description": "コーヒー",
+                    "lines": [
+                        {"account_code": accounts["5010"].code, "debit": 500},
+                        {"account_code": accounts["1010"].code, "credit": 500},
+                    ],
+                },
+            ],
+        })
+        assert resp.status_code == 201, resp.get_json()
+        data = resp.get_json()
+        assert data["ok"] is True
+        assert data["created_count"] == 2
+        assert len(data["entries"]) == 2
+        assert "batch_id" in data
+        # 全 entry が同じ batch_id で DB に入っていること
+        entries_db = JournalEntry.query.filter_by(user_id=user.id).all()
+        assert {e.batch_id for e in entries_db} == {data["batch_id"]}
+
+    def test_client_supplied_batch_id(self, client, db, user, accounts, auth_header):
+        resp = client.post("/api/v1/journals/batch", headers=auth_header, json={
+            "batch_id": "my-import-2026-02",
+            "entries": [{
+                "date": "2026-02-15", "description": "test",
+                "lines": [
+                    {"account_code": accounts["5010"].code, "debit": 100},
+                    {"account_code": accounts["1010"].code, "credit": 100},
+                ],
+            }],
+        })
+        assert resp.status_code == 201
+        assert resp.get_json()["batch_id"] == "my-import-2026-02"
+
+    def test_empty_entries_rejected(self, client, db, user, accounts, auth_header):
+        resp = client.post("/api/v1/journals/batch", headers=auth_header, json={
+            "entries": [],
+        })
+        assert resp.status_code == 400
+
+    def test_too_many_entries(self, client, db, user, accounts, auth_header):
+        resp = client.post("/api/v1/journals/batch", headers=auth_header, json={
+            "entries": [
+                {
+                    "date": "2026-02-01", "description": f"e{i}",
+                    "lines": [
+                        {"account_code": accounts["5010"].code, "debit": 1},
+                        {"account_code": accounts["1010"].code, "credit": 1},
+                    ],
+                } for i in range(501)
+            ],
+        })
+        assert resp.status_code == 400
+        assert "上限" in resp.get_json()["error"]
+
+    def test_atomicity_partial_failure_rolls_back(
+            self, client, db, user, accounts, auth_header):
+        """1 entry でも貸借不一致なら、全 entry が rollback される。"""
+        resp = client.post("/api/v1/journals/batch", headers=auth_header, json={
+            "entries": [
+                {
+                    "date": "2026-02-01", "description": "valid",
+                    "lines": [
+                        {"account_code": accounts["5010"].code, "debit": 100},
+                        {"account_code": accounts["1010"].code, "credit": 100},
+                    ],
+                },
+                {
+                    # 貸借不一致: create_journal_entry が ValueError
+                    "date": "2026-02-02", "description": "invalid",
+                    "lines": [
+                        {"account_code": accounts["5010"].code, "debit": 100},
+                        {"account_code": accounts["1010"].code, "credit": 99},
+                    ],
+                },
+            ],
+        })
+        assert resp.status_code == 400
+        # valid 側も保存されていない (rollback)
+        assert JournalEntry.query.filter_by(user_id=user.id).count() == 0
+
+    def test_invalid_date_format(self, client, db, user, accounts, auth_header):
+        resp = client.post("/api/v1/journals/batch", headers=auth_header, json={
+            "entries": [{
+                "date": "not-a-date", "description": "x",
+                "lines": [
+                    {"account_code": accounts["5010"].code, "debit": 1},
+                    {"account_code": accounts["1010"].code, "credit": 1},
+                ],
+            }],
+        })
+        assert resp.status_code == 400
+
+    def test_missing_description(self, client, db, user, accounts, auth_header):
+        resp = client.post("/api/v1/journals/batch", headers=auth_header, json={
+            "entries": [{
+                "date": "2026-02-01",
+                "lines": [
+                    {"account_code": accounts["5010"].code, "debit": 1},
+                    {"account_code": accounts["1010"].code, "credit": 1},
+                ],
+            }],
+        })
+        assert resp.status_code == 400
+
+    def test_scope_required(self, client, db, user, accounts):
+        """journals:read のみのキーでは batch 起票不可。"""
+        raw_key, key_hash, key_prefix = APIKey.generate()
+        key = APIKey(
+            user_id=user.id, name="readonly",
+            key_hash=key_hash, key_prefix=key_prefix,
+            scopes="journals:read", is_active=True,
+        )
+        db.session.add(key)
+        db.session.commit()
+        resp = client.post("/api/v1/journals/batch",
+                           headers=_auth_header(raw_key), json={
+            "entries": [{
+                "date": "2026-02-01", "description": "x",
+                "lines": [
+                    {"account_code": accounts["5010"].code, "debit": 1},
+                    {"account_code": accounts["1010"].code, "credit": 1},
+                ],
+            }],
+        })
+        assert resp.status_code == 403
+
+    def test_no_auth(self, client, db, user, accounts):
+        resp = client.post("/api/v1/journals/batch", json={"entries": []})
+        assert resp.status_code == 401
+
+    def test_fiscal_period_16_rejected(self, client, db, user, accounts, auth_header):
+        """fp=16 (損益振替) は自動生成専用なので batch から起票できない。"""
+        resp = client.post("/api/v1/journals/batch", headers=auth_header, json={
+            "entries": [{
+                "date": "2026-02-01", "description": "損益振替",
+                "fiscal_period": 16,
+                "lines": [
+                    {"account_code": accounts["5010"].code, "debit": 100},
+                    {"account_code": accounts["1010"].code, "credit": 100},
+                ],
+            }],
+        })
+        assert resp.status_code == 400
+        assert "損益振替" in resp.get_json()["error"]
+
+    def test_invalid_source_rejected(self, client, db, user, accounts, auth_header):
+        resp = client.post("/api/v1/journals/batch", headers=auth_header, json={
+            "entries": [{
+                "date": "2026-02-01", "description": "x", "source": "malicious",
+                "lines": [
+                    {"account_code": accounts["5010"].code, "debit": 1},
+                    {"account_code": accounts["1010"].code, "credit": 1},
+                ],
+            }],
+        })
+        assert resp.status_code == 400
+        assert "source" in resp.get_json()["error"]
+
+    def test_description_too_long_rejected(self, client, db, user, accounts, auth_header):
+        """description が 256 文字以上だと DB エラー (500) になるので 400 で弾く。"""
+        resp = client.post("/api/v1/journals/batch", headers=auth_header, json={
+            "entries": [{
+                "date": "2026-02-01", "description": "x" * 256,
+                "lines": [
+                    {"account_code": accounts["5010"].code, "debit": 1},
+                    {"account_code": accounts["1010"].code, "credit": 1},
+                ],
+            }],
+        })
+        assert resp.status_code == 400
+        assert "255" in resp.get_json()["error"]
+
+    def test_invalid_account_code_rejected(self, client, db, user, accounts, auth_header):
+        """存在しない account_code は FK 違反 (500) ではなく 400 で返す。"""
+        resp = client.post("/api/v1/journals/batch", headers=auth_header, json={
+            "entries": [{
+                "date": "2026-02-01", "description": "x",
+                "lines": [
+                    {"account_code": "9999", "debit": 100},
+                    {"account_code": accounts["1010"].code, "credit": 100},
+                ],
+            }],
+        })
+        assert resp.status_code == 400
+        assert "9999" in resp.get_json()["error"]
+
+    def test_float_amount_rejected(self, client, db, user, accounts, auth_header):
+        """float の debit/credit は切り捨てで貸借不一致を隠すので拒否する。"""
+        resp = client.post("/api/v1/journals/batch", headers=auth_header, json={
+            "entries": [{
+                "date": "2026-02-01", "description": "x",
+                "lines": [
+                    {"account_code": accounts["5010"].code, "debit": 100.5},
+                    {"account_code": accounts["1010"].code, "credit": 100.5},
+                ],
+            }],
+        })
+        assert resp.status_code == 400
+        assert "整数" in resp.get_json()["error"]
+
+    def test_bool_amount_rejected(self, client, db, user, accounts, auth_header):
+        """bool は int サブクラスなので明示的に弾く (True→1 の意図しない仕訳化防止)。"""
+        resp = client.post("/api/v1/journals/batch", headers=auth_header, json={
+            "entries": [{
+                "date": "2026-02-01", "description": "x",
+                "lines": [
+                    {"account_code": accounts["5010"].code, "debit": True},
+                    {"account_code": accounts["1010"].code, "credit": True},
+                ],
+            }],
+        })
+        assert resp.status_code == 400
+        assert "整数" in resp.get_json()["error"]
+
+
 class TestCreateJournalE2EE:
     """Phase E3: encrypted_blob / blob_iv / fiscal_year 受け付けのテスト。"""
 
