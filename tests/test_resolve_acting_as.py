@@ -66,19 +66,15 @@ def grant_lv2(db, owner, auditor):
 class TestResolveActingAsReadSession:
     """セッション認証 + acting_as 中の read 操作は permission_level 問わず通る。"""
 
-    def test_lv2_can_read_owner_journals(self, client, db, owner, auditor, grant_lv2, accounts):
-        # accounts fixture は owner ではなく user に紐づくが、ここでは API がエラーを
-        # 返さず owner の id でフィルタする (= 空 list) ことを検証。
+    def test_lv2_can_read_owner_journals(self, client, db, owner, auditor, grant_lv2):
         _login(client, auditor)
         _set_acting_as(client, owner.id, 2)
-        # GET /api/v1/journals (read) は scope: journals:read 必要だが、セッション認証は
-        # scope 不問。allow_session=True で動く想定。
+        # owner には journal がないので空配列 = owner として動いた証拠
         resp = client.get("/api/v1/journals?fiscal_year=2026")
         assert resp.status_code == 200
-        # owner には journal がないので空配列
         assert resp.get_json()["journals"] == []
 
-    def test_lv3_can_read_owner_journals(self, client, db, owner, auditor, grant_lv3, accounts):
+    def test_lv3_can_read_owner_journals(self, client, db, owner, auditor, grant_lv3):
         _login(client, auditor)
         _set_acting_as(client, owner.id, 3)
         resp = client.get("/api/v1/journals?fiscal_year=2026")
@@ -167,6 +163,62 @@ class TestResolveActingAsRevoked:
         with client.session_transaction() as sess:
             assert sess.get("acting_as_user_id") is None
             assert sess.get("acting_as_permission_level") is None
+
+
+class TestResolveActingAsLiveDb:
+    """DB grant の変更がリアルタイム反映されることを確認 (session キャッシュ非依存)。"""
+
+    def test_grant_downgrade_lv3_to_lv1_blocks_write_next_request(
+            self, client, db, owner, auditor, grant_lv3,
+    ):
+        # 初回 write は Lv3 → 通る (validate 400 で返る)
+        _login(client, auditor)
+        _set_acting_as(client, owner.id, 3)
+        resp = client.post("/api/v1/journals/batch", json={
+            "entries": [{
+                "date": "2026-02-01", "description": "x",
+                "lines": [
+                    {"account_code": "9999", "debit": 100},
+                    {"account_code": "8888", "credit": 100},
+                ],
+            }],
+        })
+        assert resp.status_code == 400  # validate で 400 = 認証は通った
+
+        # DB で grant を Lv1 に降格 (session の permission_level=3 はそのまま)
+        grant_lv3.permission_level = 1
+        db.session.commit()
+
+        # 次の write request は 403 になるべき (session ではなく DB grant で判定)
+        resp = client.post("/api/v1/journals/batch", json={
+            "entries": [{
+                "date": "2026-02-01", "description": "x",
+                "lines": [
+                    {"account_code": "1010", "debit": 100},
+                    {"account_code": "5010", "credit": 100},
+                ],
+            }],
+        })
+        assert resp.status_code == 403
+
+    def test_lv2_unsubmitted_grant_clears_session(
+            self, client, db, owner, auditor, grant_lv2,
+    ):
+        # Lv2 grant が submitted のときは acting_as 有効
+        _login(client, auditor)
+        _set_acting_as(client, owner.id, 2)
+        resp = client.get("/api/v1/journals?fiscal_year=2026")
+        assert resp.status_code == 200
+
+        # オーナーが提出取消 (status = draft)
+        grant_lv2.status = "draft"
+        db.session.commit()
+
+        # 次のリクエストでアクセス遮断 (auditor 本人として動作)
+        resp = client.get("/api/v1/journals?fiscal_year=2026")
+        assert resp.status_code == 200
+        with client.session_transaction() as sess:
+            assert sess.get("acting_as_user_id") is None
 
 
 class TestResolveBearerIgnoresActingAs:

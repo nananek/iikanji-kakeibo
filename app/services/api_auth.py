@@ -87,17 +87,21 @@ def resolve_bearer_or_session(
                 owner_user_id=acting_as,
                 auditor_user_id=current_user.id,
             ).first()
-            if not grant:
-                # グラント取消済 → セッションクリアして auditor 本人として動作
+            # Lv2 grant が submitted 状態でなくなった (オーナーが提出取消した)
+            # 場合もアクセス遮断する。auditor.switch() ビューと同じ条件。
+            if not grant or (
+                grant.permission_level == 2 and grant.status != "submitted"
+            ):
                 session.pop("acting_as_user_id", None)
                 session.pop("acting_as_permission_level", None)
                 return current_user._get_current_object(), None
-            if write:
-                perm = session.get("acting_as_permission_level")
-                if perm is None or perm < 3:
-                    return None, (jsonify(
-                        error="代理閲覧中の書込操作は権限レベル 3 (full access) のみ可能です。"
-                    ), 403)
+            # 権限レベルは DB grant から直接読む (session キャッシュを信頼しない:
+            # オーナーの権限変更がリアルタイム反映される、SECRET_KEY 漏洩時の
+            # セッション偽造でも grant.permission_level は守られる)。
+            if write and grant.permission_level < 3:
+                return None, (jsonify(
+                    error="代理閲覧中の書込操作は権限レベル 3 (full access) のみ可能です。"
+                ), 403)
             effective_user = db.session.get(User, acting_as)
             if effective_user is None:
                 return None, (jsonify(error="User not found"), 401)
