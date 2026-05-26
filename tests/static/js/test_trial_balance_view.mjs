@@ -42,7 +42,11 @@ test("accountsMeta が object でないと TypeError", () => {
 test("空 jsRows で sections=[] + grandTotal=0", () => {
   const v = composeTrialBalanceView([], META);
   assert.deepEqual(v.sections, []);
-  assert.deepEqual(v.grandTotal, { debit: 0, credit: 0, is_balanced: true });
+  assert.equal(v.grandTotal.debit, 0);
+  assert.equal(v.grandTotal.credit, 0);
+  assert.equal(v.grandTotal.balance_debit_side, 0);
+  assert.equal(v.grandTotal.balance_credit_side, 0);
+  assert.equal(v.grandTotal.is_balanced, true);
 });
 
 
@@ -190,20 +194,48 @@ test("opening のみの code (期中 0 だが前期繰越あり) も拾う", () 
 
 // --- grandTotal (Issue #221) ---
 
-test("grandTotal: 借方/貸方合計 + is_balanced", () => {
+test("grandTotal: 期中借方/貸方合計を保持", () => {
   const v = composeTrialBalanceView([
     { account_code: "1010", debit: 1000, credit: 0 },
     { account_code: "4010", debit: 0, credit: 1000 },
   ], META);
   assert.equal(v.grandTotal.debit, 1000);
   assert.equal(v.grandTotal.credit, 1000);
+});
+
+test("is_balanced: 借方科目残高 === 貸方科目残高 で true", () => {
+  // 1010 (現金, 借方科目) +1000 / 4010 (売上, 貸方科目) +1000
+  // 借方残高 1000 === 貸方残高 1000 → balanced
+  const v = composeTrialBalanceView([
+    { account_code: "1010", debit: 1000, credit: 0 },
+    { account_code: "4010", debit: 0, credit: 1000 },
+  ], META);
+  assert.equal(v.grandTotal.balance_debit_side, 1000);
+  assert.equal(v.grandTotal.balance_credit_side, 1000);
   assert.equal(v.grandTotal.is_balanced, true);
 });
 
-test("grandTotal: 不均衡なら is_balanced=false", () => {
+test("is_balanced: 期中取引が借方=貸方でも残高不均衡なら false", () => {
+  // 1010 (現金, 借方科目) +1000 / 2010 (未払金, 貸方科目) +500
+  // 取引: debit=1000, credit=500+500=1000 (取引整合性は OK)
+  // ただし期初 opening が一致しない設定で残高不均衡を作る
+  // 例: 5010 (費用) +500 で借方科目側に 1500, 貸方科目側に 500 だが
+  // 実は 5010 borrow から credit 0 になるよう設計 → 借方 vs 貸方の残高不一致
   const v = composeTrialBalanceView([
-    { account_code: "1010", debit: 1000, credit: 0 },
-    { account_code: "4010", debit: 0, credit: 800 },
+    { account_code: "1010", debit: 1000, credit: 0 },  // 借方科目残 +1000
+    { account_code: "5010", debit: 500, credit: 0 },   // 借方科目残 +500
+    { account_code: "2010", debit: 0, credit: 1500 },  // 貸方科目残 +1500
   ], META);
-  assert.equal(v.grandTotal.is_balanced, false);
+  // 借方科目残: 1000 + 500 = 1500, 貸方科目残: 1500 → balanced
+  assert.equal(v.grandTotal.is_balanced, true);
+
+  // 不均衡パターン: opening で借方科目だけ +500 → 1500 vs 1000
+  const v2 = composeTrialBalanceView([
+    { account_code: "1010", debit: 1000, credit: 0 },
+    { account_code: "2010", debit: 0, credit: 1000 },
+  ], META, { opening: { "1010": 500 } });
+  // 借方残: 1500, 貸方残: 1000 → 不均衡
+  assert.equal(v2.grandTotal.is_balanced, false);
+  assert.equal(v2.grandTotal.balance_debit_side, 1500);
+  assert.equal(v2.grandTotal.balance_credit_side, 1000);
 });

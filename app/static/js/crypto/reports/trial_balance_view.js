@@ -101,6 +101,10 @@ export function composeTrialBalanceView(jsRows, accountsMeta, options = {}) {
   const sections = [];
   let grandDebit = 0;
   let grandCredit = 0;
+  // 残高ベースの貸借一致チェック: 借方科目 (資産 + 費用) の残高合計 ===
+  // 貸方科目 (負債 + 純資産 + 収益) の残高合計
+  let balanceDebitSide = 0;
+  let balanceCreditSide = 0;
   for (const t of TYPE_ORDER) {
     if (buckets[t].rows.length === 0) continue;
     buckets[t].rows.sort((a, b) => a.code.localeCompare(b.code));
@@ -112,14 +116,25 @@ export function composeTrialBalanceView(jsRows, accountsMeta, options = {}) {
     });
     grandDebit += buckets[t].subtotal.debit;
     grandCredit += buckets[t].subtotal.credit;
+    if (t === "asset" || t === "expense") {
+      balanceDebitSide += buckets[t].subtotal.balance;
+    } else {
+      balanceCreditSide += buckets[t].subtotal.balance;
+    }
   }
 
   return {
     sections,
     grandTotal: {
+      // 合計試算表 (期中借方/貸方取引の総合計)
       debit: grandDebit,
       credit: grandCredit,
-      is_balanced: grandDebit === grandCredit,
+      // 残高試算表 (借方科目 vs 貸方科目の残高)
+      balance_debit_side: balanceDebitSide,
+      balance_credit_side: balanceCreditSide,
+      // 残高ベースで一致確認 (期中取引の借方=貸方は仕訳整合性から常に成立
+      // するため、check の意味があるのは残高ベースのみ)
+      is_balanced: balanceDebitSide === balanceCreditSide,
     },
   };
 }

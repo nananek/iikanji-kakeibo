@@ -113,10 +113,11 @@ function _renderSection(section, params) {
 
 
 function _renderGrandTotalRow(view) {
+  // 合計試算表: 期中の借方/貸方総合計 (仕訳整合性から本質的に一致)
   const tr = document.createElement("tr");
-  tr.className = view.grandTotal.is_balanced ? "table-success" : "table-warning";
+  tr.className = "table-dark";
   tr.appendChild(_td("", { className: "d-mobile-none" }));
-  tr.appendChild(_td("総合計 (借方 = 貸方)", {
+  tr.appendChild(_td("総合計 (期中取引)", {
     className: "text-end", bold: true,
   }));
   tr.appendChild(_td(_fmtYen(view.grandTotal.debit), {
@@ -125,17 +126,38 @@ function _renderGrandTotalRow(view) {
   tr.appendChild(_td(_fmtYen(view.grandTotal.credit), {
     className: "text-end", bold: true,
   }));
+  tr.appendChild(_td(""));
+  return tr;
+}
+
+
+function _renderBalanceCheckRow(view) {
+  // 残高試算表: 借方科目 (資産+費用) 残高合計 === 貸方科目 (負債+純資産+収益)
+  // 残高合計 を確認する行。前期繰越誤り・科目区分誤り等を検知できる。
+  const gt = view.grandTotal;
+  const tr = document.createElement("tr");
+  tr.className = gt.is_balanced ? "table-success" : "table-warning";
+  tr.appendChild(_td("", { className: "d-mobile-none" }));
+  tr.appendChild(_td("残高チェック (借方科目 = 貸方科目)", {
+    className: "text-end", bold: true,
+  }));
+  tr.appendChild(_td(_fmtYen(gt.balance_debit_side), {
+    className: "text-end", bold: true,
+  }));
+  tr.appendChild(_td(_fmtYen(gt.balance_credit_side), {
+    className: "text-end", bold: true,
+  }));
   const checkTd = document.createElement("td");
   checkTd.className = "text-end";
   const icon = document.createElement("i");
-  icon.className = view.grandTotal.is_balanced
+  icon.className = gt.is_balanced
     ? "bi bi-check-circle text-success"
     : "bi bi-exclamation-triangle text-danger";
   checkTd.appendChild(icon);
-  if (!view.grandTotal.is_balanced) {
+  if (!gt.is_balanced) {
     checkTd.appendChild(document.createTextNode(" 差額 "));
     const diffStrong = document.createElement("strong");
-    diffStrong.textContent = _fmtYen(view.grandTotal.debit - view.grandTotal.credit);
+    diffStrong.textContent = _fmtYen(gt.balance_debit_side - gt.balance_credit_side);
     checkTd.appendChild(diffStrong);
   }
   tr.appendChild(checkTd);
@@ -159,6 +181,7 @@ function _renderView(view, params) {
     tbody.appendChild(_renderSection(section, params));
   }
   tbody.appendChild(_renderGrandTotalRow(view));
+  tbody.appendChild(_renderBalanceCheckRow(view));
 }
 
 
