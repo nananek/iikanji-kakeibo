@@ -176,21 +176,23 @@ class TestOfxImportUpload:
 
 
 class TestOfxImportConfirm:
+    """confirm view は GET のみ (E3-F-5 で旧 POST 経路撤去)。取込実行は
+    batch API 経由 (entries_builder + /api/v1/journals/batch) で行われ、
+    そちらのテストは tests/test_api.py と tests/static/js/ にある。"""
+
     def test_no_data_redirects(self, logged_in_client, accounts):
         resp = logged_in_client.get("/ofx-import/confirm")
         assert resp.status_code in (302, 303)
         assert "/ofx-import" in resp.headers["Location"]
 
-    def test_full_flow_imports_entries(self, db, logged_in_client, user, accounts):
-        # mock parse_ofx → upload → confirm
+    def test_confirm_get_renders(self, db, logged_in_client, user, accounts):
+        # mock parse_ofx → upload → confirm GET
         with patch("app.views.ofx_import.parse_ofx") as mock_parse:
             mock_parse.return_value = {
                 "account_id": "X",
                 "rows": [
                     {"date": "2026-02-15", "description": "支払",
                      "deposit": 0, "withdrawal": 1500},
-                    {"date": "2026-02-25", "description": "給与",
-                     "deposit": 250000, "withdrawal": 0},
                 ],
             }
             logged_in_client.post("/ofx-import/", data={
@@ -198,55 +200,8 @@ class TestOfxImportConfirm:
                 "payment_account_code": "1010",
             }, content_type="multipart/form-data")
 
-        # confirm GET
         resp = logged_in_client.get("/ofx-import/confirm")
         assert resp.status_code == 200
-
-        # confirm POST: 取込実行
-        rows = [
-            {"enabled": True, "date": "2026-02-15", "description": "支払",
-             "deposit": 0, "withdrawal": 1500, "category_code": "5010"},
-            {"enabled": True, "date": "2026-02-25", "description": "給与",
-             "deposit": 250000, "withdrawal": 0, "category_code": "4010"},
-        ]
-        resp = logged_in_client.post("/ofx-import/confirm", data={
-            "import_rows": json.dumps(rows),
-            "old_year_action": "skip",
-        })
-        assert resp.status_code in (302, 303)
-        # 2件取り込み
-        assert JournalEntry.query.filter_by(
-            user_id=user.id, source="ofx"
-        ).count() == 2
-
-    def test_disabled_rows_skipped(self, db, logged_in_client, user, accounts):
-        with patch("app.views.ofx_import.parse_ofx") as mock_parse:
-            mock_parse.return_value = {
-                "account_id": "X",
-                "rows": [{"date": "2026-02-15", "description": "x",
-                          "deposit": 0, "withdrawal": 100}],
-            }
-            logged_in_client.post("/ofx-import/", data={
-                "ofx_file": (io.BytesIO(b"x"), "x.ofx"),
-                "payment_account_code": "1010",
-            }, content_type="multipart/form-data")
-
-        rows = [
-            {"enabled": False, "date": "2026-02-15",
-             "deposit": 0, "withdrawal": 100, "category_code": "5010"},
-        ]
-        resp = logged_in_client.post("/ofx-import/confirm", data={
-            "import_rows": json.dumps(rows),
-            "old_year_action": "skip",
-        })
-        assert resp.status_code in (302, 303)
-        assert JournalEntry.query.filter_by(
-            user_id=user.id, source="ofx"
-        ).count() == 0
-
-    def test_post_no_data_redirects(self, logged_in_client, accounts):
-        resp = logged_in_client.post("/ofx-import/confirm", data={})
-        assert resp.status_code in (302, 303)
 
 
 # --- Web Import ---
@@ -521,129 +476,18 @@ class TestWebImportUpload:
 
 
 class TestWebImportConfirm:
+    """confirm view は GET のみ (E3-F-5 で旧 POST 経路撤去)。取込実行は
+    batch API 経由で行われ、その挙動は tests/test_api.py と
+    tests/static/js/ で検証する。"""
+
     def test_no_data_redirects(self, logged_in_client, accounts):
         resp = logged_in_client.get("/web-import/confirm")
         assert resp.status_code in (302, 303)
 
-    def test_full_flow(self, db, logged_in_client, user, accounts):
-        # parse_web_text 経由ではなく session を直接仕込んで
-        # confirm フロー (仕訳生成) だけをテスト。
+    def test_confirm_get_renders(self, db, logged_in_client, user, accounts):
         _setup_web_import_session(logged_in_client, [
             {"date": "2026-02-15", "description": "セブン",
              "deposit": 0, "withdrawal": 500},
         ])
-
         resp = logged_in_client.get("/web-import/confirm")
         assert resp.status_code == 200
-
-        rows = [
-            {"enabled": True, "date": "2026-02-15", "description": "セブン",
-             "deposit": 0, "withdrawal": 500, "category_code": "5010"},
-        ]
-        resp = logged_in_client.post("/web-import/confirm", data={
-            "import_rows": json.dumps(rows),
-            "old_year_action": "skip",
-        })
-        assert resp.status_code in (302, 303)
-        assert JournalEntry.query.filter_by(
-            user_id=user.id, source="web"
-        ).count() == 1
-
-    def test_post_no_rows(self, logged_in_client, accounts):
-        resp = logged_in_client.post("/web-import/confirm", data={})
-        assert resp.status_code in (302, 303)
-
-    def test_confirm_skips_disabled_and_invalid_rows(
-        self, db, logged_in_client, user, accounts,
-    ):
-        """enabled=false / 日付欠落 / カテゴリ欠落 / 金額 0 は skip される。"""
-        _setup_web_import_session(
-            logged_in_client,
-            [{"date": "2026-02-15", "description": "x"}],
-        )
-        rows = [
-            # enabled=False は skip
-            {"enabled": False, "date": "2026-02-15", "description": "off",
-             "deposit": 0, "withdrawal": 100, "category_code": "5010"},
-            # 日付欠落は skip
-            {"enabled": True, "date": "", "description": "no-date",
-             "deposit": 100, "withdrawal": 0, "category_code": "5010"},
-            # category_code 欠落は skip
-            {"enabled": True, "date": "2026-02-15", "description": "no-cat",
-             "deposit": 100, "withdrawal": 0, "category_code": ""},
-            # 金額両方 0 は skip
-            {"enabled": True, "date": "2026-02-15", "description": "zero",
-             "deposit": 0, "withdrawal": 0, "category_code": "5010"},
-            # 正常 — import される
-            {"enabled": True, "date": "2026-02-15", "description": "ok",
-             "deposit": 0, "withdrawal": 200, "category_code": "5010"},
-        ]
-        resp = logged_in_client.post("/web-import/confirm", data={
-            "import_rows": json.dumps(rows),
-            "old_year_action": "skip",
-        })
-        assert resp.status_code in (302, 303)
-        # 5 件中 1 件のみ取込
-        assert JournalEntry.query.filter_by(
-            user_id=user.id, source="web",
-        ).count() == 1
-
-    def test_confirm_skips_closed_period(
-        self, db, logged_in_client, user, accounts,
-    ):
-        """確定済み期間に該当する行は skip される。"""
-        from app.models.fiscal import FiscalClose
-        db.session.add(FiscalClose(user_id=user.id, year=2026, closed_period=2))
-        db.session.commit()
-        _setup_web_import_session(
-            logged_in_client, [{"date": "2026-02-15"}],
-        )
-        rows = [
-            # 2026-02 は確定済み → skip
-            {"enabled": True, "date": "2026-02-15", "description": "blocked",
-             "deposit": 100, "withdrawal": 0, "category_code": "5010"},
-            # 2026-03 は未確定 → import
-            {"enabled": True, "date": "2026-03-15", "description": "ok",
-             "deposit": 200, "withdrawal": 0, "category_code": "5010"},
-        ]
-        resp = logged_in_client.post("/web-import/confirm", data={
-            "import_rows": json.dumps(rows),
-            "old_year_action": "skip",
-        })
-        assert resp.status_code in (302, 303)
-        assert JournalEntry.query.filter_by(
-            user_id=user.id, source="web",
-        ).count() == 1
-
-    def test_confirm_skips_locked_account_code(
-        self, db, logged_in_client, user, accounts,
-    ):
-        """提出済みロック科目を含む行は skip される。"""
-        from app.models.tax_form import TaxFormField, TaxFormMapping
-        # 提出済みフラグを立てる科目を作る
-        field = TaxFormField.query.first()
-        if field is None:
-            import pytest
-            pytest.skip("tax_form 未シード")
-        m = TaxFormMapping(
-            user_id=user.id, account_code="5010",
-            tax_form_field_id=field.id, year=2026, submitted=True,
-        )
-        db.session.add(m)
-        db.session.commit()
-        _setup_web_import_session(
-            logged_in_client, [{"date": "2026-02-15"}],
-        )
-        rows = [
-            # 5010 はロック → skip
-            {"enabled": True, "date": "2026-02-15", "description": "locked",
-             "deposit": 100, "withdrawal": 0, "category_code": "5010"},
-        ]
-        resp = logged_in_client.post("/web-import/confirm", data={
-            "import_rows": json.dumps(rows),
-            "old_year_action": "skip",
-        })
-        assert resp.status_code in (302, 303)
-        assert JournalEntry.query.filter_by(
-            user_id=user.id, source="web",
-        ).count() == 0

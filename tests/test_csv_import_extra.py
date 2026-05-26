@@ -59,6 +59,10 @@ class TestMappingPost:
 
 
 class TestConfirm:
+    """confirm view は GET のみ (E3-F-5 で旧 POST 経路撤去)。取込実行は
+    batch API 経由 (entries_builder + /api/v1/journals/batch) で行われ、
+    そちらの挙動は tests/test_api.py / tests/static/js/ でテストする。"""
+
     def test_no_data_redirects(self, logged_in_client, accounts):
         resp = logged_in_client.get("/csv-import/confirm")
         assert resp.status_code in (302, 303)
@@ -72,123 +76,6 @@ class TestConfirm:
         })
         resp = logged_in_client.get("/csv-import/confirm")
         assert resp.status_code == 200
-
-    def test_post_imports(self, db, logged_in_client, user, accounts):
-        _setup_csv_session(logged_in_client)
-        logged_in_client.post("/csv-import/mapping", data={
-            "date_col": "0", "desc_col": "1",
-            "withdrawal_col": "2", "deposit_col": "3",
-            "date_format": "%Y-%m-%d",
-        })
-        rows = [
-            {"enabled": True, "date": "2026-02-15", "description": "セブン",
-             "deposit": 0, "withdrawal": 500, "category_code": "5010"},
-            {"enabled": True, "date": "2026-02-16", "description": "給与",
-             "deposit": 250000, "withdrawal": 0, "category_code": "4010"},
-        ]
-        resp = logged_in_client.post("/csv-import/confirm", data={
-            "import_rows": json.dumps(rows),
-            "old_year_action": "skip",
-        })
-        assert resp.status_code in (302, 303)
-        assert JournalEntry.query.filter_by(
-            user_id=user.id, source="csv"
-        ).count() == 2
-
-    def test_post_no_rows_redirects(self, db, logged_in_client, user, accounts):
-        _setup_csv_session(logged_in_client)
-        logged_in_client.post("/csv-import/mapping", data={
-            "date_col": "0", "desc_col": "1",
-            "withdrawal_col": "2", "deposit_col": "3",
-            "date_format": "%Y-%m-%d",
-        })
-        resp = logged_in_client.post("/csv-import/confirm", data={})
-        assert resp.status_code in (302, 303)
-
-    def test_disabled_rows_skipped(self, db, logged_in_client, user, accounts):
-        _setup_csv_session(logged_in_client)
-        logged_in_client.post("/csv-import/mapping", data={
-            "date_col": "0", "desc_col": "1",
-            "withdrawal_col": "2", "deposit_col": "3",
-            "date_format": "%Y-%m-%d",
-        })
-        rows = [
-            {"enabled": False, "date": "2026-02-15", "description": "x",
-             "deposit": 0, "withdrawal": 100, "category_code": "5010"},
-        ]
-        resp = logged_in_client.post("/csv-import/confirm", data={
-            "import_rows": json.dumps(rows),
-            "old_year_action": "skip",
-        })
-        assert resp.status_code in (302, 303)
-        assert JournalEntry.query.filter_by(
-            user_id=user.id, source="csv"
-        ).count() == 0
-
-    def test_no_category_skipped(self, db, logged_in_client, user, accounts):
-        _setup_csv_session(logged_in_client)
-        logged_in_client.post("/csv-import/mapping", data={
-            "date_col": "0", "desc_col": "1",
-            "withdrawal_col": "2", "deposit_col": "3",
-            "date_format": "%Y-%m-%d",
-        })
-        rows = [
-            {"enabled": True, "date": "2026-02-15", "description": "x",
-             "deposit": 0, "withdrawal": 100, "category_code": ""},
-        ]
-        resp = logged_in_client.post("/csv-import/confirm", data={
-            "import_rows": json.dumps(rows),
-            "old_year_action": "skip",
-        })
-        assert resp.status_code in (302, 303)
-        assert JournalEntry.query.filter_by(
-            user_id=user.id, source="csv"
-        ).count() == 0
-
-    def test_locked_period_skipped(self, db, logged_in_client, user, accounts):
-        db.session.add(FiscalClose(user_id=user.id, year=2026, closed_period=2))
-        db.session.commit()
-        _setup_csv_session(logged_in_client)
-        logged_in_client.post("/csv-import/mapping", data={
-            "date_col": "0", "desc_col": "1",
-            "withdrawal_col": "2", "deposit_col": "3",
-            "date_format": "%Y-%m-%d",
-        })
-        rows = [
-            {"enabled": True, "date": "2026-02-15", "description": "x",
-             "deposit": 0, "withdrawal": 100, "category_code": "5010"},
-        ]
-        resp = logged_in_client.post("/csv-import/confirm", data={
-            "import_rows": json.dumps(rows),
-            "old_year_action": "skip",
-        })
-        assert resp.status_code in (302, 303)
-        # 確定済み期間なのでスキップ
-        assert JournalEntry.query.filter_by(
-            user_id=user.id, source="csv"
-        ).count() == 0
-
-    def test_transfer_detection(self, db, logged_in_client, user, accounts):
-        # category_code = 1020 (asset = 普通預金) なら振替仕訳
-        _setup_csv_session(logged_in_client)
-        logged_in_client.post("/csv-import/mapping", data={
-            "date_col": "0", "desc_col": "1",
-            "withdrawal_col": "2", "deposit_col": "3",
-            "date_format": "%Y-%m-%d",
-        })
-        rows = [
-            {"enabled": True, "date": "2026-02-15", "description": "口座移動",
-             "deposit": 0, "withdrawal": 5000, "category_code": "1020"},
-        ]
-        resp = logged_in_client.post("/csv-import/confirm", data={
-            "import_rows": json.dumps(rows),
-            "old_year_action": "skip",
-        })
-        assert resp.status_code in (302, 303)
-        # 振替仕訳として 1件作成
-        assert JournalEntry.query.filter_by(
-            user_id=user.id, source="csv"
-        ).count() == 1
 
 
 class TestReconcile:
