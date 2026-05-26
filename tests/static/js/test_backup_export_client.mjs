@@ -270,3 +270,45 @@ test("balance_cache_blob: 復号失敗で _decryptError、cumulative なし", as
   assert.equal(row.cumulative, undefined);
   assert.match(row._decryptError, /AAD/);
 });
+
+
+// --- decryption: vouchers (passthrough, no decrypt needed) ---
+
+test("vouchers: そのままパススルー (画像は復号不要)", async () => {
+  const client = makeMockClient();
+  const r = await decryptBackup(client, {
+    user_id: 1, data: {
+      vouchers: [
+        {
+          id: 7, image_key: "vouchers/x.jpg", image_mime: "image/jpeg",
+          image_data: "base64string", file_hash: "abc",
+        },
+      ],
+    },
+  });
+  assert.equal(r.data.vouchers.length, 1);
+  assert.equal(r.data.vouchers[0].id, 7);
+  assert.equal(r.data.vouchers[0].image_data, "base64string");
+});
+
+test("vouchers キーが backup.data に無くても空配列", async () => {
+  const client = makeMockClient();
+  const r = await decryptBackup(client, { user_id: 1, data: {} });
+  assert.deepEqual(r.data.vouchers, []);
+});
+
+test("vouchers: _imageError が付与されたデータもそのまま通る", async () => {
+  const client = makeMockClient();
+  const r = await decryptBackup(client, {
+    user_id: 1, data: {
+      vouchers: [
+        {
+          id: 8, image_key: "vouchers/gone.jpg",
+          image_data: null, _imageError: "IOError: disk gone",
+        },
+      ],
+    },
+  });
+  assert.equal(r.data.vouchers[0]._imageError, "IOError: disk gone");
+  assert.equal(r.data.vouchers[0].image_data, null);
+});

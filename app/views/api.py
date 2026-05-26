@@ -703,18 +703,23 @@ def backup_export():
     返す。サーバは平文を一切組立てない (E2EE 維持)。クライアントは自分の MK
     で各 encrypted_blob を復号してから平文 JSON ファイルとして保存する。
 
-    含めるテーブル (Phase BU-1):
+    含めるテーブル:
       accounts, fiscal_closes, journal_entries, journal_entry_lines,
-      medical_expenses, balance_cache_blobs
+      medical_expenses, balance_cache_blobs (BU-1),
+      vouchers (BU-2a, active のみ。画像本体を base64 で含む)
 
     含めないもの (今 PR では):
-      vouchers (画像本体), ai_drafts (画像本体), user_ai_configs (API キー),
-      webhook_configs, tax_form_mappings, csv_column_profiles, webauthn_*
+      ai_drafts (画像本体), user_ai_configs (API キー), webhook_configs,
+      tax_form_mappings, csv_column_profiles, webauthn_*
       → 次の BU-PR で順次対応。
 
     監査代理閲覧では他人のデータを export できない: 監査者の MK ではオーナーの
     encrypted_blob を復号できないため、結果として復号失敗するが、API としては
     監査者自身のデータが返るだけ (acting_as 解決は将来 PR)。
+
+    画像取得失敗 (ストレージ欠落 / I/O エラー) はその voucher の image_data を
+    null にして "_imageError" フィールドにメッセージを記録し、エクスポート全体
+    は継続する (1 枚の欠損で全件失敗を避ける)。
     """
     from app.models.fiscal import FiscalClose
     from app.models.journal import JournalEntryLine
@@ -738,6 +743,8 @@ def backup_export():
     ) if entry_ids else []
     medical = MedicalExpense.query.filter_by(user_id=user_id).all()
     blobs = BalanceCacheBlob.query.filter_by(user_id=user_id).all()
+    vouchers = Voucher.active().filter_by(user_id=user_id).all()
+    storage = get_storage_backend() if vouchers else None
 
     return jsonify({
         "version": "1.0",
@@ -818,8 +825,44 @@ def backup_export():
                 }
                 for b in blobs
             ],
+            "vouchers": [
+                _voucher_to_backup_dict(v, storage)
+                for v in vouchers
+            ],
         },
     })
+
+
+def _voucher_to_backup_dict(voucher, storage):
+    """Voucher 1 件を backup 用 dict に変換 (画像本体を base64 で含む)。
+
+    画像取得失敗は image_data=None + _imageError 文字列で局所化。1 枚の I/O
+    失敗で export 全体を 500 にしない。
+    """
+    image_data_b64 = None
+    image_error = None
+    try:
+        raw = storage.get(voucher.image_key)
+        if raw is None:
+            image_error = "storage returned None"
+        else:
+            image_data_b64 = b64encode(raw).decode("ascii")
+    except Exception as e:
+        image_error = f"{type(e).__name__}: {e}"
+    out = {
+        "id": voucher.id,
+        "journal_entry_id": voucher.journal_entry_id,
+        "image_key": voucher.image_key,
+        "image_mime": voucher.image_mime,
+        "original_filename": voucher.original_filename,
+        "file_hash": voucher.file_hash,
+        "file_size": voucher.file_size,
+        "uploaded_at": voucher.uploaded_at.isoformat() if voucher.uploaded_at else None,
+        "image_data": image_data_b64,
+    }
+    if image_error is not None:
+        out["_imageError"] = image_error
+    return out
 
 
 # --- 仕訳閲覧 ---

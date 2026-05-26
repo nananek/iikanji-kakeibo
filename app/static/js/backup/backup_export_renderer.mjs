@@ -100,23 +100,34 @@ export async function runBackupExport() {
     _setStatus("ローカルで復号しています…", "info");
     const decrypted = await decryptBackup(client, backup);
 
-    // 復号失敗行があれば警告表示
-    let failures = 0;
+    // 復号失敗 / 画像取得失敗があれば警告表示
+    let decryptFailures = 0;
     for (const tbl of [
       "journal_entries", "journal_entry_lines",
       "medical_expenses", "balance_cache_blobs",
     ]) {
       for (const r of decrypted.data[tbl] || []) {
-        if (r._decryptError) failures += 1;
+        if (r._decryptError) decryptFailures += 1;
       }
     }
+    let imageFailures = 0;
+    for (const v of decrypted.data.vouchers || []) {
+      if (v._imageError) imageFailures += 1;
+    }
     _downloadJSON(decrypted, _filename());
-    if (failures > 0) {
-      _setStatus(
-        `ダウンロード完了。${failures} 件の暗号文は復号できなかったため、` +
-        "ファイル内に `_decryptError` フィールドとして記録されています。",
-        "warning",
+    const warnings = [];
+    if (decryptFailures > 0) {
+      warnings.push(
+        `${decryptFailures} 件の暗号文は復号できなかったため _decryptError として記録`,
       );
+    }
+    if (imageFailures > 0) {
+      warnings.push(
+        `${imageFailures} 件の証憑画像は取得できなかったため _imageError として記録`,
+      );
+    }
+    if (warnings.length > 0) {
+      _setStatus("ダウンロード完了。" + warnings.join("、"), "warning");
     } else {
       _setStatus("ダウンロード完了。", "success");
     }

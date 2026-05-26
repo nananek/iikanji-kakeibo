@@ -1142,6 +1142,7 @@ class TestBackupExport:
         assert set(data["data"].keys()) >= {
             "accounts", "fiscal_closes", "journal_entries",
             "journal_entry_lines", "medical_expenses", "balance_cache_blobs",
+            "vouchers",
         }
 
     def test_user_data_included(
@@ -1259,6 +1260,127 @@ class TestBackupExport:
         blobs = resp.get_json()["data"]["balance_cache_blobs"]
         assert len(blobs) == 1
         assert blobs[0]["encrypted_blob"] == base64.b64encode(b"\x01\x02\x03").decode()
+
+
+class TestBackupExportVouchers:
+    """v5 BU-2a: Voucher (画像本体含む) のエクスポート。"""
+
+    def _make_voucher(self, db, user_id, key="vouchers/x.jpg", journal_id=None):
+        from app.models.voucher import Voucher
+        v = Voucher(
+            user_id=user_id,
+            journal_entry_id=journal_id,
+            image_key=key, image_mime="image/jpeg",
+            file_hash="a" * 64, file_size=100,
+        )
+        db.session.add(v)
+        db.session.flush()
+        return v
+
+    def test_voucher_data_included_with_image_b64(
+        self, app, client, db, user, auth_header, monkeypatch,
+    ):
+        import base64
+        from app.services import storage as storage_module
+        from app.views import api as api_module
+
+        class FakeStorage:
+            def get(self, k):
+                return b"\xff\xd8\xff\xe0FAKE-JPEG"
+
+        backend = FakeStorage()
+        monkeypatch.setattr(storage_module, "get_storage_backend", lambda: backend)
+        monkeypatch.setattr(api_module, "get_storage_backend", lambda: backend)
+
+        self._make_voucher(db, user.id)
+        db.session.commit()
+
+        resp = client.get("/api/v1/backup/export", headers=auth_header)
+        assert resp.status_code == 200
+        vouchers = resp.get_json()["data"]["vouchers"]
+        assert len(vouchers) == 1
+        v = vouchers[0]
+        assert v["image_key"] == "vouchers/x.jpg"
+        assert v["image_mime"] == "image/jpeg"
+        assert v["image_data"] == base64.b64encode(b"\xff\xd8\xff\xe0FAKE-JPEG").decode()
+        assert "_imageError" not in v
+
+    def test_voucher_storage_failure_localized(
+        self, app, client, db, user, auth_header, monkeypatch,
+    ):
+        """ストレージ I/O 失敗で全体 500 にならず、当該行に _imageError。"""
+        from app.services import storage as storage_module
+        from app.views import api as api_module
+
+        class FlakyStorage:
+            def get(self, k):
+                if "boom" in k:
+                    raise IOError("disk gone")
+                return b"OK"
+
+        backend = FlakyStorage()
+        monkeypatch.setattr(storage_module, "get_storage_backend", lambda: backend)
+        monkeypatch.setattr(api_module, "get_storage_backend", lambda: backend)
+
+        self._make_voucher(db, user.id, key="vouchers/ok.jpg")
+        self._make_voucher(db, user.id, key="vouchers/boom.jpg")
+        db.session.commit()
+
+        resp = client.get("/api/v1/backup/export", headers=auth_header)
+        assert resp.status_code == 200
+        vouchers = resp.get_json()["data"]["vouchers"]
+        ok = [v for v in vouchers if v["image_key"] == "vouchers/ok.jpg"]
+        bad = [v for v in vouchers if v["image_key"] == "vouchers/boom.jpg"]
+        assert len(ok) == 1
+        assert ok[0]["image_data"] is not None
+        assert "_imageError" not in ok[0]
+        assert len(bad) == 1
+        assert bad[0]["image_data"] is None
+        assert "disk gone" in bad[0]["_imageError"]
+
+    def test_voucher_other_user_excluded(
+        self, app, client, db, user, auth_header, monkeypatch,
+    ):
+        from app.models.user import User
+        from app.services import storage as storage_module
+        from app.views import api as api_module
+        backend = type("S", (), {"get": lambda self, k: b"x"})()
+        monkeypatch.setattr(storage_module, "get_storage_backend", lambda: backend)
+        monkeypatch.setattr(api_module, "get_storage_backend", lambda: backend)
+
+        other = User(
+            username="other_v", email="other_v@example.com", user_type="personal",
+        )
+        other.set_password("password123")
+        db.session.add(other)
+        db.session.flush()
+        self._make_voucher(db, other.id, key="vouchers/other.jpg")
+        db.session.commit()
+
+        resp = client.get("/api/v1/backup/export", headers=auth_header)
+        assert resp.status_code == 200
+        keys = [v["image_key"] for v in resp.get_json()["data"]["vouchers"]]
+        assert "vouchers/other.jpg" not in keys
+
+    def test_voucher_soft_deleted_excluded(
+        self, app, client, db, user, auth_header, monkeypatch,
+    ):
+        """論理削除済 (deleted_at != None) は export 対象外。"""
+        from datetime import datetime, timezone
+        from app.services import storage as storage_module
+        from app.views import api as api_module
+        backend = type("S", (), {"get": lambda self, k: b"x"})()
+        monkeypatch.setattr(storage_module, "get_storage_backend", lambda: backend)
+        monkeypatch.setattr(api_module, "get_storage_backend", lambda: backend)
+
+        v = self._make_voucher(db, user.id, key="vouchers/gone.jpg")
+        v.deleted_at = datetime.now(timezone.utc)
+        db.session.commit()
+
+        resp = client.get("/api/v1/backup/export", headers=auth_header)
+        assert resp.status_code == 200
+        keys = [v["image_key"] for v in resp.get_json()["data"]["vouchers"]]
+        assert "vouchers/gone.jpg" not in keys
 
 
 # --- 下書き一覧 ---

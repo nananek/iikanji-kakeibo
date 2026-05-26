@@ -13,8 +13,12 @@
 //       journal_entry_lines: [{id, journal_entry_id, encrypted_blob, ...}],
 //       medical_expenses: [{id, encrypted_blob, ...}],
 //       balance_cache_blobs: [{year, period, encrypted_blob, blob_iv, ...}],
+//       vouchers: [{id, image_key, image_mime, image_data (base64), ...}],
 //     }
 //   }
+//
+// vouchers の画像 (image_data) はサーバ側ストレージに平文保存されている
+// ため復号不要。本クライアントではメタ + base64 をそのままパススルーする。
 //
 // 復号後の構造 (本関数の戻り値):
 //   data.journal_entries[i]: 復号できた行は body フィールドを展開 (date /
@@ -81,6 +85,8 @@ export async function decryptBackup(client, backup) {
       journal_entry_lines: [],
       medical_expenses: [],
       balance_cache_blobs: [],
+      // 画像はサーバ側ストレージに平文保存、復号不要のためそのまま通す
+      vouchers: backup.data.vouchers || [],
     },
   };
 
