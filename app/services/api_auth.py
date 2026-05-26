@@ -12,11 +12,12 @@ from __future__ import annotations
 import functools
 from datetime import datetime, timezone
 
-from flask import g, jsonify, request
+from flask import g, jsonify, request, session
 from flask_login import current_user
 
 from app.extensions import db
 from app.models.api_key import APIKey
+from app.models.audit import AuditGrant
 from app.models.oauth import OAuthToken
 from app.models.user import User
 
@@ -78,6 +79,29 @@ def resolve_bearer_or_session(
 
     # Web セッション
     if allow_session and current_user.is_authenticated:
+        # 監査代理閲覧中なら effective user (= 対象オーナー) を返す。
+        # write 操作は permission_level=3 (full access) のみ許可。
+        acting_as = session.get("acting_as_user_id")
+        if acting_as:
+            grant = AuditGrant.query.filter_by(
+                owner_user_id=acting_as,
+                auditor_user_id=current_user.id,
+            ).first()
+            if not grant:
+                # グラント取消済 → セッションクリアして auditor 本人として動作
+                session.pop("acting_as_user_id", None)
+                session.pop("acting_as_permission_level", None)
+                return current_user._get_current_object(), None
+            if write:
+                perm = session.get("acting_as_permission_level")
+                if perm is None or perm < 3:
+                    return None, (jsonify(
+                        error="代理閲覧中の書込操作は権限レベル 3 (full access) のみ可能です。"
+                    ), 403)
+            effective_user = db.session.get(User, acting_as)
+            if effective_user is None:
+                return None, (jsonify(error="User not found"), 401)
+            return effective_user, None
         return current_user._get_current_object(), None
     return None, (jsonify(error="Authentication required"), 401)
 
