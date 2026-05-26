@@ -10,14 +10,20 @@
   var _restrictedBefore = {{ restricted_before_year | tojson }};
   var _defaultIncomeId = {{ default_income_id | tojson }};
   var _defaultExpenseId = {{ default_expense_id | tojson }};
+  // x-data 属性内に直接 tojson 結果を埋めるとダブルクォートが衝突して
+  // HTML パースが壊れる。事前に変数化して x-data からは参照だけする。
+  var _paymentCode = {{ payment_account.code | tojson }};
+  var _capitalCode = {{ (capital_code or '') | tojson }};
 </script>
 <div x-data="importConfirm({
   rows: _importRows,
-  paymentAccountCode: '{{ payment_account.code }}',
+  paymentAccountCode: _paymentCode,
   defaultIncomeId: _defaultIncomeId,
   defaultExpenseId: _defaultExpenseId,
   closedPeriods: _closedPeriods,
-  restrictedBeforeYear: _restrictedBefore
+  restrictedBeforeYear: _restrictedBefore,
+  capitalCode: _capitalCode,
+  importSource: 'ofx'
 })" @drag-select-update="_syncFromCheckboxes()">
 
 {% set import_step_label = "Step 2:" %}
@@ -25,6 +31,12 @@
 {% set import_back_buttons %}
 <a href="{{ url_for('ofx_import.upload') }}" class="btn btn-outline-secondary">最初からやり直す</a>
 {% endset %}
+{# 確定処理を batch API + entries_builder に切替えてクライアント完結化。
+   監査代理閲覧時は IDOR 回避のため旧サーバ POST 経路 (default の
+   serializeRows) に fallback する (E3-F で不要になる予定)。 #}
+{% if not is_audit_proxy %}
+  {% set submit_handler = 'submitImportBatch($event)' %}
+{% endif %}
 {% include "_partials/import_confirm_table.html" %}
 
 </div>
