@@ -169,7 +169,15 @@
     <a href="{{ url_for('settings.backup') }}" class="card h-100 text-decoration-none shadow-sm">
       <div class="card-body">
         <h6 class="card-title"><i class="bi bi-download text-primary"></i> 全データバックアップ <span class="badge bg-info">v5.0 準備</span></h6>
-        <p class="card-text text-muted small mb-0">平文 JSON で全データをダウンロード (BU-1)</p>
+        <p class="card-text text-muted small mb-0">平文 JSON / .ikbackup で全データをダウンロード</p>
+      </div>
+    </a>
+  </div>
+  <div class="col">
+    <a href="{{ url_for('settings.restore') }}" class="card h-100 text-decoration-none shadow-sm">
+      <div class="card-body">
+        <h6 class="card-title"><i class="bi bi-upload text-primary"></i> 全データリストア <span class="badge bg-warning text-dark">preview のみ</span></h6>
+        <p class="card-text text-muted small mb-0">バックアップファイルの内容確認 (BU-4a、書き戻しは未実装)</p>
       </div>
     </a>
   </div>
