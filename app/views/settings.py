@@ -117,6 +117,23 @@ def backup():
     return render_template("settings/backup.html")
 
 
+@bp.route("/restore")
+@login_required
+def restore():
+    """全データリストア preview (Phase v5 BU-4a)。
+
+    ローカルのバックアップファイル (.json or .ikbackup) を選択してブラウザ
+    で復号、内容のサマリを表示するだけの read-only ツール。実際の DB 書き
+    込みは将来 PR (BU-4b/c) で追加予定。
+
+    監査ユーザーは対象外。
+    """
+    if current_user.user_type == "auditor":
+        flash("監査アカウントは全データリストアの対象外です。", "info")
+        return redirect(url_for("settings.index"))
+    return render_template("settings/restore.html")
+
+
 @bp.route("/encryption-keys")
 @login_required
 def encryption_keys():

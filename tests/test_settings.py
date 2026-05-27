@@ -101,6 +101,37 @@ class TestBackupView:
         assert "/settings/" in resp.headers["Location"]
 
 
+class TestRestoreView:
+    """GET /settings/restore — 全データリストア preview (Phase v5 BU-4a)"""
+
+    def test_unauthenticated_redirects(self, client):
+        resp = client.get("/settings/restore")
+        assert resp.status_code == 302
+        assert "/login" in resp.headers["Location"]
+
+    def test_personal_user_200(self, db, logged_in_client):
+        resp = logged_in_client.get("/settings/restore")
+        assert resp.status_code == 200
+        html = resp.data.decode()
+        assert "全データリストア" in html
+        # クライアント JS が読み込まれている
+        assert "backup_import_renderer.mjs" in html
+        # ファイル選択 + パスフレーズ入力
+        assert 'id="restore-file"' in html
+        assert 'id="restore-passphrase"' in html
+        # accept に .json と .ikbackup
+        assert ".json" in html and ".ikbackup" in html
+        # まだ書き戻しは未実装と明記
+        assert "preview" in html.lower() or "プレビュー" in html
+
+    def test_auditor_redirects_to_settings_index(self, app, client, auditor):
+        with client.session_transaction() as sess:
+            sess["_user_id"] = str(auditor.id)
+        resp = client.get("/settings/restore", follow_redirects=False)
+        assert resp.status_code == 302
+        assert "/settings/" in resp.headers["Location"]
+
+
 class TestEncryptionKeysView:
     """GET /settings/encryption-keys — E2EE 鍵管理ウィザード (v5.0 準備)"""
 

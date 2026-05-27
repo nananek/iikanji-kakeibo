@@ -1,0 +1,100 @@
+{% extends "base.html" %}
+{% block title %}全データリストア - いいかんじ™家計簿{% endblock %}
+
+{% block content %}
+<h2 class="mb-3"><i class="bi bi-upload"></i> 全データリストア (preview)</h2>
+
+<div class="alert alert-warning small">
+  <i class="bi bi-info-circle"></i>
+  <strong>プレビュー機能 (BU-4a):</strong>
+  ローカルのバックアップファイルを選択して内容を確認するだけのツールです。
+  <strong>まだ DB への書き戻し (実リストア) は実装されていません。</strong>
+  次の PR (BU-4b) で全置換書き込みを追加予定です。
+</div>
+
+<div class="card shadow-sm mb-4">
+  <div class="card-body">
+    <h5 class="card-title mb-3">バックアップファイルの読み込み</h5>
+
+    <div class="mb-3">
+      <label for="restore-file" class="form-label fw-bold small mb-1">
+        ファイル
+      </label>
+      <input type="file" id="restore-file" class="form-control form-control-sm"
+             accept=".json,.ikbackup,application/json,application/octet-stream">
+      <div class="form-text small">
+        平文 JSON (.json) または暗号化アーカイブ (.ikbackup) を選択
+      </div>
+    </div>
+
+    <div class="mb-3">
+      <label for="restore-passphrase" class="form-label fw-bold small mb-1">
+        パスフレーズ <span class="text-muted">(.ikbackup 選択時のみ)</span>
+      </label>
+      <input type="password" id="restore-passphrase" class="form-control form-control-sm"
+             autocomplete="current-password" disabled
+             placeholder="エクスポート時に設定したパスフレーズ">
+    </div>
+
+    <div id="restore-status" class="alert alert-warning small d-none"></div>
+
+    <button id="restore-preview-btn" class="btn btn-primary" disabled>
+      <i class="bi bi-eye"></i> 内容を確認 (preview)
+    </button>
+  </div>
+</div>
+
+<div id="restore-summary-card" class="card shadow-sm mb-4 d-none">
+  <div class="card-body">
+    <h5 class="card-title mb-3"><i class="bi bi-table"></i> バックアップ内容</h5>
+    <dl class="row small mb-3" id="restore-summary-meta"></dl>
+    <table class="table table-sm">
+      <thead>
+        <tr>
+          <th>テーブル</th>
+          <th class="text-end">件数</th>
+        </tr>
+      </thead>
+      <tbody id="restore-summary-tbody"></tbody>
+    </table>
+    <p class="small text-muted mb-0">
+      <i class="bi bi-info-circle"></i>
+      DB への書き戻し (実リストア) は次の PR で追加されます。
+    </p>
+  </div>
+</div>
+
+<script id="restore-static-root" type="application/json">
+  {{ {"static_root": url_for('static', filename='')} | tojson }}
+</script>
+
+<script>
+  // ファイル選択時にパスフレーズ入力 + プレビューボタンの状態を更新
+  (function() {
+    function sync() {
+      const file = document.getElementById("restore-file");
+      const pp = document.getElementById("restore-passphrase");
+      const btn = document.getElementById("restore-preview-btn");
+      if (!file || !pp || !btn) return;
+      const hasFile = file.files && file.files.length > 0;
+      const isIkbackup = hasFile && /\.ikbackup$/i.test(file.files[0].name);
+      pp.disabled = !isIkbackup;
+      pp.required = isIkbackup;
+      if (!isIkbackup) pp.value = "";
+      btn.disabled = !hasFile;
+    }
+    document.getElementById("restore-file").addEventListener("change", sync);
+    sync();
+  })();
+</script>
+
+<script type="module">
+  const sr = JSON.parse(document.getElementById("restore-static-root").textContent);
+  globalThis.IIKANJI_STATIC_ROOT = sr.static_root;
+  const { runRestorePreview } = await import(sr.static_root + "js/backup/backup_import_renderer.mjs");
+
+  document.getElementById("restore-preview-btn").addEventListener(
+    "click", () => runRestorePreview(),
+  );
+</script>
+{% endblock %}
