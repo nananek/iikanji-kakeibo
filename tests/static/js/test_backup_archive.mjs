@@ -65,13 +65,42 @@ test("passphrase が空文字だと TypeError", async () => {
   );
 });
 
+test("passphrase が 8 文字未満だと TypeError (encrypt)", async () => {
+  await assert.rejects(
+    () => encryptBackupArchive(plaintextBytes("x"), "short", {
+      argon2Impl: makeMockArgon2Impl(),
+    }),
+    /at least 8/,
+  );
+});
+
+test("passphrase が 8 文字未満だと TypeError (decrypt)", async () => {
+  const impl = makeMockArgon2Impl();
+  const enc = await encryptBackupArchive(
+    plaintextBytes("x"), "long-enough-pp", { argon2Impl: impl },
+  );
+  await assert.rejects(
+    () => decryptBackupArchive(enc, "short", { argon2Impl: impl }),
+    /at least 8/,
+  );
+});
+
+test("passphrase が string でないと TypeError", async () => {
+  await assert.rejects(
+    () => encryptBackupArchive(plaintextBytes("x"), 12345678, {
+      argon2Impl: makeMockArgon2Impl(),
+    }),
+    /must be a string/,
+  );
+});
+
 
 // --- header layout ---
 
 test("header の magic / version が固定値", async () => {
   const impl = makeMockArgon2Impl();
   const out = await encryptBackupArchive(
-    plaintextBytes("hello"), "pw", { argon2Impl: impl },
+    plaintextBytes("hello"), "longpass", { argon2Impl: impl },
   );
   // magic 8 bytes
   for (let i = 0; i < 8; i++) {
@@ -101,8 +130,8 @@ test("暗号化→復号で原文が戻る", async () => {
 test("空 plaintext でも往復可能", async () => {
   const impl = makeMockArgon2Impl();
   const empty = new Uint8Array(0);
-  const enc = await encryptBackupArchive(empty, "p", { argon2Impl: impl });
-  const dec = await decryptBackupArchive(enc, "p", { argon2Impl: impl });
+  const enc = await encryptBackupArchive(empty, "longpass", { argon2Impl: impl });
+  const dec = await decryptBackupArchive(enc, "longpass", { argon2Impl: impl });
   assert.equal(dec.byteLength, 0);
 });
 
@@ -112,10 +141,10 @@ test("空 plaintext でも往復可能", async () => {
 test("間違ったパスフレーズで decrypt 失敗 (OperationError)", async () => {
   const impl = makeMockArgon2Impl();
   const enc = await encryptBackupArchive(
-    plaintextBytes("xx"), "correct", { argon2Impl: impl },
+    plaintextBytes("xx"), "correct-pass", { argon2Impl: impl },
   );
   await assert.rejects(
-    () => decryptBackupArchive(enc, "wrong", { argon2Impl: impl }),
+    () => decryptBackupArchive(enc, "wrong-pass", { argon2Impl: impl }),
     /operation|decrypt|error/i,
   );
 });
@@ -123,12 +152,12 @@ test("間違ったパスフレーズで decrypt 失敗 (OperationError)", async 
 test("ヘッダ tampering (argon2 params 改ざん) で AAD 不一致", async () => {
   const impl = makeMockArgon2Impl();
   const enc = await encryptBackupArchive(
-    plaintextBytes("xx"), "p", { argon2Impl: impl },
+    plaintextBytes("xx"), "longpass", { argon2Impl: impl },
   );
   // memory_kib (offset 12-15) を 0 に潰す
   enc[12] = enc[13] = enc[14] = enc[15] = 0;
   await assert.rejects(
-    () => decryptBackupArchive(enc, "p", { argon2Impl: impl }),
+    () => decryptBackupArchive(enc, "longpass", { argon2Impl: impl }),
     /operation|decrypt|error/i,
   );
 });
@@ -136,12 +165,12 @@ test("ヘッダ tampering (argon2 params 改ざん) で AAD 不一致", async ()
 test("ciphertext tampering で復号失敗", async () => {
   const impl = makeMockArgon2Impl();
   const enc = await encryptBackupArchive(
-    plaintextBytes("xx"), "p", { argon2Impl: impl },
+    plaintextBytes("xx"), "longpass", { argon2Impl: impl },
   );
   // 最終 byte (GCM tag の末尾) を 1 bit 反転
   enc[enc.byteLength - 1] ^= 0x01;
   await assert.rejects(
-    () => decryptBackupArchive(enc, "p", { argon2Impl: impl }),
+    () => decryptBackupArchive(enc, "longpass", { argon2Impl: impl }),
     /operation|decrypt|error/i,
   );
 });
@@ -152,7 +181,7 @@ test("ciphertext tampering で復号失敗", async () => {
 test("magic が違うと invalid magic", async () => {
   const buf = new Uint8Array(_internals.HEADER_LEN);
   await assert.rejects(
-    () => decryptBackupArchive(buf, "p", {
+    () => decryptBackupArchive(buf, "longpass", {
       argon2Impl: makeMockArgon2Impl(),
     }),
     /magic/,
@@ -162,18 +191,18 @@ test("magic が違うと invalid magic", async () => {
 test("version が違うと unsupported version", async () => {
   const impl = makeMockArgon2Impl();
   const enc = await encryptBackupArchive(
-    plaintextBytes("x"), "p", { argon2Impl: impl },
+    plaintextBytes("x"), "longpass", { argon2Impl: impl },
   );
   enc[8] = 0xFF;  // version
   await assert.rejects(
-    () => decryptBackupArchive(enc, "p", { argon2Impl: impl }),
+    () => decryptBackupArchive(enc, "longpass", { argon2Impl: impl }),
     /version/,
   );
 });
 
 test("archive が header 長未満だと too short", async () => {
   await assert.rejects(
-    () => decryptBackupArchive(new Uint8Array(10), "p", {
+    () => decryptBackupArchive(new Uint8Array(10), "longpass", {
       argon2Impl: makeMockArgon2Impl(),
     }),
     /short/,
@@ -183,12 +212,12 @@ test("archive が header 長未満だと too short", async () => {
 test("archive 長と header の ciphertext_len が不一致だとエラー", async () => {
   const impl = makeMockArgon2Impl();
   const enc = await encryptBackupArchive(
-    plaintextBytes("x"), "p", { argon2Impl: impl },
+    plaintextBytes("x"), "longpass", { argon2Impl: impl },
   );
   // 末尾 1 byte 削る
   const truncated = enc.slice(0, enc.byteLength - 1);
   await assert.rejects(
-    () => decryptBackupArchive(truncated, "p", { argon2Impl: impl }),
+    () => decryptBackupArchive(truncated, "longpass", { argon2Impl: impl }),
     /length mismatch/,
   );
 });
@@ -199,14 +228,14 @@ test("archive 長と header の ciphertext_len が不一致だとエラー", asy
 test("同じ入力でも salt/iv がランダムなので毎回違うバイナリ", async () => {
   const impl = makeMockArgon2Impl();
   const a = await encryptBackupArchive(
-    plaintextBytes("same"), "p", { argon2Impl: impl },
+    plaintextBytes("same"), "longpass", { argon2Impl: impl },
   );
   const b = await encryptBackupArchive(
-    plaintextBytes("same"), "p", { argon2Impl: impl },
+    plaintextBytes("same"), "longpass", { argon2Impl: impl },
   );
   assert.notDeepEqual(a, b);
   // ただしどちらも復号できる
-  const dec_a = await decryptBackupArchive(a, "p", { argon2Impl: impl });
-  const dec_b = await decryptBackupArchive(b, "p", { argon2Impl: impl });
+  const dec_a = await decryptBackupArchive(a, "longpass", { argon2Impl: impl });
+  const dec_b = await decryptBackupArchive(b, "longpass", { argon2Impl: impl });
   assert.deepEqual(dec_a, dec_b);
 });
