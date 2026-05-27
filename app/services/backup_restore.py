@@ -22,6 +22,7 @@ VoucherAuditLog は user_id を NULL 化のみ (電帳法 7 年保管の匿名�
 from __future__ import annotations
 
 import base64
+import hashlib
 from datetime import date, datetime, timezone
 from typing import Any
 
@@ -138,6 +139,38 @@ def _validate_backup(user_id: int, backup: Any) -> None:
             raise BackupValidationError(f"invalid year: {year!r}")
         if not isinstance(period, int) or period < 0 or period > 16:
             raise BackupValidationError(f"invalid period: {period!r}")
+
+    # journal_entries の fiscal_period=16 (損益振替) は自動生成専用なので
+    # restore 経由でも注入を禁止する (CLAUDE.md の複式簿記設計に従う)
+    for row in data.get("journal_entries") or []:
+        if not isinstance(row, dict):
+            raise BackupValidationError("journal_entries[*] must be an object")
+        if row.get("fiscal_period") == 16:
+            raise BackupValidationError(
+                "fiscal_period=16 (損益振替) はバックアップ復元できません"
+            )
+
+    # journal_entry の貸借合計一致チェック (改ざんされた backup から不整合な
+    # 仕訳を DB に書き込ませないため)
+    entry_balance: dict[int, list[int]] = {}
+    for row in data.get("journal_entry_lines") or []:
+        eid = row.get("journal_entry_id")
+        if eid is None:
+            continue
+        bal = entry_balance.setdefault(eid, [0, 0])
+        try:
+            bal[0] += int(row.get("debit_amount") or 0)
+            bal[1] += int(row.get("credit_amount") or 0)
+        except (TypeError, ValueError) as e:
+            raise BackupValidationError(
+                f"journal_entry_lines: invalid amount: {e}",
+            ) from e
+    for eid, (dr, cr) in entry_balance.items():
+        if dr != cr:
+            raise BackupValidationError(
+                f"journal_entry {eid}: debit {dr} != credit {cr}"
+                " (貸借不一致)",
+            )
 
 
 # --- delete (User と鍵類は残す) ---
@@ -414,14 +447,17 @@ def _restore_vouchers(
         image_bytes = _b64_decode(image_data_b64)
         old_eid = r.get("journal_entry_id")
         new_eid = entry_id_map.get(old_eid) if old_eid is not None else None
+        # 改ざん検知: 画像バイトから SHA-256 を再計算して file_hash に採用
+        # (backup の file_hash と画像バイトが不一致のまま保存しない)
+        computed_hash = hashlib.sha256(image_bytes).hexdigest()
         voucher = Voucher(
             user_id=user_id,
             journal_entry_id=new_eid,
             image_key="",  # 仮、後で setattr
             image_mime=r.get("image_mime", "application/octet-stream"),
             original_filename=r.get("original_filename"),
-            file_hash=r.get("file_hash"),
-            file_size=r.get("file_size") or (len(image_bytes) if image_bytes else 0),
+            file_hash=computed_hash,
+            file_size=len(image_bytes),
             uploaded_at=_parse_datetime(r.get("uploaded_at")) or datetime.now(timezone.utc),
         )
         db.session.add(voucher)
@@ -451,12 +487,13 @@ def _restore_ai_drafts(
             )
             continue
         image_bytes = _b64_decode(image_data_b64)
+        computed_hash = hashlib.sha256(image_bytes).hexdigest()
         draft = AIDraft(
             user_id=user_id,
             image_key="",  # 後で setattr
             image_mime=r.get("image_mime", "application/octet-stream"),
-            file_hash=r.get("file_hash"),
-            file_size=r.get("file_size") or (len(image_bytes) if image_bytes else 0),
+            file_hash=computed_hash,
+            file_size=len(image_bytes),
             comment=r.get("comment", "") or "",
             suggestions_json=r.get("suggestions_json"),
             status=r.get("status", "pending") or "pending",

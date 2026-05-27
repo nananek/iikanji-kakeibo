@@ -178,6 +178,54 @@ class TestBackupRestoreValidation:
         )
         assert resp.status_code == 400
 
+    def test_fiscal_period_16_rejected(
+        self, client, db, user, accounts, auth_header, reset_limiter,
+        backup_skeleton,
+    ):
+        """fiscal_period=16 (損益振替) は restore 経由でも禁止。"""
+        backup_skeleton["data"]["accounts"] = [
+            {"code": "1010", "name": "現金",
+             "account_type_id": accounts["1010"].account_type_id},
+        ]
+        backup_skeleton["data"]["journal_entries"] = [
+            {"id": 1, "date": "2026-12-31", "entry_number": 1,
+             "description": "悪意の損益振替", "fiscal_period": 16},
+        ]
+        resp = client.post(
+            "/api/v1/backup/restore",
+            headers=auth_header, json=backup_skeleton,
+        )
+        assert resp.status_code == 400
+        assert "fiscal_period" in resp.get_json().get("error", "")
+
+    def test_unbalanced_entry_rejected(
+        self, client, db, user, accounts, auth_header, reset_limiter,
+        backup_skeleton,
+    ):
+        """貸借不一致の仕訳は復元拒否 (改ざん検知)。"""
+        backup_skeleton["data"]["accounts"] = [
+            {"code": "1010", "name": "現金",
+             "account_type_id": accounts["1010"].account_type_id},
+            {"code": "5010", "name": "食費",
+             "account_type_id": accounts["5010"].account_type_id},
+        ]
+        backup_skeleton["data"]["journal_entries"] = [
+            {"id": 1, "date": "2026-01-01", "entry_number": 1, "description": "x"},
+        ]
+        backup_skeleton["data"]["journal_entry_lines"] = [
+            {"id": 1, "journal_entry_id": 1, "account_code": "5010",
+             "debit_amount": 1000, "credit_amount": 0},
+            # 借方 1000 vs 貸方 999 → 不一致
+            {"id": 2, "journal_entry_id": 1, "account_code": "1010",
+             "debit_amount": 0, "credit_amount": 999},
+        ]
+        resp = client.post(
+            "/api/v1/backup/restore",
+            headers=auth_header, json=backup_skeleton,
+        )
+        assert resp.status_code == 400
+        assert "貸借" in resp.get_json().get("error", "")
+
 
 # --- ハッピーパス ---
 
@@ -422,6 +470,348 @@ class TestBackupRestoreImages:
 
 
 # --- 障害系 ---
+
+
+class TestBackupRestoreCoverage:
+    """カバレッジ補強用テスト (各 _restore_<table> のハッピーパス + 例外分岐)。"""
+
+    def test_restore_all_optional_tables(
+        self, client, db, user, accounts, auth_header, reset_limiter,
+        backup_skeleton,
+    ):
+        """balance_cache_blob / user_ai_config / webhook / tax_mapping /
+        csv_profile / medical_expense のハッピーパス restore (カバレッジ補強)。"""
+        from app.models.tax_form import TaxFormField
+        # tax_form_mappings は TaxFormField の seed が必要
+        f = TaxFormField(
+            form_type="general", page=1, section="revenue",
+            row_code="X", name="売上(restore-test)",
+            account_type_code="revenue", display_order=1,
+        )
+        db.session.add(f)
+        db.session.commit()
+
+        backup_skeleton["data"]["accounts"] = [
+            {"code": "1010", "name": "現金",
+             "account_type_id": accounts["1010"].account_type_id},
+        ]
+        backup_skeleton["data"]["journal_entries"] = [
+            {"id": 1, "date": "2026-02-15", "entry_number": 1,
+             "description": "test"},
+        ]
+        backup_skeleton["data"]["medical_expenses"] = [
+            {"id": 1, "journal_entry_id": 1, "date": "2026-02-15",
+             "patient_name": "本人", "hospital_name": "病院",
+             "amount_paid": 5000, "insurance_reimbursement": 1000},
+        ]
+        backup_skeleton["data"]["balance_cache_blobs"] = [
+            {"year": 2026, "period": 12,
+             "encrypted_blob": base64.b64encode(b"\x01\x02").decode(),
+             "blob_iv": base64.b64encode(b"\x00" * 12).decode()},
+        ]
+        backup_skeleton["data"]["user_ai_config"] = {
+            "provider": "openai", "model_name": "gpt-4o-mini",
+            "api_key_blob": base64.b64encode(b"\xaa").decode(),
+            "api_key_iv": base64.b64encode(b"\x00" * 12).decode(),
+            "custom_prompt": "", "compliance_check": True,
+        }
+        backup_skeleton["data"]["webhook_configs"] = [
+            {"name": "Discord", "provider": "discord",
+             "webhook_url": "https://x.example/hook",
+             "events_json": '["import_success"]'},
+        ]
+        backup_skeleton["data"]["tax_form_mappings"] = [
+            {"account_code": "1010", "field_id": f.id},
+        ]
+        backup_skeleton["data"]["csv_column_profiles"] = [
+            {"account_code": "1010",
+             "date_col": 0, "desc_col": 1,
+             "deposit_col": 2, "withdrawal_col": 3,
+             "date_format": "%Y-%m-%d", "amount_mode": "separate"},
+        ]
+
+        resp = client.post(
+            "/api/v1/backup/restore",
+            headers=auth_header, json=backup_skeleton,
+        )
+        assert resp.status_code == 200, resp.get_json()
+        r = resp.get_json()["restored"]
+        assert r["tables"]["medical_expenses"] == 1
+        assert r["tables"]["balance_cache_blobs"] == 1
+        assert r["tables"]["user_ai_config"] == 1
+        assert r["tables"]["webhook_configs"] == 1
+        assert r["tables"]["tax_form_mappings"] == 1
+        assert r["tables"]["csv_column_profiles"] == 1
+
+    def test_restore_ai_draft_with_image(
+        self, app, client, db, user, auth_header, reset_limiter,
+        backup_skeleton, monkeypatch,
+    ):
+        """AIDraft 画像の storage 書き戻し (カバレッジ補強)。"""
+        from app.services import storage as storage_module
+        from app.services import backup_restore as br_module
+
+        stored: dict = {}
+
+        class FakeBackend:
+            def put(self, key, payload, mime):
+                stored[key] = payload
+
+            def delete(self, key):
+                stored.pop(key, None)
+
+            def get(self, key):
+                return stored.get(key)
+
+        backend = FakeBackend()
+        monkeypatch.setattr(
+            storage_module, "get_storage_backend", lambda: backend,
+        )
+        monkeypatch.setattr(
+            br_module, "get_storage_backend", lambda: backend,
+        )
+        from PIL import Image
+        import io
+        img = Image.new("RGB", (1, 1))
+        bio = io.BytesIO()
+        img.save(bio, "JPEG")
+        jpeg_b64 = base64.b64encode(bio.getvalue()).decode()
+
+        backup_skeleton["data"]["ai_drafts"] = [
+            {"id": 1, "image_key": "old/key.jpg",
+             "image_mime": "image/jpeg", "image_data": jpeg_b64,
+             "status": "pending", "comment": "メモ"},
+        ]
+        resp = client.post(
+            "/api/v1/backup/restore",
+            headers=auth_header, json=backup_skeleton,
+        )
+        assert resp.status_code == 200
+        assert resp.get_json()["restored"]["tables"]["ai_drafts"] == 1
+        from app.models.ai_draft import AIDraft
+        ds = AIDraft.query.filter_by(user_id=user.id).all()
+        assert len(ds) == 1
+        assert ds[0].image_key.startswith(f"vouchers/{user.id}/")
+
+    def test_invalid_base64_rejected(
+        self, client, db, user, auth_header, reset_limiter, backup_skeleton,
+    ):
+        """base64 として decode できない値は 400。"""
+        backup_skeleton["data"]["journal_entries"] = [
+            {"id": 1, "date": "2026-01-01", "entry_number": 1,
+             "description": "x", "encrypted_blob": "!!!not-base64!!!"},
+        ]
+        resp = client.post(
+            "/api/v1/backup/restore",
+            headers=auth_header, json=backup_skeleton,
+        )
+        assert resp.status_code == 400
+
+    def test_invalid_year_range_rejected(
+        self, client, db, user, auth_header, reset_limiter, backup_skeleton,
+    ):
+        backup_skeleton["data"]["balance_cache_blobs"] = [
+            {"year": 1800, "period": 5,
+             "encrypted_blob": base64.b64encode(b"x").decode(),
+             "blob_iv": base64.b64encode(b"\x00" * 12).decode()},
+        ]
+        resp = client.post(
+            "/api/v1/backup/restore",
+            headers=auth_header, json=backup_skeleton,
+        )
+        assert resp.status_code == 400
+        assert "year" in resp.get_json().get("error", "")
+
+    def test_invalid_period_rejected(
+        self, client, db, user, auth_header, reset_limiter, backup_skeleton,
+    ):
+        backup_skeleton["data"]["balance_cache_blobs"] = [
+            {"year": 2026, "period": 99,
+             "encrypted_blob": base64.b64encode(b"x").decode(),
+             "blob_iv": base64.b64encode(b"\x00" * 12).decode()},
+        ]
+        resp = client.post(
+            "/api/v1/backup/restore",
+            headers=auth_header, json=backup_skeleton,
+        )
+        assert resp.status_code == 400
+        assert "period" in resp.get_json().get("error", "")
+
+    def test_list_table_must_be_list(
+        self, client, db, user, auth_header, reset_limiter, backup_skeleton,
+    ):
+        backup_skeleton["data"]["accounts"] = "not a list"
+        resp = client.post(
+            "/api/v1/backup/restore",
+            headers=auth_header, json=backup_skeleton,
+        )
+        assert resp.status_code == 400
+
+    def test_user_ai_config_must_be_dict_or_null(
+        self, client, db, user, auth_header, reset_limiter, backup_skeleton,
+    ):
+        backup_skeleton["data"]["user_ai_config"] = "wrong type"
+        resp = client.post(
+            "/api/v1/backup/restore",
+            headers=auth_header, json=backup_skeleton,
+        )
+        assert resp.status_code == 400
+
+    def test_voucher_without_image_data_skipped(
+        self, app, client, db, user, accounts, auth_header,
+        reset_limiter, monkeypatch, backup_skeleton,
+    ):
+        """export 時に画像取得失敗で image_data=None になった行は skip される。"""
+        from app.services import storage as storage_module
+        from app.services import backup_restore as br_module
+        backend = type("S", (), {
+            "put": lambda self, k, p, m: None,
+            "delete": lambda self, k: None,
+            "get": lambda self, k: None,
+        })()
+        monkeypatch.setattr(storage_module, "get_storage_backend", lambda: backend)
+        monkeypatch.setattr(br_module, "get_storage_backend", lambda: backend)
+
+        backup_skeleton["data"]["vouchers"] = [
+            {"id": 1, "image_key": "lost.jpg", "image_mime": "image/jpeg",
+             "image_data": None, "_imageError": "lost"},
+        ]
+        resp = client.post(
+            "/api/v1/backup/restore",
+            headers=auth_header, json=backup_skeleton,
+        )
+        assert resp.status_code == 200
+        assert resp.get_json()["restored"]["tables"]["vouchers"] == 0
+        assert resp.get_json()["restored"]["storage"]["vouchers"] == 0
+
+
+class TestBackupRestoreHelpers:
+    """`_validate_backup` / `_b64_decode` / `_parse_date` / `_parse_datetime`
+    の internal helper を直接呼んでカバレッジ補強。"""
+
+    def test_validate_non_dict_backup(self):
+        from app.services.backup_restore import (
+            _validate_backup, BackupValidationError,
+        )
+        with pytest.raises(BackupValidationError, match="object"):
+            _validate_backup(1, "not a dict")
+
+    def test_validate_account_in_accounts_must_be_dict(self):
+        """accounts[*] が非 dict だと早期 isinstance フィルタで弾く。
+        ↓ FK 検算 ループで `if not isinstance(row, dict)` 分岐を踏む。"""
+        from app.services.backup_restore import (
+            _validate_backup, BackupValidationError,
+        )
+        b = {
+            "version": "1.0", "user_id": 1,
+            "data": {"journal_entry_lines": ["not a dict"]},
+        }
+        with pytest.raises(BackupValidationError, match="object"):
+            _validate_backup(1, b)
+
+    def test_validate_voucher_entry_id_not_dict(self):
+        from app.services.backup_restore import (
+            _validate_backup, BackupValidationError,
+        )
+        b = {
+            "version": "1.0", "user_id": 1,
+            "data": {"vouchers": ["not a dict"]},
+        }
+        with pytest.raises(BackupValidationError, match="object"):
+            _validate_backup(1, b)
+
+    def test_validate_bcb_non_dict(self):
+        from app.services.backup_restore import (
+            _validate_backup, BackupValidationError,
+        )
+        b = {
+            "version": "1.0", "user_id": 1,
+            "data": {"balance_cache_blobs": ["nope"]},
+        }
+        with pytest.raises(BackupValidationError, match="object"):
+            _validate_backup(1, b)
+
+    def test_validate_journal_entry_non_dict(self):
+        from app.services.backup_restore import (
+            _validate_backup, BackupValidationError,
+        )
+        b = {
+            "version": "1.0", "user_id": 1,
+            "data": {"journal_entries": ["nope"]},
+        }
+        with pytest.raises(BackupValidationError, match="object"):
+            _validate_backup(1, b)
+
+    def test_validate_invalid_amount(self):
+        from app.services.backup_restore import (
+            _validate_backup, BackupValidationError,
+        )
+        b = {
+            "version": "1.0", "user_id": 1,
+            "data": {
+                "accounts": [{"code": "1010"}],
+                "journal_entries": [{"id": 1}],
+                "journal_entry_lines": [
+                    {"journal_entry_id": 1, "account_code": "1010",
+                     "debit_amount": "abc", "credit_amount": 0},
+                ],
+            },
+        }
+        with pytest.raises(BackupValidationError, match="invalid amount"):
+            _validate_backup(1, b)
+
+    def test_b64_decode_helpers(self):
+        from app.services.backup_restore import (
+            _b64_decode, BackupValidationError,
+        )
+        assert _b64_decode(None) is None
+        assert _b64_decode(base64.b64encode(b"ok").decode()) == b"ok"
+        with pytest.raises(BackupValidationError, match="string"):
+            _b64_decode(123)
+        with pytest.raises(BackupValidationError, match="invalid base64"):
+            _b64_decode("!!!not base64!!!")
+
+    def test_parse_date_helpers(self):
+        from app.services.backup_restore import (
+            _parse_date, BackupValidationError,
+        )
+        from datetime import date
+        assert _parse_date(None) is None
+        d = date(2026, 1, 1)
+        assert _parse_date(d) == d
+        assert _parse_date("2026-03-15") == date(2026, 3, 15)
+        with pytest.raises(BackupValidationError, match="ISO string"):
+            _parse_date(123)
+        with pytest.raises(BackupValidationError, match="invalid date"):
+            _parse_date("not a date")
+
+    def test_parse_datetime_helpers(self):
+        from app.services.backup_restore import _parse_datetime
+        from datetime import datetime, timezone
+        assert _parse_datetime(None) is None
+        dt = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        assert _parse_datetime(dt) == dt
+        assert _parse_datetime("2026-01-01T00:00:00") == datetime(2026, 1, 1)
+        # 不正な値は silently None (例外なし)
+        assert _parse_datetime(123) is None
+        assert _parse_datetime("bogus") is None
+
+    def test_cleanup_storage_swallows_errors(self):
+        """_cleanup_storage は backend.delete の例外を吸収して続行する。"""
+        from app.services.backup_restore import _cleanup_storage
+
+        deleted = []
+
+        class FlakyBackend:
+            def delete(self, k):
+                deleted.append(k)
+                if "boom" in k:
+                    raise IOError("disk gone")
+
+        backend = FlakyBackend()
+        # 例外を出さずに全 keys を試みること
+        _cleanup_storage(backend, ["ok-1.jpg", "boom-2.jpg", "ok-3.jpg"])
+        assert deleted == ["ok-1.jpg", "boom-2.jpg", "ok-3.jpg"]
 
 
 class TestBackupRestoreFailure:

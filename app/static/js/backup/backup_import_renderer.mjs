@@ -248,6 +248,7 @@ export async function runRestoreApply() {
   if (btn) btn.disabled = true;
   _setStatus("DB に書き戻しています… (数秒〜数十秒かかります)", "info");
 
+  let succeeded = false;
   try {
     // /api/v1 は CSRF 免除 + Web セッション認証 OK
     const resp = await fetch("/api/v1/backup/restore", {
@@ -263,14 +264,21 @@ export async function runRestoreApply() {
     }
     _renderRestoreResult(json.restored || {});
     _setStatus("リストアが完了しました。", "success");
-    // apply card は再実行を促さないよう disable
-    if (cb) cb.disabled = true;
+    succeeded = true;
   } catch (e) {
     _setStatus(
       "リストアに失敗しました: " + (e.message || e),
       "danger",
     );
   } finally {
-    if (btn) btn.disabled = false;
+    if (succeeded) {
+      // 成功時は二重実行を防ぐためチェック + ボタンを disable のまま保持
+      if (cb) cb.disabled = true;
+      // btn は disabled のまま放置 (再度走らせるならページ再読み込み)
+      _lastPreviewedBackup = null;
+    } else {
+      // 失敗時のみ再操作可能にする
+      if (btn) btn.disabled = false;
+    }
   }
 }
