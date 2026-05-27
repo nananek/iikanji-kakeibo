@@ -976,6 +976,47 @@ def _ai_config_to_backup_dict(cfg):
     }
 
 
+# --- 全データリストア (v5 BU-4b) ---
+
+
+@bp.route("/backup/restore", methods=["POST"])
+@auth_required(write=True, scope="backup:restore", allow_session=True)
+@limiter.limit("2 per hour", key_func=rate_limit_key)
+def backup_restore():
+    """全置換 restore (v5 BU-4b)。
+
+    リクエストボディに復号済み平文 backup JSON (GET /backup/export 形式) を
+    POST すると、本人の全関連データを delete してから INSERT で再構築する。
+    1 トランザクションでアトミック。
+
+    監査ユーザーは破壊的操作のため禁止。`backup:restore` scope が必要。
+    """
+    from app.services.backup_restore import (
+        BackupRestoreError,
+        BackupValidationError,
+        restore_user_backup,
+    )
+
+    if g.auth_user.user_type == "auditor":
+        return jsonify({"error": "監査アカウントはリストア対象外です。"}), 403
+
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify({"error": "JSON ボディが必要です。"}), 400
+
+    try:
+        result = restore_user_backup(g.auth_user.id, payload)
+    except BackupValidationError as ve:
+        return jsonify({"error": safe_user_error(ve)}), 400
+    except BackupRestoreError:
+        return jsonify({"error": "リストアに失敗しました。"}), 500
+    except Exception:
+        current_app.logger.exception("backup_restore unexpected error")
+        return jsonify({"error": "リストアに失敗しました。"}), 500
+
+    return jsonify({"ok": True, "restored": result}), 200
+
+
 # --- 仕訳閲覧 ---
 
 

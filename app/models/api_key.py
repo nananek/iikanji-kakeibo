@@ -8,7 +8,7 @@ KEY_PREFIX = "ik_"
 
 ALL_SCOPES = (
     "journals:create", "journals:read", "journals:delete",
-    "ai:analyze", "reports:read",
+    "ai:analyze", "reports:read", "backup:restore",
 )
 SCOPE_LABELS = {
     "journals:create": "仕訳起票",
@@ -16,6 +16,7 @@ SCOPE_LABELS = {
     "journals:delete": "仕訳削除",
     "ai:analyze": "AI証憑仕訳",
     "reports:read": "レポート閲覧",
+    "backup:restore": "バックアップ復元",
 }
 SCOPE_DEPENDENCIES = {"journals:delete": "journals:read"}
 
