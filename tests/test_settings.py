@@ -87,6 +87,11 @@ class TestBackupView:
         assert "全データバックアップ" in html
         # クライアント JS が読み込まれている
         assert "backup_export_renderer.mjs" in html
+        # BU-3: 形式選択ラジオ + パスフレーズ入力
+        assert 'name="backup-format"' in html
+        assert 'value="json"' in html
+        assert 'value="ikbackup"' in html
+        assert 'id="backup-passphrase"' in html
 
     def test_auditor_redirects_to_settings_index(self, app, client, auditor):
         with client.session_transaction() as sess:

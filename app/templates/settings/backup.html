@@ -6,32 +6,62 @@
 
 <div class="alert alert-info small">
   <i class="bi bi-info-circle"></i>
-  <strong>プレビュー機能 (BU-1):</strong>
-  仕訳・科目・医療費・月次確定・残高キャッシュを平文 JSON ファイルとして
-  ダウンロードします。暗号化アーカイブ (.ikbackup) 形式や、復元 (リストア)
-  機能は今後の PR で追加予定です。
+  <strong>プレビュー機能 (BU-3):</strong>
+  仕訳・科目・医療費・月次確定・残高キャッシュ・証憑画像・AI 下書き・各種設定
+  をローカルでダウンロードします。<strong>復元 (リストア) 機能は次の PR で追加予定です。</strong>
 </div>
 
 <div class="card shadow-sm mb-4">
   <div class="card-body">
     <h5 class="card-title mb-3">エクスポート対象</h5>
     <ul class="small mb-3">
-      <li>勘定科目 (accounts)</li>
-      <li>仕訳伝票・仕訳明細 (journal_entries, journal_entry_lines)</li>
-      <li>医療費 (medical_expenses)</li>
-      <li>月次確定 (fiscal_closes)</li>
-      <li>残高キャッシュ (balance_cache_blobs)</li>
+      <li>勘定科目 / 仕訳伝票・明細 / 医療費 / 月次確定 / 残高キャッシュ</li>
+      <li>証憑画像 (active のみ) / AI 下書き</li>
+      <li>AI 設定 (API キーは暗号文のまま) / Webhook / CSV プロファイル / 決算書マッピング</li>
+      <li class="text-muted">
+        除外: Passkey / API キー / OAuth トークン / 電帳法監査ログ
+        (復元時に再登録する想定)
+      </li>
     </ul>
     <p class="small text-muted mb-3">
       <i class="bi bi-shield-check"></i>
-      サーバは暗号文のまま返します。本ブラウザの暗号鍵 (MK) で復号して
-      平文 JSON を生成するので、サーバ管理者からは中身が見えません。
+      サーバは暗号文のまま返します。本ブラウザの暗号鍵 (MK) で復号してから
+      ファイル化するので、サーバ管理者からは中身が見えません。
     </p>
+
+    <div class="mb-3">
+      <label class="form-label fw-bold small mb-1">出力形式</label>
+      <div class="form-check">
+        <input class="form-check-input" type="radio" name="backup-format" id="backup-format-json" value="json" checked>
+        <label class="form-check-label small" for="backup-format-json">
+          <strong>平文 JSON</strong> (.json) — 中身が読めるが、保管場所の暗号化はユーザー責任
+        </label>
+      </div>
+      <div class="form-check">
+        <input class="form-check-input" type="radio" name="backup-format" id="backup-format-ikbackup" value="ikbackup">
+        <label class="form-check-label small" for="backup-format-ikbackup">
+          <strong>暗号化アーカイブ</strong> (.ikbackup) — パスフレーズ Argon2id + AES-256-GCM
+        </label>
+      </div>
+    </div>
+
+    <div class="mb-3">
+      <label for="backup-passphrase" class="form-label fw-bold small mb-1">
+        パスフレーズ <span class="text-muted">(.ikbackup 選択時のみ、8 文字以上)</span>
+      </label>
+      <input type="password" id="backup-passphrase" class="form-control form-control-sm"
+             autocomplete="new-password" minlength="8"
+             placeholder="災害時用の独立パスフレーズ (MK とは別)">
+      <div class="form-text small">
+        このパスフレーズを失うと .ikbackup は復元できません。MK と独立な
+        「災害時用の鍵」として、メモアプリ等で別管理してください。
+      </div>
+    </div>
 
     <div id="backup-status" class="alert alert-warning small d-none"></div>
 
     <button id="backup-export-btn" class="btn btn-primary">
-      <i class="bi bi-download"></i> 平文 JSON でダウンロード
+      <i class="bi bi-download"></i> ダウンロード
     </button>
   </div>
 </div>
