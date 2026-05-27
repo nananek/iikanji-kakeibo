@@ -53,8 +53,36 @@ async function _readAsArrayBuffer(file) {
 }
 
 
-function _summaryRow(label, n) {
-  return `<tr><td>${label}</td><td class="text-end">${n}</td></tr>`;
+function _clearChildren(el) {
+  while (el.firstChild) el.removeChild(el.firstChild);
+}
+
+
+// XSS 防止: ファイル由来の値を innerHTML で展開しない。textContent で構築する。
+function _appendMeta(container, label, value) {
+  const dt = document.createElement("dt");
+  dt.className = "col-sm-3";
+  dt.textContent = label;
+  const dd = document.createElement("dd");
+  dd.className = "col-sm-9";
+  const code = document.createElement("code");
+  code.textContent = String(value);
+  dd.appendChild(code);
+  container.appendChild(dt);
+  container.appendChild(dd);
+}
+
+
+function _appendSummaryRow(tbody, label, n) {
+  const tr = document.createElement("tr");
+  const td1 = document.createElement("td");
+  td1.textContent = label;
+  const td2 = document.createElement("td");
+  td2.className = "text-end";
+  td2.textContent = String(n);
+  tr.appendChild(td1);
+  tr.appendChild(td2);
+  tbody.appendChild(tr);
 }
 
 
@@ -65,17 +93,12 @@ function _renderSummary(backup) {
   const tbodyEl = document.getElementById("restore-summary-tbody");
   if (!cardEl || !metaEl || !tbodyEl) return;
 
-  metaEl.innerHTML = "";
-  if (backup.version) {
-    metaEl.innerHTML += `<dt class="col-sm-3">version</dt><dd class="col-sm-9"><code>${backup.version}</code></dd>`;
-  }
-  if (backup.exported_at) {
-    metaEl.innerHTML += `<dt class="col-sm-3">exported_at</dt><dd class="col-sm-9"><code>${backup.exported_at}</code></dd>`;
-  }
-  if (backup.user_id != null) {
-    metaEl.innerHTML += `<dt class="col-sm-3">user_id</dt><dd class="col-sm-9"><code>${backup.user_id}</code></dd>`;
-  }
+  _clearChildren(metaEl);
+  if (backup.version != null) _appendMeta(metaEl, "version", backup.version);
+  if (backup.exported_at != null) _appendMeta(metaEl, "exported_at", backup.exported_at);
+  if (backup.user_id != null) _appendMeta(metaEl, "user_id", backup.user_id);
 
+  _clearChildren(tbodyEl);
   const tables = [
     ["accounts", "勘定科目"],
     ["fiscal_closes", "月次確定"],
@@ -89,13 +112,11 @@ function _renderSummary(backup) {
     ["tax_form_mappings", "決算書マッピング"],
     ["csv_column_profiles", "CSV プロファイル"],
   ];
-  tbodyEl.innerHTML = tables.map(
-    ([key, label]) => _summaryRow(label, (data[key] || []).length),
-  ).join("");
+  for (const [key, label] of tables) {
+    _appendSummaryRow(tbodyEl, label, (data[key] || []).length);
+  }
   // user_ai_config は 0 or 1
-  tbodyEl.innerHTML += _summaryRow(
-    "AI 設定", data.user_ai_config != null ? 1 : 0,
-  );
+  _appendSummaryRow(tbodyEl, "AI 設定", data.user_ai_config != null ? 1 : 0);
 
   cardEl.classList.remove("d-none");
 }
