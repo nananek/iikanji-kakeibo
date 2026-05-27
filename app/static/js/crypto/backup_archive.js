@@ -35,6 +35,20 @@ const VERSION = 0x01;
 const HEADER_LEN = 60;
 const SALT_LEN = 16;
 const IV_LEN = 12;
+// UI と独立して関数レベルで minimum を保証 (BU-4 restore で重要)。
+const PASSPHRASE_MIN_LEN = 8;
+
+
+function _assertPassphrase(passphrase) {
+  if (typeof passphrase !== "string") {
+    throw new TypeError("passphrase must be a string");
+  }
+  if (passphrase.length < PASSPHRASE_MIN_LEN) {
+    throw new TypeError(
+      `passphrase must be at least ${PASSPHRASE_MIN_LEN} characters`,
+    );
+  }
+}
 
 
 function _u32BE(view, offset, value) {
@@ -134,9 +148,7 @@ export async function encryptBackupArchive(plaintext, passphrase, opts = {}) {
   if (!(plaintext instanceof Uint8Array)) {
     throw new TypeError("plaintext must be a Uint8Array");
   }
-  if (typeof passphrase !== "string" || passphrase.length === 0) {
-    throw new TypeError("passphrase must be non-empty string");
-  }
+  _assertPassphrase(passphrase);
   const params = { ...ARGON2ID_DEFAULTS, ...(opts.argon2Params ?? {}) };
 
   const salt = crypto.getRandomValues(new Uint8Array(SALT_LEN));
@@ -188,9 +200,7 @@ export async function encryptBackupArchive(plaintext, passphrase, opts = {}) {
  * @returns {Promise<Uint8Array>}  復号された平文
  */
 export async function decryptBackupArchive(archive, passphrase, opts = {}) {
-  if (typeof passphrase !== "string" || passphrase.length === 0) {
-    throw new TypeError("passphrase must be non-empty string");
-  }
+  _assertPassphrase(passphrase);
   const parsed = _parseHeader(archive);
   const derived = await deriveKeyFromPassphrase(
     passphrase, parsed.salt,

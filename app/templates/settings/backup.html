@@ -50,13 +50,32 @@
         パスフレーズ <span class="text-muted">(.ikbackup 選択時のみ、8 文字以上)</span>
       </label>
       <input type="password" id="backup-passphrase" class="form-control form-control-sm"
-             autocomplete="new-password" minlength="8"
+             autocomplete="new-password" minlength="8" disabled
              placeholder="災害時用の独立パスフレーズ (MK とは別)">
       <div class="form-text small">
         このパスフレーズを失うと .ikbackup は復元できません。MK と独立な
         「災害時用の鍵」として、メモアプリ等で別管理してください。
       </div>
     </div>
+
+    <script>
+      // 形式ラジオが変わったらパスフレーズ入力を enable/disable する
+      (function() {
+        function sync() {
+          const fmt = document.querySelector('input[name="backup-format"]:checked');
+          const pp = document.getElementById("backup-passphrase");
+          if (!fmt || !pp) return;
+          const isIkbackup = fmt.value === "ikbackup";
+          pp.disabled = !isIkbackup;
+          pp.required = isIkbackup;
+          if (!isIkbackup) pp.value = "";  // 平文選択に戻したらクリア
+        }
+        document.querySelectorAll('input[name="backup-format"]').forEach(
+          (r) => r.addEventListener("change", sync),
+        );
+        sync();
+      })();
+    </script>
 
     <div id="backup-status" class="alert alert-warning small d-none"></div>
 
