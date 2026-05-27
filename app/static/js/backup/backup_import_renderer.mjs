@@ -173,14 +173,101 @@ export async function runRestorePreview() {
     }
 
     _renderSummary(backup);
+    _lastPreviewedBackup = backup;
+    // apply card を表示 (チェックボックスはユーザが付け直すまで未確認のまま)
+    const applyCard = document.getElementById("restore-apply-card");
+    if (applyCard) applyCard.classList.remove("d-none");
+    const cb = document.getElementById("restore-apply-confirm");
+    if (cb) cb.checked = false;
+    const applyBtn = document.getElementById("restore-apply-btn");
+    if (applyBtn) applyBtn.disabled = true;
+
     _setStatus(
       `読み込み完了 (version=${backup.version ?? "?"})。` +
-      "DB への書き戻しは次の PR で対応予定です。",
+      "下のカードで「全置換して復元する」を押すと DB が書き戻されます。",
       "success",
     );
   } catch (e) {
+    _lastPreviewedBackup = null;
     _setStatus(
       "プレビューに失敗しました: " + (e.message || e),
+      "danger",
+    );
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+
+// preview した最後の backup (apply で使う)
+let _lastPreviewedBackup = null;
+
+
+function _clearChildren(el) {
+  while (el.firstChild) el.removeChild(el.firstChild);
+}
+
+
+function _renderRestoreResult(restored) {
+  const card = document.getElementById("restore-result-card");
+  const dl = document.getElementById("restore-result-counts");
+  if (!card || !dl) return;
+  _clearChildren(dl);
+  const tables = (restored && restored.tables) || {};
+  for (const [k, v] of Object.entries(tables)) {
+    const dt = document.createElement("dt");
+    dt.className = "col-sm-5";
+    dt.textContent = k;
+    const dd = document.createElement("dd");
+    dd.className = "col-sm-7";
+    dd.textContent = String(v);
+    dl.appendChild(dt);
+    dl.appendChild(dd);
+  }
+  card.classList.remove("d-none");
+}
+
+
+export async function runRestoreApply() {
+  if (!_lastPreviewedBackup) {
+    _setStatus("先に preview を実行してください。", "warning");
+    return;
+  }
+  const cb = document.getElementById("restore-apply-confirm");
+  if (!cb || !cb.checked) {
+    _setStatus("同意チェックが必要です。", "warning");
+    return;
+  }
+  if (!window.confirm(
+    "既存データが全て削除され、バックアップ内容で置き換えられます。実行しますか?"
+  )) {
+    return;
+  }
+
+  const btn = document.getElementById("restore-apply-btn");
+  if (btn) btn.disabled = true;
+  _setStatus("DB に書き戻しています… (数秒〜数十秒かかります)", "info");
+
+  try {
+    // /api/v1 は CSRF 免除 + Web セッション認証 OK
+    const resp = await fetch("/api/v1/backup/restore", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "same-origin",
+      body: JSON.stringify(_lastPreviewedBackup),
+    });
+    let json = {};
+    try { json = await resp.json(); } catch (_e) { /* ignore */ }
+    if (!resp.ok) {
+      throw new Error(json.error || `HTTP ${resp.status}`);
+    }
+    _renderRestoreResult(json.restored || {});
+    _setStatus("リストアが完了しました。", "success");
+    // apply card は再実行を促さないよう disable
+    if (cb) cb.disabled = true;
+  } catch (e) {
+    _setStatus(
+      "リストアに失敗しました: " + (e.message || e),
       "danger",
     );
   } finally {

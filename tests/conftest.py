@@ -171,7 +171,7 @@ def api_key_raw(db, user):
         name="テスト用キー",
         key_hash=key_hash,
         key_prefix=key_prefix,
-        scopes="journals:create,journals:read,journals:delete,ai:analyze,reports:read",
+        scopes="journals:create,journals:read,journals:delete,ai:analyze,reports:read,backup:restore",
         is_active=True,
     )
     db.session.add(key)
@@ -187,6 +187,30 @@ def _auth_header(raw_key):
 def auth_header(api_key_raw):
     raw_key, _ = api_key_raw
     return _auth_header(raw_key)
+
+
+@pytest.fixture
+def backup_skeleton(user):
+    """空ユーザ用の最小 backup dict (BU-4b restore テスト用ベース)。"""
+    return {
+        "version": "1.0",
+        "exported_at": "2026-01-01T00:00:00+00:00",
+        "user_id": user.id,
+        "data": {
+            "accounts": [],
+            "fiscal_closes": [],
+            "journal_entries": [],
+            "journal_entry_lines": [],
+            "medical_expenses": [],
+            "balance_cache_blobs": [],
+            "vouchers": [],
+            "ai_drafts": [],
+            "user_ai_config": None,
+            "webhook_configs": [],
+            "tax_form_mappings": [],
+            "csv_column_profiles": [],
+        },
+    }
 
 
 # --- ヘルパー ---

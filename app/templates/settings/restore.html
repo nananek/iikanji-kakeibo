@@ -2,14 +2,13 @@
 {% block title %}全データリストア - いいかんじ™家計簿{% endblock %}
 
 {% block content %}
-<h2 class="mb-3"><i class="bi bi-upload"></i> 全データリストア (preview)</h2>
+<h2 class="mb-3"><i class="bi bi-upload"></i> 全データリストア</h2>
 
-<div class="alert alert-warning small">
-  <i class="bi bi-info-circle"></i>
-  <strong>プレビュー機能 (BU-4a):</strong>
-  ローカルのバックアップファイルを選択して内容を確認するだけのツールです。
-  <strong>まだ DB への書き戻し (実リストア) は実装されていません。</strong>
-  次の PR (BU-4b) で全置換書き込みを追加予定です。
+<div class="alert alert-danger small">
+  <i class="bi bi-exclamation-triangle"></i>
+  <strong>破壊的操作:</strong> リストアは「全置換」モードで動作し、
+  <strong>本人の既存データ全てが削除されてバックアップ内容で置き換えられます</strong>。
+  操作は取り消せません。実行前にもう一度バックアップを取ることを強く推奨します。
 </div>
 
 <div class="card shadow-sm mb-4">
@@ -57,10 +56,49 @@
       </thead>
       <tbody id="restore-summary-tbody"></tbody>
     </table>
-    <p class="small text-muted mb-0">
-      <i class="bi bi-info-circle"></i>
-      DB への書き戻し (実リストア) は次の PR で追加されます。
-    </p>
+  </div>
+</div>
+
+<div id="restore-apply-card" class="card shadow-sm border-danger mb-4 d-none">
+  <div class="card-body">
+    <h5 class="card-title text-danger">
+      <i class="bi bi-exclamation-triangle"></i> 全置換リストアの実行
+    </h5>
+    <div class="alert alert-danger small mb-3">
+      <strong>このユーザーの既存データ全て</strong>
+      (仕訳・出納帳・証憑画像・科目・確定情報・AI 設定・Webhook 設定・
+      CSV プロファイル等) が完全に削除され、上記のバックアップ内容で
+      置き換えられます。
+      <ul class="mb-0 mt-2">
+        <li>APIキー・OAuthトークン・Passkey は保持されます (再生成不要)</li>
+        <li>電帳法の証憑操作ログ (VoucherAuditLog) は保管対象のため触りません</li>
+        <li>失敗時は全 rollback され、部分復元は発生しません</li>
+      </ul>
+    </div>
+
+    <div class="form-check mb-3">
+      <input type="checkbox" id="restore-apply-confirm" class="form-check-input">
+      <label for="restore-apply-confirm" class="form-check-label small">
+        上記の警告を理解し、既存データの全置換に同意します
+      </label>
+    </div>
+
+    <button id="restore-apply-btn" class="btn btn-danger" disabled>
+      <i class="bi bi-trash"></i> 全置換して復元する
+    </button>
+  </div>
+</div>
+
+<div id="restore-result-card" class="card shadow-sm border-success mb-4 d-none">
+  <div class="card-body">
+    <h5 class="card-title text-success">
+      <i class="bi bi-check-circle"></i> リストア完了
+    </h5>
+    <p class="small text-muted mb-3">以下の件数が復元されました。</p>
+    <dl id="restore-result-counts" class="row small mb-3"></dl>
+    <a href="{{ url_for('dashboard.index') }}" class="btn btn-primary">
+      <i class="bi bi-house"></i> ダッシュボードへ
+    </a>
   </div>
 </div>
 
@@ -91,10 +129,24 @@
 <script type="module">
   const sr = JSON.parse(document.getElementById("restore-static-root").textContent);
   globalThis.IIKANJI_STATIC_ROOT = sr.static_root;
-  const { runRestorePreview } = await import(sr.static_root + "js/backup/backup_import_renderer.mjs");
+  const { runRestorePreview, runRestoreApply } = await import(
+    sr.static_root + "js/backup/backup_import_renderer.mjs"
+  );
 
   document.getElementById("restore-preview-btn").addEventListener(
     "click", () => runRestorePreview(),
   );
+  document.getElementById("restore-apply-btn").addEventListener(
+    "click", () => runRestoreApply(),
+  );
+
+  // 同意チェックで apply ボタンを enable
+  const cb = document.getElementById("restore-apply-confirm");
+  const applyBtn = document.getElementById("restore-apply-btn");
+  if (cb && applyBtn) {
+    cb.addEventListener("change", () => {
+      applyBtn.disabled = !cb.checked;
+    });
+  }
 </script>
 {% endblock %}
