@@ -7,7 +7,7 @@ const M = new URL(
   "../../../app/static/js/crypto/entries_builder.js",
   import.meta.url,
 );
-const { buildCashbookEntry, buildTransferEntry } = await import(M.href);
+const { buildCashbookEntry, buildJournalEntry, buildTransferEntry } = await import(M.href);
 
 const REC = new URL(
   "../../../app/static/js/crypto/record.js",
@@ -387,6 +387,178 @@ test("不正な日付 (fiscal_year 抽出失敗) で TypeError", async () => {
     }),
     /cannot derive fiscal_year/,
   );
+});
+
+
+// --- buildJournalEntry (E3-F PR-B2) ---
+
+
+test("journal: 2 行の balanced lines をそのまま受け取り平文 entry を返す", () => {
+  const e = buildJournalEntry({
+    date: "2026-02-15",
+    description: "テスト仕訳",
+    lines: [
+      { account_code: "5010", debit: 1000, credit: 0, description: "" },
+      { account_code: "1010", debit: 0, credit: 1000, description: "" },
+    ],
+  });
+  assert.equal(e.date, "2026-02-15");
+  assert.equal(e.description, "テスト仕訳");
+  assert.equal(e.source, "journal");
+  assert.equal(e.fiscal_period, null);
+  assert.deepEqual(e.lines, [
+    { account_code: "5010", debit: 1000, credit: 0, description: "" },
+    { account_code: "1010", debit: 0, credit: 1000, description: "" },
+  ]);
+});
+
+test("journal: 3 行以上の lines もサポート (複合仕訳)", () => {
+  const e = buildJournalEntry({
+    date: "2026-02-15", description: "x",
+    lines: [
+      { account_code: "5010", debit: 700, credit: 0 },
+      { account_code: "5020", debit: 300, credit: 0 },
+      { account_code: "1010", debit: 0, credit: 1000 },
+    ],
+  });
+  assert.equal(e.lines.length, 3);
+  assert.equal(e.lines[1].account_code, "5020");
+});
+
+test("journal: 貸借不一致で TypeError", () => {
+  assert.throws(() => buildJournalEntry({
+    date: "2026-02-15", description: "x",
+    lines: [
+      { account_code: "5010", debit: 1000, credit: 0 },
+      { account_code: "1010", debit: 0, credit: 500 },
+    ],
+  }), /unbalanced/);
+});
+
+test("journal: lines が空 / 1 行で TypeError", () => {
+  assert.throws(() => buildJournalEntry({
+    date: "2026-02-15", description: "x", lines: [],
+  }), /length >= 2/);
+  assert.throws(() => buildJournalEntry({
+    date: "2026-02-15", description: "x",
+    lines: [{ account_code: "5010", debit: 100, credit: 0 }],
+  }), /length >= 2/);
+});
+
+test("journal: debit/credit 両方非ゼロは TypeError (片側のみ原則)", () => {
+  assert.throws(() => buildJournalEntry({
+    date: "2026-02-15", description: "x",
+    lines: [
+      { account_code: "5010", debit: 100, credit: 50 },
+      { account_code: "1010", debit: 0, credit: 50 },
+    ],
+  }), /exactly one of debit\/credit/);
+});
+
+test("journal: debit/credit 両方 0 は TypeError (空行)", () => {
+  assert.throws(() => buildJournalEntry({
+    date: "2026-02-15", description: "x",
+    lines: [
+      { account_code: "5010", debit: 0, credit: 0 },
+      { account_code: "1010", debit: 0, credit: 0 },
+    ],
+  }), /exactly one of debit\/credit/);
+});
+
+test("journal: account_code 欠落で TypeError", () => {
+  assert.throws(() => buildJournalEntry({
+    date: "2026-02-15", description: "x",
+    lines: [
+      { account_code: "", debit: 1000, credit: 0 },
+      { account_code: "1010", debit: 0, credit: 1000 },
+    ],
+  }), /account_code/);
+});
+
+test("journal: 負値の debit/credit で TypeError", () => {
+  assert.throws(() => buildJournalEntry({
+    date: "2026-02-15", description: "x",
+    lines: [
+      { account_code: "5010", debit: -100, credit: 0 },
+      { account_code: "1010", debit: 0, credit: -100 },
+    ],
+  }), /non-negative integer/);
+});
+
+test("journal: float の debit/credit で TypeError", () => {
+  assert.throws(() => buildJournalEntry({
+    date: "2026-02-15", description: "x",
+    lines: [
+      { account_code: "5010", debit: 100.5, credit: 0 },
+      { account_code: "1010", debit: 0, credit: 100 },
+    ],
+  }), /non-negative integer/);
+});
+
+test("journal: source / fiscalPeriod 上書き", () => {
+  const e = buildJournalEntry({
+    date: "2026-02-15", description: "x",
+    lines: [
+      { account_code: "5010", debit: 100, credit: 0 },
+      { account_code: "1010", debit: 0, credit: 100 },
+    ],
+    source: "ai_receipt",
+    fiscalPeriod: 0,
+  });
+  assert.equal(e.source, "ai_receipt");
+  assert.equal(e.fiscal_period, 0);
+});
+
+test("journal: fiscalPeriod=16 (損益振替) で TypeError", () => {
+  assert.throws(() => buildJournalEntry({
+    date: "2026-02-15", description: "x",
+    lines: [
+      { account_code: "5010", debit: 100, credit: 0 },
+      { account_code: "1010", debit: 0, credit: 100 },
+    ],
+    fiscalPeriod: 16,
+  }), TypeError);
+});
+
+test("journal: client + userId 指定で encrypted_blob / blob_iv / fiscal_year が付く", async () => {
+  const client = makeMockClient();
+  const userId = 5;
+  const e = await buildJournalEntry({
+    client, userId,
+    date: "2026-02-15", description: "暗号化仕訳",
+    lines: [
+      { account_code: "5010", debit: 1000, credit: 0 },
+      { account_code: "1010", debit: 0, credit: 1000 },
+    ],
+  });
+  assert.equal(e.fiscal_year, 2026);
+  assert.ok(typeof e.encrypted_blob === "string" && e.encrypted_blob.length > 0);
+  assert.ok(typeof e.blob_iv === "string" && e.blob_iv.length > 0);
+  for (const line of e.lines) {
+    assert.ok(typeof line.encrypted_blob === "string");
+    assert.ok(typeof line.blob_iv === "string");
+  }
+  // round-trip decrypt
+  const body = await decryptRecord(
+    client,
+    b64decode(e.encrypted_blob),
+    b64decode(e.blob_iv),
+    buildAAD("je", userId),
+  );
+  assert.equal(body.description, "暗号化仕訳");
+  assert.equal(body.source, "journal");
+});
+
+test("journal: client なしの場合は同期返却 (Promise でない)", () => {
+  const e = buildJournalEntry({
+    date: "2026-02-15", description: "x",
+    lines: [
+      { account_code: "5010", debit: 100, credit: 0 },
+      { account_code: "1010", debit: 0, credit: 100 },
+    ],
+  });
+  assert.equal(typeof e.then, "undefined");
+  assert.equal(e.encrypted_blob, undefined);
 });
 
 

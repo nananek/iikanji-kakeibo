@@ -2,6 +2,11 @@
 
 API テストは test_api.py / test_journal_create_api.py で網羅済み。
 こちらはフォーム経由のフロー（new / edit / delete / bulk_delete / batches）を扱う。
+
+E3-F PR-B2 以降、new / edit は GET 専用。フォーム送信は JS が
+entries_builder.buildJournalEntry で暗号化して batch / PUT API に投げる経路に
+移行した (test_api.py::TestCreateJournalsBatch / TestUpdateJournal で網羅)。
+旧 POST テストは 405 期待 1 件に集約する。
 """
 
 import json
@@ -10,24 +15,6 @@ from datetime import date
 from app.models.fiscal import FiscalClose
 from app.models.journal import JournalEntry
 from tests.conftest import make_journal
-
-
-def _post_journal(client, *, date_str="2026-02-15",
-                  description="テスト",
-                  lines=None, fiscal_period=""):
-    if lines is None:
-        lines = [
-            {"account_code": "5010", "debit_amount": 1000, "credit_amount": 0,
-             "description": ""},
-            {"account_code": "1010", "debit_amount": 0, "credit_amount": 1000,
-             "description": ""},
-        ]
-    return client.post("/journal/new", data={
-        "date": date_str,
-        "description": description,
-        "fiscal_period": fiscal_period,
-        "lines_json": json.dumps(lines),
-    })
 
 
 class TestIndex:
@@ -75,7 +62,7 @@ class TestIndex:
         assert "JAN" not in body
 
 
-class TestNew:
+class TestNewGet:
     def test_unauthenticated(self, client):
         resp = client.get("/journal/new")
         assert resp.status_code in (302, 401)
@@ -84,63 +71,26 @@ class TestNew:
         resp = logged_in_client.get("/journal/new")
         assert resp.status_code == 200
 
-    def test_create_balanced(self, db, logged_in_client, user, accounts):
-        resp = _post_journal(logged_in_client, description="新規")
-        assert resp.status_code in (302, 303)
-        entry = JournalEntry.query.filter_by(
-            user_id=user.id, source="journal"
-        ).first()
-        assert entry is not None
-        assert entry.description == "新規"
 
-    def test_create_with_no_lines_rejected(self, db, logged_in_client, user, accounts):
-        resp = _post_journal(logged_in_client, lines=[])
-        assert resp.status_code == 200
-        # 仕訳は作成されない
-        assert JournalEntry.query.filter_by(
-            user_id=user.id, source="journal"
-        ).count() == 0
+class TestNewPostRejected:
+    """E3-F PR-B2: journal.new は GET 専用。POST は 405 を返し、
+    平文 POST 経路でデータが書込まれないことを保証する。"""
 
-    def test_create_with_invalid_lines_json(self, db, logged_in_client, user, accounts):
+    def test_post_returns_405(self, db, logged_in_client, user, accounts):
         resp = logged_in_client.post("/journal/new", data={
             "date": "2026-02-15",
-            "description": "x",
+            "description": "平文 POST",
             "fiscal_period": "",
-            "lines_json": "not-json{",
+            "lines_json": json.dumps([
+                {"account_code": "5010", "debit_amount": 1000, "credit_amount": 0},
+                {"account_code": "1010", "debit_amount": 0, "credit_amount": 1000},
+            ]),
         })
-        assert resp.status_code == 200
+        assert resp.status_code == 405
+        # 仕訳は作成されていない (server-side 経路が無効化されている)
         assert JournalEntry.query.filter_by(
             user_id=user.id, source="journal"
         ).count() == 0
-
-    def test_create_unbalanced_rejected(self, db, logged_in_client, user, accounts):
-        resp = _post_journal(logged_in_client, lines=[
-            {"account_code": "5010", "debit_amount": 1000, "credit_amount": 0,
-             "description": ""},
-            {"account_code": "1010", "debit_amount": 0, "credit_amount": 500,
-             "description": ""},
-        ])
-        # 200 でフォーム再表示
-        assert resp.status_code == 200
-        # 仕訳は作成されない
-        assert JournalEntry.query.filter_by(
-            user_id=user.id, source="journal"
-        ).count() == 0
-
-    def test_create_in_locked_period_rejected(self, db, logged_in_client, user, accounts):
-        db.session.add(FiscalClose(user_id=user.id, year=2026, closed_period=2))
-        db.session.commit()
-        resp = _post_journal(logged_in_client, date_str="2026-02-15")
-        assert resp.status_code == 200
-        assert JournalEntry.query.filter_by(
-            user_id=user.id, source="journal"
-        ).count() == 0
-
-    def test_create_with_fiscal_period_16_blocked(self, db, logged_in_client, user, accounts):
-        resp = _post_journal(logged_in_client, fiscal_period="16")
-        # fiscal_period 16 (損益振替) は手動入力不可
-        # SelectField の choices に無いので validation で再表示 or エラー
-        assert resp.status_code in (200, 302)
 
 
 class TestEdit:
@@ -170,6 +120,23 @@ class TestEdit:
         entry = self._make_entry(db, user.id)
         resp = logged_in_client.get(f"/journal/{entry.id}/edit")
         assert resp.status_code == 200
+
+    def test_post_returns_405(self, db, logged_in_client, user, accounts):
+        """E3-F PR-B2: journal.edit は GET 専用。POST は 405 を返し、
+        平文 POST 経路で既存仕訳が書き換えられないことを保証する。"""
+        entry = self._make_entry(db, user.id)
+        resp = logged_in_client.post(f"/journal/{entry.id}/edit", data={
+            "date": "2026-02-20",
+            "description": "更新後",
+            "fiscal_period": "",
+            "lines_json": json.dumps([
+                {"account_code": "5010", "debit_amount": 2000, "credit_amount": 0},
+                {"account_code": "1010", "debit_amount": 0, "credit_amount": 2000},
+            ]),
+        })
+        assert resp.status_code == 405
+        db.session.refresh(entry)
+        assert entry.description == "ORIG"  # 元のまま
 
     def test_edit_blocked_by_closed_period(self, db, logged_in_client, user, accounts):
         entry = self._make_entry(db, user.id)

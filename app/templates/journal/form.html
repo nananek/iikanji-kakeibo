@@ -12,12 +12,23 @@
       var _existingLines = {{ existing_lines | tojson if existing_lines is defined else '[]' }};
       var _closedPeriods = {{ (closed_periods or {})|tojson }};
       var _restrictedBefore = {{ restricted_before_year|tojson }};
+      var _userId = {{ current_user.id|tojson }};
+      var _isProxyMode = {{ is_acting_as|tojson }};
+      var _isEdit = {{ is_edit|tojson }};
+      var _entryId = {{ (entry.id if is_edit else None)|tojson }};
     </script>
     <form method="POST" id="journalForm"
-          x-data="journalLines({ lines: _existingLines })"
-          @submit="serializeLines()">
+          x-data="journalLines({
+            lines: _existingLines,
+            submitConfig: {
+              isEdit: _isEdit,
+              entryId: _entryId,
+              userId: _userId,
+              isProxyMode: _isProxyMode
+            }
+          })"
+          @submit.prevent="submitJournalForm($event)">
       {{ form.hidden_tag() }}
-      <input type="hidden" name="lines_json" x-ref="linesJson">
 
       <div x-data="fiscalPeriodChecker({
         closedPeriods: _closedPeriods,
@@ -101,8 +112,8 @@
           <tfoot>
             <tr class="table-light">
               <th>合計</th>
-              <th class="text-end" x-text="'\u00a5' + totalDebit.toLocaleString()">0</th>
-              <th class="text-end" x-text="'\u00a5' + totalCredit.toLocaleString()">0</th>
+              <th class="text-end" x-text="'¥' + totalDebit.toLocaleString()">0</th>
+              <th class="text-end" x-text="'¥' + totalCredit.toLocaleString()">0</th>
               <th class="d-mobile-none"></th>
               <th></th>
             </tr>
@@ -124,7 +135,13 @@
 
       <hr>
       <div class="d-flex gap-2">
-        <button type="submit" class="btn btn-primary" :disabled="isBlocked || isUnbalanced">{{ '更新' if is_edit else '登録' }}</button>
+        <button type="submit" class="btn btn-primary"
+                :disabled="submitting || isBlocked || isUnbalanced">
+          <template x-if="submitting">
+            <span class="spinner-border spinner-border-sm me-1" role="status"></span>
+          </template>
+          <span x-text="submitting ? '保存中...' : ('{{ '更新' if is_edit else '登録' }}')"></span>
+        </button>
         <a href="{{ url_for('journal.index') }}" class="btn btn-outline-secondary">キャンセル</a>
       </div>
       </div><!-- /x-data fiscalPeriodChecker -->

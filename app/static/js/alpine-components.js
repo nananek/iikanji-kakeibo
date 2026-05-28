@@ -297,17 +297,24 @@ document.addEventListener('alpine:init', function() {
   /**
    * 仕訳明細行: 動的行追加・削除、貸借合計、科目選択連携
    *
-   * 使い方:
+   * 使い方 (旧 form POST 経路, ai_journal/review.html 等):
    *   <form x-data="journalLines({ lines: [...], fullName: false })"
    *         @submit="serializeLines()">
    *     <input type="hidden" name="lines_json" x-ref="linesJson">
    *     <template x-for="(line, index) in lines" :key="line._key"> ... </template>
+   *
+   * 使い方 (E3-F PR-B2: journal/form.html, JS submit + 暗号化経路):
+   *   <form x-data="journalLines({ lines: [...], submitConfig: {
+   *           isEdit, entryId, userId, isProxyMode } })"
+   *         @submit.prevent="submitJournalForm($event)">
+   *   submitConfig が指定された場合のみ submitJournalForm が動作する。
    */
   Alpine.data('journalLines', function(config) {
     var _keyCounter = 0;
 
     return {
       lines: [],
+      submitting: false,
       get totalDebit() {
         var sum = 0;
         for (var i = 0; i < this.lines.length; i++) sum += parseInt(this.lines[i].debit_amount) || 0;
@@ -380,6 +387,51 @@ document.addEventListener('alpine:init', function() {
           }
         }
         this.$refs.linesJson.value = JSON.stringify(result);
+      },
+
+      // E3-F PR-B2: journal/form.html 用の JS submit。
+      // config.submitConfig が指定された時のみ動作する。is_proprietor 行は除外
+      // (Lv2 監査用の集約行で、サーバ側に送るとそもそも科目が存在しないため)。
+      async submitJournalForm(event) {
+        var sc = config && config.submitConfig;
+        if (!sc) return;
+        if (this.submitting) return;
+        if (sc.isProxyMode) {
+          alert('代理閲覧モードでは保存できません。本人アカウントで実行してください。');
+          return;
+        }
+        var formEl = event && event.target;
+        if (!formEl) return;
+        var dateEl = formEl.querySelector('input[name=date]');
+        var fpEl = formEl.querySelector('select[name=fiscal_period]');
+        var descEl = formEl.querySelector('input[name=description], textarea[name=description]');
+        var fp = (fpEl && fpEl.value !== '') ? parseInt(fpEl.value, 10) : null;
+        var sentLines = [];
+        for (var i = 0; i < this.lines.length; i++) {
+          var ln = this.lines[i];
+          if (ln.is_proprietor) continue;
+          sentLines.push({
+            account_code: ln.account_code,
+            debit_amount: parseInt(ln.debit_amount) || 0,
+            credit_amount: parseInt(ln.credit_amount) || 0,
+            description: ln.description || '',
+          });
+        }
+        this.submitting = true;
+        try {
+          await window.journalSubmitE2EE({
+            isEdit: sc.isEdit,
+            entryId: sc.entryId,
+            userId: sc.userId,
+            date: dateEl ? dateEl.value : '',
+            fiscalPeriod: fp,
+            description: descEl ? descEl.value : '',
+            lines: sentLines,
+          });
+        } catch (err) {
+          this.submitting = false;
+          alert('保存に失敗しました: ' + (err && err.message ? err.message : err));
+        }
       }
     };
   });
@@ -1465,6 +1517,90 @@ async function cashbookSubmitE2EE(opts) {
   }
 }
 window.cashbookSubmitE2EE = cashbookSubmitE2EE;
+
+
+// journal/form.html (新規 + 編集) から呼ばれる E2EE submit。
+//
+// 仕訳帳 form を JS submit に乗っ取り、N 行可変の lines を entries_builder で
+// 暗号化して batch API (新規: POST /api/v1/journals/batch) / PUT API (編集:
+// PUT /api/v1/journals/<id>) に送る (E3-F PR-B2)。サーバ側 view (journal.new
+// / journal.edit) は GET 専用で平文 POST は受け付けない。
+//
+// opts:
+//   isEdit, entryId, userId, date, fiscalPeriod, description, lines
+//   lines: [{account_code, debit_amount, credit_amount, description}, ...]
+async function journalSubmitE2EE(opts) {
+  var sharedClientMod = await import("/static/js/crypto/shared-client.js");
+  var sharedClient = new sharedClientMod.SharedCryptoClient(
+    "/static/js/crypto/shared-worker.js",
+  );
+  try {
+    var status = await sharedClient.status();
+    if (!status.hasKey) {
+      throw new Error("MK ロック中です (設定 → 暗号鍵管理 で解除)");
+    }
+    var builderMod = await import("/static/js/crypto/entries_builder.js");
+    // serializeLines と同等の正規化: account_code が空 / 両方 0 の行を除外し、
+    // form のキー名 (debit_amount/credit_amount) を builder API (debit/credit)
+    // に揃える。buildJournalEntry 側でも貸借一致 assert を行う。
+    var normalizedLines = [];
+    for (var i = 0; i < (opts.lines || []).length; i++) {
+      var ln = opts.lines[i];
+      var debit = parseInt(ln.debit_amount, 10) || 0;
+      var credit = parseInt(ln.credit_amount, 10) || 0;
+      if (!ln.account_code) continue;
+      if (debit === 0 && credit === 0) continue;
+      normalizedLines.push({
+        account_code: ln.account_code,
+        debit: debit,
+        credit: credit,
+        description: ln.description || "",
+      });
+    }
+    if (normalizedLines.length < 2) {
+      throw new Error("仕訳明細を 2 行以上入力してください。");
+    }
+    var entry = await builderMod.buildJournalEntry({
+      client: sharedClient,
+      userId: opts.userId,
+      date: opts.date,
+      description: opts.description || "",
+      lines: normalizedLines,
+      source: "journal",
+      fiscalPeriod: opts.fiscalPeriod,
+    });
+    var csrfMeta = document.querySelector('meta[name="csrf-token"]');
+    var csrfToken = csrfMeta ? csrfMeta.getAttribute("content") : "";
+    var url = opts.isEdit
+      ? "/api/v1/journals/" + opts.entryId
+      : "/api/v1/journals/batch";
+    var method = opts.isEdit ? "PUT" : "POST";
+    var body = opts.isEdit ? entry : { entries: [entry] };
+    var res = await fetch(url, {
+      method: method,
+      credentials: "include",
+      headers: {
+        "Content-Type": "application/json",
+        "X-CSRFToken": csrfToken,
+      },
+      body: JSON.stringify(body),
+    });
+    var rb = await res.json().catch(function() { return {}; });
+    if (!res.ok) {
+      throw new Error(rb.error || ("HTTP " + res.status));
+    }
+    try {
+      sessionStorage.setItem(
+        "flash:success",
+        opts.isEdit ? "伝票を更新しました。" : "伝票を登録しました。",
+      );
+    } catch (_e) { /* ignore */ }
+    window.location.href = "/journal/";
+  } finally {
+    try { sharedClient.close(); } catch (_e) { /* ignore */ }
+  }
+}
+window.journalSubmitE2EE = journalSubmitE2EE;
 
 
 // reconcileMode.runAiReconcile から呼ばれる E2EE フロー。

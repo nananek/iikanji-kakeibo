@@ -131,60 +131,15 @@ class TestJournalEditApiLv2:
         assert resp.status_code == 200
 
 
-class TestJournalEditPostLv2:
-    """ブラウザフォーム経由の edit POST (Lv2)"""
+class TestJournalEditPostLv2Removed:
+    """E3-F PR-B2 で /journal/<id>/edit は GET 専用化された。
 
-    def test_unbalanced_rejected(self, lv2_setup, mixed_journal, client):
+    Lv2 の編集経路はモーダル経由の /journal/<id>/edit-api (TestJournalEditApiLv2)
+    が引き続き本流。form POST が 405 を返すことを担保する。"""
+
+    def test_post_returns_405(self, lv2_setup, mixed_journal, client):
         resp = client.post(f"/journal/{mixed_journal.id}/edit", data={
             "date": "2026-02-15",
-            "description": "x",
-            "fiscal_period": "",
-            "lines_json": json.dumps([
-                {"account_code": "5010", "debit_amount": 500, "credit_amount": 0},
-                {"account_code": "1010", "debit_amount": 0, "credit_amount": 100},
-            ]),
-        })
-        assert resp.status_code == 200  # form 再表示
-
-    def test_balanced_update(self, lv2_setup, mixed_journal, client, db):
-        resp = client.post(f"/journal/{mixed_journal.id}/edit", data={
-            "date": "2026-02-15",
-            "description": "Lv2フォーム更新",
-            "fiscal_period": "",
-            "lines_json": json.dumps([
-                {"account_code": "5010", "debit_amount": 1000, "credit_amount": 0},
-                {"account_code": "1010", "debit_amount": 0, "credit_amount": 1200},
-            ]),
-        })
-        assert resp.status_code in (302, 303)
-        e = db.session.get(JournalEntry, mixed_journal.id)
-        assert e.description == "Lv2フォーム更新"
-        # 非公開行 (5020) はそのまま
-        assert any(l.account_code == "5020" for l in e.lines)
-
-    def test_fiscal_period_16_blocked(self, lv2_setup, mixed_journal, client):
-        # 監査ユーザーの settings.fiscal はもともとブロックされるが、
-        # edit form で fiscal_period=16 を渡すケースも明示的にブロック
-        # 実際には JournalForm の SelectField choices に 16 はないので validate fail
-        # ここでは form 再表示を確認
-        resp = client.post(f"/journal/{mixed_journal.id}/edit", data={
-            "date": "2026-02-15",
-            "description": "x",
-            "fiscal_period": "16",
-            "lines_json": json.dumps([
-                {"account_code": "5010", "debit_amount": 1000, "credit_amount": 0},
-                {"account_code": "1010", "debit_amount": 0, "credit_amount": 1200},
-            ]),
-        })
-        assert resp.status_code in (200, 302)
-
-    def test_locked_period_target_rejected(self, lv2_setup, mixed_journal, client, db):
-        from app.models.fiscal import FiscalClose
-        # 2026-03 を確定 → 03 への変更を試す
-        db.session.add(FiscalClose(user_id=mixed_journal.user_id, year=2026, closed_period=3))
-        db.session.commit()
-        resp = client.post(f"/journal/{mixed_journal.id}/edit", data={
-            "date": "2026-03-15",
             "description": "x",
             "fiscal_period": "",
             "lines_json": json.dumps([
@@ -192,9 +147,7 @@ class TestJournalEditPostLv2:
                 {"account_code": "1010", "debit_amount": 0, "credit_amount": 1200},
             ]),
         })
-        # entry_modifiable で先にブロック (元伝票は 2026-02 だが 2026-02 は確定済みではない)
-        # → check_period_open_for_new で 03 が確定済みとして弾かれる
-        assert resp.status_code in (200, 302, 303)
+        assert resp.status_code == 405
 
 
 # _send_draft_notification は POST /api/v1/ai/analyze 削除に伴い廃止済。

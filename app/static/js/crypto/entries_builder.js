@@ -232,6 +232,100 @@ export function buildCashbookEntry({
  * @param {number|null} [opts.fiscalPeriod=null]
  * @returns {Promise<Object>|Object}
  */
+/**
+ * 仕訳帳 (journal) の N 行可変 entry を生成する純粋関数。
+ *
+ * cashbook (固定 2 行) と違い、lines は呼出側で組み立て済みのものを受け取る。
+ * 貸借一致 (sum(debit) == sum(credit) > 0) を assert し、各 line は account_code
+ * 非空 + debit/credit が非負整数 + (debit > 0 XOR credit > 0) を満たすこと。
+ *
+ * E3-F PR-B2: journal/form.html の form POST を撤去し、JS submit + 暗号化経路に
+ * 移行する際の共通 entry builder。
+ *
+ * @param {Object} opts
+ * @param {Object} [opts.client]              SharedCryptoClient
+ * @param {number|bigint} [opts.userId]
+ * @param {string} opts.date                  ISO YYYY-MM-DD
+ * @param {string} [opts.description=""]
+ * @param {Array<{account_code: string, debit: number, credit: number, description?: string}>} opts.lines
+ * @param {string} [opts.source="journal"]
+ * @param {number|null} [opts.fiscalPeriod=null]
+ * @returns {Promise<Object>|Object}
+ */
+export function buildJournalEntry({
+  client,
+  userId,
+  date,
+  description = "",
+  lines,
+  source = "journal",
+  fiscalPeriod = null,
+}) {
+  _assertNonEmptyString(date, "date");
+  _assertFiscalPeriod(fiscalPeriod);
+  if (!Array.isArray(lines) || lines.length < 2) {
+    throw new TypeError("lines must be an array of length >= 2");
+  }
+
+  let totalDebit = 0;
+  let totalCredit = 0;
+  const normalizedLines = [];
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (line === null || typeof line !== "object") {
+      throw new TypeError(`lines[${i}] must be an object`);
+    }
+    _assertNonEmptyString(line.account_code, `lines[${i}].account_code`);
+    const debit = line.debit ?? 0;
+    const credit = line.credit ?? 0;
+    if (!Number.isInteger(debit) || debit < 0) {
+      throw new TypeError(`lines[${i}].debit must be a non-negative integer`);
+    }
+    if (!Number.isInteger(credit) || credit < 0) {
+      throw new TypeError(`lines[${i}].credit must be a non-negative integer`);
+    }
+    if ((debit > 0) === (credit > 0)) {
+      // 両方 > 0 → 仕訳明細としては不正 (片側のみ非ゼロが原則)
+      // 両方 0 → serializeLines で除外されるはずだが防御的に弾く
+      throw new TypeError(
+        `lines[${i}]: exactly one of debit/credit must be > 0 ` +
+        `(got debit=${debit}, credit=${credit})`,
+      );
+    }
+    totalDebit += debit;
+    totalCredit += credit;
+    normalizedLines.push({
+      account_code: line.account_code,
+      debit,
+      credit,
+      description: line.description ?? "",
+    });
+  }
+  if (totalDebit !== totalCredit) {
+    throw new TypeError(
+      `unbalanced lines: debit=${totalDebit}, credit=${totalCredit}`,
+    );
+  }
+  if (totalDebit === 0) {
+    throw new TypeError("lines total must be > 0");
+  }
+
+  const entry = {
+    date,
+    description,
+    source,
+    fiscal_period: fiscalPeriod,
+    lines: normalizedLines,
+  };
+
+  if (client !== undefined && client !== null) {
+    _validateUserId(userId);
+    return _encryptEntry(client, userId, entry);
+  }
+  return entry;
+}
+
+
 export function buildTransferEntry({
   client,
   userId,

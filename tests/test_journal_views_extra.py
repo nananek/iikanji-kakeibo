@@ -1,84 +1,20 @@
 """仕訳帳ビューの追加テスト
 
 test_journal_views.py で扱った index/new/delete/bulk_delete に加えて、
-edit POST / get_json / edit_api / suggest_categories / ai_suggest_categories /
+get_json / edit_api / suggest_categories / ai_suggest_categories /
 delete_batch を網羅。
+
+E3-F PR-B2 以降、フォーム POST (edit) は廃止 (test_journal_views.py で 405 を担保)。
+更新の本流は PUT /api/v1/journals/<id> (test_api.py::TestUpdateJournal) と
+モーダル経由の /journal/<id>/edit-api (TestEditApi、本ファイル) の 2 経路。
 """
 
-import json
 from datetime import date
 from unittest.mock import patch
 
 from app.models.fiscal import FiscalClose
 from app.models.journal import JournalEntry, JournalEntryLine
 from tests.conftest import make_journal
-
-
-def _post_edit(client, entry_id, *, date_str="2026-02-15",
-               description="更新後", lines=None, fiscal_period=""):
-    if lines is None:
-        lines = [
-            {"account_code": "5010", "debit_amount": 2000, "credit_amount": 0,
-             "description": ""},
-            {"account_code": "1010", "debit_amount": 0, "credit_amount": 2000,
-             "description": ""},
-        ]
-    return client.post(f"/journal/{entry_id}/edit", data={
-        "date": date_str,
-        "description": description,
-        "fiscal_period": fiscal_period,
-        "lines_json": json.dumps(lines),
-    })
-
-
-class TestEditPost:
-    def _make_entry(self, db, user_id):
-        return make_journal(db, user_id, "5010", "1010", 1000,
-                            entry_date=date(2026, 2, 15),
-                            source="journal", description="ORIG")
-
-    def test_post_updates(self, db, logged_in_client, user, accounts):
-        entry = self._make_entry(db, user.id)
-        resp = _post_edit(logged_in_client, entry.id, description="UPDATED")
-        assert resp.status_code in (302, 303)
-        db.session.refresh(entry)
-        assert entry.description == "UPDATED"
-
-    def test_unbalanced_rejected(self, db, logged_in_client, user, accounts):
-        entry = self._make_entry(db, user.id)
-        resp = _post_edit(logged_in_client, entry.id, lines=[
-            {"account_code": "5010", "debit_amount": 1000, "credit_amount": 0,
-             "description": ""},
-            {"account_code": "1010", "debit_amount": 0, "credit_amount": 500,
-             "description": ""},
-        ])
-        # 200 でフォーム再表示
-        assert resp.status_code == 200
-
-    def test_post_invalid_lines_json(self, db, logged_in_client, user, accounts):
-        entry = self._make_entry(db, user.id)
-        resp = logged_in_client.post(f"/journal/{entry.id}/edit", data={
-            "date": "2026-02-15",
-            "description": "x",
-            "fiscal_period": "",
-            "lines_json": "not-json{",
-        })
-        assert resp.status_code == 200
-
-    def test_post_fiscal_period_16_blocked(self, db, logged_in_client, user, accounts):
-        entry = self._make_entry(db, user.id)
-        resp = _post_edit(logged_in_client, entry.id, fiscal_period="16")
-        # 損益振替は手動入力不可。SelectField の choices に無いので validate fail or block
-        assert resp.status_code in (200, 302)
-
-    def test_post_locked_target_period_rejected(self, db, logged_in_client, user, accounts):
-        entry = self._make_entry(db, user.id)
-        # 2026-03 を確定済みにする → 03 への移動を試す
-        db.session.add(FiscalClose(user_id=user.id, year=2026, closed_period=3))
-        db.session.commit()
-        # 03 に移動しようとすると edit ハンドラ自身がリダイレクト (entry_modifiable で弾かれる)
-        resp = _post_edit(logged_in_client, entry.id, date_str="2026-03-15")
-        assert resp.status_code in (200, 302, 303)
 
 
 class TestGetJson:
