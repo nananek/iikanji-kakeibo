@@ -1,8 +1,19 @@
 // Phase E3: 仕訳 / 仕訳明細 / 医療費の record-level 暗号化 helper。
 //
 // 1 レコード = 1 JSON 暗号文 (JSON-then-encrypt) パターン。AAD には
-// テーブル種別 + user_id + 識別 ID を big-endian で連結し、サーバが BLOB を
-// 別ユーザー / 別行にすり替えても復号失敗で検出する。
+// テーブル種別 + user_id を big-endian で連結する (Option B、§12.2 設計判断)。
+//
+// AAD swap 攻撃の検知能力:
+//   - 異テーブル間 (je vs jel vs me) ですり替えても tableType プレフィックスで検知
+//   - 異ユーザー間ですり替えても user_id で検知
+//   - **同一ユーザー / 同一テーブル内の entry-to-entry swap は検知しない** (Option B)
+//
+// Option B トレードオフ:
+//   - 新規 POST 時に entry_id が未確定でも AAD を構築できる (1 RTT)
+//   - swap 攻撃はサーバ侵害が前提で、その時点で他の攻撃ベクターも開いている
+//
+// balance_cache_blobs (`bcb`) は (year, period) で論理 ID が決まる特殊例で、
+// クライアントが PUT 時に (year, period) を知っているため AAD に含める。
 //
 // 設計書 §12.2 (AAD フォーマット) 参照。
 
@@ -51,11 +62,14 @@ const NUL = TEXT_ENC.encode("\0");
 
 // テーブル種別ごとの ids 個数。間違った数を渡すと別の (しかし有効な) AAD が
 // 生成され、暗号化した BLOB が永遠に復号できなくなるリスクがあるため厳密検査。
+//
+// je / jel / me は Option B で 0 個 (user_id のみで一意)。
+// bcb は (year, period) を含む 1 個 (year*100 + period) のまま。
 const TABLE_ID_COUNT = {
-  je: 1,    // entry_id
-  jel: 2,   // journal_entry_id + line_id
-  me: 1,    // expense_id
-  bcb: 1,   // balance cache blob id
+  je: 0,    // journal_entries (user_id のみ)
+  jel: 0,   // journal_entry_lines (user_id のみ)
+  me: 0,    // medical_expenses (user_id のみ)
+  bcb: 1,   // balance_cache_blobs (year*100+period)
 };
 
 
@@ -63,12 +77,12 @@ const TABLE_ID_COUNT = {
  * AAD バイト列を構築。
  *
  * @param {"je"|"jel"|"me"|"bcb"} tableType  テーブル種別プレフィックス
- *   - "je"  = journal_entries (ids: entry_id)
- *   - "jel" = journal_entry_lines (ids: journal_entry_id, line_id)
- *   - "me"  = medical_expenses (ids: expense_id)
- *   - "bcb" = balance_cache_blobs (E3-E で導入予定、ids: blob_id)
+ *   - "je"  = journal_entries (ids: なし)
+ *   - "jel" = journal_entry_lines (ids: なし)
+ *   - "me"  = medical_expenses (ids: なし)
+ *   - "bcb" = balance_cache_blobs (ids: year*100+period)
  * @param {number|bigint} userId
- * @param {Array<number|bigint>} ids  識別 ID 列 (entry_id / line_id 等)
+ * @param {Array<number|bigint>} ids  追加識別 ID 列 (bcb のみ使用)
  * @returns {Uint8Array}
  */
 export function buildAAD(tableType, userId, ...ids) {

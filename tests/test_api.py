@@ -1572,3 +1572,96 @@ class TestDraftsAPI:
     def test_delete_draft_not_found(self, client, db, user, accounts, auth_header):
         resp = client.delete("/api/v1/ai/drafts/99999", headers=auth_header)
         assert resp.status_code == 404
+
+
+class TestAuditProxyWriteBlock:
+    """Lv3 監査人が代理閲覧 (acting_as_user_id セッション) 中に
+    `encrypted_blob` 付き batch POST または restore を叩くと 403 を返す
+    回帰テスト (PR #251 review M-1)。
+
+    クライアント側 AAD は監査人 ID で構築されるため、owner DB に保存すると
+    AAD 不一致で永続的に復号不能になる。平文 POST は既存設計 (Lv3=本人同等)
+    で許可されているのでブロックしない。
+    """
+
+    def _set_acting_as(self, db, client, owner, auditor, level=3):
+        from app.models.audit import AuditGrant
+        grant = AuditGrant(
+            owner_user_id=owner.id,
+            auditor_user_id=auditor.id,
+            permission_level=level,
+            status="active",
+        )
+        db.session.add(grant)
+        db.session.commit()
+        with client.session_transaction() as sess:
+            sess["_user_id"] = str(auditor.id)
+            sess["acting_as_user_id"] = owner.id
+            sess["acting_as_permission_level"] = level
+
+    def test_batch_with_encrypted_blob_blocked_in_proxy(
+            self, client, db, user, auditor, accounts,
+    ):
+        # entry レベルに encrypted_blob があれば 403
+        self._set_acting_as(db, client, user, auditor, level=3)
+        resp = client.post("/api/v1/journals/batch", json={
+            "entries": [
+                {
+                    "date": "2026-02-01", "description": "テスト",
+                    "encrypted_blob": "AAAA", "blob_iv": "BBBB",
+                    "lines": [
+                        {"account_code": accounts["5010"].code, "debit": 100},
+                        {"account_code": accounts["1010"].code, "credit": 100},
+                    ],
+                },
+            ],
+        })
+        assert resp.status_code == 403
+        assert "代理閲覧" in resp.get_json()["error"]
+
+    def test_batch_with_line_blob_blocked_in_proxy(
+            self, client, db, user, auditor, accounts,
+    ):
+        # line レベルに encrypted_blob があっても 403 (lines を再帰チェック)
+        self._set_acting_as(db, client, user, auditor, level=3)
+        resp = client.post("/api/v1/journals/batch", json={
+            "entries": [
+                {
+                    "date": "2026-02-01", "description": "テスト",
+                    "lines": [
+                        {"account_code": accounts["5010"].code, "debit": 100,
+                         "encrypted_blob": "AAAA", "blob_iv": "BBBB"},
+                        {"account_code": accounts["1010"].code, "credit": 100},
+                    ],
+                },
+            ],
+        })
+        assert resp.status_code == 403
+
+    def test_batch_plaintext_allowed_in_proxy(
+            self, client, db, user, auditor, accounts,
+    ):
+        # encrypted_blob が無ければ Lv3 の平文 POST は通過する (既存設計)
+        self._set_acting_as(db, client, user, auditor, level=3)
+        resp = client.post("/api/v1/journals/batch", json={
+            "entries": [
+                {
+                    "date": "2026-02-01", "description": "テスト",
+                    "lines": [
+                        {"account_code": accounts["5010"].code, "debit": 100},
+                        {"account_code": accounts["1010"].code, "credit": 100},
+                    ],
+                },
+            ],
+        })
+        # batch validate / commit が通って 201 になる
+        assert resp.status_code == 201
+
+    def test_restore_blocked_in_proxy(self, client, db, user, auditor):
+        # restore は破壊的全置換のため、暗号化有無に関わらず 403
+        self._set_acting_as(db, client, user, auditor, level=3)
+        resp = client.post("/api/v1/backup/restore", json={
+            "version": "1.0", "user_id": user.id, "data": {},
+        })
+        assert resp.status_code == 403
+        assert "代理閲覧" in resp.get_json()["error"]

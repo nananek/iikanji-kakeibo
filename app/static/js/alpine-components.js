@@ -902,6 +902,12 @@ document.addEventListener('alpine:init', function() {
     // old_year_action=capital を扱うときに必要な元入金 (capital) 科目コード。
     // 未開設年度の行を当年 1/1 / 元入金科目に差替えてから batch API に送る。
     var capitalCode = config.capitalCode || '';
+    // E3-F PR-A: クライアント側暗号化の AAD に使う user_id。テンプレート側で
+    // `current_user.id` を渡す。代理閲覧 (auditor proxy) では監査者本人の ID
+    // が渡るが、書込み先 DB は owner なので AAD 不一致で復号不能になる。
+    // isProxyMode が true の時は submitImportBatch 冒頭で fail-loud に拒否する。
+    var userId = config.userId;
+    var isProxyMode = !!config.isProxyMode;
 
     function getStatus(row) {
       if (!row.date) return { cls: 'bg-warning text-dark', text: '日付なし', icon: '', problem: false };
@@ -1203,6 +1209,12 @@ document.addEventListener('alpine:init', function() {
        */
       submitImportBatch: async function(event) {
         event.preventDefault();
+        // E3-F PR-A: 代理閲覧 (auditor proxy) 中は AAD に監査者の userId が
+        // 入って owner DB に保存されると復号不能になる。早期に拒否する。
+        if (isProxyMode) {
+          alert('代理閲覧モードでは取込できません。本人アカウントで実行してください。');
+          return;
+        }
         // 未開設年度の扱い: ラジオボタン (skip / capital) の値を読む
         var oldYearActionEl = this.$el.querySelector(
           'input[name="old_year_action"]:checked',
@@ -1246,11 +1258,32 @@ document.addEventListener('alpine:init', function() {
           submitBtn.innerHTML =
             '<span class="spinner-border spinner-border-sm" role="status"></span> 取込中...';
         }
+        var sharedClient = null;
         try {
           var builderMod = await import("/static/js/crypto/entries_builder.js");
-          var entries = validRows.map(function(r) {
+          // E3-F PR-A: entry + 各 line を MK で暗号化して batch API に送る。
+          // 旧経路 (平文 POST) は dual-storage 期間中サーバ側で受け付けるが、
+          // クライアントは必ず暗号化する (= 平文 POST 経路に意図せず戻らない)。
+          if (typeof userId !== 'number' || !Number.isSafeInteger(userId)) {
+            throw new Error(
+              '取込確認画面の userId が未設定です (テンプレート修正が必要)',
+            );
+          }
+          var sharedClientMod = await import("/static/js/crypto/shared-client.js");
+          sharedClient = new sharedClientMod.SharedCryptoClient(
+            "/static/js/crypto/shared-worker.js",
+          );
+          var keyStatus = await sharedClient.status();
+          if (!keyStatus.hasKey) {
+            throw new Error('MK ロック中です (設定 → 暗号鍵管理 で解除)');
+          }
+          var entries = [];
+          for (var i = 0; i < validRows.length; i++) {
+            var r = validRows[i];
             var amount = (r.deposit && r.deposit > 0) ? r.deposit : r.withdrawal;
-            return builderMod.buildCashbookEntry({
+            entries.push(await builderMod.buildCashbookEntry({
+              client: sharedClient,
+              userId: userId,
               date: r.date,
               // batch API は空 description を 400 で弾くため、AI 抽出結果が
               // 空のときはフォールバック文字列で補う (旧サーバ confirm POST
@@ -1261,8 +1294,8 @@ document.addEventListener('alpine:init', function() {
               categoryAccountCode: r.category_code,
               amount: amount,
               source: importSource,
-            });
-          });
+            }));
+          }
 
           var csrfMeta = document.querySelector('meta[name="csrf-token"]');
           var csrfToken = csrfMeta ? csrfMeta.getAttribute('content') : '';
@@ -1302,6 +1335,10 @@ document.addEventListener('alpine:init', function() {
             submitBtn.innerHTML = originalLabel;
           }
           alert('取込に失敗しました: ' + (err.message || err));
+        } finally {
+          if (sharedClient) {
+            try { sharedClient.close(); } catch (_e) { /* ignore */ }
+          }
         }
       },
 

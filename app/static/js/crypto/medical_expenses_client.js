@@ -16,7 +16,8 @@ async function _normalize(client, userId, apiExpense) {
     try {
       const blob = b64decode(apiExpense.encrypted_blob);
       const iv = b64decode(apiExpense.blob_iv);
-      const aad = buildAAD("me", userId, apiExpense.id);
+      // E3-F PR-A: AAD は Option B (user_id のみ)。
+      const aad = buildAAD("me", userId);
       body = await decryptRecord(client, blob, iv, aad);
     } catch (e) {
       // 復号失敗 → 平文フォールバック (dual-read 設計通り)

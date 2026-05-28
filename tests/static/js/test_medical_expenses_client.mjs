@@ -48,7 +48,8 @@ function makeMockClient() {
 
 
 async function makeEncryptedExpense(client, userId, expenseId, body) {
-  const aad = buildAAD("me", userId, expenseId);
+  // E3-F PR-A: AAD は Option B (user_id のみ)。
+  const aad = buildAAD("me", userId);
   const pt = new TextEncoder().encode(JSON.stringify(body));
   const { ciphertext, iv } = await client.encrypt(pt, aad);
   return {

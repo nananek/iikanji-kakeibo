@@ -27,7 +27,7 @@ async function _normalizeEntry(client, userId, apiEntry) {
     try {
       const blob = b64decode(apiEntry.encrypted_blob);
       const iv = b64decode(apiEntry.blob_iv);
-      const aad = buildAAD("je", userId, apiEntry.id);
+      const aad = buildAAD("je", userId);
       body = await decryptRecord(client, blob, iv, aad);
     } catch (e) {
       // 復号失敗 (AAD 不一致 / bit flip / 鍵不一致) は dual-read 設計通り
@@ -79,20 +79,12 @@ async function _normalizeEntry(client, userId, apiEntry) {
 async function _normalizeLine(client, userId, entryId, apiLine) {
   let body = null;
   if (apiLine.encrypted_blob && apiLine.blob_iv) {
-    // E3-C-1b: line.id が API レスポンスに必須。AAD は
-    // ("jel", user_id, entry_id, line_id) で、line index 由来の AAD だと
-    // 将来 lines の並び替え・削除で復号不能になるため。
-    if (apiLine.id === undefined || apiLine.id === null) {
-      throw new Error(
-        `journals_client: encrypted line missing apiLine.id ` +
-        `(entry=${entryId}); サーバ /api/v1/journals レスポンスに line.id ` +
-        `が含まれていません。E3-C-1b 以降のサーバが必須です。`,
-      );
-    }
     try {
       const blob = b64decode(apiLine.encrypted_blob);
       const iv = b64decode(apiLine.blob_iv);
-      const aad = buildAAD("jel", userId, entryId, apiLine.id);
+      // E3-F PR-A: AAD は Option B (user_id のみ)。entry_id / line_id swap
+      // 検知能力は失う代わりに新規 POST 時の AAD 構築が単純化される。
+      const aad = buildAAD("jel", userId);
       body = await decryptRecord(client, blob, iv, aad);
     } catch (e) {
       console.warn(

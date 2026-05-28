@@ -9,6 +9,50 @@ const M = new URL(
 );
 const { buildCashbookEntry, buildTransferEntry } = await import(M.href);
 
+const REC = new URL(
+  "../../../app/static/js/crypto/record.js",
+  import.meta.url,
+);
+const { buildAAD, decryptRecord } = await import(REC.href);
+
+const B64 = new URL(
+  "../../../app/static/js/crypto/b64.js",
+  import.meta.url,
+);
+const { b64decode } = await import(B64.href);
+
+
+// --- mock SharedCryptoClient (test_record.mjs と同パターン) ---
+function makeMockClient() {
+  const aadStore = new Map();
+  function _key(b) { return Array.from(b.slice(0, 32)).join(","); }
+  return {
+    async encrypt(plaintext, aad) {
+      const iv = new Uint8Array(12);
+      crypto.getRandomValues(iv);
+      const ciphertext = new Uint8Array(plaintext.length + 16);
+      ciphertext.set(plaintext, 0);
+      crypto.getRandomValues(ciphertext.subarray(plaintext.length));
+      aadStore.set(_key(ciphertext), new Uint8Array(aad || []));
+      return { ciphertext, iv };
+    },
+    async decrypt(ciphertext, iv, aad) {
+      const expected = aadStore.get(_key(ciphertext));
+      const actual = new Uint8Array(aad || []);
+      if (!expected || expected.length !== actual.length) {
+        throw new Error("decrypt: AAD mismatch");
+      }
+      for (let i = 0; i < expected.length; i++) {
+        if (expected[i] !== actual[i]) {
+          throw new Error("decrypt: AAD mismatch");
+        }
+      }
+      const plen = ciphertext.length - 16;
+      return { plaintext: ciphertext.slice(0, plen) };
+    },
+  };
+}
+
 
 // --- buildCashbookEntry ---
 
@@ -208,4 +252,154 @@ test("description 省略時は空文字", () => {
     paymentAccountCode: "1010", categoryAccountCode: "5010", amount: 100,
   });
   assert.equal(e.description, "");
+});
+
+
+// --- E3-F PR-A: client + userId 指定時の暗号化対応 ---
+
+
+test("encrypted: client + userId 指定で encrypted_blob / blob_iv / fiscal_year が付く", async () => {
+  const client = makeMockClient();
+  const e = await buildCashbookEntry({
+    client, userId: 1,
+    date: "2026-05-22", description: "スーパー",
+    transactionType: "expense",
+    paymentAccountCode: "1010", categoryAccountCode: "5010", amount: 800,
+  });
+  assert.equal(e.fiscal_year, 2026);
+  assert.ok(typeof e.encrypted_blob === "string" && e.encrypted_blob.length > 0);
+  assert.ok(typeof e.blob_iv === "string" && e.blob_iv.length > 0);
+  assert.equal(e.lines.length, 2);
+  for (const line of e.lines) {
+    assert.ok(typeof line.encrypted_blob === "string" && line.encrypted_blob.length > 0);
+    assert.ok(typeof line.blob_iv === "string" && line.blob_iv.length > 0);
+    // 旧平文フィールド (dual-storage) も併送
+    assert.ok(typeof line.account_code === "string");
+    assert.ok(Number.isInteger(line.debit));
+    assert.ok(Number.isInteger(line.credit));
+  }
+});
+
+
+test("encrypted: 暗号文 + AAD で復号すると元の body が戻る (round-trip)", async () => {
+  const client = makeMockClient();
+  const userId = 7;
+  const e = await buildCashbookEntry({
+    client, userId,
+    date: "2026-03-01", description: "テスト摘要",
+    transactionType: "expense",
+    paymentAccountCode: "1010", categoryAccountCode: "5010", amount: 1234,
+    source: "csv", fiscalPeriod: 3,
+  });
+  // entry 本体の暗号文を復号
+  const entryBody = await decryptRecord(
+    client,
+    b64decode(e.encrypted_blob),
+    b64decode(e.blob_iv),
+    buildAAD("je", userId),
+  );
+  assert.equal(entryBody.v, 1);
+  assert.equal(entryBody.date, "2026-03-01");
+  assert.equal(entryBody.description, "テスト摘要");
+  assert.equal(entryBody.source, "csv");
+  assert.equal(entryBody.fiscal_period, 3);
+  // 各 line も復号
+  for (const line of e.lines) {
+    const lineBody = await decryptRecord(
+      client,
+      b64decode(line.encrypted_blob),
+      b64decode(line.blob_iv),
+      buildAAD("jel", userId),
+    );
+    assert.equal(lineBody.v, 1);
+    assert.equal(lineBody.account_code, line.account_code);
+    assert.equal(lineBody.debit_amount, line.debit);
+    assert.equal(lineBody.credit_amount, line.credit);
+  }
+});
+
+
+test("encrypted: 異なる userId だと復号できない (AAD すり替え)", async () => {
+  const client = makeMockClient();
+  const e = await buildCashbookEntry({
+    client, userId: 1,
+    date: "2026-03-01", description: "x",
+    transactionType: "expense",
+    paymentAccountCode: "1010", categoryAccountCode: "5010", amount: 100,
+  });
+  await assert.rejects(
+    () => decryptRecord(
+      client,
+      b64decode(e.encrypted_blob),
+      b64decode(e.blob_iv),
+      buildAAD("je", 2),
+    ),
+    /AAD mismatch/,
+  );
+});
+
+
+test("encrypted: client 指定で userId 欠落だと TypeError (validation は同期 throw)", () => {
+  const client = makeMockClient();
+  // userId validation は同期で走るため throw を使う (Promise reject ではない)
+  assert.throws(
+    () => buildCashbookEntry({
+      client,
+      date: "2026-03-01", description: "x",
+      transactionType: "expense",
+      paymentAccountCode: "1010", categoryAccountCode: "5010", amount: 100,
+    }),
+    /userId must be a number or bigint/,
+  );
+});
+
+
+test("encrypted: buildTransferEntry も同様に暗号化される", async () => {
+  const client = makeMockClient();
+  const userId = 42;
+  const e = await buildTransferEntry({
+    client, userId,
+    date: "2026-04-15", description: "口座振替",
+    fromAccountCode: "1010", toAccountCode: "1020", amount: 50000,
+  });
+  assert.equal(e.fiscal_year, 2026);
+  assert.ok(e.encrypted_blob);
+  assert.ok(e.blob_iv);
+  // 復号
+  const body = await decryptRecord(
+    client,
+    b64decode(e.encrypted_blob),
+    b64decode(e.blob_iv),
+    buildAAD("je", userId),
+  );
+  assert.equal(body.date, "2026-04-15");
+});
+
+
+test("不正な日付 (fiscal_year 抽出失敗) で TypeError", async () => {
+  const client = makeMockClient();
+  await assert.rejects(
+    () => buildCashbookEntry({
+      client, userId: 1,
+      date: "not-a-date",
+      transactionType: "expense",
+      paymentAccountCode: "1010", categoryAccountCode: "5010", amount: 100,
+    }),
+    /cannot derive fiscal_year/,
+  );
+});
+
+
+test("client なしの場合は従来通り平文 entry を同期返却 (後方互換)", () => {
+  // Promise でなく即値を返すことを確認 (await なしでも .lines にアクセスできる)
+  const e = buildCashbookEntry({
+    date: "2026-02-15", description: "x",
+    transactionType: "expense",
+    paymentAccountCode: "1010", categoryAccountCode: "5010", amount: 100,
+  });
+  // 戻り値は Promise ではない (平文 entry)
+  assert.equal(typeof e.then, "undefined");
+  assert.equal(e.encrypted_blob, undefined);
+  assert.equal(e.fiscal_year, undefined);
+  assert.equal(e.lines.length, 2);
 });

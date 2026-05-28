@@ -60,40 +60,44 @@ test("uint64BE: 53bit 超え Number は guard で throw (精度ロス防止)", (
 
 
 // ============ buildAAD ============
+// Option B: je / jel / me は user_id のみ (entry_id 等を含めない)。
+// bcb は (year, period) を含む 1 個。
 
-test("buildAAD: je (journal_entries) — user_id + entry_id", () => {
-  const aad = buildAAD("je", 1, 100);
-  // b"je\0" + uint64_be(1) + b"\0" + uint64_be(100)
-  // = [0x6a, 0x65, 0x00, ...1..., 0x00, ...100...]
+test("buildAAD: je (journal_entries) — user_id のみ", () => {
+  const aad = buildAAD("je", 1);
+  // b"je\0" + uint64_be(1)
   const expected = new Uint8Array([
     0x6a, 0x65, 0x00,            // "je\0"
     0, 0, 0, 0, 0, 0, 0, 1,      // user_id=1
-    0x00,                         // sep
-    0, 0, 0, 0, 0, 0, 0, 100,    // entry_id=100
   ]);
   assert.deepEqual(aad, expected);
 });
 
-test("buildAAD: jel (journal_entry_lines) — user_id + entry_id + line_id", () => {
-  const aad = buildAAD("jel", 2, 50, 7);
+test("buildAAD: jel (journal_entry_lines) — user_id のみ", () => {
+  const aad = buildAAD("jel", 2);
   const expected = new Uint8Array([
     0x6a, 0x65, 0x6c, 0x00,      // "jel\0"
     0, 0, 0, 0, 0, 0, 0, 2,      // user_id=2
-    0x00,
-    0, 0, 0, 0, 0, 0, 0, 50,     // entry_id=50
-    0x00,
-    0, 0, 0, 0, 0, 0, 0, 7,      // line_id=7
   ]);
   assert.deepEqual(aad, expected);
 });
 
-test("buildAAD: me (medical_expenses) — user_id + expense_id", () => {
-  const aad = buildAAD("me", 1, 42);
+test("buildAAD: me (medical_expenses) — user_id のみ", () => {
+  const aad = buildAAD("me", 1);
   const expected = new Uint8Array([
     0x6d, 0x65, 0x00,            // "me\0"
     0, 0, 0, 0, 0, 0, 0, 1,
+  ]);
+  assert.deepEqual(aad, expected);
+});
+
+test("buildAAD: bcb (balance_cache_blobs) — user_id + period_key (year*100+period)", () => {
+  const aad = buildAAD("bcb", 1, 202605);
+  const expected = new Uint8Array([
+    0x62, 0x63, 0x62, 0x00,      // "bcb\0"
+    0, 0, 0, 0, 0, 0, 0, 1,      // user_id=1
     0x00,
-    0, 0, 0, 0, 0, 0, 0, 42,
+    0, 0, 0, 0, 0, 0x03, 0x17, 0x6d, // 202605 = 0x3_17_6d
   ]);
   assert.deepEqual(aad, expected);
 });
@@ -103,32 +107,38 @@ test("buildAAD: 未対応 tableType で throw", () => {
 });
 
 test("buildAAD: AAD が user_id 毎に異なる (すり替え検知の前提)", () => {
-  const a = buildAAD("je", 1, 100);
-  const b = buildAAD("je", 2, 100);
+  const a = buildAAD("je", 1);
+  const b = buildAAD("je", 2);
   assert.notDeepEqual(a, b);
 });
 
-test("buildAAD: AAD が entry_id 毎に異なる", () => {
-  const a = buildAAD("je", 1, 100);
-  const b = buildAAD("je", 1, 101);
-  assert.notDeepEqual(a, b);
+test("buildAAD: 同一ユーザの entry-to-entry swap は検知しない (Option B トレードオフ)", () => {
+  // Option B では entry_id を AAD に含めないので、同一 user_id の異なる
+  // entry 間で AAD が同じ。サーバ侵害時の swap 攻撃は検知できないが、
+  // dual-read 撤去で「サーバが平文を見ない」を優先する設計判断。
+  const a = buildAAD("je", 1);
+  const b = buildAAD("je", 1);
+  assert.deepEqual(a, b);
 });
 
 test("buildAAD: tableType prefix が異テーブル間で衝突しない", () => {
-  // 同じ user_id / id でもテーブル種別が違えば AAD が違う
-  const je = buildAAD("je", 1, 100);
-  const jel = buildAAD("jel", 1, 100, 100);  // line_id 追加で長さも違う
+  // 同じ user_id でもテーブル種別が違えば AAD が違う
+  const je = buildAAD("je", 1);
+  const jel = buildAAD("jel", 1);
+  const me = buildAAD("me", 1);
   assert.notDeepEqual(je, jel);
+  assert.notDeepEqual(je, me);
+  assert.notDeepEqual(jel, me);
 });
 
 test("buildAAD: tableType ごとの ids 個数を厳密検証", () => {
-  // je は 1 個必要 (entry_id のみ)
-  assert.throws(() => buildAAD("je", 1), /expects 1 id\(s\), got 0/);
-  assert.throws(() => buildAAD("je", 1, 100, 200), /expects 1 id\(s\), got 2/);
-  // jel は 2 個必要 (entry_id + line_id)
-  assert.throws(() => buildAAD("jel", 1, 100), /expects 2 id\(s\), got 1/);
-  // me は 1 個必要
-  assert.throws(() => buildAAD("me", 1, 1, 2), /expects 1 id\(s\), got 2/);
+  // je / jel / me は 0 個 (user_id のみ)
+  assert.throws(() => buildAAD("je", 1, 100), /expects 0 id\(s\), got 1/);
+  assert.throws(() => buildAAD("jel", 1, 100, 200), /expects 0 id\(s\), got 2/);
+  assert.throws(() => buildAAD("me", 1, 42), /expects 0 id\(s\), got 1/);
+  // bcb は 1 個必要 (year*100+period)
+  assert.throws(() => buildAAD("bcb", 1), /expects 1 id\(s\), got 0/);
+  assert.throws(() => buildAAD("bcb", 1, 202605, 999), /expects 1 id\(s\), got 2/);
 });
 
 
@@ -180,7 +190,7 @@ test("encryptRecord/decryptRecord: round-trip", async () => {
     v: 1, date: "2026-05-22", description: "スーパー",
     source: "cashbook", batch_id: null, fiscal_period: 5,
   };
-  const aad = buildAAD("je", 1, 100);
+  const aad = buildAAD("je", 1);
   const { blob, iv } = await encryptRecord(client, record, aad);
   assert.ok(blob instanceof Uint8Array);
   assert.equal(iv.length, 12);
@@ -191,20 +201,9 @@ test("encryptRecord/decryptRecord: round-trip", async () => {
 test("decryptRecord: AAD すり替えで throw (user_id 違い)", async () => {
   const client = makeMockClient();
   const record = { v: 1, x: "secret" };
-  const aadCorrect = buildAAD("je", 1, 100);
-  const aadEvil = buildAAD("je", 2, 100);  // 別ユーザー
+  const aadCorrect = buildAAD("je", 1);
+  const aadEvil = buildAAD("je", 2);  // 別ユーザー
   const { blob, iv } = await encryptRecord(client, record, aadCorrect);
-  await assert.rejects(
-    () => decryptRecord(client, blob, iv, aadEvil),
-    /AAD mismatch/,
-  );
-});
-
-test("decryptRecord: AAD すり替えで throw (entry_id 違い)", async () => {
-  const client = makeMockClient();
-  const aadCorrect = buildAAD("je", 1, 100);
-  const aadEvil = buildAAD("je", 1, 101);
-  const { blob, iv } = await encryptRecord(client, { x: 1 }, aadCorrect);
   await assert.rejects(
     () => decryptRecord(client, blob, iv, aadEvil),
     /AAD mismatch/,
@@ -213,8 +212,8 @@ test("decryptRecord: AAD すり替えで throw (entry_id 違い)", async () => {
 
 test("decryptRecord: tableType すり替えで throw", async () => {
   const client = makeMockClient();
-  const aadCorrect = buildAAD("je", 1, 100);
-  const aadEvil = buildAAD("me", 1, 100);  // 別テーブル
+  const aadCorrect = buildAAD("je", 1);
+  const aadEvil = buildAAD("me", 1);  // 別テーブル
   const { blob, iv } = await encryptRecord(client, { x: 1 }, aadCorrect);
   await assert.rejects(
     () => decryptRecord(client, blob, iv, aadEvil),

@@ -101,7 +101,7 @@ export async function decryptBackup(client, backup) {
   for (const e of backup.data.journal_entries || []) {
     const r = await _decryptOne(
       client, userId, e.encrypted_blob, e.blob_iv,
-      () => buildAAD("je", userId, e.id),
+      () => buildAAD("je", userId),
     );
     const row = { ...e };
     delete row.encrypted_blob;
@@ -117,7 +117,7 @@ export async function decryptBackup(client, backup) {
   for (const l of backup.data.journal_entry_lines || []) {
     const r = await _decryptOne(
       client, userId, l.encrypted_blob, l.blob_iv,
-      () => buildAAD("jel", userId, l.journal_entry_id, l.id),
+      () => buildAAD("jel", userId),
     );
     const row = { ...l };
     delete row.encrypted_blob;
@@ -133,7 +133,7 @@ export async function decryptBackup(client, backup) {
   for (const m of backup.data.medical_expenses || []) {
     const r = await _decryptOne(
       client, userId, m.encrypted_blob, m.blob_iv,
-      () => buildAAD("me", userId, m.id),
+      () => buildAAD("me", userId),
     );
     const row = { ...m };
     delete row.encrypted_blob;

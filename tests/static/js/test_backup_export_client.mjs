@@ -119,7 +119,7 @@ test("journal_entry: 復号成功で body が展開され、暗号文フィー�
   const entryId = 42;
   const body = { date: "2026-03-15", description: "テスト仕訳", source: "journal" };
   const enc = await makeEncryptedRow(
-    client, buildAAD("je", userId, entryId), body,
+    client, buildAAD("je", userId), body,
   );
   const r = await decryptBackup(client, {
     user_id: userId, data: {
@@ -141,11 +141,11 @@ test("journal_entry: 復号失敗で _decryptError がセットされる (他行
   const client = makeMockClient();
   const userId = 7;
   const okEnc = await makeEncryptedRow(
-    client, buildAAD("je", userId, 1), { date: "2026-03-15" },
+    client, buildAAD("je", userId), { date: "2026-03-15" },
   );
   // 別の userId 用に作った暗号文を userId=7 で復号しようとする → AAD 不一致
   const badEnc = await makeEncryptedRow(
-    client, buildAAD("je", 999, 2), { date: "2026-04-01" },
+    client, buildAAD("je", 999), { date: "2026-04-01" },
   );
   const r = await decryptBackup(client, {
     user_id: userId, data: {
@@ -182,13 +182,13 @@ test("journal_entry: blob / iv なし (旧平文行) は body 展開なし", asy
 
 // --- decryption: journal_entry_lines ---
 
-test("journal_entry_line: AAD には entry_id + line_id 両方を含む", async () => {
+test("journal_entry_line: AAD は user_id のみ (Option B)", async () => {
   const client = makeMockClient();
   const userId = 3;
   const entryId = 100, lineId = 200;
   const body = { account_code: "5010", debit: 1000, credit: 0 };
   const enc = await makeEncryptedRow(
-    client, buildAAD("jel", userId, entryId, lineId), body,
+    client, buildAAD("jel", userId), body,
   );
   const r = await decryptBackup(client, {
     user_id: userId, data: {
@@ -217,7 +217,7 @@ test("medical_expense: 復号で body 展開", async () => {
     amount_paid: 5000, insurance_reimbursement: 1000,
   };
   const enc = await makeEncryptedRow(
-    client, buildAAD("me", userId, mid), body,
+    client, buildAAD("me", userId), body,
   );
   const r = await decryptBackup(client, {
     user_id: userId, data: {

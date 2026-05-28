@@ -14,6 +14,8 @@
   // HTML パースが壊れる。事前に変数化して x-data からは参照だけする。
   var _paymentCode = {{ payment_account.code | tojson }};
   var _capitalCode = {{ (capital_code or '') | tojson }};
+  var _userId = {{ current_user.id | tojson }};
+  var _isProxyMode = {{ is_acting_as | tojson }};
 </script>
 
 <div x-data="reconcileMode({
@@ -53,6 +55,8 @@
     closedPeriods: _closedPeriods,
     restrictedBeforeYear: _restrictedBefore,
     capitalCode: _capitalCode,
+    userId: _userId,
+    isProxyMode: _isProxyMode,
     importSource: 'csv'
   })" @drag-select-update="_syncFromCheckboxes()">
 
