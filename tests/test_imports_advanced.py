@@ -52,8 +52,11 @@ class TestCashbookLockedAccounts:
         return grant
 
     def test_new_with_locked_account_blocked(self, db, logged_in_client, user, accounts, auditor):
+        # E3-F PR-B1.1: cashbook.new は GET 専用化された。提出済み科目の
+        # ロックチェックは batch API (POST /api/v1/journals/batch) 側で
+        # 実施される (test_api.py::TestBatch で別途カバー)。
+        # ここでは POST 経路が無効化され仕訳が作成されないことだけ確認する。
         self._setup_locked(db, user, auditor)
-        # 5010 を含む新規仕訳は提出済みなのでブロック
         resp = logged_in_client.post("/cashbook/new", data={
             "date": "2026-02-15",
             "transaction_type": "expense",
@@ -63,7 +66,7 @@ class TestCashbookLockedAccounts:
             "description": "x",
             "fiscal_period": "",
         })
-        assert resp.status_code == 200  # form 再表示
+        assert resp.status_code == 405
         assert JournalEntry.query.filter_by(
             user_id=user.id, source="cashbook"
         ).count() == 0

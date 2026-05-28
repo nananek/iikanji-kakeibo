@@ -4,15 +4,26 @@
 {% block content %}
 <h2><i class="bi bi-wallet2"></i> 出納帳 — {{ '編集' if is_edit else '新規記帳' }}</h2>
 
+<script>
+  var _closedPeriods = {{ (closed_periods or {})|tojson }};
+  var _restrictedBefore = {{ restricted_before_year|tojson }};
+  var _userId = {{ current_user.id|tojson }};
+  var _isProxyMode = {{ is_acting_as|tojson }};
+  var _isEdit = {{ is_edit|tojson }};
+  var _entryId = {{ (entry.id if is_edit else None)|tojson }};
+</script>
+
 <div class="card shadow-sm mt-4">
   <div class="card-body">
     <form method="POST"
+      @submit.prevent="submitForm($event)"
       x-data="{
         tab: '{{ form.transaction_type.data or 'expense' }}',
         paymentCode: '{{ form.payment_account_code.data or '' }}',
         paymentName: '{{ payment_account_name or '' }}',
         categoryCode: '{{ form.category_account_code.data or '' }}',
         categoryName: '{{ category_account_name or '' }}',
+        submitting: false,
 
         get field1Label() {
           return this.tab === 'income' ? '入金先' : (this.tab === 'transfer' ? '移動元' : '支払元');
@@ -37,17 +48,46 @@
           this.tab = newTab;
           this.categoryCode = '';
           this.categoryName = '';
+        },
+
+        async submitForm(event) {
+          if (this.submitting) return;
+          if (_isProxyMode) {
+            alert('代理閲覧モードでは保存できません。本人アカウントで実行してください。');
+            return;
+          }
+          var dateEl = event.target.querySelector('input[name=date]');
+          var fpEl = event.target.querySelector('select[name=fiscal_period]');
+          var amountEl = event.target.querySelector('input[name=amount]');
+          var descEl = event.target.querySelector('input[name=description], textarea[name=description]');
+          var amount = parseInt(amountEl ? amountEl.value : '0', 10);
+          if (!Number.isInteger(amount) || amount <= 0) {
+            alert('金額を入力してください。');
+            return;
+          }
+          var fp = fpEl && fpEl.value !== '' ? parseInt(fpEl.value, 10) : null;
+          this.submitting = true;
+          try {
+            await window.cashbookSubmitE2EE({
+              isEdit: _isEdit,
+              entryId: _entryId,
+              userId: _userId,
+              date: dateEl ? dateEl.value : '',
+              fiscalPeriod: fp,
+              transactionType: this.tab,
+              paymentAccountCode: this.paymentCode,
+              categoryAccountCode: this.categoryCode,
+              amount: amount,
+              description: descEl ? descEl.value : '',
+            });
+          } catch (err) {
+            this.submitting = false;
+            alert('保存に失敗しました: ' + (err && err.message ? err.message : err));
+          }
         }
       }">
       {{ form.hidden_tag() }}
-      <input type="hidden" name="transaction_type" :value="tab">
-      <input type="hidden" name="payment_account_code" :value="paymentCode">
-      <input type="hidden" name="category_account_code" :value="categoryCode">
 
-      <script>
-        var _closedPeriods = {{ (closed_periods or {})|tojson }};
-        var _restrictedBefore = {{ restricted_before_year|tojson }};
-      </script>
       <div x-data="fiscalPeriodChecker({
         closedPeriods: _closedPeriods,
         restrictedBefore: _restrictedBefore,
@@ -135,7 +175,13 @@
       </div>
 
       <div class="d-flex gap-2">
-        <button type="submit" class="btn btn-primary" :disabled="isBlocked || sameAccountWarning || !paymentCode || !categoryCode">{{ '更新' if is_edit else '登録' }}</button>
+        <button type="submit" class="btn btn-primary"
+                :disabled="submitting || isBlocked || sameAccountWarning || !paymentCode || !categoryCode">
+          <template x-if="submitting">
+            <span class="spinner-border spinner-border-sm me-1" role="status"></span>
+          </template>
+          <span x-text="submitting ? '保存中...' : ('{{ '更新' if is_edit else '登録' }}')"></span>
+        </button>
         <a href="{{ url_for('cashbook.index') }}" class="btn btn-outline-secondary">キャンセル</a>
       </div>
       </div>{# /x-data fiscalPeriodChecker #}

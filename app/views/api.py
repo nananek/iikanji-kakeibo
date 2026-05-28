@@ -149,7 +149,7 @@ def _audit_proxy_blocks_encrypted_writes(payload):
     if payload.get("encrypted_blob") or payload.get("blob_iv"):
         return _proxy_block_resp()
     # PUT 経路では entries[] が無く top-level lines[] が直接置かれるため、
-    # ここで line-level の encrypted_blob も検出する必要がある (PR #252 review)。
+    # ここで line-level の encrypted_blob も検出する必要がある。
     top_lines = payload.get("lines")
     if isinstance(top_lines, list):
         for ln in top_lines:
