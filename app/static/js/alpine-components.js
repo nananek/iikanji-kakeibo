@@ -903,9 +903,11 @@ document.addEventListener('alpine:init', function() {
     // 未開設年度の行を当年 1/1 / 元入金科目に差替えてから batch API に送る。
     var capitalCode = config.capitalCode || '';
     // E3-F PR-A: クライアント側暗号化の AAD に使う user_id。テンプレート側で
-    // `current_user.id` を渡す。代理閲覧 (auditor proxy) では暗号化経路が
-    // 使えないため、呼出側で submit_handler 上書き自体をスキップする。
+    // `current_user.id` を渡す。代理閲覧 (auditor proxy) では監査者本人の ID
+    // が渡るが、書込み先 DB は owner なので AAD 不一致で復号不能になる。
+    // isProxyMode が true の時は submitImportBatch 冒頭で fail-loud に拒否する。
     var userId = config.userId;
+    var isProxyMode = !!config.isProxyMode;
 
     function getStatus(row) {
       if (!row.date) return { cls: 'bg-warning text-dark', text: '日付なし', icon: '', problem: false };
@@ -1207,6 +1209,12 @@ document.addEventListener('alpine:init', function() {
        */
       submitImportBatch: async function(event) {
         event.preventDefault();
+        // E3-F PR-A: 代理閲覧 (auditor proxy) 中は AAD に監査者の userId が
+        // 入って owner DB に保存されると復号不能になる。早期に拒否する。
+        if (isProxyMode) {
+          alert('代理閲覧モードでは取込できません。本人アカウントで実行してください。');
+          return;
+        }
         // 未開設年度の扱い: ラジオボタン (skip / capital) の値を読む
         var oldYearActionEl = this.$el.querySelector(
           'input[name="old_year_action"]:checked',

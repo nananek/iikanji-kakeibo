@@ -15,6 +15,7 @@
   var _paymentCode = {{ payment_account.code | tojson }};
   var _capitalCode = {{ (capital_code or '') | tojson }};
   var _userId = {{ current_user.id | tojson }};
+  var _isProxyMode = {{ is_acting_as | tojson }};
 </script>
 <div x-data="importConfirm({
   rows: _importRows,
@@ -25,6 +26,7 @@
   restrictedBeforeYear: _restrictedBefore,
   capitalCode: _capitalCode,
   userId: _userId,
+  isProxyMode: _isProxyMode,
   importSource: 'ofx'
 })" @drag-select-update="_syncFromCheckboxes()">
 

@@ -116,7 +116,9 @@ async function _encryptEntry(client, userId, entry) {
       account_code: line.account_code,
       debit_amount: line.debit,
       credit_amount: line.credit,
-      description: "",
+      // 現状 JournalEntryLine に description カラムはないが、将来拡張用に
+      // 枠だけ予約。lines に description が来た場合は素直に通す。
+      description: line.description ?? "",
     };
     const lineEnc = await encryptRecord(client, lineBody, lineAAD);
     encryptedLines.push({
