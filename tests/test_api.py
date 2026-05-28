@@ -1665,3 +1665,189 @@ class TestAuditProxyWriteBlock:
         })
         assert resp.status_code == 403
         assert "代理閲覧" in resp.get_json()["error"]
+
+
+class TestUpdateJournal:
+    """PUT /api/v1/journals/<id> の動作確認 (E3-F PR-B1.0)。
+
+    cashbook / journal の編集経路がクライアント側暗号化に移行する際の
+    共通エンドポイント。フィールドと lines を全置換する。
+    """
+
+    def test_success_plaintext_update(self, client, db, user, accounts, auth_header):
+        entry = make_journal(
+            db, user.id, accounts["5010"].code, accounts["1010"].code, 1000,
+            description="変更前",
+        )
+        resp = client.put(f"/api/v1/journals/{entry.id}",
+                          headers=auth_header,
+                          json={
+                              "date": "2026-03-15",
+                              "description": "変更後",
+                              "lines": [
+                                  {"account_code": accounts["5010"].code, "debit": 2000},
+                                  {"account_code": accounts["1010"].code, "credit": 2000},
+                              ],
+                          })
+        assert resp.status_code == 200, resp.get_json()
+        data = resp.get_json()
+        assert data["ok"] is True
+        assert data["id"] == entry.id
+        from app.extensions import db as _db
+        _db.session.refresh(entry)
+        assert entry.description == "変更後"
+        assert str(entry.date) == "2026-03-15"
+        assert len(entry.lines) == 2
+        assert entry.lines[0].debit_amount == 2000
+
+    def test_success_with_encrypted_blob(self, client, db, user, accounts, auth_header):
+        entry = make_journal(
+            db, user.id, accounts["5010"].code, accounts["1010"].code, 500,
+        )
+        import base64
+        resp = client.put(f"/api/v1/journals/{entry.id}",
+                          headers=auth_header,
+                          json={
+                              "date": "2026-03-20",
+                              "description": "暗号化更新",
+                              "encrypted_blob": base64.b64encode(b"\x00" * 48).decode(),
+                              "blob_iv": base64.b64encode(b"\x00" * 12).decode(),
+                              "fiscal_year": 2026,
+                              "lines": [
+                                  {"account_code": accounts["5010"].code, "debit": 500,
+                                   "encrypted_blob": base64.b64encode(b"\x11" * 48).decode(),
+                                   "blob_iv": base64.b64encode(b"\x11" * 12).decode()},
+                                  {"account_code": accounts["1010"].code, "credit": 500},
+                              ],
+                          })
+        assert resp.status_code == 200, resp.get_json()
+        from app.extensions import db as _db
+        _db.session.refresh(entry)
+        assert entry.encrypted_blob is not None
+        assert entry.blob_iv is not None
+        assert any(l.encrypted_blob is not None for l in entry.lines)
+
+    def test_not_found(self, client, db, user, accounts, auth_header):
+        resp = client.put("/api/v1/journals/99999",
+                          headers=auth_header,
+                          json={
+                              "date": "2026-03-15",
+                              "description": "x",
+                              "lines": [
+                                  {"account_code": accounts["5010"].code, "debit": 100},
+                                  {"account_code": accounts["1010"].code, "credit": 100},
+                              ],
+                          })
+        assert resp.status_code == 404
+
+    def test_unbalanced_returns_400(self, client, db, user, accounts, auth_header):
+        entry = make_journal(
+            db, user.id, accounts["5010"].code, accounts["1010"].code, 1000,
+        )
+        resp = client.put(f"/api/v1/journals/{entry.id}",
+                          headers=auth_header,
+                          json={
+                              "date": "2026-03-15", "description": "x",
+                              "lines": [
+                                  {"account_code": accounts["5010"].code, "debit": 200},
+                                  {"account_code": accounts["1010"].code, "credit": 100},
+                              ],
+                          })
+        assert resp.status_code == 400
+
+    def test_locked_period_returns_400(self, client, db, user, accounts, auth_header):
+        from app.models.fiscal import FiscalClose
+        entry = make_journal(
+            db, user.id, accounts["5010"].code, accounts["1010"].code, 100,
+            entry_date=date(2026, 5, 15),
+        )
+        # 5 月までを確定済みにする → PUT 不可
+        fc = FiscalClose(user_id=user.id, year=2026, closed_period=5)
+        db.session.add(fc)
+        db.session.commit()
+        resp = client.put(f"/api/v1/journals/{entry.id}",
+                          headers=auth_header,
+                          json={
+                              "date": "2026-05-20", "description": "x",
+                              "lines": [
+                                  {"account_code": accounts["5010"].code, "debit": 100},
+                                  {"account_code": accounts["1010"].code, "credit": 100},
+                              ],
+                          })
+        assert resp.status_code == 400
+
+    def _setup_proxy(self, db, client, owner, auditor):
+        from app.models.audit import AuditGrant
+        g = AuditGrant(owner_user_id=owner.id, auditor_user_id=auditor.id,
+                       permission_level=3, status="active")
+        db.session.add(g)
+        db.session.commit()
+        with client.session_transaction() as sess:
+            sess["_user_id"] = str(auditor.id)
+            sess["acting_as_user_id"] = owner.id
+            sess["acting_as_permission_level"] = 3
+
+    def test_proxy_encrypted_update_blocked(self, client, db, user, auditor, accounts):
+        entry = make_journal(
+            db, user.id, accounts["5010"].code, accounts["1010"].code, 100,
+        )
+        self._setup_proxy(db, client, user, auditor)
+        import base64
+        resp = client.put(f"/api/v1/journals/{entry.id}", json={
+            "date": "2026-03-15", "description": "x",
+            "encrypted_blob": base64.b64encode(b"\x00" * 48).decode(),
+            "blob_iv": base64.b64encode(b"\x00" * 12).decode(),
+            "lines": [
+                {"account_code": accounts["5010"].code, "debit": 100},
+                {"account_code": accounts["1010"].code, "credit": 100},
+            ],
+        })
+        assert resp.status_code == 403
+        assert "代理閲覧" in resp.get_json()["error"]
+
+    def test_proxy_line_only_encrypted_blocked(
+            self, client, db, user, auditor, accounts,
+    ):
+        # entry-level 暗号化なし、line-level 暗号化ありのリクエストが
+        # 代理閲覧中に通ってしまわないこと (PR #252 review で指摘されたバグ)。
+        entry = make_journal(
+            db, user.id, accounts["5010"].code, accounts["1010"].code, 100,
+        )
+        self._setup_proxy(db, client, user, auditor)
+        import base64
+        resp = client.put(f"/api/v1/journals/{entry.id}", json={
+            "date": "2026-03-15", "description": "x",
+            "lines": [
+                {"account_code": accounts["5010"].code, "debit": 100,
+                 "encrypted_blob": base64.b64encode(b"\x11" * 48).decode(),
+                 "blob_iv": base64.b64encode(b"\x11" * 12).decode()},
+                {"account_code": accounts["1010"].code, "credit": 100},
+            ],
+        })
+        assert resp.status_code == 403
+        assert "代理閲覧" in resp.get_json()["error"]
+
+    def test_new_date_in_locked_period_returns_400(
+            self, client, db, user, accounts, auth_header,
+    ):
+        # 既存 entry は未確定、PUT の新 date が確定済み月 → 400
+        # (check_period_open_for_new 分岐のカバー)
+        from app.models.fiscal import FiscalClose
+        entry = make_journal(
+            db, user.id, accounts["5010"].code, accounts["1010"].code, 100,
+            entry_date=date(2026, 10, 15),  # 未確定月
+        )
+        fc = FiscalClose(user_id=user.id, year=2026, closed_period=5)
+        db.session.add(fc)
+        db.session.commit()
+        resp = client.put(f"/api/v1/journals/{entry.id}",
+                          headers=auth_header,
+                          json={
+                              "date": "2026-03-10",  # 確定済み月
+                              "description": "x",
+                              "lines": [
+                                  {"account_code": accounts["5010"].code, "debit": 100},
+                                  {"account_code": accounts["1010"].code, "credit": 100},
+                              ],
+                          })
+        assert resp.status_code == 400

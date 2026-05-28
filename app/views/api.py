@@ -18,7 +18,7 @@ from app.models.ai_draft import AIDraft
 from app.models.ai_usage_log import AIUsageLog
 from app.models.account import Account
 from app.models.balance_cache import BalanceCacheBlob
-from app.models.journal import JournalEntry
+from app.models.journal import JournalEntry, JournalEntryLine
 from app.services.accounting import create_journal_entry
 from app.services.audit import get_submitted_account_codes, is_entry_locked_for_owner
 from app.services.fiscal import check_period_open_for_new, check_entry_modifiable
@@ -145,9 +145,18 @@ def _audit_proxy_blocks_encrypted_writes(payload):
         return None
     if not isinstance(payload, dict):
         return None
-    # single POST (/api/v1/journals): top-level に encrypted_blob/blob_iv
+    # single POST / PUT: top-level に encrypted_blob/blob_iv
     if payload.get("encrypted_blob") or payload.get("blob_iv"):
         return _proxy_block_resp()
+    # PUT 経路では entries[] が無く top-level lines[] が直接置かれるため、
+    # ここで line-level の encrypted_blob も検出する必要がある (PR #252 review)。
+    top_lines = payload.get("lines")
+    if isinstance(top_lines, list):
+        for ln in top_lines:
+            if isinstance(ln, dict) and (
+                ln.get("encrypted_blob") or ln.get("blob_iv")
+            ):
+                return _proxy_block_resp()
     # batch POST: entries[] / その lines[] を 1 レベル再帰でチェック
     entries = payload.get("entries")
     if isinstance(entries, list):
@@ -1217,6 +1226,125 @@ def get_journal(entry_id):
 
 
 # --- 仕訳削除 ---
+
+
+@bp.route("/journals/<int:entry_id>", methods=["PUT"])
+@auth_required(write=True, scope="journals:create", allow_session=True)
+@limiter.limit("60 per minute", key_func=rate_limit_key)
+def update_journal(entry_id):
+    """仕訳更新 API。
+
+    cashbook / journal の編集経路がクライアント側暗号化に移行 (PR-B1) する
+    際の共通エンドポイント。1 entry 分の payload を受け取り、フィールドと
+    lines を全置換する。
+
+    リクエスト:
+        {
+          date, description, source, fiscal_period, fiscal_year,
+          encrypted_blob, blob_iv,  // 任意 (dual-storage 期間中)
+          lines: [{account_code, debit, credit, encrypted_blob, blob_iv}, ...]
+        }
+
+    レスポンス:
+        200 {ok, id, entry_number}
+
+    確定済み期間 / 提出済みロック / 貸借不一致 / 科目不在 はいずれも 400。
+    代理閲覧中の encrypted_blob 付き更新は 403 (AAD 不一致防止)。
+    """
+    data = request.get_json(silent=True)
+    if not data:
+        return jsonify({"error": "JSON ボディが必要です。"}), 400
+
+    proxy_block = _audit_proxy_blocks_encrypted_writes(data)
+    if proxy_block:
+        return proxy_block
+
+    user_id = g.auth_user.id
+    entry = JournalEntry.query.filter_by(
+        id=entry_id, user_id=user_id,
+    ).first()
+    if not entry:
+        return jsonify({"error": "仕訳が見つかりません。"}), 404
+
+    # 旧 entry の編集可否 (確定済み期間 / 提出済みロック)
+    err = check_entry_modifiable(user_id, entry)
+    if err:
+        return jsonify({"error": err}), 400
+    if is_entry_locked_for_owner(user_id, entry):
+        return jsonify({
+            "error": "提出済みの税務科目を含む伝票のため変更できません。",
+        }), 400
+
+    locked_codes = get_submitted_account_codes(user_id)
+    user_account_codes = {
+        a.code for a in Account.query.filter_by(user_id=user_id).all()
+    }
+
+    try:
+        parsed = _validate_and_parse_batch_entry(
+            data, 0, user_account_codes, locked_codes,
+        )
+    except ValueError as ve:
+        msg = str(ve)
+        # entries[0]. プレフィックスは PUT では混乱を招くため除去する
+        if msg.startswith("entries[0]"):
+            msg = msg.replace("entries[0].", "").replace("entries[0]:", "").lstrip()
+        return jsonify({"error": msg}), 400
+
+    # 貸借不一致チェック (create_journal_entry に倣う)
+    total_debit = sum(ld["debit_amount"] for ld in parsed["lines_data"])
+    total_credit = sum(ld["credit_amount"] for ld in parsed["lines_data"])
+    if total_debit != total_credit:
+        return jsonify({
+            "error": (
+                f"貸借が一致しません（借方: {total_debit}, 貸方: {total_credit}）"
+            ),
+        }), 400
+
+    # 新規 date が確定済み期間に該当しないか確認
+    err = check_period_open_for_new(
+        user_id, parsed["date"].year, parsed["date"].month,
+    )
+    if err:
+        return jsonify({"error": err}), 400
+
+    # entry フィールド更新
+    entry.date = parsed["date"]
+    entry.description = parsed["description"]
+    entry.source = parsed["source"]
+    entry.fiscal_period = parsed["fiscal_period"]
+    if parsed["fiscal_year"] is not None:
+        entry.fiscal_year = parsed["fiscal_year"]
+    else:
+        entry.fiscal_year = parsed["date"].year
+    entry.encrypted_blob = parsed["encrypted_blob"]
+    entry.blob_iv = parsed["blob_iv"]
+
+    # lines を全削除 → 新規追加
+    for line in list(entry.lines):
+        db.session.delete(line)
+    db.session.flush()
+
+    for ld in parsed["lines_data"]:
+        line = JournalEntryLine(
+            journal_entry_id=entry.id,
+            account_user_id=user_id,
+            account_code=ld["account_code"],
+            debit_amount=ld["debit_amount"],
+            credit_amount=ld["credit_amount"],
+            description=ld.get("description", ""),
+            encrypted_blob=ld.get("encrypted_blob"),
+            blob_iv=ld.get("blob_iv"),
+        )
+        db.session.add(line)
+
+    db.session.commit()
+
+    return jsonify({
+        "ok": True,
+        "id": entry.id,
+        "entry_number": entry.entry_number,
+    })
 
 
 @bp.route("/journals/<int:entry_id>", methods=["DELETE"])
