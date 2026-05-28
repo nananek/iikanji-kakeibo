@@ -8,7 +8,7 @@ from base64 import b64decode, b64encode
 from binascii import Error as BinasciiError
 from datetime import date as date_type, datetime, timezone
 
-from flask import Blueprint, current_app, jsonify, request, g
+from flask import Blueprint, current_app, jsonify, request, g, session as flask_session
 
 from app.extensions import db, limiter
 from app.models.api_key import APIKey
@@ -121,6 +121,25 @@ _ALLOWED_BATCH_SOURCES = {
     "journal", "cashbook", "ai_receipt", "csv", "ofx", "web", "api",
 }
 _AES_GCM_IV_BYTES = 12
+
+
+def _audit_proxy_writeblock_response():
+    """Lv3 監査人が代理閲覧 (acting_as_user_id) 中に書き込み API を叩いた場合の
+    403 レスポンスを返す。該当しなければ None。
+
+    クライアント側 AAD は `current_user.id` (= 監査人) で構築されるため、
+    owner DB に保存すると AAD 不一致で永久に復号不能になる。
+    `api_auth.resolve_bearer_or_session` は Lv3 を許容する側に解決するため、
+    AAD 整合のためにサーバ側 (= ここ) で代理閲覧中の書き込みを拒否する。
+
+    クライアント側 (alpine-components.js の `isProxyMode`) のガードに加えて
+    curl 直接叩きへの defense-in-depth として機能する。
+    """
+    if flask_session.get("acting_as_user_id"):
+        return jsonify({
+            "error": "代理閲覧モードでは書き込みできません。本人アカウントで実行してください。",
+        }), 403
+    return None
 
 
 def _decode_record_crypto(d: dict, label: str, blob_key: str, iv_key: str,
@@ -468,6 +487,9 @@ def create_journals_batch():
     レスポンス:
         201 {ok, batch_id, created_count, entries: [{id, entry_number}, ...]}
     """
+    proxy_block = _audit_proxy_writeblock_response()
+    if proxy_block:
+        return proxy_block
     data = request.get_json(silent=True)
     if not data:
         return jsonify({"error": "JSON ボディが必要です。"}), 400
@@ -996,6 +1018,10 @@ def backup_restore():
         BackupValidationError,
         restore_user_backup,
     )
+
+    proxy_block = _audit_proxy_writeblock_response()
+    if proxy_block:
+        return proxy_block
 
     if g.auth_user.user_type == "auditor":
         return jsonify({"error": "監査アカウントはリストア対象外です。"}), 403
