@@ -1668,7 +1668,7 @@ class TestAuditProxyWriteBlock:
 
 
 class TestUpdateJournal:
-    """PUT /api/v1/journals/<id> の動作確認 (E3-F PR-B1.0)。
+    """PUT /api/v1/journals/<id> の動作確認。
 
     cashbook / journal の編集経路がクライアント側暗号化に移行する際の
     共通エンドポイント。フィールドと lines を全置換する。
@@ -1809,7 +1809,7 @@ class TestUpdateJournal:
             self, client, db, user, auditor, accounts,
     ):
         # entry-level 暗号化なし、line-level 暗号化ありのリクエストが
-        # 代理閲覧中に通ってしまわないこと (PR #252 review で指摘されたバグ)。
+        # 代理閲覧中に通ってしまわないこと。
         entry = make_journal(
             db, user.id, accounts["5010"].code, accounts["1010"].code, 100,
         )

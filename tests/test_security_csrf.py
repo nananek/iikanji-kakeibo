@@ -40,16 +40,11 @@ class TestCsrfRejection:
         })
         assert resp.status_code == 400
 
-    def test_cashbook_new_without_csrf_rejected(self, csrf_app, csrf_client):
+    def test_cashbook_delete_without_csrf_rejected(self, csrf_app, csrf_client):
+        # E3-F PR-B1.1: cashbook.new/edit は GET 専用化されたため、CSRF を
+        # 評価する POST 経路は delete のみ残る。
         _create_user_and_login(csrf_client, csrf_app)
-        resp = csrf_client.post("/cashbook/new", data={
-            "date": "2026-01-15",
-            "transaction_type": "expense",
-            "payment_account_code": "1010",
-            "category_account_code": "5010",
-            "amount": 1000,
-            "description": "test",
-        })
+        resp = csrf_client.post("/cashbook/1/delete")
         assert resp.status_code == 400
 
     def test_journal_delete_without_csrf_rejected(self, csrf_app, csrf_client):

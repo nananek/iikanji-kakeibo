@@ -67,125 +67,25 @@ class TestNewGet:
         assert resp.status_code == 200
 
 
-class TestNewPostExpense:
-    def test_create_expense(self, db, logged_in_client, user, accounts):
+class TestNewPostRejected:
+    """E3-F PR-B1.1: cashbook.new は GET 専用。POST は 405 を返し、
+    平文 POST 経路でデータが書込まれないことを保証する。"""
+
+    def test_post_returns_405(self, db, logged_in_client, user, accounts):
         resp = logged_in_client.post("/cashbook/new", data={
             "date": "2026-02-15",
             "transaction_type": "expense",
             "payment_account_code": "1010",
             "category_account_code": "5010",
             "amount": "1500",
-            "description": "ランチ",
+            "description": "平文 POST",
             "fiscal_period": "",
         })
-        assert resp.status_code in (302, 303)
-        entry = JournalEntry.query.filter_by(
-            user_id=user.id, source="cashbook"
-        ).first()
-        assert entry is not None
-        assert entry.description == "ランチ"
-
-    def test_create_income(self, db, logged_in_client, user, accounts):
-        resp = logged_in_client.post("/cashbook/new", data={
-            "date": "2026-02-15",
-            "transaction_type": "income",
-            "payment_account_code": "1010",
-            "category_account_code": "4010",
-            "amount": "300000",
-            "description": "給与",
-            "fiscal_period": "",
-        })
-        assert resp.status_code in (302, 303)
-        entry = JournalEntry.query.filter_by(
-            user_id=user.id, source="cashbook"
-        ).first()
-        assert entry is not None
-        assert entry.description == "給与"
-
-    def test_create_transfer(self, db, logged_in_client, user, accounts):
-        resp = logged_in_client.post("/cashbook/new", data={
-            "date": "2026-02-15",
-            "transaction_type": "transfer",
-            "payment_account_code": "1010",
-            "category_account_code": "1020",
-            "amount": "10000",
-            "description": "現金→預金",
-            "fiscal_period": "",
-        })
-        assert resp.status_code in (302, 303)
-        entry = JournalEntry.query.filter_by(
-            user_id=user.id, source="cashbook"
-        ).first()
-        assert entry is not None
-
-    def test_transfer_same_account_rejected(self, db, logged_in_client, user, accounts):
-        resp = logged_in_client.post("/cashbook/new", data={
-            "date": "2026-02-15",
-            "transaction_type": "transfer",
-            "payment_account_code": "1010",
-            "category_account_code": "1010",
-            "amount": "10000",
-            "description": "同一",
-            "fiscal_period": "",
-        })
-        assert resp.status_code == 200  # form 再表示
-        body = resp.get_data(as_text=True)
-        assert "異なる科目" in body
-        # 仕訳は作成されていない
+        assert resp.status_code == 405
+        # 仕訳は作成されていない (server-side 経路が無効化されている)
         assert JournalEntry.query.filter_by(
             user_id=user.id, source="cashbook"
         ).count() == 0
-
-    def test_locked_period_rejected(self, db, logged_in_client, user, accounts):
-        # 2026年2月を確定済みに
-        db.session.add(FiscalClose(user_id=user.id, year=2026, closed_period=2))
-        db.session.commit()
-        resp = logged_in_client.post("/cashbook/new", data={
-            "date": "2026-02-15",
-            "transaction_type": "expense",
-            "payment_account_code": "1010",
-            "category_account_code": "5010",
-            "amount": "1000",
-            "description": "確定済み",
-            "fiscal_period": "",
-        })
-        # form 再表示で 200
-        assert resp.status_code == 200
-        # 仕訳は作成されていない
-        assert JournalEntry.query.filter_by(
-            user_id=user.id, source="cashbook"
-        ).count() == 0
-
-    def test_missing_required_fields(self, logged_in_client, accounts):
-        resp = logged_in_client.post("/cashbook/new", data={
-            "date": "",  # 必須なのに空
-            "transaction_type": "expense",
-            "payment_account_code": "",
-            "category_account_code": "",
-            "amount": "",
-            "description": "",
-            "fiscal_period": "",
-        })
-        # 200 でフォーム再表示
-        assert resp.status_code == 200
-
-    def test_fiscal_period_special(self, db, logged_in_client, user, accounts):
-        """期首振戻月 (fiscal_period=0) で登録"""
-        resp = logged_in_client.post("/cashbook/new", data={
-            "date": "2026-02-15",
-            "transaction_type": "expense",
-            "payment_account_code": "1010",
-            "category_account_code": "5010",
-            "amount": "100",
-            "description": "期首振戻",
-            "fiscal_period": "0",
-        })
-        assert resp.status_code in (302, 303)
-        entry = JournalEntry.query.filter_by(
-            user_id=user.id, source="cashbook"
-        ).first()
-        assert entry is not None
-        assert entry.fiscal_period == 0
 
 
 class TestEdit:
@@ -219,7 +119,9 @@ class TestEdit:
         resp = logged_in_client.get(f"/cashbook/{other_entry.id}/edit")
         assert resp.status_code == 404
 
-    def test_post_updates_entry(self, db, logged_in_client, user, accounts):
+    def test_post_returns_405(self, db, logged_in_client, user, accounts):
+        """E3-F PR-B1.1: cashbook.edit は GET 専用。POST は 405 を返し、
+        平文 POST 経路で既存仕訳が書き換えられないことを保証する。"""
         entry = self._make_cashbook(db, user.id)
         resp = logged_in_client.post(f"/cashbook/{entry.id}/edit", data={
             "date": "2026-02-20",
@@ -230,9 +132,9 @@ class TestEdit:
             "description": "更新後",
             "fiscal_period": "",
         })
-        assert resp.status_code in (302, 303)
+        assert resp.status_code == 405
         db.session.refresh(entry)
-        assert entry.description == "更新後"
+        assert entry.description == "編集対象"  # 元のまま
 
     def test_edit_blocked_by_closed_period(self, db, logged_in_client, user, accounts):
         entry = self._make_cashbook(db, user.id)
@@ -241,52 +143,6 @@ class TestEdit:
         resp = logged_in_client.get(f"/cashbook/{entry.id}/edit")
         # 確定済みなのでリダイレクト
         assert resp.status_code in (302, 303)
-
-    def test_edit_post_to_closed_target_period_rerenders(
-        self, db, logged_in_client, user, accounts,
-    ):
-        """編集先の対象期間が確定済みなら同一フォーム再描画 (リダイレクトではない)。"""
-        # 編集元は 2026-02 (未確定)、編集先 2026-01 を確定済みに
-        entry = make_journal(
-            db, user.id, "5010", "1010", 1000,
-            entry_date=date(2026, 2, 15), source="cashbook",
-        )
-        db.session.add(FiscalClose(user_id=user.id, year=2026, closed_period=1))
-        db.session.commit()
-        resp = logged_in_client.post(f"/cashbook/{entry.id}/edit", data={
-            "date": "2026-01-15",  # 確定済みに移そうとする
-            "transaction_type": "expense",
-            "payment_account_code": "1010",
-            "category_account_code": "5010",
-            "amount": "1000",
-            "description": "x",
-            "fiscal_period": "",
-        })
-        # check_period_open_for_new で確定済みエラー → フォーム再描画 (200)
-        assert resp.status_code == 200
-        body = resp.get_data(as_text=True)
-        assert "確定" in body or "closed" in body.lower() or "danger" in body
-
-    def test_edit_post_transfer_same_account_rerenders(
-        self, db, logged_in_client, user, accounts,
-    ):
-        """編集で資金移動の元/先を同一科目にすると同一フォーム再描画。"""
-        entry = make_journal(
-            db, user.id, "5010", "1010", 1000,
-            entry_date=date(2026, 2, 15), source="cashbook",
-        )
-        resp = logged_in_client.post(f"/cashbook/{entry.id}/edit", data={
-            "date": "2026-02-15",
-            "transaction_type": "transfer",
-            "payment_account_code": "1010",
-            "category_account_code": "1010",  # 同一
-            "amount": "1000",
-            "description": "x",
-            "fiscal_period": "",
-        })
-        assert resp.status_code == 200
-        body = resp.get_data(as_text=True)
-        assert "移動元" in body or "異なる" in body
 
     def test_edit_get_prefill_transfer(self, db, logged_in_client, user, accounts):
         """資金移動 (BS↔BS) の編集 GET でフォームに transfer プリフィル。"""

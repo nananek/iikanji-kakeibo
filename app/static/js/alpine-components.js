@@ -1385,6 +1385,88 @@ async function runSuggestCategoriesE2EE(paymentAccountCode, rows) {
 window.runSuggestCategoriesE2EE = runSuggestCategoriesE2EE;
 
 
+// cashbook/form.html (新規 + 編集) から呼ばれる E2EE submit。
+//
+// 出納帳 form を JS submit に乗っ取り、入力値を entries_builder で暗号化して
+// batch API (新規: POST /api/v1/journals/batch) / PUT API (編集:
+// PUT /api/v1/journals/<id>) に送る (E3-F PR-B1.1)。サーバ側 view (cashbook.new
+// / cashbook.edit) は GET 専用で平文 POST は受け付けない。
+//
+// opts:
+//   isEdit, entryId, userId, date, fiscalPeriod, transactionType,
+//   paymentAccountCode, categoryAccountCode, amount, description
+async function cashbookSubmitE2EE(opts) {
+  var sharedClientMod = await import("/static/js/crypto/shared-client.js");
+  var sharedClient = new sharedClientMod.SharedCryptoClient(
+    "/static/js/crypto/shared-worker.js",
+  );
+  try {
+    var status = await sharedClient.status();
+    if (!status.hasKey) {
+      throw new Error("MK ロック中です (設定 → 暗号鍵管理 で解除)");
+    }
+    var builderMod = await import("/static/js/crypto/entries_builder.js");
+    var entry;
+    if (opts.transactionType === "transfer") {
+      entry = await builderMod.buildTransferEntry({
+        client: sharedClient,
+        userId: opts.userId,
+        date: opts.date,
+        description: opts.description || "",
+        fromAccountCode: opts.paymentAccountCode,
+        toAccountCode: opts.categoryAccountCode,
+        amount: opts.amount,
+        source: "cashbook",
+        fiscalPeriod: opts.fiscalPeriod,
+      });
+    } else {
+      entry = await builderMod.buildCashbookEntry({
+        client: sharedClient,
+        userId: opts.userId,
+        date: opts.date,
+        description: opts.description || "",
+        transactionType: opts.transactionType,
+        paymentAccountCode: opts.paymentAccountCode,
+        categoryAccountCode: opts.categoryAccountCode,
+        amount: opts.amount,
+        source: "cashbook",
+        fiscalPeriod: opts.fiscalPeriod,
+      });
+    }
+    var csrfMeta = document.querySelector('meta[name="csrf-token"]');
+    var csrfToken = csrfMeta ? csrfMeta.getAttribute("content") : "";
+    var url = opts.isEdit
+      ? "/api/v1/journals/" + opts.entryId
+      : "/api/v1/journals/batch";
+    var method = opts.isEdit ? "PUT" : "POST";
+    var body = opts.isEdit ? entry : { entries: [entry] };
+    var res = await fetch(url, {
+      method: method,
+      credentials: "include",
+      headers: {
+        "Content-Type": "application/json",
+        "X-CSRFToken": csrfToken,
+      },
+      body: JSON.stringify(body),
+    });
+    var rb = await res.json().catch(function() { return {}; });
+    if (!res.ok) {
+      throw new Error(rb.error || ("HTTP " + res.status));
+    }
+    try {
+      sessionStorage.setItem(
+        "flash:success",
+        opts.isEdit ? "伝票を更新しました。" : "伝票を登録しました。",
+      );
+    } catch (_e) { /* ignore */ }
+    window.location.href = "/cashbook/";
+  } finally {
+    try { sharedClient.close(); } catch (_e) { /* ignore */ }
+  }
+}
+window.cashbookSubmitE2EE = cashbookSubmitE2EE;
+
+
 // reconcileMode.runAiReconcile から呼ばれる E2EE フロー。
 async function runReconcileE2EE() {
   var orchestratorMod = await import("/static/js/crypto/reconcile_orchestrator.js");

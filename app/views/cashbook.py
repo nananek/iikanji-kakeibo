@@ -9,15 +9,9 @@ from app.extensions import db
 from app.models.account import Account
 from app.models.journal import JournalEntry, JournalEntryLine
 from app.forms.cashbook import CashbookForm
-from app.services.accounting import (
-    create_cashbook_entry,
-    create_transfer_entry,
-    update_cashbook_entry,
-    update_transfer_entry,
-)
-from app.services.fiscal import check_entry_modifiable, check_period_open_for_new, adjust_date_for_fiscal_period, get_closed_periods_map, get_restricted_before_year
+from app.services.fiscal import check_entry_modifiable, get_closed_periods_map, get_restricted_before_year
 from app.services.audit import (
-    get_effective_user_id, get_allowed_account_codes, get_submitted_account_codes,
+    get_effective_user_id, get_allowed_account_codes,
     is_entry_locked_for_owner, is_entry_locked_for_auditor,
     is_acting_as_auditor,
 )
@@ -27,7 +21,6 @@ bp = Blueprint("cashbook", __name__, url_prefix="/cashbook")
 
 
 def _account_name(account_code, user_id):
-    """科目codeから名前を取得"""
     if not account_code:
         return None
     a = Account.query.filter_by(user_id=user_id, code=account_code).first()
@@ -72,7 +65,13 @@ def index():
     )
 
 
-@bp.route("/new", methods=["GET", "POST"])
+# E3-F PR-B1.1: new() / edit() は GET 専用。フォーム送信は JS が
+# entries_builder で暗号化 → POST /api/v1/journals/batch (新規) /
+# PUT /api/v1/journals/<id> (更新) に直接送る (E2EE 経路)。
+# accounting.create_cashbook_entry / update_cashbook_entry は本 view からは
+# 呼ばれなくなったが、accounts.py / medical.py / tests 由来の呼出が残るため
+# 関数自体は dual-storage 完了 (PR-D) まで保持する。
+@bp.route("/new", methods=["GET"])
 @login_required
 def new():
     form = CashbookForm()
@@ -84,95 +83,9 @@ def new():
     if not form.date.data:
         form.date.data = date.today()
 
-    if form.validate_on_submit():
-        # 本人側: ロック科目チェック
-        if not is_acting_as_auditor():
-            locked_codes = get_submitted_account_codes(user_id)
-            if locked_codes:
-                used = {form.payment_account_code.data, form.category_account_code.data}
-                if used & locked_codes:
-                    flash("提出済みの税務科目を含むため登録できません。", "danger")
-                    grouped_accounts = get_grouped_accounts(user_id, allowed_codes)
-                    payment_account_name = _account_name(form.payment_account_code.data, get_effective_user_id())
-                    category_account_name = _account_name(form.category_account_code.data, get_effective_user_id())
-                    return render_template(
-                        "cashbook/form.html", form=form, is_edit=False,
-                        grouped_accounts=grouped_accounts,
-                        payment_account_name=payment_account_name,
-                        category_account_name=category_account_name,
-                        closed_periods=closed_periods,
-                        restricted_before_year=restricted_before,
-                    )
-
-        # 計上期間の決定
-        fiscal_period = None
-        if form.fiscal_period.data:
-            fiscal_period = int(form.fiscal_period.data)
-        # 特殊期間の日付補正
-        form.date.data = adjust_date_for_fiscal_period(form.date.data, fiscal_period)
-        period = fiscal_period if fiscal_period is not None else form.date.data.month
-
-        # 確定済み期間チェック
-        err = check_period_open_for_new(
-            user_id, form.date.data.year, period
-        )
-        if err:
-            flash(err, "danger")
-            grouped_accounts = get_grouped_accounts(user_id, allowed_codes)
-            payment_account_name = _account_name(form.payment_account_code.data, get_effective_user_id())
-            category_account_name = _account_name(form.category_account_code.data, get_effective_user_id())
-            return render_template(
-                "cashbook/form.html", form=form, is_edit=False,
-                grouped_accounts=grouped_accounts,
-                payment_account_name=payment_account_name,
-                category_account_name=category_account_name,
-                closed_periods=closed_periods,
-                restricted_before_year=restricted_before,
-            )
-
-        # 資金移動: 同一科目チェック
-        if form.transaction_type.data == "transfer":
-            if form.payment_account_code.data == form.category_account_code.data:
-                flash("移動元と移動先は異なる科目を選択してください。", "danger")
-                grouped_accounts = get_grouped_accounts(user_id, allowed_codes)
-                payment_account_name = _account_name(form.payment_account_code.data, get_effective_user_id())
-                category_account_name = _account_name(form.category_account_code.data, get_effective_user_id())
-                return render_template(
-                    "cashbook/form.html", form=form, is_edit=False,
-                    grouped_accounts=grouped_accounts,
-                    payment_account_name=payment_account_name,
-                    category_account_name=category_account_name,
-                    closed_periods=closed_periods,
-                    restricted_before_year=restricted_before,
-                )
-
-        if form.transaction_type.data == "transfer":
-            entry = create_transfer_entry(
-                user_id=user_id,
-                date=form.date.data,
-                from_account_code=form.payment_account_code.data,
-                to_account_code=form.category_account_code.data,
-                amount=form.amount.data,
-                description=form.description.data,
-                fiscal_period=fiscal_period,
-            )
-        else:
-            entry = create_cashbook_entry(
-                user_id=user_id,
-                date=form.date.data,
-                transaction_type=form.transaction_type.data,
-                payment_account_code=form.payment_account_code.data,
-                category_account_code=form.category_account_code.data,
-                amount=form.amount.data,
-                description=form.description.data,
-                fiscal_period=fiscal_period,
-            )
-        flash(f"伝票 #{entry.entry_number} を登録しました。", "success")
-        return redirect(url_for("cashbook.index"))
-
     grouped_accounts = get_grouped_accounts(user_id, allowed_codes)
-    payment_account_name = _account_name(form.payment_account_code.data, get_effective_user_id())
-    category_account_name = _account_name(form.category_account_code.data, get_effective_user_id())
+    payment_account_name = _account_name(form.payment_account_code.data, user_id)
+    category_account_name = _account_name(form.category_account_code.data, user_id)
     return render_template(
         "cashbook/form.html", form=form, is_edit=False,
         grouped_accounts=grouped_accounts,
@@ -183,7 +96,7 @@ def new():
     )
 
 
-@bp.route("/<int:entry_id>/edit", methods=["GET", "POST"])
+@bp.route("/<int:entry_id>/edit", methods=["GET"])
 @login_required
 def edit(entry_id):
     user_id = get_effective_user_id()
@@ -210,109 +123,40 @@ def edit(entry_id):
     closed_periods = get_closed_periods_map(user_id)
     restricted_before = get_restricted_before_year(user_id)
 
-    if form.validate_on_submit():
-        # 計上期間の決定
-        fiscal_period = None
-        if form.fiscal_period.data:
-            fiscal_period = int(form.fiscal_period.data)
-        # 特殊期間の日付補正
-        form.date.data = adjust_date_for_fiscal_period(form.date.data, fiscal_period)
+    form.date.data = entry.date
+    form.description.data = entry.description
+    form.fiscal_period.data = str(entry.fiscal_period) if entry.fiscal_period is not None else ""
+    # 仕訳明細から元のデータを復元（3方向検出）
+    lines = entry.lines
+    if len(lines) == 2:
+        debit_line = [l for l in lines if l.debit_amount > 0][0]
+        credit_line = [l for l in lines if l.credit_amount > 0][0]
 
-        # 変更先の期間が確定済みでないかチェック
-        new_period = fiscal_period if fiscal_period is not None else form.date.data.month
-        err = check_period_open_for_new(user_id, form.date.data.year, new_period)
-        if err:
-            flash(err, "danger")
-            grouped_accounts = get_grouped_accounts(user_id, allowed_codes)
-            payment_account_name = _account_name(form.payment_account_code.data, get_effective_user_id())
-            category_account_name = _account_name(form.category_account_code.data, get_effective_user_id())
-            return render_template(
-                "cashbook/form.html", form=form, is_edit=True, entry=entry,
-                grouped_accounts=grouped_accounts,
-                payment_account_name=payment_account_name,
-                category_account_name=category_account_name,
-                closed_periods=closed_periods,
-                restricted_before_year=restricted_before,
-            )
+        bs_types = {"asset", "liability"}
+        debit_account = Account.query.filter_by(user_id=user_id, code=debit_line.account_code).first()
+        credit_account = Account.query.filter_by(user_id=user_id, code=credit_line.account_code).first()
+        debit_is_bs = debit_account and debit_account.account_type.code in bs_types
+        credit_is_bs = credit_account and credit_account.account_type.code in bs_types
 
-        # 資金移動: 同一科目チェック
-        if form.transaction_type.data == "transfer":
-            if form.payment_account_code.data == form.category_account_code.data:
-                flash("移動元と移動先は異なる科目を選択してください。", "danger")
-                grouped_accounts = get_grouped_accounts(user_id, allowed_codes)
-                payment_account_name = _account_name(form.payment_account_code.data, get_effective_user_id())
-                category_account_name = _account_name(form.category_account_code.data, get_effective_user_id())
-                return render_template(
-                    "cashbook/form.html", form=form, is_edit=True, entry=entry,
-                    grouped_accounts=grouped_accounts,
-                    payment_account_name=payment_account_name,
-                    category_account_name=category_account_name,
-                    closed_periods=closed_periods,
-                    restricted_before_year=restricted_before,
-                )
-
-        if form.transaction_type.data == "transfer":
-            update_transfer_entry(
-                entry=entry,
-                date=form.date.data,
-                from_account_code=form.payment_account_code.data,
-                to_account_code=form.category_account_code.data,
-                amount=form.amount.data,
-                description=form.description.data,
-            )
+        if debit_is_bs and credit_is_bs:
+            form.transaction_type.data = "transfer"
+            form.payment_account_code.data = credit_line.account_code
+            form.category_account_code.data = debit_line.account_code
+            form.amount.data = int(debit_line.debit_amount)
+        elif debit_is_bs:
+            form.transaction_type.data = "income"
+            form.payment_account_code.data = debit_line.account_code
+            form.category_account_code.data = credit_line.account_code
+            form.amount.data = int(debit_line.debit_amount)
         else:
-            update_cashbook_entry(
-                entry=entry,
-                date=form.date.data,
-                transaction_type=form.transaction_type.data,
-                payment_account_code=form.payment_account_code.data,
-                category_account_code=form.category_account_code.data,
-                amount=form.amount.data,
-                description=form.description.data,
-            )
-        entry.fiscal_period = fiscal_period
-        db.session.commit()
-        flash(f"伝票 #{entry.entry_number} を更新しました。", "success")
-        return redirect(url_for("cashbook.index"))
+            form.transaction_type.data = "expense"
+            form.payment_account_code.data = credit_line.account_code
+            form.category_account_code.data = debit_line.account_code
+            form.amount.data = int(debit_line.debit_amount)
 
-    if request.method == "GET":
-        form.date.data = entry.date
-        form.description.data = entry.description
-        form.fiscal_period.data = str(entry.fiscal_period) if entry.fiscal_period is not None else ""
-        # 仕訳明細から元のデータを復元（3方向検出）
-        lines = entry.lines
-        if len(lines) == 2:
-            debit_line = [l for l in lines if l.debit_amount > 0][0]
-            credit_line = [l for l in lines if l.credit_amount > 0][0]
-
-            bs_types = {"asset", "liability"}
-            debit_account = Account.query.filter_by(user_id=user_id, code=debit_line.account_code).first()
-            credit_account = Account.query.filter_by(user_id=user_id, code=credit_line.account_code).first()
-            debit_is_bs = debit_account and debit_account.account_type.code in bs_types
-            credit_is_bs = credit_account and credit_account.account_type.code in bs_types
-
-            if debit_is_bs and credit_is_bs:
-                # 資金移動: 移動元=credit側, 移動先=debit側
-                form.transaction_type.data = "transfer"
-                form.payment_account_code.data = credit_line.account_code
-                form.category_account_code.data = debit_line.account_code
-                form.amount.data = int(debit_line.debit_amount)
-            elif debit_is_bs:
-                # 収入: 入金先=debit側, 収入源=credit側
-                form.transaction_type.data = "income"
-                form.payment_account_code.data = debit_line.account_code
-                form.category_account_code.data = credit_line.account_code
-                form.amount.data = int(debit_line.debit_amount)
-            else:
-                # 支出: 支払元=credit側, 支出先=debit側
-                form.transaction_type.data = "expense"
-                form.payment_account_code.data = credit_line.account_code
-                form.category_account_code.data = debit_line.account_code
-                form.amount.data = int(debit_line.debit_amount)
-
-    grouped_accounts = get_grouped_accounts(get_effective_user_id(), allowed_codes)
-    payment_account_name = _account_name(form.payment_account_code.data, get_effective_user_id())
-    category_account_name = _account_name(form.category_account_code.data, get_effective_user_id())
+    grouped_accounts = get_grouped_accounts(user_id, allowed_codes)
+    payment_account_name = _account_name(form.payment_account_code.data, user_id)
+    category_account_name = _account_name(form.category_account_code.data, user_id)
     return render_template(
         "cashbook/form.html", form=form, is_edit=True, entry=entry,
         grouped_accounts=grouped_accounts,
