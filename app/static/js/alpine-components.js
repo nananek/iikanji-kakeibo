@@ -1206,12 +1206,6 @@ document.addEventListener('alpine:init', function() {
        * して旧サーバ POST 経路にフォールバックする (本メソッドは呼ばれない)。
        */
       submitImportBatch: async function(event) {
-        // E3-F PR-A フォールバック: 既に「暗号化バイパス」フラグが立っていれば、
-        // preventDefault せず通常 form POST に流す (MK 未設定時の救済経路)。
-        var form = event.target;
-        if (form && form.dataset && form.dataset.bypassEncryption === 'true') {
-          return;
-        }
         event.preventDefault();
         // 未開設年度の扱い: ラジオボタン (skip / capital) の値を読む
         var oldYearActionEl = this.$el.querySelector(
@@ -1273,23 +1267,7 @@ document.addEventListener('alpine:init', function() {
           );
           var keyStatus = await sharedClient.status();
           if (!keyStatus.hasKey) {
-            // MK 未設定 / ロック中 → 旧サーバ form POST 経路 (csv/ofx/web の
-            // confirm エンドポイント) にフォールバックする。PR-C で
-            // encrypted_blob が必須化されるまでの dual-storage 期間限定の救済。
-            // dataset フラグで二重呼出を回避し、form の通常 POST を走らせる。
-            try { sharedClient.close(); } catch (_e) { /* ignore */ }
-            sharedClient = null;
-            if (submitBtn) {
-              submitBtn.disabled = false;
-              submitBtn.innerHTML = originalLabel;
-            }
-            form.dataset.bypassEncryption = 'true';
-            if (typeof form.requestSubmit === 'function') {
-              form.requestSubmit(submitBtn || undefined);
-            } else {
-              form.submit();
-            }
-            return;
+            throw new Error('MK ロック中です (設定 → 暗号鍵管理 で解除)');
           }
           var entries = [];
           for (var i = 0; i < validRows.length; i++) {
