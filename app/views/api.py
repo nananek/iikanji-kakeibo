@@ -123,22 +123,53 @@ _ALLOWED_BATCH_SOURCES = {
 _AES_GCM_IV_BYTES = 12
 
 
-def _audit_proxy_writeblock_response():
-    """Lv3 監査人が代理閲覧 (acting_as_user_id) 中に書き込み API を叩いた場合の
-    403 レスポンスを返す。該当しなければ None。
+def _proxy_block_resp():
+    return jsonify({
+        "error": "代理閲覧モードでは暗号化書き込みできません。本人アカウントで実行してください。",
+    }), 403
 
-    クライアント側 AAD は `current_user.id` (= 監査人) で構築されるため、
-    owner DB に保存すると AAD 不一致で永久に復号不能になる。
-    `api_auth.resolve_bearer_or_session` は Lv3 を許容する側に解決するため、
-    AAD 整合のためにサーバ側 (= ここ) で代理閲覧中の書き込みを拒否する。
+
+def _audit_proxy_blocks_encrypted_writes(payload):
+    """代理閲覧 (acting_as_user_id セッション) 中、payload に encrypted_blob /
+    blob_iv が含まれていれば 403 を返す。該当しなければ None。
+
+    クライアント側 AAD は監査人の userId で構築されるため、owner DB に
+    保存すると永久に復号不能になる。一方、平文-only の POST は既存設計
+    (Lv3 = 本人同等、test_resolve_acting_as) で許可されているのでブロック
+    しない。
 
     クライアント側 (alpine-components.js の `isProxyMode`) のガードに加えて
     curl 直接叩きへの defense-in-depth として機能する。
     """
+    if not flask_session.get("acting_as_user_id"):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    # single POST (/api/v1/journals): top-level に encrypted_blob/blob_iv
+    if payload.get("encrypted_blob") or payload.get("blob_iv"):
+        return _proxy_block_resp()
+    # batch POST: entries[] / その lines[] を 1 レベル再帰でチェック
+    entries = payload.get("entries")
+    if isinstance(entries, list):
+        for e in entries:
+            if not isinstance(e, dict):
+                continue
+            if e.get("encrypted_blob") or e.get("blob_iv"):
+                return _proxy_block_resp()
+            lines = e.get("lines")
+            if isinstance(lines, list):
+                for ln in lines:
+                    if isinstance(ln, dict) and (
+                        ln.get("encrypted_blob") or ln.get("blob_iv")
+                    ):
+                        return _proxy_block_resp()
+    return None
+
+
+def _audit_proxy_blocks_all_writes():
+    """代理閲覧中なら無条件 403。backup/restore など破壊的書き込み用。"""
     if flask_session.get("acting_as_user_id"):
-        return jsonify({
-            "error": "代理閲覧モードでは書き込みできません。本人アカウントで実行してください。",
-        }), 403
+        return _proxy_block_resp()
     return None
 
 
@@ -487,12 +518,15 @@ def create_journals_batch():
     レスポンス:
         201 {ok, batch_id, created_count, entries: [{id, entry_number}, ...]}
     """
-    proxy_block = _audit_proxy_writeblock_response()
-    if proxy_block:
-        return proxy_block
     data = request.get_json(silent=True)
     if not data:
         return jsonify({"error": "JSON ボディが必要です。"}), 400
+
+    # 代理閲覧中の暗号化書込みを拒否 (AAD 不一致で復号不能になるため)。
+    # 平文 POST は既存設計通り Lv3 で許可。
+    proxy_block = _audit_proxy_blocks_encrypted_writes(data)
+    if proxy_block:
+        return proxy_block
 
     entries_in = data.get("entries")
     if not isinstance(entries_in, list) or not entries_in:
@@ -1019,7 +1053,8 @@ def backup_restore():
         restore_user_backup,
     )
 
-    proxy_block = _audit_proxy_writeblock_response()
+    # restore は破壊的全置換のため、代理閲覧中は無条件で拒否。
+    proxy_block = _audit_proxy_blocks_all_writes()
     if proxy_block:
         return proxy_block
 
