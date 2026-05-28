@@ -145,9 +145,18 @@ def _audit_proxy_blocks_encrypted_writes(payload):
         return None
     if not isinstance(payload, dict):
         return None
-    # single POST (/api/v1/journals): top-level に encrypted_blob/blob_iv
+    # single POST / PUT: top-level に encrypted_blob/blob_iv
     if payload.get("encrypted_blob") or payload.get("blob_iv"):
         return _proxy_block_resp()
+    # PUT 経路では entries[] が無く top-level lines[] が直接置かれるため、
+    # ここで line-level の encrypted_blob も検出する必要がある (PR #252 review)。
+    top_lines = payload.get("lines")
+    if isinstance(top_lines, list):
+        for ln in top_lines:
+            if isinstance(ln, dict) and (
+                ln.get("encrypted_blob") or ln.get("blob_iv")
+            ):
+                return _proxy_block_resp()
     # batch POST: entries[] / その lines[] を 1 レベル再帰でチェック
     entries = payload.get("entries")
     if isinstance(entries, list):

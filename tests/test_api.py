@@ -1776,19 +1776,22 @@ class TestUpdateJournal:
                           })
         assert resp.status_code == 400
 
-    def test_proxy_encrypted_update_blocked(self, client, db, user, auditor, accounts):
+    def _setup_proxy(self, db, client, owner, auditor):
         from app.models.audit import AuditGrant
-        entry = make_journal(
-            db, user.id, accounts["5010"].code, accounts["1010"].code, 100,
-        )
-        g = AuditGrant(owner_user_id=user.id, auditor_user_id=auditor.id,
+        g = AuditGrant(owner_user_id=owner.id, auditor_user_id=auditor.id,
                        permission_level=3, status="active")
         db.session.add(g)
         db.session.commit()
         with client.session_transaction() as sess:
             sess["_user_id"] = str(auditor.id)
-            sess["acting_as_user_id"] = user.id
+            sess["acting_as_user_id"] = owner.id
             sess["acting_as_permission_level"] = 3
+
+    def test_proxy_encrypted_update_blocked(self, client, db, user, auditor, accounts):
+        entry = make_journal(
+            db, user.id, accounts["5010"].code, accounts["1010"].code, 100,
+        )
+        self._setup_proxy(db, client, user, auditor)
         import base64
         resp = client.put(f"/api/v1/journals/{entry.id}", json={
             "date": "2026-03-15", "description": "x",
@@ -1801,3 +1804,50 @@ class TestUpdateJournal:
         })
         assert resp.status_code == 403
         assert "代理閲覧" in resp.get_json()["error"]
+
+    def test_proxy_line_only_encrypted_blocked(
+            self, client, db, user, auditor, accounts,
+    ):
+        # entry-level 暗号化なし、line-level 暗号化ありのリクエストが
+        # 代理閲覧中に通ってしまわないこと (PR #252 review で指摘されたバグ)。
+        entry = make_journal(
+            db, user.id, accounts["5010"].code, accounts["1010"].code, 100,
+        )
+        self._setup_proxy(db, client, user, auditor)
+        import base64
+        resp = client.put(f"/api/v1/journals/{entry.id}", json={
+            "date": "2026-03-15", "description": "x",
+            "lines": [
+                {"account_code": accounts["5010"].code, "debit": 100,
+                 "encrypted_blob": base64.b64encode(b"\x11" * 48).decode(),
+                 "blob_iv": base64.b64encode(b"\x11" * 12).decode()},
+                {"account_code": accounts["1010"].code, "credit": 100},
+            ],
+        })
+        assert resp.status_code == 403
+        assert "代理閲覧" in resp.get_json()["error"]
+
+    def test_new_date_in_locked_period_returns_400(
+            self, client, db, user, accounts, auth_header,
+    ):
+        # 既存 entry は未確定、PUT の新 date が確定済み月 → 400
+        # (check_period_open_for_new 分岐のカバー)
+        from app.models.fiscal import FiscalClose
+        entry = make_journal(
+            db, user.id, accounts["5010"].code, accounts["1010"].code, 100,
+            entry_date=date(2026, 10, 15),  # 未確定月
+        )
+        fc = FiscalClose(user_id=user.id, year=2026, closed_period=5)
+        db.session.add(fc)
+        db.session.commit()
+        resp = client.put(f"/api/v1/journals/{entry.id}",
+                          headers=auth_header,
+                          json={
+                              "date": "2026-03-10",  # 確定済み月
+                              "description": "x",
+                              "lines": [
+                                  {"account_code": accounts["5010"].code, "debit": 100},
+                                  {"account_code": accounts["1010"].code, "credit": 100},
+                              ],
+                          })
+        assert resp.status_code == 400
