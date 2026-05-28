@@ -62,7 +62,8 @@ function makeMockClient() {
 // --- helper: encrypted entry + lines を mock API response 形式で組み立て ---
 
 async function makeEncryptedEntry(client, userId, entryId, recordBody) {
-  const aad = buildAAD("je", userId, entryId);
+  // E3-F PR-A: AAD は Option B (user_id のみ、entry_id を含めない)。
+  const aad = buildAAD("je", userId);
   const pt = new TextEncoder().encode(JSON.stringify(recordBody));
   const { ciphertext, iv } = await client.encrypt(pt, aad);
   return {
@@ -78,7 +79,7 @@ async function makeEncryptedEntry(client, userId, entryId, recordBody) {
 }
 
 async function makeEncryptedLine(client, userId, entryId, lineId, lineBody) {
-  const aad = buildAAD("jel", userId, entryId, lineId);
+  const aad = buildAAD("jel", userId);
   const pt = new TextEncoder().encode(JSON.stringify(lineBody));
   const { ciphertext, iv } = await client.encrypt(pt, aad);
   return {
@@ -287,10 +288,9 @@ test("AAD すり替え (別 user_id) は平文フォールバックする (全�
   assert.equal(result[0].description, null);
 });
 
-test("encrypted line に id が無くても全件取得は成功し、line は平文フォールバック", async () => {
-  // C-1 修正: _normalizeLine の throw が Promise.all を突き抜けて
-  // fetchJournalsForYear 全体を reject させないよう、line 単位で catch して
-  // 平文フォールバックに局所化している。
+test("Option B: encrypted line は line.id が無くても復号成功する", async () => {
+  // E3-F PR-A: AAD に line.id を含めないので、id 欠落でも復号可能。
+  // (旧 E3-C-1b では line.id を AAD に使っていたため throw していた)
   const client = makeMockClient();
   const userId = 1;
   const entryId = 100;
@@ -302,23 +302,16 @@ test("encrypted line に id が無くても全件取得は成功し、line は�
     { account_code: "5010", debit_amount: 100, credit_amount: 0 },
   );
   delete lineWithoutId.id;
-  // 平文 fallback 値もセット (本来 dual-read で平文があるはずだが、
-  // ここではテストのため明示的にセット)
-  lineWithoutId.account_code = "PLAINTEXT_5010";
-  lineWithoutId.debit = 999;
-  lineWithoutId.credit = 0;
   entry.lines = [lineWithoutId];
   const fetchImpl = makeFetch([entry]);
   const result = await fetchJournalsForYear({
     client, userId, fiscalYear: 2026, fetchImpl,
   });
-  // 全件取得は成功 (1 件)
   assert.equal(result.length, 1);
-  // entry 自体は復号成功
   assert.equal(result[0].description, "test entry");
-  // 該当 line は平文フォールバック
-  assert.equal(result[0].lines[0].account_code, "PLAINTEXT_5010");
-  assert.equal(result[0].lines[0].debit, 999);
+  // line は復号成功
+  assert.equal(result[0].lines[0].account_code, "5010");
+  assert.equal(result[0].lines[0].debit, 100);
 });
 
 test("batch_id も dual-read で平文フォールバック (W-1 修正)", async () => {
