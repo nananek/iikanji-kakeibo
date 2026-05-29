@@ -410,6 +410,170 @@ class TestCreateJournalsBatch:
         assert "整数" in resp.get_json()["error"]
 
 
+class TestCreateJournalsBatchDraftId:
+    """E3-F PR-B3: batch API entry-level draft_id (AI 証憑下書き → Voucher 紐付け)。
+
+    quick-accept クライアントが暗号化済 entry に draft_id を載せて投げる経路の
+    サーバ側 contract をカバーする。
+    """
+
+    @staticmethod
+    def _make_draft(db_sess, user_id, status="analyzed"):
+        from app.models.ai_draft import AIDraft
+        d = AIDraft(
+            user_id=user_id,
+            image_key=f"vouchers/{user_id}/test.jpg",
+            image_mime="image/jpeg",
+            file_hash="0" * 64,
+            file_size=100,
+            suggestions_json='[{"date": "2026-02-15", "entry_description": "x"}]',
+            status=status,
+        )
+        db_sess.session.add(d)
+        db_sess.session.commit()
+        return d
+
+    def test_draft_id_creates_voucher_and_deletes_draft(
+        self, client, db, user, accounts, auth_header,
+    ):
+        from app.models.ai_draft import AIDraft
+        from app.models.voucher import Voucher
+        d = self._make_draft(db, user.id)
+        resp = client.post("/api/v1/journals/batch", headers=auth_header, json={
+            "entries": [{
+                "date": "2026-02-15", "description": "AI受領",
+                "source": "ai_receipt",
+                "draft_id": d.id,
+                "lines": [
+                    {"account_code": accounts["5010"].code, "debit": 500},
+                    {"account_code": accounts["1010"].code, "credit": 500},
+                ],
+            }],
+        })
+        assert resp.status_code == 201, resp.get_json()
+        entry_id = resp.get_json()["entries"][0]["id"]
+        # draft が削除され、Voucher が紐付いている
+        assert db.session.get(AIDraft, d.id) is None
+        voucher = Voucher.query.filter_by(journal_entry_id=entry_id).first()
+        assert voucher is not None
+        assert voucher.user_id == user.id
+
+    def test_other_user_draft_id_rejected_and_rolls_back(
+        self, client, db, user, accounts, auth_header,
+    ):
+        """他人の draft_id を指定 → 400 で entry も Voucher も作られない。"""
+        from app.models.ai_draft import AIDraft
+        from app.models.user import User
+        from app.models.voucher import Voucher
+        other = User(username="other_bx3", email="otherbx3@example.com")
+        other.set_password("pass")
+        db.session.add(other)
+        db.session.commit()
+        d = self._make_draft(db, other.id)
+        resp = client.post("/api/v1/journals/batch", headers=auth_header, json={
+            "entries": [{
+                "date": "2026-02-15", "description": "x",
+                "draft_id": d.id,
+                "lines": [
+                    {"account_code": accounts["5010"].code, "debit": 100},
+                    {"account_code": accounts["1010"].code, "credit": 100},
+                ],
+            }],
+        })
+        assert resp.status_code == 400
+        assert "draft_id" in resp.get_json()["error"]
+        # 他人の draft はそのまま残る
+        assert db.session.get(AIDraft, d.id) is not None
+        # 自分の entry / voucher も作られていない
+        assert JournalEntry.query.filter_by(user_id=user.id).count() == 0
+        assert Voucher.query.filter_by(user_id=user.id).count() == 0
+
+    def test_nonexistent_draft_id_rejected(
+        self, client, db, user, accounts, auth_header,
+    ):
+        resp = client.post("/api/v1/journals/batch", headers=auth_header, json={
+            "entries": [{
+                "date": "2026-02-15", "description": "x",
+                "draft_id": 99999,
+                "lines": [
+                    {"account_code": accounts["5010"].code, "debit": 100},
+                    {"account_code": accounts["1010"].code, "credit": 100},
+                ],
+            }],
+        })
+        assert resp.status_code == 400
+        assert JournalEntry.query.filter_by(user_id=user.id).count() == 0
+
+    def test_done_draft_id_rejected(
+        self, client, db, user, accounts, auth_header,
+    ):
+        """status='done' / 'temp' の下書きは status='analyzed' フィルタで弾く。"""
+        d = self._make_draft(db, user.id, status="done")
+        resp = client.post("/api/v1/journals/batch", headers=auth_header, json={
+            "entries": [{
+                "date": "2026-02-15", "description": "x",
+                "draft_id": d.id,
+                "lines": [
+                    {"account_code": accounts["5010"].code, "debit": 100},
+                    {"account_code": accounts["1010"].code, "credit": 100},
+                ],
+            }],
+        })
+        assert resp.status_code == 400
+        assert JournalEntry.query.filter_by(user_id=user.id).count() == 0
+
+    def test_draft_id_non_int_rejected(
+        self, client, db, user, accounts, auth_header,
+    ):
+        resp = client.post("/api/v1/journals/batch", headers=auth_header, json={
+            "entries": [{
+                "date": "2026-02-15", "description": "x",
+                "draft_id": "abc",
+                "lines": [
+                    {"account_code": accounts["5010"].code, "debit": 100},
+                    {"account_code": accounts["1010"].code, "credit": 100},
+                ],
+            }],
+        })
+        assert resp.status_code == 400
+        assert "draft_id" in resp.get_json()["error"]
+
+    def test_partial_failure_rolls_back_draft_and_voucher(
+        self, client, db, user, accounts, auth_header,
+    ):
+        """entry[0] が draft 付きで成功直前に entry[1] が validate 失敗 →
+        Voucher / Draft の状態も巻き戻る。
+        """
+        from app.models.ai_draft import AIDraft
+        from app.models.voucher import Voucher
+        d = self._make_draft(db, user.id)
+        resp = client.post("/api/v1/journals/batch", headers=auth_header, json={
+            "entries": [
+                {
+                    "date": "2026-02-15", "description": "draft 紐付き",
+                    "draft_id": d.id,
+                    "lines": [
+                        {"account_code": accounts["5010"].code, "debit": 100},
+                        {"account_code": accounts["1010"].code, "credit": 100},
+                    ],
+                },
+                {
+                    # 貸借不一致で fail
+                    "date": "2026-02-16", "description": "fail",
+                    "lines": [
+                        {"account_code": accounts["5010"].code, "debit": 100},
+                        {"account_code": accounts["1010"].code, "credit": 99},
+                    ],
+                },
+            ],
+        })
+        assert resp.status_code == 400
+        # entry も Voucher も作られていない、draft は残ったまま
+        assert JournalEntry.query.filter_by(user_id=user.id).count() == 0
+        assert Voucher.query.filter_by(user_id=user.id).count() == 0
+        assert db.session.get(AIDraft, d.id) is not None
+
+
 class TestCreateJournalE2EE:
     """Phase E3: encrypted_blob / blob_iv / fiscal_year 受け付けのテスト。"""
 

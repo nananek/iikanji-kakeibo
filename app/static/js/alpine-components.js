@@ -1410,6 +1410,95 @@ document.addEventListener('alpine:init', function() {
     };
   });
 
+  /**
+   * AI 証憑下書き「案 1 で登録」ボタン (ai_journal/drafts.html) の Alpine
+   * component (E3-F PR-B3)。クライアント側で AES-GCM 暗号化して batch API
+   * に投げる。成功時は親 .col-md-6 を fade out + DOM 除去。
+   *
+   * config:
+   *   draftId, userId, isProxyMode, suggestion
+   *   suggestion: { date, entry_description, lines: [{ account_code,
+   *                  debit_amount, credit_amount, description }, ...] }
+   */
+  Alpine.data('aiDraftQuickAccept', function(config) {
+    return {
+      submitting: false,
+
+      async submit() {
+        if (this.submitting) return;
+        if (config.isProxyMode) {
+          alert('代理閲覧モードでは登録できません。本人アカウントで実行してください。');
+          return;
+        }
+        var s = config.suggestion;
+        if (!s) {
+          if (typeof showToast === 'function') {
+            showToast('解析データがありません。', 'danger');
+          }
+          return;
+        }
+        var description = (s.entry_description || '').trim();
+        var date = s.date || '';
+        var rawLines = s.lines || [];
+        var lines = [];
+        for (var i = 0; i < rawLines.length; i++) {
+          var ln = rawLines[i];
+          var code = ln.account_code;
+          var debit = parseInt(ln.debit_amount, 10) || 0;
+          var credit = parseInt(ln.credit_amount, 10) || 0;
+          if (!code) continue;
+          if (debit === 0 && credit === 0) continue;
+          lines.push({
+            account_code: code,
+            debit: debit,
+            credit: credit,
+            description: ln.description || '',
+          });
+        }
+        if (!date || !description || lines.length < 2) {
+          if (typeof showToast === 'function') {
+            showToast(
+              '案 1 の内容が不完全です。レビュー画面で確認してください。',
+              'danger',
+            );
+          }
+          return;
+        }
+        this.submitting = true;
+        var self = this;
+        try {
+          var entryNumber = await window.aiDraftQuickAcceptE2EE({
+            draftId: config.draftId,
+            userId: config.userId,
+            date: date,
+            description: description,
+            lines: lines,
+          });
+          if (typeof showToast === 'function') {
+            showToast(
+              '伝票 #' + entryNumber + ' を登録しました。',
+              'success',
+            );
+          }
+          var card = self.$el.closest('.col-md-6');
+          if (card) {
+            card.style.transition = 'opacity 0.3s';
+            card.style.opacity = '0';
+            setTimeout(function() { card.remove(); }, 300);
+          }
+        } catch (err) {
+          self.submitting = false;
+          var msg = (err && err.message) ? err.message : '登録に失敗しました。';
+          if (typeof showToast === 'function') {
+            showToast(msg, 'danger');
+          } else {
+            alert(msg);
+          }
+        }
+      }
+    };
+  });
+
 });
 
 
@@ -1601,6 +1690,64 @@ async function journalSubmitE2EE(opts) {
   }
 }
 window.journalSubmitE2EE = journalSubmitE2EE;
+
+
+// ai_journal/drafts.html (案 1 で登録ボタン) から呼ばれる E2EE submit (E3-F PR-B3)。
+//
+// AI 解析済み下書きの案 1 (= suggestions[0]) をクライアント側で暗号化して
+// batch API の entry-level draft_id 経路で送信する。サーバは AAD = userId
+// のみの暗号文を保存し、commit 内で AIDraft → Voucher 化 + Discord 通知
+// 更新を atomic に行う。
+//
+// opts:
+//   draftId, userId, date (YYYY-MM-DD), description, lines
+//   lines: [{account_code, debit, credit, description}, ...]
+//
+// 戻り値: 採番された entry_number (Toast 表示用)
+async function aiDraftQuickAcceptE2EE(opts) {
+  var sharedClientMod = await import("/static/js/crypto/shared-client.js");
+  var sharedClient = new sharedClientMod.SharedCryptoClient(
+    "/static/js/crypto/shared-worker.js",
+  );
+  try {
+    var status = await sharedClient.status();
+    if (!status.hasKey) {
+      throw new Error("MK ロック中です (設定 → 暗号鍵管理 で解除)");
+    }
+    var builderMod = await import("/static/js/crypto/entries_builder.js");
+    var entry = await builderMod.buildJournalEntry({
+      client: sharedClient,
+      userId: opts.userId,
+      date: opts.date,
+      description: opts.description || "",
+      lines: opts.lines,
+      source: "ai_receipt",
+    });
+    var csrfMeta = document.querySelector('meta[name="csrf-token"]');
+    var csrfToken = csrfMeta ? csrfMeta.getAttribute("content") : "";
+    var body = {
+      entries: [Object.assign({}, entry, { draft_id: opts.draftId })],
+    };
+    var res = await fetch("/api/v1/journals/batch", {
+      method: "POST",
+      credentials: "include",
+      headers: {
+        "Content-Type": "application/json",
+        "X-CSRFToken": csrfToken,
+      },
+      body: JSON.stringify(body),
+    });
+    var rb = await res.json().catch(function() { return {}; });
+    if (!res.ok) {
+      throw new Error(rb.error || ("HTTP " + res.status));
+    }
+    var entries = rb.entries || [];
+    return entries[0] && entries[0].entry_number;
+  } finally {
+    try { sharedClient.close(); } catch (_e) { /* ignore */ }
+  }
+}
+window.aiDraftQuickAcceptE2EE = aiDraftQuickAcceptE2EE;
 
 
 // reconcileMode.runAiReconcile から呼ばれる E2EE フロー。

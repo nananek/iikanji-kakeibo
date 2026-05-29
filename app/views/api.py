@@ -477,6 +477,13 @@ def _validate_and_parse_batch_entry(e, idx, user_account_codes, locked_codes):
             f"entries[{idx}].source の値が不正です: {source!r}"
         )
 
+    draft_id = e.get("draft_id")
+    if draft_id is not None:
+        if type(draft_id) is not int or draft_id <= 0:
+            raise ValueError(
+                f"entries[{idx}].draft_id は正の整数で指定してください。"
+            )
+
     return {
         "date": entry_date,
         "description": description,
@@ -486,6 +493,7 @@ def _validate_and_parse_batch_entry(e, idx, user_account_codes, locked_codes):
         "blob_iv": entry_iv,
         "fiscal_year": fiscal_year,
         "fiscal_period": fiscal_period,
+        "draft_id": draft_id,
     }
 
 
@@ -584,6 +592,21 @@ def create_journals_batch():
                 fiscal_year=parsed["fiscal_year"],
                 commit=False,
             )
+
+            # AI 証憑下書きの紐付け (E3-F PR-B3 quick-accept 経路)。
+            # 下書きが見つからない / 既に処理済みなら全 rollback。
+            if parsed["draft_id"] is not None:
+                draft = AIDraft.query.filter_by(
+                    id=parsed["draft_id"], user_id=user_id, status="analyzed",
+                ).first()
+                if draft is None:
+                    raise ValueError(
+                        f"entries[{idx}].draft_id: 下書きが見つからないか"
+                        "既に処理済みです。"
+                    )
+                _mark_draft_done(draft, entry.entry_number)
+                create_voucher_from_draft(draft, entry.id)
+
             created.append(entry)
 
         db.session.commit()

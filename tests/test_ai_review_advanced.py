@@ -135,83 +135,13 @@ class TestAdvancedModePost:
         assert "lines_json" in html
 
 
-class TestQuickAccept:
-    """下書き一覧からの案1クイックアクセプト"""
+class TestQuickAcceptRemoved:
+    """E3-F PR-B3: drafts_quick_accept view は撤去、案 1 登録は batch API
+    + entry-level draft_id 経路に置き換え。残置確認用テスト。
+    """
 
-    def _make_draft(self, db_sess, user_id, accounts, status="analyzed"):
-        suggestions = [{
-            "title": "テスト仕訳",
-            "description": "desc",
-            "date": "2026-01-15",
-            "entry_description": "テスト購入",
-            "lines": [
-                {"account_code": accounts["5010"].code, "account_name": "食費",
-                 "debit_amount": 1000, "credit_amount": 0},
-                {"account_code": accounts["1010"].code, "account_name": "現金",
-                 "debit_amount": 0, "credit_amount": 1000},
-            ],
-        }]
-        draft = AIDraft(
-            user_id=user_id,
-            image_key="vouchers/1/test.jpg",
-            image_mime="image/jpeg",
-            suggestions_json=json.dumps(suggestions, ensure_ascii=False),
-            status=status,
-        )
-        db_sess.session.add(draft)
-        db_sess.session.commit()
-        return draft
-
-    def test_quick_accept_creates_entry(self, db, logged_in_client, user, accounts):
-        """案1でクイックアクセプトすると仕訳が作成される"""
-        draft = self._make_draft(db, user.id, accounts)
-
-        resp = logged_in_client.post(
-            f"/ai-journal/drafts/{draft.id}/quick-accept",
-            follow_redirects=True,
-        )
-        assert resp.status_code == 200
-
-        entry = JournalEntry.query.filter_by(source="ai_receipt").first()
-        assert entry is not None
-        assert entry.description == "テスト購入"
-        assert len(entry.lines) == 2
-
-        # ドラフトが削除され、Voucher が作成されている
-        assert AIDraft.query.get(draft.id) is None
-        voucher = Voucher.query.filter_by(journal_entry_id=entry.id).first()
-        assert voucher is not None
-
-    def test_quick_accept_done_draft_rejected(self, db, logged_in_client, user, accounts):
-        """仕訳登録済みのドラフトはクイックアクセプトできない"""
-        draft = self._make_draft(db, user.id, accounts, status="done")
-
-        resp = logged_in_client.post(
-            f"/ai-journal/drafts/{draft.id}/quick-accept",
-            follow_redirects=True,
-        )
-        assert resp.status_code == 200
-        assert JournalEntry.query.filter_by(source="ai_receipt").first() is None
-
-    def test_quick_accept_other_user_rejected(self, db, logged_in_client, user, accounts):
-        """他ユーザーのドラフトはクイックアクセプトできない"""
-        from app.models.user import User
-        other = User(username="other", email="other@example.com")
-        other.set_password("pass")
-        db.session.add(other)
-        db.session.commit()
-
-        draft = self._make_draft(db, other.id, accounts)
-
-        resp = logged_in_client.post(
-            f"/ai-journal/drafts/{draft.id}/quick-accept",
-            follow_redirects=True,
-        )
-        assert resp.status_code == 200
-        assert JournalEntry.query.filter_by(source="ai_receipt").first() is None
-
-    def test_quick_accept_no_suggestions(self, db, logged_in_client, user):
-        """suggestions が空のドラフトはクイックアクセプトできない"""
+    def test_quick_accept_url_returns_404(self, db, logged_in_client, user, accounts):
+        """旧 quick-accept URL は 404 になっている (view 削除)"""
         draft = AIDraft(
             user_id=user.id,
             image_key="vouchers/1/test.jpg",
@@ -221,61 +151,10 @@ class TestQuickAccept:
         )
         db.session.add(draft)
         db.session.commit()
-
         resp = logged_in_client.post(
             f"/ai-journal/drafts/{draft.id}/quick-accept",
-            follow_redirects=True,
         )
-        assert resp.status_code == 200
-        assert JournalEntry.query.filter_by(source="ai_receipt").first() is None
-
-    def test_drafts_page_shows_quick_accept_button(self, db, logged_in_client, user, accounts):
-        """下書き一覧に「案1で登録」ボタンが表示される"""
-        self._make_draft(db, user.id, accounts)
-
-        resp = logged_in_client.get("/ai-journal/drafts")
-        html = resp.data.decode()
-        assert "案1で登録" in html
-        assert "quick-accept" in html
-        # htmx attributes for in-place update
-        assert "hx-post" in html
-        assert "hx-swap" in html
-
-    def test_quick_accept_htmx_returns_empty_with_toast(self, db, logged_in_client, user, accounts):
-        """HX-Request の場合、空ボディ＋HX-Trigger でトースト表示"""
-        draft = self._make_draft(db, user.id, accounts)
-
-        resp = logged_in_client.post(
-            f"/ai-journal/drafts/{draft.id}/quick-accept",
-            headers={"HX-Request": "true"},
-        )
-        assert resp.status_code == 200
-        assert resp.data == b""
-        trigger = json.loads(resp.headers["HX-Trigger"])
-        assert "showToast" in trigger
-        assert "登録しました" in trigger["showToast"]["message"]
-        assert trigger["showToast"]["type"] == "success"
-
-    def test_quick_accept_htmx_error_returns_422(self, db, logged_in_client, user):
-        """HX-Request でエラー時は 422 + Reswap=none + danger トースト"""
-        draft = AIDraft(
-            user_id=user.id,
-            image_key="vouchers/1/test.jpg",
-            image_mime="image/jpeg",
-            suggestions_json="[]",
-            status="analyzed",
-        )
-        db.session.add(draft)
-        db.session.commit()
-
-        resp = logged_in_client.post(
-            f"/ai-journal/drafts/{draft.id}/quick-accept",
-            headers={"HX-Request": "true"},
-        )
-        assert resp.status_code == 422
-        assert resp.headers.get("HX-Reswap") == "none"
-        trigger = json.loads(resp.headers["HX-Trigger"])
-        assert trigger["showToast"]["type"] == "danger"
+        assert resp.status_code == 404
 
 
 class TestReviewButtons:

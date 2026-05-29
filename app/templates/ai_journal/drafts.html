@@ -2,6 +2,12 @@
 {% block title %}一時保存一覧 - AI証憑仕訳 - いいかんじ™家計簿{% endblock %}
 
 {% block content %}
+<script>
+  // E3-F PR-B3: 案 1 ワンタップ登録のクライアント側暗号化に使う。
+  var _userId = {{ current_user.id|tojson }};
+  var _isProxyMode = {{ is_acting_as|tojson }};
+</script>
+
 <h2><i class="bi bi-archive"></i> AI証憑 一時保存</h2>
 
 <div class="d-flex justify-content-between align-items-center mt-3 mb-3">
@@ -72,15 +78,22 @@
       </div>
       <div class="card-footer d-flex gap-2">
         {% if d.status != 'done' %}
-        <form hx-post="{{ url_for('ai_journal.drafts_quick_accept', draft_id=d.id) }}"
-              hx-target="closest .col-md-6"
-              hx-swap="outerHTML swap:0.3s"
-              class="flex-fill">
-          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-          <button type="submit" class="btn btn-success btn-sm w-100">
-            <i class="bi bi-check-lg"></i> 案1で登録
-          </button>
-        </form>
+        <button type="button"
+                x-data="aiDraftQuickAccept({
+                  draftId: {{ d.id|tojson }},
+                  userId: _userId,
+                  isProxyMode: _isProxyMode,
+                  suggestion: {{ item.suggestion|tojson }}
+                })"
+                @click="submit()"
+                :disabled="submitting"
+                class="btn btn-success btn-sm flex-fill">
+          <span x-show="!submitting"><i class="bi bi-check-lg"></i> 案1で登録</span>
+          <span x-show="submitting" x-cloak>
+            <span class="spinner-border spinner-border-sm" role="status"></span>
+            登録中…
+          </span>
+        </button>
         <a href="{{ url_for('ai_journal.drafts_review', draft_id=d.id) }}"
            class="btn btn-outline-primary btn-sm">
           <i class="bi bi-pencil-square"></i> 編集
