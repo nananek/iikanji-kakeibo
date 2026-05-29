@@ -84,13 +84,31 @@ class TestResolveActingAsReadSession:
 class TestResolveActingAsWriteSession:
     """write 操作は permission_level=3 のみ許可。"""
 
-    def test_lv3_can_create_journal_for_owner(
+    def test_lv3_encrypted_write_blocked_in_proxy(
             self, client, db, owner, auditor, grant_lv3,
     ):
-        # owner には科目を seed しないので validate で 400 (account_code 不存在)
-        # で返るはず = 認証が通って owner として動いた証拠 (Lv3 で write 許可)
+        """PR-C: acting_as 中の write は encrypted_blob 付きなら _audit_proxy_blocks_
+        encrypted_writes で 403、平文-only なら encrypted_blob 必須化で 400。
+        Lv3 でも実質的に書き込み不可能 (AAD 不整合保護)。
+        """
+        from tests.conftest import encrypt_lines, encrypted_payload
         _login(client, auditor)
         _set_acting_as(client, owner.id, 3)
+        # 暗号化 write: AAD 不整合防止のため 403
+        resp = client.post("/api/v1/journals/batch", json={
+            "entries": [{
+                "date": "2026-02-01",
+                "description": "x",
+                "lines": encrypt_lines([
+                    {"account_code": "9999", "debit": 100},
+                    {"account_code": "8888", "credit": 100},
+                ]),
+                **encrypted_payload(),
+            }],
+        })
+        assert resp.status_code == 403
+        assert "代理閲覧" in resp.get_json()["error"]
+        # 平文-only write: encrypted_blob 必須化で 400
         resp = client.post("/api/v1/journals/batch", json={
             "entries": [{
                 "date": "2026-02-01",
@@ -101,10 +119,8 @@ class TestResolveActingAsWriteSession:
                 ],
             }],
         })
-        # 認証は通り、validate で 400 (科目が存在しない)
         assert resp.status_code == 400
-        err = resp.get_json()["error"]
-        assert "9999" in err or "8888" in err
+        assert "encrypted_blob" in resp.get_json()["error"]
 
     def test_lv2_cannot_create_journal(
             self, client, db, owner, auditor, grant_lv2,
@@ -211,37 +227,24 @@ class TestResolveActingAsRevoked:
 class TestResolveActingAsLiveDb:
     """DB grant の変更がリアルタイム反映されることを確認 (session キャッシュ非依存)。"""
 
-    def test_grant_downgrade_lv3_to_lv1_blocks_write_next_request(
+    def test_grant_downgrade_lv3_to_lv1_blocks_read_next_request(
             self, client, db, owner, auditor, grant_lv3,
     ):
-        # 初回 write は Lv3 → 通る (validate 400 で返る)
+        """PR-C で acting_as 中の write は事実上不可能になったので、grant 降格の
+        リアルタイム反映は read API で検証する (Lv3 read OK → Lv1 read 403)。
+        """
         _login(client, auditor)
         _set_acting_as(client, owner.id, 3)
-        resp = client.post("/api/v1/journals/batch", json={
-            "entries": [{
-                "date": "2026-02-01", "description": "x",
-                "lines": [
-                    {"account_code": "9999", "debit": 100},
-                    {"account_code": "8888", "credit": 100},
-                ],
-            }],
-        })
-        assert resp.status_code == 400  # validate で 400 = 認証は通った
+        # 初回 read は Lv3 → 200
+        resp = client.get("/api/v1/journals?fiscal_year=2026")
+        assert resp.status_code == 200
 
         # DB で grant を Lv1 に降格 (session の permission_level=3 はそのまま)
         grant_lv3.permission_level = 1
         db.session.commit()
 
-        # 次の write request は 403 になるべき (session ではなく DB grant で判定)
-        resp = client.post("/api/v1/journals/batch", json={
-            "entries": [{
-                "date": "2026-02-01", "description": "x",
-                "lines": [
-                    {"account_code": "1010", "debit": 100},
-                    {"account_code": "5010", "credit": 100},
-                ],
-            }],
-        })
+        # 次の read は Lv1 になるべき (session ではなく DB grant で判定) → 403
+        resp = client.get("/api/v1/journals?fiscal_year=2026")
         assert resp.status_code == 403
 
     def test_lv2_unsubmitted_grant_clears_session(

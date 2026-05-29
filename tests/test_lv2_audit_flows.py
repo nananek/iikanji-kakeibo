@@ -184,15 +184,17 @@ class TestMarkDraftDone:
         db.session.add(d)
         db.session.commit()
 
+        from tests.conftest import encrypt_lines, encrypted_payload
         with patch("app.views.api.create_voucher_from_draft"), \
              patch("app.services.notify.update_discord_message") as mock_upd:
             resp = client.post("/api/v1/journals", headers=auth_header, json={
                 "date": "2026-02-15",
                 "description": "ファミマ",
-                "lines": [
+                "lines": encrypt_lines([
                     {"account_code": "5010", "debit": 100, "credit": 0},
                     {"account_code": "1010", "debit": 0, "credit": 100},
-                ],
+                ]),
+                **encrypted_payload(),
                 "draft_id": d.id,
             })
         assert resp.status_code == 201
@@ -218,15 +220,17 @@ class TestMarkDraftDone:
         db.session.add(d)
         db.session.commit()
 
+        from tests.conftest import encrypt_lines, encrypted_payload
         with patch("app.views.api.create_voucher_from_draft"), \
              patch("app.services.notify.update_discord_message") as mock_upd:
             resp = client.post("/api/v1/journals", headers=auth_header, json={
                 "date": "2026-02-15",
                 "description": "ファミマ",
-                "lines": [
+                "lines": encrypt_lines([
                     {"account_code": "5010", "debit": 100, "credit": 0},
                     {"account_code": "1010", "debit": 0, "credit": 100},
-                ],
+                ]),
+                **encrypted_payload(),
                 "draft_id": d.id,
             })
         assert resp.status_code == 201

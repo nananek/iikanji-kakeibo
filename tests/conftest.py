@@ -349,6 +349,35 @@ def make_journal(db, user_id, acct_debit_code, acct_credit_code, amount,
     return entry
 
 
+def _dummy_blob_b64(n_bytes=48, fill=0x42):
+    """E3-F PR-C 以降、POST API は encrypted_blob/blob_iv を必須化したため、
+    テストでダミー base64 payload を生成するヘルパー。
+    """
+    from base64 import b64encode
+    return b64encode(bytes([fill]) * n_bytes).decode("ascii")
+
+
+def encrypted_payload(n_blob_bytes=48, fill=0x42):
+    """テスト用に encrypted_blob/blob_iv の dict を返す。POST payload に **展開
+    して使う:
+        client.post(url, json={**encrypted_payload(), ...其他フィールド})
+    """
+    return {
+        "encrypted_blob": _dummy_blob_b64(n_blob_bytes, fill),
+        "blob_iv": _dummy_blob_b64(12, fill),
+    }
+
+
+def encrypt_line(line_dict, n_blob_bytes=48, fill=0x42):
+    """既存の line dict にダミー暗号化 payload を merge して返す。"""
+    return {**line_dict, **encrypted_payload(n_blob_bytes, fill)}
+
+
+def encrypt_lines(line_dicts, n_blob_bytes=48, fill=0x42):
+    """line dict のリストすべてに暗号化 payload を付与する。"""
+    return [encrypt_line(ld, n_blob_bytes, fill) for ld in line_dicts]
+
+
 def make_voucher(db, user_id, journal_entry_id=None,
                  image_key="vouchers/1/1.jpg", image_mime="image/jpeg"):
     """テスト用の証憑を作成するヘルパー"""

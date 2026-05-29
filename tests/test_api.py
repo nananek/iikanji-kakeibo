@@ -7,7 +7,9 @@ import pytest
 
 from app.models.api_key import APIKey
 from app.models.journal import JournalEntry
-from tests.conftest import _auth_header, make_journal
+from tests.conftest import (
+    _auth_header, encrypt_lines, encrypted_payload, make_journal,
+)
 
 
 # --- 認証 ---
@@ -64,10 +66,11 @@ class TestCreateJournal:
         resp = client.post("/api/v1/journals", headers=auth_header, json={
             "date": "2026-02-15",
             "description": "食材購入",
-            "lines": [
+            "lines": encrypt_lines([
                 {"account_code": accounts["5010"].code, "debit": 3000},
                 {"account_code": accounts["1010"].code, "credit": 3000},
-            ],
+            ]),
+            **encrypted_payload(),
         })
         assert resp.status_code == 201
         data = resp.get_json()
@@ -124,10 +127,11 @@ class TestCreateJournal:
         resp = client.post("/api/v1/journals", headers=auth_header, json={
             "date": "2026-02-15",
             "description": "テスト",
-            "lines": [
+            "lines": encrypt_lines([
                 {"account_code": accounts["5010"].code, "debit": 100},
                 {"account_code": accounts["1010"].code, "credit": 100},
-            ],
+            ]),
+            **encrypted_payload(),
             "draft_id": "abc",
         })
         assert resp.status_code == 400
@@ -137,10 +141,11 @@ class TestCreateJournal:
         resp = client.post("/api/v1/journals", headers=auth_header, json={
             "date": "2026-02-15",
             "description": "テスト",
-            "lines": [
+            "lines": encrypt_lines([
                 {"account_code": accounts["5010"].code, "debit": 100},
                 {"account_code": accounts["1010"].code, "credit": 100},
-            ],
+            ]),
+            **encrypted_payload(),
             "draft_id": 99999,
         })
         assert resp.status_code == 400
@@ -167,17 +172,19 @@ class TestCreateJournalsBatch:
             "entries": [
                 {
                     "date": "2026-02-01", "description": "ランチ",
-                    "lines": [
+                    "lines": encrypt_lines([
                         {"account_code": accounts["5010"].code, "debit": 800},
                         {"account_code": accounts["1010"].code, "credit": 800},
-                    ],
+                    ]),
+                    **encrypted_payload(),
                 },
                 {
                     "date": "2026-02-02", "description": "コーヒー",
-                    "lines": [
+                    "lines": encrypt_lines([
                         {"account_code": accounts["5010"].code, "debit": 500},
                         {"account_code": accounts["1010"].code, "credit": 500},
-                    ],
+                    ]),
+                    **encrypted_payload(),
                 },
             ],
         })
@@ -196,10 +203,11 @@ class TestCreateJournalsBatch:
             "batch_id": "my-import-2026-02",
             "entries": [{
                 "date": "2026-02-15", "description": "test",
-                "lines": [
+                "lines": encrypt_lines([
                     {"account_code": accounts["5010"].code, "debit": 100},
                     {"account_code": accounts["1010"].code, "credit": 100},
-                ],
+                ]),
+                **encrypted_payload(),
             }],
         })
         assert resp.status_code == 201
@@ -308,10 +316,11 @@ class TestCreateJournalsBatch:
             "entries": [{
                 "date": "2026-02-01", "description": "損益振替",
                 "fiscal_period": 16,
-                "lines": [
+                "lines": encrypt_lines([
                     {"account_code": accounts["5010"].code, "debit": 100},
                     {"account_code": accounts["1010"].code, "credit": 100},
-                ],
+                ]),
+                **encrypted_payload(),
             }],
         })
         assert resp.status_code == 400
@@ -329,10 +338,11 @@ class TestCreateJournalsBatch:
             "entries": [{
                 "date": "2026-02-01", "description": "期首振戻",
                 "fiscal_period": 0,
-                "lines": [
+                "lines": encrypt_lines([
                     {"account_code": accounts["5010"].code, "debit": 100},
                     {"account_code": accounts["1010"].code, "credit": 100},
-                ],
+                ]),
+                **encrypted_payload(),
             }],
         })
         assert resp.status_code == 201
@@ -344,10 +354,11 @@ class TestCreateJournalsBatch:
         resp = client.post("/api/v1/journals/batch", headers=auth_header, json={
             "entries": [{
                 "date": "2026-02-01", "description": "x", "source": "malicious",
-                "lines": [
+                "lines": encrypt_lines([
                     {"account_code": accounts["5010"].code, "debit": 1},
                     {"account_code": accounts["1010"].code, "credit": 1},
-                ],
+                ]),
+                **encrypted_payload(),
             }],
         })
         assert resp.status_code == 400
@@ -372,10 +383,11 @@ class TestCreateJournalsBatch:
         resp = client.post("/api/v1/journals/batch", headers=auth_header, json={
             "entries": [{
                 "date": "2026-02-01", "description": "x",
-                "lines": [
+                "lines": encrypt_lines([
                     {"account_code": "9999", "debit": 100},
                     {"account_code": accounts["1010"].code, "credit": 100},
-                ],
+                ]),
+                **encrypted_payload(),
             }],
         })
         assert resp.status_code == 400
@@ -386,10 +398,11 @@ class TestCreateJournalsBatch:
         resp = client.post("/api/v1/journals/batch", headers=auth_header, json={
             "entries": [{
                 "date": "2026-02-01", "description": "x",
-                "lines": [
+                "lines": encrypt_lines([
                     {"account_code": accounts["5010"].code, "debit": 100.5},
                     {"account_code": accounts["1010"].code, "credit": 100.5},
-                ],
+                ]),
+                **encrypted_payload(),
             }],
         })
         assert resp.status_code == 400
@@ -400,10 +413,11 @@ class TestCreateJournalsBatch:
         resp = client.post("/api/v1/journals/batch", headers=auth_header, json={
             "entries": [{
                 "date": "2026-02-01", "description": "x",
-                "lines": [
+                "lines": encrypt_lines([
                     {"account_code": accounts["5010"].code, "debit": True},
                     {"account_code": accounts["1010"].code, "credit": True},
-                ],
+                ]),
+                **encrypted_payload(),
             }],
         })
         assert resp.status_code == 400
@@ -444,10 +458,11 @@ class TestCreateJournalsBatchDraftId:
                 "date": "2026-02-15", "description": "AI受領",
                 "source": "ai_receipt",
                 "draft_id": d.id,
-                "lines": [
+                "lines": encrypt_lines([
                     {"account_code": accounts["5010"].code, "debit": 500},
                     {"account_code": accounts["1010"].code, "credit": 500},
-                ],
+                ]),
+                **encrypted_payload(),
             }],
         })
         assert resp.status_code == 201, resp.get_json()
@@ -474,10 +489,11 @@ class TestCreateJournalsBatchDraftId:
             "entries": [{
                 "date": "2026-02-15", "description": "x",
                 "draft_id": d.id,
-                "lines": [
+                "lines": encrypt_lines([
                     {"account_code": accounts["5010"].code, "debit": 100},
                     {"account_code": accounts["1010"].code, "credit": 100},
-                ],
+                ]),
+                **encrypted_payload(),
             }],
         })
         assert resp.status_code == 400
@@ -529,10 +545,11 @@ class TestCreateJournalsBatchDraftId:
             "entries": [{
                 "date": "2026-02-15", "description": "x",
                 "draft_id": "abc",
-                "lines": [
+                "lines": encrypt_lines([
                     {"account_code": accounts["5010"].code, "debit": 100},
                     {"account_code": accounts["1010"].code, "credit": 100},
-                ],
+                ]),
+                **encrypted_payload(),
             }],
         })
         assert resp.status_code == 400
@@ -575,7 +592,12 @@ class TestCreateJournalsBatchDraftId:
 
 
 class TestCreateJournalE2EE:
-    """Phase E3: encrypted_blob / blob_iv / fiscal_year 受け付けのテスト。"""
+    """Phase E3: encrypted_blob / blob_iv / fiscal_year 受け付けのテスト。
+
+    PR-C 以降は encrypted_blob / blob_iv は必須化された。本クラスは
+    blob/iv が正しく DB に保存されること、および blob/iv ペアの整合性
+    (同時指定 / IV 長 / size cap / base64) を検証する。
+    """
 
     def _b64(self, n_bytes):
         from base64 import b64encode
@@ -588,13 +610,11 @@ class TestCreateJournalE2EE:
         from app.models.journal import JournalEntry
         resp = client.post("/api/v1/journals", headers=auth_header, json={
             "date": "2026-02-15", "description": "テスト",
-            "lines": [
-                {"account_code": accounts["5010"].code, "debit": 100,
-                 "encrypted_blob": self._b64(48), "blob_iv": self._b64(12)},
+            "lines": encrypt_lines([
+                {"account_code": accounts["5010"].code, "debit": 100},
                 {"account_code": accounts["1010"].code, "credit": 100},
-            ],
-            "encrypted_blob": self._b64(48),
-            "blob_iv": self._b64(12),
+            ]),
+            **encrypted_payload(),
             "fiscal_year": 2026,
         })
         assert resp.status_code == 201
@@ -602,11 +622,10 @@ class TestCreateJournalE2EE:
         assert entry.encrypted_blob == b"\x42" * 48
         assert entry.blob_iv == b"\x42" * 12
         assert entry.fiscal_year == 2026
-        # line 1 にのみ blob あり
-        lines_by_code = {l.account_code: l for l in entry.lines}
-        assert lines_by_code["5010"].encrypted_blob == b"\x42" * 48
-        assert lines_by_code["5010"].blob_iv == b"\x42" * 12
-        assert lines_by_code["1010"].encrypted_blob is None
+        # 全 line に blob あり (PR-C 以降必須)
+        for line in entry.lines:
+            assert line.encrypted_blob == b"\x42" * 48
+            assert line.blob_iv == b"\x42" * 12
 
     def test_fiscal_year_defaults_to_date_year(
         self, client, db, user, accounts, auth_header,
@@ -614,10 +633,11 @@ class TestCreateJournalE2EE:
         from app.models.journal import JournalEntry
         resp = client.post("/api/v1/journals", headers=auth_header, json={
             "date": "2024-08-15", "description": "x",
-            "lines": [
+            "lines": encrypt_lines([
                 {"account_code": accounts["5010"].code, "debit": 100},
                 {"account_code": accounts["1010"].code, "credit": 100},
-            ],
+            ]),
+            **encrypted_payload(),
         })
         assert resp.status_code == 201
         entry = JournalEntry.query.get(resp.get_json()["id"])
@@ -626,12 +646,13 @@ class TestCreateJournalE2EE:
     def test_blob_without_iv_rejected(
         self, client, db, user, accounts, auth_header,
     ):
+        """entry レベルで blob のみ / iv のみは "同時に指定" 拒否。"""
         resp = client.post("/api/v1/journals", headers=auth_header, json={
             "date": "2026-02-15", "description": "x",
-            "lines": [
+            "lines": encrypt_lines([
                 {"account_code": accounts["5010"].code, "debit": 100},
                 {"account_code": accounts["1010"].code, "credit": 100},
-            ],
+            ]),
             "encrypted_blob": self._b64(48),
             # blob_iv なし
         })
@@ -645,10 +666,14 @@ class TestCreateJournalE2EE:
         resp = client.post("/api/v1/journals", headers=auth_header, json={
             "date": "2026-02-15", "description": "x",
             "lines": [
+                # line[0]: blob あり / iv 欠落
                 {"account_code": accounts["5010"].code, "debit": 100,
-                 "encrypted_blob": self._b64(48)},  # blob_iv 欠落
-                {"account_code": accounts["1010"].code, "credit": 100},
+                 "encrypted_blob": self._b64(48)},
+                # line[1]: 正常 (必須化に通すため)
+                {"account_code": accounts["1010"].code, "credit": 100,
+                 **encrypted_payload()},
             ],
+            **encrypted_payload(),
         })
         assert resp.status_code == 400
         body = resp.get_json()
@@ -661,10 +686,11 @@ class TestCreateJournalE2EE:
         """bool は int サブクラスだが fiscal_year としては不正。"""
         resp = client.post("/api/v1/journals", headers=auth_header, json={
             "date": "2026-02-15", "description": "x",
-            "lines": [
+            "lines": encrypt_lines([
                 {"account_code": accounts["5010"].code, "debit": 100},
                 {"account_code": accounts["1010"].code, "credit": 100},
-            ],
+            ]),
+            **encrypted_payload(),
             "fiscal_year": True,
         })
         assert resp.status_code == 400
@@ -676,10 +702,11 @@ class TestCreateJournalE2EE:
         for bad_year in (1899, 2201, -1, 99999):
             resp = client.post("/api/v1/journals", headers=auth_header, json={
                 "date": "2026-02-15", "description": "x",
-                "lines": [
+                "lines": encrypt_lines([
                     {"account_code": accounts["5010"].code, "debit": 100},
                     {"account_code": accounts["1010"].code, "credit": 100},
-                ],
+                ]),
+                **encrypted_payload(),
                 "fiscal_year": bad_year,
             })
             assert resp.status_code == 400, f"year={bad_year} should be rejected"
@@ -730,18 +757,106 @@ class TestCreateJournalE2EE:
         assert resp.status_code == 400
         assert "base64" in resp.get_json()["error"]
 
+    def test_plaintext_only_post_rejected(
+        self, client, db, user, accounts, auth_header,
+    ):
+        """PR-C: entry レベルの encrypted_blob/blob_iv が無い POST は 400 拒否。"""
+        resp = client.post("/api/v1/journals", headers=auth_header, json={
+            "date": "2026-02-15", "description": "x",
+            "lines": encrypt_lines([
+                {"account_code": accounts["5010"].code, "debit": 100},
+                {"account_code": accounts["1010"].code, "credit": 100},
+            ]),
+            # encrypted_blob / blob_iv 未指定
+        })
+        assert resp.status_code == 400
+        body = resp.get_json()
+        assert "encrypted_blob" in body["error"]
+        assert "必須" in body["error"]
+
+    def test_plaintext_line_in_otherwise_encrypted_entry_rejected(
+        self, client, db, user, accounts, auth_header,
+    ):
+        """PR-C: entry blob はあるが lines[i] に blob 欠落 → 400 拒否。"""
+        resp = client.post("/api/v1/journals", headers=auth_header, json={
+            "date": "2026-02-15", "description": "x",
+            "lines": [
+                # line[0]: 暗号化済み
+                {"account_code": accounts["5010"].code, "debit": 100,
+                 **encrypted_payload()},
+                # line[1]: 平文のみ
+                {"account_code": accounts["1010"].code, "credit": 100},
+            ],
+            **encrypted_payload(),
+        })
+        assert resp.status_code == 400
+        body = resp.get_json()
+        assert "lines[1]" in body["error"]
+        assert "必須" in body["error"]
+
+    def test_batch_plaintext_only_entry_rejected(
+        self, client, db, user, accounts, auth_header,
+    ):
+        """PR-C: batch 内の 1 entry でも encrypted_blob 欠落 → 400 (全 rollback)。"""
+        resp = client.post("/api/v1/journals/batch", headers=auth_header, json={
+            "entries": [
+                {
+                    "date": "2026-02-01", "description": "正常",
+                    "lines": encrypt_lines([
+                        {"account_code": accounts["5010"].code, "debit": 100},
+                        {"account_code": accounts["1010"].code, "credit": 100},
+                    ]),
+                    **encrypted_payload(),
+                },
+                {
+                    # encrypted_blob 欠落の不正 entry
+                    "date": "2026-02-02", "description": "平文のみ",
+                    "lines": [
+                        {"account_code": accounts["5010"].code, "debit": 100},
+                        {"account_code": accounts["1010"].code, "credit": 100},
+                    ],
+                },
+            ],
+        })
+        assert resp.status_code == 400
+        body = resp.get_json()
+        assert "entries[1]" in body["error"]
+        assert "必須" in body["error"]
+        # 全 rollback されている
+        assert JournalEntry.query.filter_by(user_id=user.id).count() == 0
+
+    def test_put_plaintext_only_update_rejected(
+        self, client, db, user, accounts, auth_header,
+    ):
+        """PR-C: PUT も encrypted_blob 必須化対象。"""
+        entry = make_journal(
+            db, user.id, accounts["5010"].code, accounts["1010"].code, 100,
+        )
+        resp = client.put(f"/api/v1/journals/{entry.id}",
+                          headers=auth_header,
+                          json={
+                              "date": "2026-03-15", "description": "x",
+                              "lines": [
+                                  {"account_code": accounts["5010"].code, "debit": 100},
+                                  {"account_code": accounts["1010"].code, "credit": 100},
+                              ],
+                          })
+        assert resp.status_code == 400
+        assert "必須" in resp.get_json()["error"]
+
     def test_get_returns_encrypted_blob_as_base64(
         self, client, db, user, accounts, auth_header,
     ):
         """GET レスポンスに encrypted_blob/blob_iv が base64 で含まれる。"""
         from base64 import b64decode
-        # まず E2EE 形式で 1 件作成
+        # まず E2EE 形式で 1 件作成 (PR-C 以降 全 line に blob 必須)
         post_resp = client.post("/api/v1/journals", headers=auth_header, json={
             "date": "2026-02-15", "description": "x",
             "lines": [
                 {"account_code": accounts["5010"].code, "debit": 100,
                  "encrypted_blob": self._b64(32), "blob_iv": self._b64(12)},
-                {"account_code": accounts["1010"].code, "credit": 100},
+                {"account_code": accounts["1010"].code, "credit": 100,
+                 "encrypted_blob": self._b64(40), "blob_iv": self._b64(12)},
             ],
             "encrypted_blob": self._b64(48),
             "blob_iv": self._b64(12),
@@ -755,11 +870,9 @@ class TestCreateJournalE2EE:
         assert b64decode(body["encrypted_blob"]) == b"\x42" * 48
         assert b64decode(body["blob_iv"]) == b"\x42" * 12
         assert body["fiscal_year"] == 2026
-        # blob なしの line は null
         lines_by_code = {l["account_code"]: l for l in body["lines"]}
         assert b64decode(lines_by_code["5010"]["encrypted_blob"]) == b"\x42" * 32
-        assert lines_by_code["1010"]["encrypted_blob"] is None
-        assert lines_by_code["1010"]["blob_iv"] is None
+        assert b64decode(lines_by_code["1010"]["encrypted_blob"]) == b"\x42" * 40
 
 
 # --- 仕訳一覧 ---
@@ -1825,10 +1938,12 @@ class TestAuditProxyWriteBlock:
         })
         assert resp.status_code == 403
 
-    def test_batch_plaintext_allowed_in_proxy(
+    def test_batch_plaintext_rejected_in_proxy(
             self, client, db, user, auditor, accounts,
     ):
-        # encrypted_blob が無ければ Lv3 の平文 POST は通過する (既存設計)
+        # PR-C 以降 平文-only POST は 400 で拒否される。代理閲覧 Lv3 でも
+        # ガード対象外 (= proxy_block を通過) だが、encrypted_blob 必須化に
+        # より別経路で 400 になる。
         self._set_acting_as(db, client, user, auditor, level=3)
         resp = client.post("/api/v1/journals/batch", json={
             "entries": [
@@ -1841,8 +1956,8 @@ class TestAuditProxyWriteBlock:
                 },
             ],
         })
-        # batch validate / commit が通って 201 になる
-        assert resp.status_code == 201
+        assert resp.status_code == 400
+        assert "encrypted_blob" in resp.get_json()["error"]
 
     def test_restore_blocked_in_proxy(self, client, db, user, auditor):
         # restore は破壊的全置換のため、暗号化有無に関わらず 403
@@ -1861,33 +1976,8 @@ class TestUpdateJournal:
     共通エンドポイント。フィールドと lines を全置換する。
     """
 
-    def test_success_plaintext_update(self, client, db, user, accounts, auth_header):
-        entry = make_journal(
-            db, user.id, accounts["5010"].code, accounts["1010"].code, 1000,
-            description="変更前",
-        )
-        resp = client.put(f"/api/v1/journals/{entry.id}",
-                          headers=auth_header,
-                          json={
-                              "date": "2026-03-15",
-                              "description": "変更後",
-                              "lines": [
-                                  {"account_code": accounts["5010"].code, "debit": 2000},
-                                  {"account_code": accounts["1010"].code, "credit": 2000},
-                              ],
-                          })
-        assert resp.status_code == 200, resp.get_json()
-        data = resp.get_json()
-        assert data["ok"] is True
-        assert data["id"] == entry.id
-        from app.extensions import db as _db
-        _db.session.refresh(entry)
-        assert entry.description == "変更後"
-        assert str(entry.date) == "2026-03-15"
-        assert len(entry.lines) == 2
-        assert entry.lines[0].debit_amount == 2000
-
     def test_success_with_encrypted_blob(self, client, db, user, accounts, auth_header):
+        """PUT も PR-C 以降 entry + 全 line に encrypted_blob 必須。"""
         entry = make_journal(
             db, user.id, accounts["5010"].code, accounts["1010"].code, 500,
         )
@@ -1904,7 +1994,9 @@ class TestUpdateJournal:
                                   {"account_code": accounts["5010"].code, "debit": 500,
                                    "encrypted_blob": base64.b64encode(b"\x11" * 48).decode(),
                                    "blob_iv": base64.b64encode(b"\x11" * 12).decode()},
-                                  {"account_code": accounts["1010"].code, "credit": 500},
+                                  {"account_code": accounts["1010"].code, "credit": 500,
+                                   "encrypted_blob": base64.b64encode(b"\x22" * 48).decode(),
+                                   "blob_iv": base64.b64encode(b"\x22" * 12).decode()},
                               ],
                           })
         assert resp.status_code == 200, resp.get_json()
@@ -1912,7 +2004,9 @@ class TestUpdateJournal:
         _db.session.refresh(entry)
         assert entry.encrypted_blob is not None
         assert entry.blob_iv is not None
-        assert any(l.encrypted_blob is not None for l in entry.lines)
+        for line in entry.lines:
+            assert line.encrypted_blob is not None
+            assert line.blob_iv is not None
 
     def test_not_found(self, client, db, user, accounts, auth_header):
         resp = client.put("/api/v1/journals/99999",
@@ -1935,10 +2029,11 @@ class TestUpdateJournal:
                           headers=auth_header,
                           json={
                               "date": "2026-03-15", "description": "x",
-                              "lines": [
+                              "lines": encrypt_lines([
                                   {"account_code": accounts["5010"].code, "debit": 200},
                                   {"account_code": accounts["1010"].code, "credit": 100},
-                              ],
+                              ]),
+                              **encrypted_payload(),
                           })
         assert resp.status_code == 400
 
@@ -1956,10 +2051,11 @@ class TestUpdateJournal:
                           headers=auth_header,
                           json={
                               "date": "2026-05-20", "description": "x",
-                              "lines": [
+                              "lines": encrypt_lines([
                                   {"account_code": accounts["5010"].code, "debit": 100},
                                   {"account_code": accounts["1010"].code, "credit": 100},
-                              ],
+                              ]),
+                              **encrypted_payload(),
                           })
         assert resp.status_code == 400
 
@@ -2032,9 +2128,10 @@ class TestUpdateJournal:
                           json={
                               "date": "2026-03-10",  # 確定済み月
                               "description": "x",
-                              "lines": [
+                              "lines": encrypt_lines([
                                   {"account_code": accounts["5010"].code, "debit": 100},
                                   {"account_code": accounts["1010"].code, "credit": 100},
-                              ],
+                              ]),
+                              **encrypted_payload(),
                           })
         assert resp.status_code == 400

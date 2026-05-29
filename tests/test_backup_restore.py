@@ -203,6 +203,8 @@ class TestBackupRestoreValidation:
         backup_skeleton,
     ):
         """貸借不一致の仕訳は復元拒否 (改ざん検知)。"""
+        eb = base64.b64encode(b"\x42" * 48).decode("ascii")
+        iv = base64.b64encode(b"\x42" * 12).decode("ascii")
         backup_skeleton["data"]["accounts"] = [
             {"code": "1010", "name": "現金",
              "account_type_id": accounts["1010"].account_type_id},
@@ -210,14 +212,17 @@ class TestBackupRestoreValidation:
              "account_type_id": accounts["5010"].account_type_id},
         ]
         backup_skeleton["data"]["journal_entries"] = [
-            {"id": 1, "date": "2026-01-01", "entry_number": 1, "description": "x"},
+            {"id": 1, "date": "2026-01-01", "entry_number": 1, "description": "x",
+             "encrypted_blob": eb, "blob_iv": iv},
         ]
         backup_skeleton["data"]["journal_entry_lines"] = [
             {"id": 1, "journal_entry_id": 1, "account_code": "5010",
-             "debit_amount": 1000, "credit_amount": 0},
+             "debit_amount": 1000, "credit_amount": 0,
+             "encrypted_blob": eb, "blob_iv": iv},
             # 借方 1000 vs 貸方 999 → 不一致
             {"id": 2, "journal_entry_id": 1, "account_code": "1010",
-             "debit_amount": 0, "credit_amount": 999},
+             "debit_amount": 0, "credit_amount": 999,
+             "encrypted_blob": eb, "blob_iv": iv},
         ]
         resp = client.post(
             "/api/v1/backup/restore",
@@ -226,13 +231,68 @@ class TestBackupRestoreValidation:
         assert resp.status_code == 400
         assert "貸借" in resp.get_json().get("error", "")
 
+    def test_restore_rejects_journal_entry_without_encrypted_blob(
+        self, client, db, user, accounts, auth_header, reset_limiter,
+        backup_skeleton,
+    ):
+        """PR-C: restore で journal_entries に encrypted_blob 欠落 → 400 拒否。"""
+        backup_skeleton["data"]["accounts"] = [
+            {"code": "1010", "name": "現金",
+             "account_type_id": accounts["1010"].account_type_id},
+        ]
+        backup_skeleton["data"]["journal_entries"] = [
+            # encrypted_blob/blob_iv 欠落
+            {"id": 1, "date": "2026-02-15", "entry_number": 1,
+             "description": "test"},
+        ]
+        resp = client.post(
+            "/api/v1/backup/restore",
+            headers=auth_header, json=backup_skeleton,
+        )
+        assert resp.status_code == 400
+        assert "encrypted_blob" in resp.get_json().get("error", "")
+
+    def test_restore_rejects_line_without_encrypted_blob(
+        self, client, db, user, accounts, auth_header, reset_limiter,
+        backup_skeleton,
+    ):
+        """PR-C: restore で journal_entry_lines に encrypted_blob 欠落 → 400 拒否。"""
+        eb = base64.b64encode(b"\x42" * 48).decode("ascii")
+        iv = base64.b64encode(b"\x42" * 12).decode("ascii")
+        backup_skeleton["data"]["accounts"] = [
+            {"code": "1010", "name": "現金",
+             "account_type_id": accounts["1010"].account_type_id},
+        ]
+        backup_skeleton["data"]["journal_entries"] = [
+            {"id": 1, "date": "2026-02-15", "entry_number": 1,
+             "description": "test",
+             "encrypted_blob": eb, "blob_iv": iv},
+        ]
+        backup_skeleton["data"]["journal_entry_lines"] = [
+            # 暗号化欠落の行
+            {"id": 1, "journal_entry_id": 1, "account_code": "1010",
+             "debit_amount": 100, "credit_amount": 0},
+        ]
+        resp = client.post(
+            "/api/v1/backup/restore",
+            headers=auth_header, json=backup_skeleton,
+        )
+        assert resp.status_code == 400
+        assert "encrypted_blob" in resp.get_json().get("error", "")
+
 
 # --- ハッピーパス ---
 
 
 class TestBackupRestoreHappyPath:
     def _make_minimal_backup(self, user, accounts):
-        """1 仕訳 + 2 lines + 1 fiscal_close を含む最小 backup。"""
+        """1 仕訳 + 2 lines + 1 fiscal_close を含む最小 backup。
+
+        PR-C 以降 journal_entries / journal_entry_lines / medical_expenses
+        には encrypted_blob/blob_iv が必須化されたため、ダミー暗号文を付与する。
+        """
+        eb = base64.b64encode(b"\x42" * 48).decode("ascii")
+        iv = base64.b64encode(b"\x42" * 12).decode("ascii")
         return {
             "version": "1.0",
             "exported_at": "2026-02-15T00:00:00+00:00",
@@ -258,6 +318,7 @@ class TestBackupRestoreHappyPath:
                         "id": 100, "date": "2026-02-15",
                         "entry_number": 1, "description": "テスト仕訳",
                         "source": "journal", "fiscal_year": 2026,
+                        "encrypted_blob": eb, "blob_iv": iv,
                     },
                 ],
                 "journal_entry_lines": [
@@ -265,11 +326,13 @@ class TestBackupRestoreHappyPath:
                         "id": 200, "journal_entry_id": 100,
                         "account_code": "5010",
                         "debit_amount": 1000, "credit_amount": 0,
+                        "encrypted_blob": eb, "blob_iv": iv,
                     },
                     {
                         "id": 201, "journal_entry_id": 100,
                         "account_code": "1010",
                         "debit_amount": 0, "credit_amount": 1000,
+                        "encrypted_blob": eb, "blob_iv": iv,
                     },
                 ],
                 "medical_expenses": [],
@@ -491,18 +554,22 @@ class TestBackupRestoreCoverage:
         db.session.add(f)
         db.session.commit()
 
+        eb = base64.b64encode(b"\x42" * 48).decode("ascii")
+        iv = base64.b64encode(b"\x42" * 12).decode("ascii")
         backup_skeleton["data"]["accounts"] = [
             {"code": "1010", "name": "現金",
              "account_type_id": accounts["1010"].account_type_id},
         ]
         backup_skeleton["data"]["journal_entries"] = [
             {"id": 1, "date": "2026-02-15", "entry_number": 1,
-             "description": "test"},
+             "description": "test",
+             "encrypted_blob": eb, "blob_iv": iv},
         ]
         backup_skeleton["data"]["medical_expenses"] = [
             {"id": 1, "journal_entry_id": 1, "date": "2026-02-15",
              "patient_name": "本人", "hospital_name": "病院",
-             "amount_paid": 5000, "insurance_reimbursement": 1000},
+             "amount_paid": 5000, "insurance_reimbursement": 1000,
+             "encrypted_blob": eb, "blob_iv": iv},
         ]
         backup_skeleton["data"]["balance_cache_blobs"] = [
             {"year": 2026, "period": 12,
@@ -746,14 +813,19 @@ class TestBackupRestoreHelpers:
         from app.services.backup_restore import (
             _validate_backup, BackupValidationError,
         )
+        eb = base64.b64encode(b"\x42" * 48).decode("ascii")
+        iv = base64.b64encode(b"\x42" * 12).decode("ascii")
         b = {
             "version": "1.0", "user_id": 1,
             "data": {
                 "accounts": [{"code": "1010"}],
-                "journal_entries": [{"id": 1}],
+                "journal_entries": [
+                    {"id": 1, "encrypted_blob": eb, "blob_iv": iv},
+                ],
                 "journal_entry_lines": [
                     {"journal_entry_id": 1, "account_code": "1010",
-                     "debit_amount": "abc", "credit_amount": 0},
+                     "debit_amount": "abc", "credit_amount": 0,
+                     "encrypted_blob": eb, "blob_iv": iv},
                 ],
             },
         }

@@ -433,15 +433,17 @@ class TestAPISubmitLock:
     def test_create_blocked_by_submit_lock(self, client, db, user, accounts,
                                             auditor, auth_header):
         """提出済み科目を含む仕訳の起票が拒否される"""
+        from tests.conftest import encrypt_lines, encrypted_payload
         self._setup_submitted_grant(db, user, accounts, auditor,
                                      ["5010"])
         resp = client.post("/api/v1/journals", headers=auth_header, json={
             "date": "2026-02-15",
             "description": "ロック対象",
-            "lines": [
+            "lines": encrypt_lines([
                 {"account_code": accounts["5010"].code, "debit": 1000},
                 {"account_code": accounts["1010"].code, "credit": 1000},
-            ],
+            ]),
+            **encrypted_payload(),
         })
         assert resp.status_code == 400
         assert "提出済み" in resp.get_json()["error"]
@@ -449,15 +451,17 @@ class TestAPISubmitLock:
     def test_create_allowed_for_unlocked_accounts(self, client, db, user, accounts,
                                                     auditor, auth_header):
         """提出済み科目を含まない仕訳は起票できる"""
+        from tests.conftest import encrypt_lines, encrypted_payload
         self._setup_submitted_grant(db, user, accounts, auditor,
                                      ["5020"])
         resp = client.post("/api/v1/journals", headers=auth_header, json={
             "date": "2026-02-15",
             "description": "ロック対象外",
-            "lines": [
+            "lines": encrypt_lines([
                 {"account_code": accounts["5010"].code, "debit": 1000},
                 {"account_code": accounts["1010"].code, "credit": 1000},
-            ],
+            ]),
+            **encrypted_payload(),
         })
         assert resp.status_code == 201
 
