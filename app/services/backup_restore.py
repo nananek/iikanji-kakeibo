@@ -140,14 +140,19 @@ def _validate_backup(user_id: int, backup: Any) -> None:
         if not isinstance(period, int) or period < 0 or period > 16:
             raise BackupValidationError(f"invalid period: {period!r}")
 
-    # journal_entries の fiscal_period=16 (損益振替) は自動生成専用なので
-    # restore 経由でも注入を禁止する (CLAUDE.md の複式簿記設計に従う)
+    # journal_entries の損益振替仕訳 (fiscal_period=16 / fiscal_month=16 /
+    # is_closing) は自動生成専用なので restore 経由でも注入を禁止する
+    # (CLAUDE.md の複式簿記設計に従う)。E3-F で新カラムにも対応。
     for row in data.get("journal_entries") or []:
         if not isinstance(row, dict):
             raise BackupValidationError("journal_entries[*] must be an object")
-        if row.get("fiscal_period") == 16:
+        if (
+            row.get("fiscal_period") == 16
+            or row.get("fiscal_month") == 16
+            or row.get("is_closing")
+        ):
             raise BackupValidationError(
-                "fiscal_period=16 (損益振替) はバックアップ復元できません"
+                "損益振替仕訳 (is_closing) はバックアップ復元できません"
             )
 
     # E3-F PR-C: encrypted_blob/blob_iv の必須化チェック。balance_cache_blobs は
@@ -355,15 +360,31 @@ def _restore_journal_entries(
     id_map: dict[int, int] = {}
     for r in rows:
         old_id = r.get("id")
+        entry_date = _parse_date(r.get("date"))
+        fiscal_period = r.get("fiscal_period")
+        # E3-F: is_closing / fiscal_month は新フォーマットならそのまま、
+        # 旧フォーマット (これらキー無し) なら source / fiscal_period / date
+        # から導出する (forward-compat)。
+        is_closing = r.get("is_closing")
+        if is_closing is None:
+            is_closing = (r.get("source") == "closing")
+        fiscal_month = r.get("fiscal_month")
+        if fiscal_month is None:
+            if fiscal_period is not None:
+                fiscal_month = fiscal_period
+            elif entry_date is not None:
+                fiscal_month = entry_date.month
         entry = JournalEntry(
             user_id=user_id,
-            date=_parse_date(r.get("date")),
+            date=entry_date,
             entry_number=r.get("entry_number"),
             description=r.get("description", "") or "",
             source=r.get("source", "journal") or "journal",
             batch_id=r.get("batch_id"),
-            fiscal_period=r.get("fiscal_period"),
+            fiscal_period=fiscal_period,
             fiscal_year=r.get("fiscal_year"),
+            is_closing=bool(is_closing),
+            fiscal_month=fiscal_month,
             encrypted_blob=_b64_decode(r.get("encrypted_blob")),
             blob_iv=_b64_decode(r.get("blob_iv")),
         )

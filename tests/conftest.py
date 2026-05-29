@@ -321,12 +321,25 @@ def ratelimit_client(ratelimit_app):
 def make_journal(db, user_id, acct_debit_code, acct_credit_code, amount,
                  entry_date=None, description="テスト仕訳", source="journal",
                  fiscal_period=None, entry_number=None):
-    """テスト用の仕訳を作成するヘルパー"""
+    """テスト用の仕訳を作成するヘルパー
+
+    E3-F: 平文 fiscal_period / source と並行して新カラム fiscal_month /
+    is_closing も populate する (サーバの create_journal_entry / closing 生成と
+    同じ規約)。fiscal_month は fiscal_period 明示時はそれ、未指定なら
+    entry_date.month。source == "closing" は is_closing=True / fiscal_month=16。
+    """
     if entry_date is None:
         entry_date = date(2026, 1, 15)
     if entry_number is None:
         from app.services.accounting import get_next_entry_number
         entry_number = get_next_entry_number(user_id)
+    is_closing = (source == "closing")
+    if fiscal_period is not None:
+        fiscal_month = fiscal_period
+    elif is_closing:
+        fiscal_month = 16
+    else:
+        fiscal_month = entry_date.month
     entry = JournalEntry(
         user_id=user_id,
         date=entry_date,
@@ -335,6 +348,8 @@ def make_journal(db, user_id, acct_debit_code, acct_credit_code, amount,
         source=source,
         fiscal_period=fiscal_period,
         fiscal_year=entry_date.year,  # E3 後の年度フィルタ用
+        is_closing=is_closing,
+        fiscal_month=fiscal_month,
     )
     entry.lines = [
         JournalEntryLine(account_user_id=user_id,

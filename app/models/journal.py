@@ -10,7 +10,8 @@ class JournalEntry(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
-    date = db.Column(db.Date, nullable=False)
+    # E3-F: 055 で DROP 予定の平文列。PR-D-1 で書き込みを停止するため nullable。
+    date = db.Column(db.Date, nullable=True)
     entry_number = db.Column(db.Integer, nullable=False)
     description = db.Column(db.String(255), nullable=False, default="")
     source = db.Column(db.String(20), nullable=False, default="journal")
@@ -24,6 +25,12 @@ class JournalEntry(db.Model):
     # date 暗号化後の年度フィルタ用 (平文)。漏れる情報は「何年度に仕訳が
     # 何件あるか」のみ。
     fiscal_year = db.Column(db.SmallInteger, nullable=True)
+    # E3-F: source / fiscal_period DROP に向けた平文の代替カラム。
+    # is_closing は旧 source == 'closing' (損益振替の自動生成仕訳) の判定、
+    # fiscal_month は旧 fiscal_period と同じ値域
+    # (0=期首振戻, 1-12=通常月, 13-15=決算月, 16=損益振替)。
+    is_closing = db.Column(db.Boolean, nullable=False, default=False)
+    fiscal_month = db.Column(db.SmallInteger, nullable=True)
     created_at = db.Column(
         db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc)
     )

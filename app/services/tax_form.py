@@ -201,7 +201,7 @@ def get_business_income(user_id, year, month=None):
                 JournalEntry.user_id == user_id,
                 JournalEntry.date >= start,
                 JournalEntry.date < end,
-                JournalEntry.source != "closing",
+                JournalEntry.is_closing.is_(False),
                 Account.account_type_id == type_id,
                 Account.code.in_(biz_codes),
             )

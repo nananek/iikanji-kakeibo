@@ -196,7 +196,8 @@ class TestBackupRestoreValidation:
             headers=auth_header, json=backup_skeleton,
         )
         assert resp.status_code == 400
-        assert "fiscal_period" in resp.get_json().get("error", "")
+        # E3-F: closing 判定メッセージは is_closing ベースに変更。
+        assert "損益振替" in resp.get_json().get("error", "")
 
     def test_unbalanced_entry_rejected(
         self, client, db, user, accounts, auth_header, reset_limiter,

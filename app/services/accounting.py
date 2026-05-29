@@ -34,6 +34,9 @@ def create_cashbook_entry(user_id, date, transaction_type, payment_account_code,
         source=source,
         batch_id=batch_id,
         fiscal_period=fiscal_period,
+        # E3-F: 平文 fiscal_period / date と並行して新カラムを populate。
+        fiscal_year=date.year,
+        fiscal_month=fiscal_period if fiscal_period is not None else date.month,
     )
     db.session.add(entry)
     db.session.flush()
@@ -114,6 +117,8 @@ def create_journal_entry(user_id, date, description, lines_data,
         encrypted_blob=encrypted_blob,
         blob_iv=blob_iv,
         fiscal_year=fiscal_year if fiscal_year is not None else date.year,
+        # E3-F: 平文 fiscal_period / date と並行して新カラムを populate。
+        fiscal_month=fiscal_period if fiscal_period is not None else date.month,
     )
     db.session.add(entry)
     db.session.flush()
@@ -172,6 +177,9 @@ def create_transfer_entry(user_id, date, from_account_code, to_account_code,
         source=source,
         batch_id=batch_id,
         fiscal_period=fiscal_period,
+        # E3-F: 平文 fiscal_period / date と並行して新カラムを populate。
+        fiscal_year=date.year,
+        fiscal_month=fiscal_period if fiscal_period is not None else date.month,
     )
     db.session.add(entry)
     db.session.flush()
@@ -202,6 +210,11 @@ def update_transfer_entry(entry, date, from_account_code, to_account_code,
     """口座間振替の仕訳を更新する"""
     entry.date = date
     entry.description = description
+    # E3-F: date 変更に追随して新カラムも更新 (fiscal_period 明示時はそれを尊重)。
+    entry.fiscal_year = date.year
+    entry.fiscal_month = (
+        entry.fiscal_period if entry.fiscal_period is not None else date.month
+    )
 
     for line in entry.lines:
         db.session.delete(line)
@@ -239,6 +252,11 @@ def update_cashbook_entry(entry, date, transaction_type, payment_account_code,
     """出納帳の仕訳を更新"""
     entry.date = date
     entry.description = description
+    # E3-F: date 変更に追随して新カラムも更新 (fiscal_period 明示時はそれを尊重)。
+    entry.fiscal_year = date.year
+    entry.fiscal_month = (
+        entry.fiscal_period if entry.fiscal_period is not None else date.month
+    )
 
     # 既存の明細を削除して再作成
     for line in entry.lines:

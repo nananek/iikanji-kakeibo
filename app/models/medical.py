@@ -15,12 +15,14 @@ class MedicalExpense(db.Model):
         db.ForeignKey("journal_entries.id", ondelete="CASCADE"),
         nullable=True,
     )
-    date = db.Column(db.Date, nullable=False)
+    # E3-F: 055 で DROP 予定の平文列。PR-D-1 で書き込みを停止するため date /
+    # amount_paid は nullable に緩和済 (それ以外は ORM default を持つ)。
+    date = db.Column(db.Date, nullable=True)
     patient_name = db.Column(db.String(100), nullable=False, default="")
     hospital_name = db.Column(db.String(200), nullable=False, default="")
     treatment_description = db.Column(db.String(255), nullable=False, default="")
     provider_type = db.Column(db.String(20), nullable=True)  # hospital/pharmacy/nursing/other
-    amount_paid = db.Column(db.Integer, nullable=False)
+    amount_paid = db.Column(db.Integer, nullable=True)
     insurance_reimbursement = db.Column(db.Integer, nullable=False, default=0)
     # Phase E3: クライアント暗号化された全フィールド本体 (date / patient_name /
     # hospital_name / treatment_description / provider_type / amount_paid /

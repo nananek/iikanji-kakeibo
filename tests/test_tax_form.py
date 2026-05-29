@@ -519,9 +519,10 @@ class TestBusinessIncomeEdgeCases:
             JournalEntryLine(account_user_id=user.id, account_code="9010",
                              debit_amount=0, credit_amount=100000),
         ]
-        # closing 仕訳（除外されるべき）
+        # closing 仕訳（除外されるべき）— E3-F: is_closing で識別する
         e2 = JournalEntry(user_id=user.id, date=date(2026, 12, 31),
-                          entry_number=2, description="損益振替", source="closing")
+                          entry_number=2, description="損益振替", source="closing",
+                          is_closing=True, fiscal_month=16, fiscal_year=2026)
         e2.lines = [
             JournalEntryLine(account_user_id=user.id, account_code="9010",
                              debit_amount=100000, credit_amount=0),

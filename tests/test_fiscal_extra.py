@@ -299,12 +299,14 @@ class TestDeleteClosingEntries:
         delete_closing_entries(user.id, 2026)
 
     def test_deletes_closing_entries(self, db, user, accounts):
-        # closing entries には fiscal_period=16 が必要
+        # E3-F: closing 仕訳は is_closing=True / fiscal_month=16 / fiscal_year
+        # で識別する (delete_closing_entries の新フィルタ)。
         from app.models.journal import JournalEntry as JE, JournalEntryLine as JEL
         e = JE(
             user_id=user.id, date=date(2026, 12, 31),
             entry_number=1, description="closing",
             source="closing", fiscal_period=16,
+            is_closing=True, fiscal_month=16, fiscal_year=2026,
         )
         e.lines = [
             JEL(account_user_id=user.id, account_code="1010",

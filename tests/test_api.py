@@ -643,6 +643,33 @@ class TestCreateJournalE2EE:
         entry = JournalEntry.query.get(resp.get_json()["id"])
         assert entry.fiscal_year == 2024
 
+    def test_new_columns_populated_and_returned(
+        self, client, db, user, accounts, auth_header,
+    ):
+        """E3-F: POST で is_closing(False)/fiscal_month が populate され、
+        GET レスポンスにも含まれる。"""
+        from app.models.journal import JournalEntry
+        resp = client.post("/api/v1/journals", headers=auth_header, json={
+            "date": "2026-08-15", "description": "x",
+            "lines": encrypt_lines([
+                {"account_code": accounts["5010"].code, "debit": 100},
+                {"account_code": accounts["1010"].code, "credit": 100},
+            ]),
+            **encrypted_payload(),
+            "fiscal_year": 2026,
+        })
+        assert resp.status_code == 201
+        eid = resp.get_json()["id"]
+        entry = JournalEntry.query.get(eid)
+        assert entry.is_closing is False
+        # fiscal_period 未指定 → date.month から導出。
+        assert entry.fiscal_month == 8
+        # GET レスポンスに新フィールドが含まれる。
+        got = client.get(f"/api/v1/journals/{eid}", headers=auth_header)
+        journal = got.get_json()["journal"]
+        assert journal["is_closing"] is False
+        assert journal["fiscal_month"] == 8
+
     def test_blob_without_iv_rejected(
         self, client, db, user, accounts, auth_header,
     ):
