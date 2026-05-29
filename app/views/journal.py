@@ -79,7 +79,16 @@ def index():
     )
 
 
-@bp.route("/new", methods=["GET", "POST"])
+# E3-F PR-B2: new() / edit() は GET 専用。フォーム送信は JS が
+# entries_builder.buildJournalEntry で暗号化 → POST /api/v1/journals/batch (新規)
+# / PUT /api/v1/journals/<id> (更新) に直接送る (E2EE 経路)。
+# accounting.create_journal_entry は本 view からは呼ばれなくなったが、ai_journal /
+# auto_import / tests 由来の呼出が残るため関数自体は dual-storage 完了 (PR-D) まで
+# 保持する。
+# Lv2 監査者の科目フィルタ (proprietor 集約 / 部分置換) は edit_api / create_api
+# (JSON API、平文経路) で従来通り。GET の existing_lines にも proprietor 集約は
+# 残すが、JS submit 側で is_proprietor 行を除外して送る。
+@bp.route("/new", methods=["GET"])
 @login_required
 def new():
     form = JournalForm()
@@ -92,87 +101,6 @@ def new():
     if not form.date.data:
         form.date.data = date.today()
 
-    if request.method == "POST" and form.validate_on_submit():
-        lines_json = request.form.get("lines_json", "[]")
-        try:
-            lines_data = json.loads(lines_json)
-        except json.JSONDecodeError:
-            flash("明細データが不正です。", "danger")
-            return render_template(
-                "journal/form.html",
-                form=form,
-                grouped_accounts=grouped_accounts,
-                is_edit=False,
-                closed_periods=closed_periods,
-                restricted_before_year=restricted_before,
-            )
-
-        def _render_with_lines(msg):
-            flash(msg, "danger")
-            return render_template(
-                "journal/form.html",
-                form=form,
-                grouped_accounts=grouped_accounts,
-                is_edit=False,
-                existing_lines=lines_data,
-                closed_periods=closed_periods,
-                restricted_before_year=restricted_before,
-            )
-
-        if not lines_data:
-            return _render_with_lines("仕訳明細を1行以上入力してください。")
-
-        # 計上期間の決定
-        fiscal_period = None
-        if form.fiscal_period.data:
-            fiscal_period = int(form.fiscal_period.data)
-        if fiscal_period == 16:
-            return _render_with_lines("損益振替期間には手動で仕訳を追加できません。")
-        # 特殊期間の日付補正
-        form.date.data = adjust_date_for_fiscal_period(form.date.data, fiscal_period)
-        period = fiscal_period if fiscal_period is not None else form.date.data.month
-
-        # 確定済み期間チェック
-        err = check_period_open_for_new(get_effective_user_id(), form.date.data.year, period)
-        if err:
-            return _render_with_lines(err)
-
-        parsed = []
-        for line in lines_data:
-            parsed.append({
-                "account_code": line["account_code"],
-                "debit_amount": int(line.get("debit_amount", 0) or 0),
-                "credit_amount": int(line.get("credit_amount", 0) or 0),
-                "description": line.get("description", ""),
-            })
-
-        # 本人側: 提出済みロック科目チェック
-        if not is_acting_as_auditor():
-            locked_codes = get_submitted_account_codes(user_id)
-            if locked_codes:
-                used_locked = [p for p in parsed if p["account_code"] in locked_codes]
-                if used_locked:
-                    return _render_with_lines("提出済みの税務科目を含むため仕訳を作成できません。")
-
-        # Lv2監査者: 非公開科目チェック
-        if allowed_codes is not None:
-            for p in parsed:
-                if p["account_code"] not in allowed_codes:
-                    return _render_with_lines("使用できない科目が含まれています。")
-
-        try:
-            entry = create_journal_entry(
-                user_id=user_id,
-                date=form.date.data,
-                description=form.description.data,
-                lines_data=parsed,
-                fiscal_period=fiscal_period,
-            )
-            flash(f"伝票 #{entry.entry_number} を登録しました。", "success")
-            return redirect(url_for("journal.index"))
-        except ValueError as e:
-            return _render_with_lines(str(e))
-
     return render_template(
         "journal/form.html",
         form=form,
@@ -183,7 +111,7 @@ def new():
     )
 
 
-@bp.route("/<int:entry_id>/edit", methods=["GET", "POST"])
+@bp.route("/<int:entry_id>/edit", methods=["GET"])
 @login_required
 def edit(entry_id):
     entry = JournalEntry.query.filter_by(
@@ -210,185 +138,9 @@ def edit(entry_id):
     closed_periods = get_closed_periods_map(user_id)
     restricted_before = get_restricted_before_year(user_id)
 
-    if request.method == "POST" and form.validate_on_submit():
-        lines_json = request.form.get("lines_json", "[]")
-        try:
-            lines_data = json.loads(lines_json)
-        except json.JSONDecodeError:
-            flash("明細データが不正です。", "danger")
-            return render_template(
-                "journal/form.html",
-                form=form,
-                grouped_accounts=grouped_accounts,
-                is_edit=True,
-                entry=entry,
-                closed_periods=closed_periods,
-                restricted_before_year=restricted_before,
-            )
-
-        # Lv2: 事業主行をスキップして公開科目のみ受け入れ
-        parsed = []
-        for line in lines_data:
-            acode = line["account_code"]
-            if allowed_codes is not None and proprietor_code and acode == proprietor_code:
-                continue
-            parsed.append({
-                "account_code": acode,
-                "debit_amount": int(line.get("debit_amount", 0) or 0),
-                "credit_amount": int(line.get("credit_amount", 0) or 0),
-                "description": line.get("description", ""),
-            })
-
-        if allowed_codes is not None:
-            # Lv2: 非公開行を保持、公開行のみ差し替え
-            non_public_debit = sum(
-                int(l.debit_amount) for l in entry.lines if l.account_code not in allowed_codes
-            )
-            non_public_credit = sum(
-                int(l.credit_amount) for l in entry.lines if l.account_code not in allowed_codes
-            )
-            public_debit = sum(l["debit_amount"] for l in parsed)
-            public_credit = sum(l["credit_amount"] for l in parsed)
-            total_debit = public_debit + non_public_debit
-            total_credit = public_credit + non_public_credit
-            if total_debit != total_credit:
-                flash(f"貸借が一致しません（借方: {total_debit:,}, 貸方: {total_credit:,}）", "danger")
-                return render_template(
-                    "journal/form.html",
-                    form=form,
-                    grouped_accounts=grouped_accounts,
-                    is_edit=True,
-                    entry=entry,
-                    closed_periods=closed_periods,
-                    restricted_before_year=restricted_before,
-                )
-
-            fiscal_period = None
-            if form.fiscal_period.data:
-                fiscal_period = int(form.fiscal_period.data)
-            if fiscal_period == 16:
-                flash("損益振替期間には手動で仕訳を追加できません。", "danger")
-                return render_template(
-                    "journal/form.html",
-                    form=form,
-                    grouped_accounts=grouped_accounts,
-                    is_edit=True,
-                    entry=entry,
-                    closed_periods=closed_periods,
-                    restricted_before_year=restricted_before,
-                )
-            form.date.data = adjust_date_for_fiscal_period(form.date.data, fiscal_period)
-
-            # 変更先の期間が確定済みでないかチェック
-            new_period = fiscal_period if fiscal_period is not None else form.date.data.month
-            err = check_period_open_for_new(user_id, form.date.data.year, new_period)
-            if err:
-                flash(err, "danger")
-                return render_template(
-                    "journal/form.html",
-                    form=form,
-                    grouped_accounts=grouped_accounts,
-                    is_edit=True,
-                    entry=entry,
-                    closed_periods=closed_periods,
-                    restricted_before_year=restricted_before,
-                )
-
-            entry.date = form.date.data
-            entry.description = form.description.data
-            entry.fiscal_period = fiscal_period
-
-            for line in entry.lines:
-                if line.account_code in allowed_codes:
-                    db.session.delete(line)
-            db.session.flush()
-
-            for line_data in parsed:
-                db.session.add(JournalEntryLine(
-                    journal_entry_id=entry.id,
-                    account_user_id=user_id,
-                    account_code=line_data["account_code"],
-                    debit_amount=line_data["debit_amount"],
-                    credit_amount=line_data["credit_amount"],
-                    description=line_data.get("description", ""),
-                ))
-
-            db.session.commit()
-            flash(f"伝票 #{entry.entry_number} を更新しました。", "success")
-            return redirect(url_for("journal.index"))
-
-        # 通常 / Lv3
-        total_debit = sum(l["debit_amount"] for l in parsed)
-        total_credit = sum(l["credit_amount"] for l in parsed)
-        if total_debit != total_credit:
-            flash(f"貸借が一致しません（借方: {total_debit:,}, 貸方: {total_credit:,}）", "danger")
-            return render_template(
-                "journal/form.html",
-                form=form,
-                grouped_accounts=grouped_accounts,
-                is_edit=True,
-                entry=entry,
-                closed_periods=closed_periods,
-                restricted_before_year=restricted_before,
-            )
-
-        fiscal_period = None
-        if form.fiscal_period.data:
-            fiscal_period = int(form.fiscal_period.data)
-        if fiscal_period == 16:
-            flash("損益振替期間には手動で仕訳を追加できません。", "danger")
-            return render_template(
-                "journal/form.html",
-                form=form,
-                grouped_accounts=grouped_accounts,
-                is_edit=True,
-                entry=entry,
-                closed_periods=closed_periods,
-                restricted_before_year=restricted_before,
-            )
-        form.date.data = adjust_date_for_fiscal_period(form.date.data, fiscal_period)
-
-        # 変更先の期間が確定済みでないかチェック
-        new_period = fiscal_period if fiscal_period is not None else form.date.data.month
-        err = check_period_open_for_new(user_id, form.date.data.year, new_period)
-        if err:
-            flash(err, "danger")
-            return render_template(
-                "journal/form.html",
-                form=form,
-                grouped_accounts=grouped_accounts,
-                is_edit=True,
-                entry=entry,
-                closed_periods=closed_periods,
-                restricted_before_year=restricted_before,
-            )
-
-        entry.date = form.date.data
-        entry.description = form.description.data
-        entry.fiscal_period = fiscal_period
-
-        for line in entry.lines:
-            db.session.delete(line)
-        db.session.flush()
-
-        for line_data in parsed:
-            db.session.add(JournalEntryLine(
-                journal_entry_id=entry.id,
-                account_user_id=user_id,
-                account_code=line_data["account_code"],
-                debit_amount=line_data["debit_amount"],
-                credit_amount=line_data["credit_amount"],
-                description=line_data.get("description", ""),
-            ))
-
-        db.session.commit()
-        flash(f"伝票 #{entry.entry_number} を更新しました。", "success")
-        return redirect(url_for("journal.index"))
-
-    if request.method == "GET":
-        form.date.data = entry.date
-        form.description.data = entry.description
-        form.fiscal_period.data = str(entry.fiscal_period) if entry.fiscal_period is not None else ""
+    form.date.data = entry.date
+    form.description.data = entry.description
+    form.fiscal_period.data = str(entry.fiscal_period) if entry.fiscal_period is not None else ""
 
     # Lv2: 公開行 + 事業主集約行
     if allowed_codes is not None and proprietor_code:

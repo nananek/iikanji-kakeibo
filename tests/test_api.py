@@ -317,6 +317,29 @@ class TestCreateJournalsBatch:
         assert resp.status_code == 400
         assert "損益振替" in resp.get_json()["error"]
 
+    def test_fiscal_period_zero_accepted(self, client, db, user, accounts, auth_header):
+        """fp=0 (期首振戻) は batch から起票できる。
+
+        PR-B1.1 で cashbook 経路の test_fiscal_period_special を削除したため、
+        手動入力可能な特殊期間 (0=期首振戻、13-15=決算整理) のうち最も使われる
+        0 を batch API レベルで担保しておく。
+        """
+        from app.models.journal import JournalEntry
+        resp = client.post("/api/v1/journals/batch", headers=auth_header, json={
+            "entries": [{
+                "date": "2026-02-01", "description": "期首振戻",
+                "fiscal_period": 0,
+                "lines": [
+                    {"account_code": accounts["5010"].code, "debit": 100},
+                    {"account_code": accounts["1010"].code, "credit": 100},
+                ],
+            }],
+        })
+        assert resp.status_code == 201
+        created_id = resp.get_json()["entries"][0]["id"]
+        entry = db.session.get(JournalEntry, created_id)
+        assert entry.fiscal_period == 0
+
     def test_invalid_source_rejected(self, client, db, user, accounts, auth_header):
         resp = client.post("/api/v1/journals/batch", headers=auth_header, json={
             "entries": [{
