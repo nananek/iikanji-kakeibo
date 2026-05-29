@@ -231,6 +231,12 @@ class TestParseCsvFull:
         )
         rows = parse_csv_full(raw, self._two_col_mapping(), "%Y/%m/%d")
         assert len(rows) == 2
+        assert rows[0]["date"] == date(2026, 1, 1)
+        assert rows[0]["description"] == "給料"
+        assert rows[0]["deposit"] == 300000
+        assert rows[0]["withdrawal"] == 0
+        assert rows[1]["deposit"] == 0
+        assert rows[1]["withdrawal"] == 5000
 
     def test_skips_blank_rows(self):
         """全セル空白の行は読み飛ばす (途中の空行・末尾改行の重複)。"""
@@ -244,12 +250,6 @@ class TestParseCsvFull:
         assert len(rows) == 2
         assert rows[0]["description"] == "給料"
         assert rows[1]["description"] == "食費"
-        assert rows[0]["date"] == date(2026, 1, 1)
-        assert rows[0]["description"] == "給料"
-        assert rows[0]["deposit"] == 300000
-        assert rows[0]["withdrawal"] == 0
-        assert rows[1]["deposit"] == 0
-        assert rows[1]["withdrawal"] == 5000
 
     def test_negative_withdrawal_becomes_deposit(self):
         """出金列のマイナス値（キャッシュバック等）は入金に反転"""
