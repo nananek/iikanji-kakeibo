@@ -130,6 +130,28 @@ class TestPutAiConfig:
         assert resp.status_code == 400
         assert "base64" in resp.get_json()["error"]
 
+    def test_non_string_blob(self, logged_in_client, accounts):
+        # api_key_blob が文字列でない (数値) → 400
+        resp = self._put(logged_in_client, api_key_blob=12345)
+        assert resp.status_code == 400
+        assert "base64 string" in resp.get_json()["error"]
+
+    def test_invalid_iv_base64(self, logged_in_client, accounts):
+        # api_key_iv が base64 として不正 → 400
+        resp = self._put(logged_in_client, api_key_iv="!!!not base64!!!")
+        assert resp.status_code == 400
+        assert "base64" in resp.get_json()["error"]
+
+    def test_model_name_too_long(self, logged_in_client, accounts):
+        resp = self._put(logged_in_client, model_name="x" * 300)
+        assert resp.status_code == 400
+        assert "model_name" in resp.get_json()["error"]
+
+    def test_custom_prompt_too_long(self, logged_in_client, accounts):
+        resp = self._put(logged_in_client, custom_prompt="y" * 20000)
+        assert resp.status_code == 400
+        assert "custom_prompt" in resp.get_json()["error"]
+
     def test_idor_only_own_config(
         self, db, logged_in_client, user, accounts, auditor,
     ):
