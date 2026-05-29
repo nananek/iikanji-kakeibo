@@ -93,6 +93,16 @@ class TestCheckEntryModifiable:
         result = check_entry_modifiable(user.id, entry)
         assert result is not None
 
+    def test_closing_detected_by_is_closing_not_source(self, db, user, accounts):
+        # E3-F: source ではなく is_closing フラグで closing 判定する。
+        entry = make_journal(db, user.id, "5010", "1010",
+                             1000, entry_date=date(2026, 2, 15))
+        entry.is_closing = True
+        entry.source = "journal"  # source は closing でなくても弾く
+        db.session.commit()
+        result = check_entry_modifiable(user.id, entry)
+        assert result is not None
+
 
 class TestCheckPeriodOpenForNew:
     def test_open_period(self, db, user):
@@ -198,6 +208,16 @@ class TestGenerateClosingEntries:
         assert closing is not None
         assert closing.fiscal_period == 16
         assert closing.is_balanced
+        # E3-F: 新カラムと encrypted_blob センチネルを確認。
+        assert closing.is_closing is True
+        assert closing.fiscal_month == 16
+        assert closing.fiscal_year == 2026
+        # サーバは MK を持たないため空 blob + ゼロ IV のセンチネル。
+        assert closing.encrypted_blob == b""
+        assert closing.blob_iv == bytes(12)
+        for line in closing.lines:
+            assert line.encrypted_blob == b""
+            assert line.blob_iv == bytes(12)
 
     def test_delete_closing_entries(self, db, user, accounts):
         make_journal(db, user.id, "1020", "4010",

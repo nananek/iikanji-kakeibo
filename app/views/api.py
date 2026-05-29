@@ -893,6 +893,9 @@ def backup_export():
                     "batch_id": e.batch_id,
                     "fiscal_period": e.fiscal_period,
                     "fiscal_year": e.fiscal_year,
+                    # E3-F: source / fiscal_period DROP 後の平文代替。
+                    "is_closing": e.is_closing,
+                    "fiscal_month": e.fiscal_month,
                     "encrypted_blob": _b64_or_none(e.encrypted_blob),
                     "blob_iv": _b64_or_none(e.blob_iv),
                 }
@@ -1137,7 +1140,7 @@ def _entry_to_dict(entry):
     """
     return {
         "id": entry.id,
-        "date": entry.date.isoformat(),
+        "date": entry.date.isoformat() if entry.date else None,
         "entry_number": entry.entry_number,
         "description": entry.description,
         "source": entry.source,
@@ -1145,6 +1148,10 @@ def _entry_to_dict(entry):
         # 等の月次集計、設計書 §12.7)。
         "fiscal_period": entry.fiscal_period,
         "fiscal_year": entry.fiscal_year,
+        # E3-F: source / fiscal_period DROP 後の平文代替。is_closing は
+        # 自動生成された損益振替仕訳 (encrypted_blob 空) の識別にも使う。
+        "is_closing": entry.is_closing,
+        "fiscal_month": entry.fiscal_month,
         "encrypted_blob": _b64_or_none(entry.encrypted_blob),
         "blob_iv": _b64_or_none(entry.blob_iv),
         "lines": [
@@ -1350,6 +1357,11 @@ def update_journal(entry_id):
         entry.fiscal_year = parsed["fiscal_year"]
     else:
         entry.fiscal_year = parsed["date"].year
+    # E3-F: 平文 fiscal_period / date と並行して新カラムも更新。
+    entry.fiscal_month = (
+        parsed["fiscal_period"] if parsed["fiscal_period"] is not None
+        else parsed["date"].month
+    )
     entry.encrypted_blob = parsed["encrypted_blob"]
     entry.blob_iv = parsed["blob_iv"]
 

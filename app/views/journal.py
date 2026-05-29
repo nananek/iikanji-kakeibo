@@ -344,6 +344,9 @@ def edit_api(entry_id):
         entry.date = new_date
         entry.description = description
         entry.fiscal_period = fiscal_period
+        # E3-F: 平文 fiscal_period / date と並行して新カラムも更新。
+        entry.fiscal_year = new_date.year
+        entry.fiscal_month = new_period
 
         # 公開科目の既存行だけ削除
         for line in entry.lines:
@@ -389,6 +392,9 @@ def edit_api(entry_id):
     entry.date = new_date
     entry.description = description
     entry.fiscal_period = fiscal_period
+    # E3-F: 平文 fiscal_period / date と並行して新カラムも更新。
+    entry.fiscal_year = new_date.year
+    entry.fiscal_month = new_period
 
     for line in entry.lines:
         db.session.delete(line)

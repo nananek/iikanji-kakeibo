@@ -14,6 +14,9 @@ from app.models.user import User
 from app.services.accounting import get_next_entry_number
 
 
+# closing 仕訳のセンチネル blob_iv 長 (AES-GCM IV と同じ 12B)。
+_CLOSING_IV_LEN = 12
+
 # 期間番号 → 表示名
 PERIOD_LABELS = {
     0: "期首振戻月",
@@ -25,7 +28,12 @@ PERIOD_LABELS = {
 
 
 def period_condition(year, p):
-    """単一期間のSQLAlchemy条件を返す（共通）"""
+    """単一期間のSQLAlchemy条件を返す（共通）
+
+    E3-F (PR-D-1): fiscal_period / date 列はまだ DROP していないため従来通り
+    これらで判定する。fiscal_month ベースへの全面移行は date 列を撤去する
+    後続 PR で行う。
+    """
     if p == 0:
         return JournalEntry.fiscal_period == 0
     elif 1 <= p <= 12:
@@ -66,7 +74,13 @@ def adjust_date_for_fiscal_period(entry_date, fiscal_period):
 
 
 def get_effective_period(entry):
-    """仕訳の実効期間を返す"""
+    """仕訳の実効期間を返す
+
+    E3-F: fiscal_month を優先。移行期の安全のため未設定時は旧 fiscal_period、
+    それも無ければ date.month にフォールバックする。
+    """
+    if entry.fiscal_month is not None:
+        return entry.fiscal_month
     if entry.fiscal_period is not None:
         return entry.fiscal_period
     return entry.date.month
@@ -124,9 +138,9 @@ def is_period_locked(user_id, year, period):
 
 def check_entry_modifiable(user_id, entry):
     """仕訳が変更可能か判定。不可ならエラーメッセージを返す"""
-    if entry.source == "closing":
+    if entry.is_closing:
         return "損益振替仕訳（自動生成）は変更できません。"
-    year = entry.date.year
+    year = entry.fiscal_year if entry.fiscal_year is not None else entry.date.year
     period = get_effective_period(entry)
     if is_period_locked(user_id, year, period):
         label = PERIOD_LABELS.get(period, f"{period}月")
@@ -357,6 +371,11 @@ def generate_closing_entries(user_id, year):
     if not lines_data:
         return None
 
+    # E3-F: サーバは MK を持たないため closing 仕訳の encrypted_blob を生成できない。
+    # 暫定的に空 blob (b"") + ゼロ IV のセンチネル値を入れ、クライアント側
+    # (journals_client.js) が `is_closing && encrypted_blob.length === 0` を
+    # 「自動生成された損益振替仕訳」と認識してラベルをハードコード表示する。
+    # closing 仕訳生成のクライアント完全移譲は follow-up (#221) で対応する。
     entry = JournalEntry(
         user_id=user_id,
         date=closing_date,
@@ -365,6 +384,11 @@ def generate_closing_entries(user_id, year):
         source="closing",
         batch_id=batch,
         fiscal_period=16,
+        is_closing=True,
+        fiscal_month=16,
+        fiscal_year=year,
+        encrypted_blob=b"",
+        blob_iv=bytes(_CLOSING_IV_LEN),
     )
     db.session.add(entry)
     db.session.flush()
@@ -376,6 +400,8 @@ def generate_closing_entries(user_id, year):
             account_code=ld["account_code"],
             debit_amount=ld["debit_amount"],
             credit_amount=ld["credit_amount"],
+            encrypted_blob=b"",
+            blob_iv=bytes(_CLOSING_IV_LEN),
         ))
 
     return None
@@ -385,10 +411,9 @@ def delete_closing_entries(user_id, year):
     """自動生成した損益振替仕訳を削除"""
     entries = JournalEntry.query.filter(
         JournalEntry.user_id == user_id,
-        JournalEntry.source == "closing",
-        JournalEntry.fiscal_period == 16,
-        JournalEntry.date >= date(year, 1, 1),
-        JournalEntry.date < date(year + 1, 1, 1),
+        JournalEntry.is_closing.is_(True),
+        JournalEntry.fiscal_month == 16,
+        JournalEntry.fiscal_year == year,
     ).all()
     for entry in entries:
         db.session.delete(entry)
