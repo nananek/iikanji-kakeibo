@@ -365,6 +365,7 @@ class TestBearerAuthIntegration:
         assert resp.status_code == 200
 
     def test_oauth_token_grants_journals_create(self, client, db, user, accounts):
+        from tests.conftest import encrypt_lines, encrypted_payload
         raw, _ = self._make_token(db, user)
         resp = client.post(
             "/api/v1/journals",
@@ -372,10 +373,11 @@ class TestBearerAuthIntegration:
             json={
                 "date": "2026-01-15",
                 "description": "OAuth経由テスト",
-                "lines": [
+                "lines": encrypt_lines([
                     {"account_code": "5010", "debit": 1000, "credit": 0},
                     {"account_code": "1010", "debit": 0, "credit": 1000},
-                ],
+                ]),
+                **encrypted_payload(),
             },
         )
         assert resp.status_code == 201

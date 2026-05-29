@@ -183,17 +183,20 @@ def _audit_proxy_blocks_all_writes():
 
 
 def _decode_record_crypto(d: dict, label: str, blob_key: str, iv_key: str,
-                          max_blob_bytes: int = None):
+                          max_blob_bytes: int = None, required: bool = False):
     """payload dict から encrypted_blob / blob_iv を base64 decode して返す。
 
     戻り値: (blob_or_None, iv_or_None, error_message_or_None)
-      - 正常で blob/iv 未指定: (None, None, None)
+      - 正常で blob/iv 未指定 (required=False): (None, None, None)
       - 正常で blob/iv 指定: (bytes, bytes, None)
       - エラー: (None, None, "ユーザー向け日本語エラー")
 
     max_blob_bytes: blob のサイズ上限 (省略時は record (4KB) 用 default)。
       balance_cache_blobs など record より大きい blob を扱う caller が
       上書きできるようにしている。
+
+    required=True: PR-C (E3-F dual-read 撤去) で導入。encrypted_blob/blob_iv
+      の片方でも欠落していれば 400 を返す (平文-only POST 拒否)。
 
     例外を投げず error message を返す設計にしている理由は、呼び出し側で
     `try/except ValueError as e: return jsonify({"error": str(e)})` を行うと
@@ -204,6 +207,11 @@ def _decode_record_crypto(d: dict, label: str, blob_key: str, iv_key: str,
     blob_b64 = d.get(blob_key)
     iv_b64 = d.get(iv_key)
     if blob_b64 is None and iv_b64 is None:
+        if required:
+            return None, None, (
+                f"{label}: {blob_key} と {iv_key} は必須です "
+                "(クライアント側暗号化が必要)。"
+            )
         return None, None, None
     if (blob_b64 is None) != (iv_b64 is None):
         return None, None, (
@@ -264,10 +272,11 @@ def create_journal():
     if err:
         return jsonify({"error": err}), 400
 
-    # Phase E3: クライアント側で AES-GCM 暗号化された entry 本体 (任意)。
-    # 両方セットされていなければ無視 (= 旧 dual storage の平文保存のみ)。
+    # E3-F PR-C: クライアント側で AES-GCM 暗号化された entry 本体は必須。
+    # 平文-only POST は 400 (web ブラウザは entries_builder.js 経由、外部
+    # クライアントは未対応のため deprecate)。
     entry_blob, entry_iv, err = _decode_record_crypto(
-        data, "entry", "encrypted_blob", "blob_iv",
+        data, "entry", "encrypted_blob", "blob_iv", required=True,
     )
     if err:
         return jsonify({"error": err}), 400
@@ -280,6 +289,7 @@ def create_journal():
             return jsonify({"error": f"lines[{i}].account_code は必須です。"}), 400
         line_blob, line_iv, err = _decode_record_crypto(
             line, f"lines[{i}]", "encrypted_blob", "blob_iv",
+            required=True,
         )
         if err:
             return jsonify({"error": err}), 400
@@ -397,7 +407,7 @@ def _validate_and_parse_batch_entry(e, idx, user_account_codes, locked_codes):
         raise ValueError(f"entries[{idx}].lines は必須です (配列)")
 
     entry_blob, entry_iv, err = _decode_record_crypto(
-        e, f"entries[{idx}]", "encrypted_blob", "blob_iv",
+        e, f"entries[{idx}]", "encrypted_blob", "blob_iv", required=True,
     )
     if err:
         raise ValueError(err)
@@ -411,7 +421,7 @@ def _validate_and_parse_batch_entry(e, idx, user_account_codes, locked_codes):
             )
         line_blob, line_iv, err = _decode_record_crypto(
             line, f"entries[{idx}].lines[{li}]",
-            "encrypted_blob", "blob_iv",
+            "encrypted_blob", "blob_iv", required=True,
         )
         if err:
             raise ValueError(err)

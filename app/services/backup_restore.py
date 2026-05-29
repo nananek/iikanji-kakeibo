@@ -150,6 +150,18 @@ def _validate_backup(user_id: int, backup: Any) -> None:
                 "fiscal_period=16 (損益振替) はバックアップ復元できません"
             )
 
+    # E3-F PR-C: encrypted_blob/blob_iv の必須化チェック。balance_cache_blobs は
+    # _restore_balance_cache_blobs 側で既に検査済みなのでここでは扱わない。
+    for tbl in ("journal_entries", "journal_entry_lines", "medical_expenses"):
+        for row in data.get(tbl) or []:
+            if not isinstance(row, dict):
+                continue  # 上で既に object チェック済み (medical のみ未だが INSERT で落ちる)
+            if not row.get("encrypted_blob") or not row.get("blob_iv"):
+                raise BackupValidationError(
+                    f"{tbl}[*].encrypted_blob/blob_iv are required "
+                    "(クライアント側暗号化が必要)"
+                )
+
     # journal_entry の貸借合計一致チェック (改ざんされた backup から不整合な
     # 仕訳を DB に書き込ませないため)
     entry_balance: dict[int, list[int]] = {}
