@@ -159,6 +159,27 @@ class TestDrafts:
         resp = logged_in_client.get("/ai-journal/drafts")
         assert resp.status_code == 200
 
+    def test_drafts_renders_quick_accept_alpine_button(
+        self, db, logged_in_client, user, account_types, accounts,
+    ):
+        """E3-F PR-B3: 案 1 で登録ボタンは Alpine + 暗号化送信に置換済。
+        テンプレに suggestion オブジェクトと aiDraftQuickAccept component が
+        埋め込まれていることを確認する。
+        """
+        draft = _make_draft(db, user.id, accounts=accounts)
+        resp = logged_in_client.get("/ai-journal/drafts")
+        assert resp.status_code == 200
+        html = resp.data.decode()
+        # Alpine component が初期化されている
+        assert "aiDraftQuickAccept(" in html
+        # draftId とユーザ ID が button x-data に展開されている
+        assert f"draftId: {draft.id}" in html
+        # suggestion オブジェクトが埋め込まれている (案 1 の entry_description)
+        assert "テスト購入" in html
+        # 旧 htmx 経路が完全に消えている
+        assert "hx-post" not in html
+        assert "quick-accept" not in html
+
 
 class TestDraftsDelete:
     """POST /ai-journal/drafts/<id>/delete"""
@@ -223,47 +244,12 @@ class TestDraftsReview:
         assert resp.status_code == 404
 
 
-class TestQuickAcceptEdgeCases:
-    """drafts_quick_accept の追加異常系"""
+class TestQuickAcceptRemoved:
+    """E3-F PR-B3: drafts_quick_accept view を撤去し、案 1 登録は
+    batch API + entry-level draft_id 経路に移行。残置確認用。
+    """
 
-    def test_invalid_json_rejected(self, db, logged_in_client, user, account_types):
-        draft = _make_draft(db, user.id, suggestions_json="{bad}", status="analyzed")
-        resp = logged_in_client.post(
-            f"/ai-journal/drafts/{draft.id}/quick-accept", follow_redirects=True)
-        assert resp.status_code == 200
-        assert JournalEntry.query.filter_by(source="ai_receipt").first() is None
-
-    def test_no_suggestions_json(self, db, logged_in_client, user, account_types):
-        draft = _make_draft(db, user.id, suggestions_json=None, status="analyzed")
-        resp = logged_in_client.post(
-            f"/ai-journal/drafts/{draft.id}/quick-accept", follow_redirects=True)
-        assert resp.status_code == 200
-
-    def test_missing_date(self, db, logged_in_client, user, account_types, accounts):
-        suggestions = _make_suggestions(accounts, date="", entry_description="テスト")
-        draft = _make_draft(db, user.id,
-                            suggestions_json=json.dumps(suggestions, ensure_ascii=False),
-                            status="analyzed")
-        resp = logged_in_client.post(f"/ai-journal/drafts/{draft.id}/quick-accept")
-        assert resp.status_code == 302
-
-    def test_invalid_date(self, db, logged_in_client, user, account_types, accounts):
-        suggestions = _make_suggestions(accounts, date="not-a-date")
-        draft = _make_draft(db, user.id,
-                            suggestions_json=json.dumps(suggestions, ensure_ascii=False),
-                            status="analyzed")
-        resp = logged_in_client.post(f"/ai-journal/drafts/{draft.id}/quick-accept")
-        assert resp.status_code == 302
-
-    def test_no_lines(self, db, logged_in_client, user, account_types):
-        suggestions = [{"title": "t", "date": "2026-01-15",
-                        "entry_description": "test", "lines": []}]
-        draft = _make_draft(db, user.id,
-                            suggestions_json=json.dumps(suggestions, ensure_ascii=False),
-                            status="analyzed")
-        resp = logged_in_client.post(f"/ai-journal/drafts/{draft.id}/quick-accept")
-        assert resp.status_code == 302
-
-    def test_404(self, db, logged_in_client, user, account_types):
+    def test_quick_accept_url_returns_404(self, db, logged_in_client, user, account_types):
+        """旧 quick-accept URL (POST) は 404 になっている"""
         resp = logged_in_client.post("/ai-journal/drafts/99999/quick-accept")
         assert resp.status_code == 404

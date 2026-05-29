@@ -1,7 +1,7 @@
 """AI 証憑仕訳ビュー (ai_journal.py) の追加テスト
 
-未到達範囲: image 配信、quick_accept 各エラーパス、
-review POST (simple/advanced モード)、_update_discord_done など。
+未到達範囲: image 配信、review POST (simple/advanced モード)、
+_update_discord_done など。quick-accept は E3-F PR-B3 で view 撤去済。
 """
 
 import io
@@ -132,88 +132,12 @@ class TestVoucherImage:
         assert resp.status_code == 403
 
 
-class TestQuickAccept:
-    def test_unauthenticated(self, client):
-        resp = client.post("/ai-journal/drafts/1/quick-accept")
-        assert resp.status_code in (302, 401)
+class TestQuickAcceptRemoved:
+    """E3-F PR-B3: drafts_quick_accept view 撤去。POST URL は 404 になる。"""
 
-    def test_404(self, logged_in_client, accounts):
+    def test_quick_accept_url_404(self, logged_in_client, accounts):
         resp = logged_in_client.post("/ai-journal/drafts/9999/quick-accept")
         assert resp.status_code == 404
-
-    def test_idor(self, db, logged_in_client, accounts, second_user):
-        d = _draft(db, second_user.id)
-        resp = logged_in_client.post(f"/ai-journal/drafts/{d.id}/quick-accept")
-        assert resp.status_code in (302, 303)
-        # 仕訳は作られない
-        from app.models.journal import JournalEntry
-        assert JournalEntry.query.count() == 0
-
-    def test_already_done(self, db, logged_in_client, user, accounts):
-        d = _draft(db, user.id, status="done")
-        resp = logged_in_client.post(f"/ai-journal/drafts/{d.id}/quick-accept")
-        assert resp.status_code in (302, 303)
-
-    def test_no_suggestions(self, db, logged_in_client, user, accounts):
-        d = _draft(db, user.id)
-        d.suggestions_json = ""
-        from app.extensions import db as _db
-        _db.session.commit()
-        resp = logged_in_client.post(f"/ai-journal/drafts/{d.id}/quick-accept")
-        assert resp.status_code in (302, 303)
-
-    def test_invalid_json(self, db, logged_in_client, user, accounts):
-        d = _draft(db, user.id)
-        d.suggestions_json = "not-json{"
-        from app.extensions import db as _db
-        _db.session.commit()
-        resp = logged_in_client.post(f"/ai-journal/drafts/{d.id}/quick-accept")
-        assert resp.status_code in (302, 303)
-
-    def test_missing_date_redirects_to_review(self, db, logged_in_client, user, accounts):
-        d = _draft(db, user.id, suggestions=[{
-            "date": "", "entry_description": "x", "lines": [],
-        }])
-        resp = logged_in_client.post(f"/ai-journal/drafts/{d.id}/quick-accept")
-        assert resp.status_code in (302, 303)
-        assert f"/drafts/{d.id}/review" in resp.headers.get("Location", "") or \
-               "review" in resp.headers.get("Location", "")
-
-    def test_invalid_date(self, db, logged_in_client, user, accounts):
-        d = _draft(db, user.id, suggestions=[{
-            "date": "BAD-DATE", "entry_description": "x",
-            "lines": [
-                {"account_code": "5010", "debit_amount": 100, "credit_amount": 0},
-                {"account_code": "1010", "debit_amount": 0, "credit_amount": 100},
-            ],
-        }])
-        resp = logged_in_client.post(f"/ai-journal/drafts/{d.id}/quick-accept")
-        assert resp.status_code in (302, 303)
-
-    def test_no_lines(self, db, logged_in_client, user, accounts):
-        d = _draft(db, user.id, suggestions=[{
-            "date": "2026-02-15", "entry_description": "x",
-            "lines": [],
-        }])
-        resp = logged_in_client.post(f"/ai-journal/drafts/{d.id}/quick-accept")
-        assert resp.status_code in (302, 303)
-
-    def test_locked_period(self, db, logged_in_client, user, accounts):
-        d = _draft(db, user.id)
-        db.session.add(FiscalClose(user_id=user.id, year=2026, closed_period=2))
-        db.session.commit()
-        resp = logged_in_client.post(f"/ai-journal/drafts/{d.id}/quick-accept")
-        assert resp.status_code in (302, 303)
-
-    def test_success(self, db, logged_in_client, user, accounts):
-        d = _draft(db, user.id)
-        with patch("app.views.ai_journal.create_voucher_from_draft"):
-            resp = logged_in_client.post(f"/ai-journal/drafts/{d.id}/quick-accept")
-        assert resp.status_code in (302, 303)
-        from app.models.journal import JournalEntry
-        assert JournalEntry.query.filter_by(
-            user_id=user.id, source="ai_receipt"
-        ).count() == 1
 
 
 class TestDraftsReview:
