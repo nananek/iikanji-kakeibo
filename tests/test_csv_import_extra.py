@@ -4,12 +4,6 @@ mapping → confirm → 取込実行までのフローと reconcile/ai-reconcile
 """
 
 import io
-import json
-from datetime import date
-from unittest.mock import patch
-
-from app.models.fiscal import FiscalClose
-from app.models.journal import JournalEntry
 
 
 def _setup_csv_session(client, csv_bytes=None, payment="1010"):
@@ -79,27 +73,12 @@ class TestConfirm:
 
 
 class TestReconcile:
-    def test_unauthenticated(self, client):
+    """E3-F PR-D-2: POST /csv-import/reconcile は削除済 (照合は client 側
+    classical.findMatches に移植)。ルート自体が無いため認証前に 404。"""
+
+    def test_post_reconcile_returns_404(self, client):
         resp = client.post("/csv-import/reconcile")
-        assert resp.status_code in (302, 401)
-
-    def test_no_data(self, logged_in_client, accounts):
-        resp = logged_in_client.post("/csv-import/reconcile")
-        assert resp.status_code == 400
-
-    def test_with_data(self, db, logged_in_client, user, accounts):
-        _setup_csv_session(logged_in_client)
-        logged_in_client.post("/csv-import/mapping", data={
-            "date_col": "0", "desc_col": "1",
-            "withdrawal_col": "2", "deposit_col": "3",
-            "date_format": "%Y-%m-%d",
-        })
-        with patch("app.services.reconciliation.find_matches") as mock_find:
-            mock_find.return_value = {
-                "csv_results": [], "journal_only": [], "daily_summary": [],
-            }
-            resp = logged_in_client.post("/csv-import/reconcile")
-        assert resp.status_code == 200
+        assert resp.status_code == 404
 
 
 class TestAiReconcile:

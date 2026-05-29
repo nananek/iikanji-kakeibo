@@ -124,16 +124,11 @@ test("filterMatches: reason 欠落で空文字", () => {
 
 // ============ runReconcile 統合 ============
 
+// E3-F PR-D-2: prompt-context は unmatched_csv / journal_candidates を返さない。
+// 未照合 CSV 行と仕訳候補は呼出側 (classical の結果) が runReconcile に渡す。
 const PROMPT_CTX = {
   prompt_template: "CSV:__CSV_ROWS_TEXT__\nJOURNAL:__JOURNAL_ROWS_TEXT__",
   batch_size: 30,
-  unmatched_csv: [
-    { csv_index: 0, date: "2026-01-10", description: "Amazon", amount: 1500 },
-  ],
-  journal_candidates: [
-    { entry_id: 1, date: "2026-01-10", description: "アマゾン",
-      amount: 1480, category_name: "日用品" },
-  ],
   custom_prompt: "",
   default_model_by_provider: {
     openai: "gpt-4o",
@@ -141,6 +136,14 @@ const PROMPT_CTX = {
     google: "gemini-2.0-flash",
   },
 };
+
+const ONE_UNMATCHED = [
+  { csv_index: 0, date: "2026-01-10", description: "Amazon", amount: 1500 },
+];
+const ONE_CANDIDATE = [
+  { entry_id: 1, date: "2026-01-10", description: "アマゾン",
+    amount: 1480, category_name: "日用品" },
+];
 
 
 test("正常フロー: 単一バッチで matches 1 件返す", async () => {
@@ -167,7 +170,8 @@ test("正常フロー: 単一バッチで matches 1 件返す", async () => {
     };
   };
   const ret = await runReconcile({
-    client, callLLMTextImpl, fetchImpl,
+    client, unmatched: ONE_UNMATCHED, candidates: ONE_CANDIDATE,
+    callLLMTextImpl, fetchImpl,
   });
   assert.equal(llmCalls, 1);
   assert.equal(ret.length, 1);
@@ -185,7 +189,7 @@ test("バッチ処理: batch_size を超える unmatched で複数回 LLM 呼出
   let llmCalls = 0;
   const fetchImpl = makeFetch([
     ["/csv-import/ai-reconcile-context", () => jsonResp({
-      ...PROMPT_CTX, batch_size: 2, unmatched_csv: big,
+      ...PROMPT_CTX, batch_size: 2,
     })],
     ["/api/v1/ai-config", () => jsonResp({
       provider: "openai", model_name: "gpt-4o",
@@ -196,7 +200,7 @@ test("バッチ処理: batch_size を超える unmatched で複数回 LLM 呼出
     plaintext: new TextEncoder().encode("k"),
   }));
   const ret = await runReconcile({
-    client, fetchImpl,
+    client, unmatched: big, candidates: ONE_CANDIDATE, fetchImpl,
     callLLMTextImpl: async () => {
       llmCalls++;
       return {
@@ -212,44 +216,30 @@ test("バッチ処理: batch_size を超える unmatched で複数回 LLM 呼出
   assert.equal(ret.length, 3);
 });
 
-test("unmatched_csv 空 → LLM 呼ばずに空配列", async () => {
+test("unmatched 空 → fetch せず空配列", async () => {
   let llmCalls = 0;
-  const fetchImpl = makeFetch([
-    ["/csv-import/ai-reconcile-context", () => jsonResp({
-      ...PROMPT_CTX, unmatched_csv: [],
-    })],
-    ["/api/v1/ai-config", () => jsonResp({
-      provider: "openai", model_name: "gpt-4o",
-      api_key_blob: "AA==", api_key_iv: "AA==", is_e2ee: true,
-    })],
-  ]);
+  const fetchImpl = makeFetch([]); // 呼ばれたら unhandled で throw
   const client = makeClient(async () => ({ plaintext: new Uint8Array() }));
   const ret = await runReconcile({
-    client, fetchImpl,
+    client, unmatched: [], candidates: ONE_CANDIDATE, fetchImpl,
     callLLMTextImpl: async () => { llmCalls++; return { result: {} }; },
   });
   assert.deepEqual(ret, []);
   assert.equal(llmCalls, 0);
+  assert.equal(fetchImpl.calls.length, 0); // ai-config / prompt-context も叩かない
 });
 
-test("journal_candidates 空 → LLM 呼ばずに空配列", async () => {
+test("candidates 空 → fetch せず空配列", async () => {
   let llmCalls = 0;
-  const fetchImpl = makeFetch([
-    ["/csv-import/ai-reconcile-context", () => jsonResp({
-      ...PROMPT_CTX, journal_candidates: [],
-    })],
-    ["/api/v1/ai-config", () => jsonResp({
-      provider: "openai", model_name: "gpt-4o",
-      api_key_blob: "AA==", api_key_iv: "AA==", is_e2ee: true,
-    })],
-  ]);
+  const fetchImpl = makeFetch([]);
   const client = makeClient(async () => ({ plaintext: new Uint8Array() }));
   const ret = await runReconcile({
-    client, fetchImpl,
+    client, unmatched: ONE_UNMATCHED, candidates: [], fetchImpl,
     callLLMTextImpl: async () => { llmCalls++; return { result: {} }; },
   });
   assert.deepEqual(ret, []);
   assert.equal(llmCalls, 0);
+  assert.equal(fetchImpl.calls.length, 0);
 });
 
 test("非 E2EE config で throw", async () => {
@@ -263,7 +253,7 @@ test("非 E2EE config で throw", async () => {
   const client = makeClient(async () => ({ plaintext: new Uint8Array() }));
   await assert.rejects(
     () => runReconcile({
-      client, fetchImpl,
+      client, unmatched: ONE_UNMATCHED, candidates: ONE_CANDIDATE, fetchImpl,
       callLLMTextImpl: async () => ({}),
     }),
     /E2EE 形式ではありません/,
@@ -283,7 +273,7 @@ test("model_name 空ならデフォルトモデル使用", async () => {
     plaintext: new TextEncoder().encode("k"),
   }));
   await runReconcile({
-    client, fetchImpl,
+    client, unmatched: ONE_UNMATCHED, candidates: ONE_CANDIDATE, fetchImpl,
     callLLMTextImpl: async (args) => {
       llmArgs = args;
       return { result: { matches: [] } };
@@ -305,7 +295,7 @@ test("未対応 provider で throw", async () => {
   }));
   await assert.rejects(
     () => runReconcile({
-      client, fetchImpl,
+      client, unmatched: ONE_UNMATCHED, candidates: ONE_CANDIDATE, fetchImpl,
       callLLMTextImpl: async () => ({}),
     }),
     /unsupported provider/,
@@ -324,7 +314,7 @@ test("非 dict 応答は空配列扱い (フィルタで吸収)", async () => {
     plaintext: new TextEncoder().encode("k"),
   }));
   const ret = await runReconcile({
-    client, fetchImpl,
+    client, unmatched: ONE_UNMATCHED, candidates: ONE_CANDIDATE, fetchImpl,
     callLLMTextImpl: async () => ({ result: "unexpected" }),
   });
   assert.deepEqual(ret, []);
@@ -332,7 +322,7 @@ test("非 dict 応答は空配列扱い (フィルタで吸収)", async () => {
 
 test("必須引数欠如で throw", async () => {
   await assert.rejects(
-    () => runReconcile({}),
+    () => runReconcile({ unmatched: ONE_UNMATCHED, candidates: ONE_CANDIDATE }),
     /client.*is required/,
   );
 });

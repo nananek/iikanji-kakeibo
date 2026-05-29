@@ -945,6 +945,22 @@ class TestListJournals:
         data = resp.get_json()
         assert data["total"] == 1
 
+    def test_date_from_invalid_format_returns_400(
+        self, client, db, user, accounts, auth_header,
+    ):
+        resp = client.get("/api/v1/journals?date_from=2026/02/01",
+                          headers=auth_header)
+        assert resp.status_code == 400
+        assert "date_from" in resp.get_json()["error"]
+
+    def test_date_to_invalid_format_returns_400(
+        self, client, db, user, accounts, auth_header,
+    ):
+        resp = client.get("/api/v1/journals?date_to=not-a-date",
+                          headers=auth_header)
+        assert resp.status_code == 400
+        assert "date_to" in resp.get_json()["error"]
+
     def test_fiscal_year_filter(self, client, db, user, accounts, auth_header):
         """Phase E3: fiscal_year パラメータで年度別取得 (date 暗号化後の代替)。"""
         make_journal(db, user.id, "5010", "1010", 100,
@@ -2034,6 +2050,15 @@ class TestUpdateJournal:
         for line in entry.lines:
             assert line.encrypted_blob is not None
             assert line.blob_iv is not None
+
+    def test_missing_body_returns_400(self, client, db, user, accounts, auth_header):
+        entry = make_journal(
+            db, user.id, accounts["5010"].code, accounts["1010"].code, 500,
+        )
+        # JSON ボディなし (Content-Type のみ) → 400
+        resp = client.put(f"/api/v1/journals/{entry.id}", headers=auth_header)
+        assert resp.status_code == 400
+        assert "JSON" in resp.get_json()["error"]
 
     def test_not_found(self, client, db, user, accounts, auth_header):
         resp = client.put("/api/v1/journals/99999",

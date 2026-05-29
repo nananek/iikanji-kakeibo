@@ -560,6 +560,7 @@ document.addEventListener('alpine:init', function() {
     var defaultIncomeId = config.defaultIncomeId || 0;
     var defaultExpenseId = config.defaultExpenseId || 0;
     var hasAiConfig = config.hasAiConfig || false;
+    var userId = config.userId;
     var sourceLabels = {
       'journal': '仕訳', 'cashbook': '出納帳', 'ai_receipt': 'AI証憑',
       'csv': 'CSV', 'ofx': 'OFX', 'web': 'Web', 'closing': '決算',
@@ -739,16 +740,17 @@ document.addEventListener('alpine:init', function() {
       loadReconciliation: function() {
         this.reconcileLoading = true;
         var self = this;
-        fetch('/csv-import/reconcile', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-CSRFToken': Alpine.store('csrf').token,
-          },
+        // E3-F PR-D-2: 照合は client 側 classical.findMatches で実行する。
+        // GET /api/v1/journals を年度別に取得・復号し、平文 date/description/
+        // source を読まずにマッチングする。snap 用に復号済み entry も保持。
+        runReconcileClassical({
+          userId: userId,
+          paymentAccountCode: paymentAccountCode,
+          csvRows: csvRows,
         })
-        .then(function(res) { return res.json(); })
-        .then(function(data) {
-          if (data.error) { alert(data.error); return; }
+        .then(function(ret) {
+          var data = ret.result;
+          self._entriesById = ret.entriesById;
           self.dailySummary = data.daily_summary || [];
           self.journalOnly = data.journal_only || [];
           var csvResults = data.csv_results || [];
@@ -800,33 +802,32 @@ document.addEventListener('alpine:init', function() {
         if (row.snapping) return;
         row.snapping = true;
         var self = this;
-        fetch('/csv-import/match/snap-date', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-CSRFToken': Alpine.store('csrf').token,
-          },
-          body: JSON.stringify({
-            entry_id: row.matchInfo.entry_id,
-            csv_date: row.date,
-          }),
+        // E3-F PR-D-2: 旧 POST /csv-import/match/snap-date は平文 date のみを
+        // 書き換え暗号化 blob を更新しないため client から見て無効だった。
+        // 復号済み entry を新日付で再暗号化し PUT /api/v1/journals/<id> する。
+        var entry = self._entriesById && self._entriesById[row.matchInfo.entry_id];
+        if (!entry) {
+          showToast('対象仕訳が見つかりません。再読込してください。', 'danger');
+          row.snapping = false;
+          return;
+        }
+        snapJournalDateE2EE({
+          userId: userId,
+          entryId: entry.id,
+          newDate: row.date,
+          entry: entry,
         })
-        .then(function(res) {
-          return res.json().then(function(body) { return { ok: res.ok, body: body }; });
-        })
-        .then(function(r) {
-          if (!r.ok || !r.body.success) {
-            showToast(r.body.error || '日付の更新に失敗しました', 'danger');
-            return;
-          }
+        .then(function() {
+          // ローカルの復号済み entry も更新し、再照合時の整合を保つ。
+          entry.date = row.date;
           // matchInfo を在席のまま更新（exact に昇格）
-          row.matchInfo.date = r.body.new_date;
+          row.matchInfo.date = row.date;
           row.matchInfo.date_diff_days = 0;
           row.matchInfo.date_band = 'exact';
-          showToast('仕訳の日付を ' + r.body.new_date + ' に変更しました', 'success');
+          showToast('仕訳の日付を ' + row.date + ' に変更しました', 'success');
         })
         .catch(function(err) {
-          showToast('日付の更新に失敗しました: ' + err.message, 'danger');
+          showToast('日付の更新に失敗しました: ' + (err.message || err), 'danger');
         })
         .finally(function() { row.snapping = false; });
       },
@@ -871,9 +872,24 @@ document.addEventListener('alpine:init', function() {
       runAiReconcile: function() {
         this.aiReconcileLoading = true;
         var self = this;
+        // 未照合 CSV 行と仕訳候補は client 側 classical の結果から渡す
+        // (E3-F PR-D-2: サーバは平文を読まない)。
+        var unmatched = [];
+        for (var r = 0; r < self.reconcileRows.length; r++) {
+          var row = self.reconcileRows[r];
+          if (row.status !== 'unmatched') continue;
+          var amount = row.withdrawal || row.deposit || 0;
+          if (!amount) continue;
+          unmatched.push({
+            csv_index: row.csv_index,
+            date: row.date || '',
+            description: row.description || '',
+            amount: amount,
+          });
+        }
         // クライアント完結 E2EE フローで実行。サーバには
         // raw description / API キーが届かない。
-        runReconcileE2EE()
+        runReconcileE2EE({ unmatched: unmatched, candidates: self.journalOnly })
         .then(function(matches) {
           for (var m = 0; m < matches.length; m++) {
             var ai = matches[m];
@@ -1750,8 +1766,149 @@ async function aiDraftQuickAcceptE2EE(opts) {
 window.aiDraftQuickAcceptE2EE = aiDraftQuickAcceptE2EE;
 
 
+// grouped_accounts (account_selector.html) から {code: name} マップを構築。
+// classical.findMatches の相手科目名解決に渡す (サーバ Account.name 相当)。
+function _buildAccountNameMap() {
+  var map = {};
+  var data = window._acctSelectorData;
+  if (Array.isArray(data)) {
+    for (var i = 0; i < data.length; i++) {
+      var accts = (data[i] && data[i].accounts) || [];
+      for (var j = 0; j < accts.length; j++) {
+        map[accts[j].code] = accts[j].name;
+      }
+    }
+  }
+  return map;
+}
+
+
+// CSV 行の日付範囲 (±7 日トレランス込み) が跨ぐ会計年度 (= 暦年) を列挙する。
+// classical のマッチングは ±7 日まで遡る/進むため、年初・年末の CSV は隣接
+// 年度の仕訳ともマッチしうる。該当する全年度を取得対象にする。
+function _reconcileFiscalYears(csvRows) {
+  var MS = 86400000;
+  var minT = null, maxT = null;
+  for (var i = 0; i < csvRows.length; i++) {
+    var d = csvRows[i] && csvRows[i].date;
+    if (typeof d !== "string") continue;
+    var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(d);
+    if (!m) continue;
+    var t = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+    if (minT === null || t < minT) minT = t;
+    if (maxT === null || t > maxT) maxT = t;
+  }
+  if (minT === null) return [];
+  var startYear = new Date(minT - 7 * MS).getUTCFullYear();
+  var endYear = new Date(maxT + 7 * MS).getUTCFullYear();
+  var years = [];
+  for (var y = startYear; y <= endYear; y++) years.push(y);
+  return years;
+}
+
+
+// reconcileMode.loadReconciliation から呼ばれる client 完結照合フロー。
+// 年度別に仕訳を取得・復号し classical.findMatches で照合する。
+// 戻り値: { result: {csv_results, journal_only, daily_summary},
+//          entriesById: {id: 復号済み entry} }  (snap で再暗号化に使う)
+async function runReconcileClassical(opts) {
+  var classicalMod = await import("/static/js/crypto/reconcile/classical.js");
+  var journalsMod = await import("/static/js/crypto/journals_client.js");
+  var sharedClientMod = await import("/static/js/crypto/shared-client.js");
+  var client = new sharedClientMod.SharedCryptoClient(
+    "/static/js/crypto/shared-worker.js",
+  );
+  try {
+    var status = await client.status();
+    if (!status.hasKey) {
+      throw new Error("MK ロック中です (設定 → 暗号鍵管理 で解除)");
+    }
+    var years = _reconcileFiscalYears(opts.csvRows);
+    var entries = [];
+    for (var i = 0; i < years.length; i++) {
+      var yearEntries = await journalsMod.fetchJournalsForYear({
+        client: client, userId: opts.userId, fiscalYear: years[i],
+      });
+      entries = entries.concat(yearEntries);
+    }
+    var result = classicalMod.findMatches({
+      paymentAccountCode: opts.paymentAccountCode,
+      csvRows: opts.csvRows,
+      journalEntries: entries,
+      accountName: _buildAccountNameMap(),
+    });
+    var entriesById = {};
+    for (var j = 0; j < entries.length; j++) {
+      entriesById[entries[j].id] = entries[j];
+    }
+    return { result: result, entriesById: entriesById };
+  } finally {
+    try { client.close(); } catch (_e) { /* ignore */ }
+  }
+}
+window.runReconcileClassical = runReconcileClassical;
+
+
+// reconcileMode.snapDate から呼ばれる E2EE フロー。
+// 復号済み entry を新日付で再暗号化し PUT /api/v1/journals/<id> する
+// (旧 snap-date は平文 date のみ更新し blob を放置していた)。
+async function snapJournalDateE2EE(opts) {
+  var sharedClientMod = await import("/static/js/crypto/shared-client.js");
+  var builderMod = await import("/static/js/crypto/entries_builder.js");
+  var client = new sharedClientMod.SharedCryptoClient(
+    "/static/js/crypto/shared-worker.js",
+  );
+  try {
+    var status = await client.status();
+    if (!status.hasKey) {
+      throw new Error("MK ロック中です (設定 → 暗号鍵管理 で解除)");
+    }
+    var lines = (opts.entry.lines || []).map(function(l) {
+      return {
+        account_code: l.account_code,
+        debit: l.debit || 0,
+        credit: l.credit || 0,
+        description: l.description || "",
+      };
+    });
+    var built = await builderMod.buildJournalEntry({
+      client: client,
+      userId: opts.userId,
+      date: opts.newDate,
+      description: opts.entry.description || "",
+      lines: lines,
+      source: opts.entry.source || "journal",
+      // fiscalPeriod は null にしてサーバに date.month から再判定させる
+      // (日付移動で月が変われば期も変わるため)。
+      fiscalPeriod: null,
+    });
+    var csrfMeta = document.querySelector('meta[name="csrf-token"]');
+    var csrfToken = csrfMeta ? csrfMeta.getAttribute("content") : "";
+    var res = await fetch("/api/v1/journals/" + opts.entryId, {
+      method: "PUT",
+      credentials: "include",
+      headers: {
+        "Content-Type": "application/json",
+        "X-CSRFToken": csrfToken,
+      },
+      body: JSON.stringify(built),
+    });
+    var rb = await res.json().catch(function() { return {}; });
+    if (!res.ok) {
+      throw new Error(rb.error || ("HTTP " + res.status));
+    }
+    return rb.entry_number;
+  } finally {
+    try { client.close(); } catch (_e) { /* ignore */ }
+  }
+}
+window.snapJournalDateE2EE = snapJournalDateE2EE;
+
+
 // reconcileMode.runAiReconcile から呼ばれる E2EE フロー。
-async function runReconcileE2EE() {
+// unmatched / candidates は呼出側が classical の結果から渡す。
+async function runReconcileE2EE(opts) {
+  opts = opts || {};
   var orchestratorMod = await import("/static/js/crypto/reconcile_orchestrator.js");
   var sharedClientMod = await import("/static/js/crypto/shared-client.js");
   var workerUrl = "/static/js/crypto/shared-worker.js";
@@ -1761,7 +1918,11 @@ async function runReconcileE2EE() {
     if (!status.hasKey) {
       throw new Error("MK ロック中です (設定 → 暗号鍵管理 で解除)");
     }
-    return await orchestratorMod.runReconcile({ client: client });
+    return await orchestratorMod.runReconcile({
+      client: client,
+      unmatched: opts.unmatched || [],
+      candidates: opts.candidates || [],
+    });
   } finally {
     try { client.close(); } catch (_e) { /* ignore */ }
   }

@@ -5,10 +5,9 @@ import json
 from flask import Blueprint, render_template, redirect, url_for, flash, request, session, jsonify
 from flask_login import login_required, current_user
 
-from app.extensions import db, limiter
+from app.extensions import limiter
 from app.models.account import Account, AccountType
 from app.models.ai_config import UserAIConfig
-from app.models.journal import JournalEntry
 from app.services.audit import get_effective_user_id
 from app.services.csv_import import (
     parse_csv_preview,
@@ -18,9 +17,8 @@ from app.services.csv_import import (
     save_column_profile,
 )
 from app.services.fiscal import (
-    check_period_open_for_new, get_restricted_before_year,
+    get_restricted_before_year,
     get_capital_account_code, get_closed_periods_for_dates,
-    check_entry_modifiable,
 )
 from app.views.helpers import (
     get_grouped_accounts, save_import_data, load_import_data, delete_import_data,
@@ -324,59 +322,26 @@ def confirm():
     )
 
 
-@bp.route("/reconcile", methods=["POST"])
-@login_required
-def reconcile():
-    """照合API — Alpine.jsからfetchで呼び出し"""
-    from app.services.reconciliation import find_matches
-
-    data_key = session.get("csv_data_key")
-    payment_account_code = session.get("csv_payment_account_code")
-    parsed = load_import_data(data_key)
-    if not parsed or not payment_account_code:
-        return jsonify({"error": "データがありません"}), 400
-
-    results = find_matches(get_effective_user_id(), payment_account_code, parsed)
-    return jsonify(results)
-
-
 @bp.route("/ai-reconcile-context", methods=["GET"])
 @login_required
 @limiter.limit("60 per hour")
 def ai_reconcile_context():
-    """AI 照合のためのプロンプト材料 + 照合候補データを返す。
+    """AI 照合のためのプロンプト材料を返す。
 
-    LLM 呼出はクライアント側 reconcile_orchestrator.js が行う。サーバには
-    LLM 出力 (matches) は通知不要 (クライアント UI で直接表示する)。
+    E3-F PR-D-2: 決定論的マッチング (旧 find_matches) はクライアント側
+    `crypto/reconcile/classical.js` に移植済。未照合 CSV 行と仕訳候補は
+    クライアントが classical の結果から直接 `runReconcile` に渡すため、この
+    エンドポイントは平文 (date / description / source) を読まず、プロンプト
+    テンプレート + バッチサイズ + custom_prompt + 既定モデルのみを返す。
+
+    LLM 呼出も reconcile_orchestrator.js がクライアント完結で行う。
     """
     from app.services.reconciliation import (
-        AI_RECONCILE_PROMPT_TEMPLATE, AI_RECONCILE_BATCH_SIZE, find_matches,
+        AI_RECONCILE_PROMPT_TEMPLATE, AI_RECONCILE_BATCH_SIZE,
     )
     from app.services.ai_receipt import PROVIDER_DEFAULTS
-    from app.models.ai_config import UserAIConfig
-
-    data_key = session.get("csv_data_key")
-    payment_account_code = session.get("csv_payment_account_code")
-    parsed = load_import_data(data_key)
-    if not parsed or not payment_account_code:
-        return jsonify({"error": "データがありません"}), 400
 
     user_id = get_effective_user_id()
-    results = find_matches(user_id, payment_account_code, parsed)
-
-    unmatched_csv = []
-    for r in results["csv_results"]:
-        if r["status"] == "unmatched":
-            csv = parsed[r["csv_index"]]
-            amount = int(csv.get("withdrawal") or 0) or int(csv.get("deposit") or 0)
-            if amount:
-                unmatched_csv.append({
-                    "csv_index": r["csv_index"],
-                    "date": csv.get("date", ""),
-                    "description": csv.get("description", ""),
-                    "amount": amount,
-                })
-
     config = UserAIConfig.query.filter_by(user_id=user_id).first()
     custom_prompt = config.custom_prompt if config else ""
 
@@ -384,66 +349,8 @@ def ai_reconcile_context():
         "ok": True,
         "prompt_template": AI_RECONCILE_PROMPT_TEMPLATE,
         "batch_size": AI_RECONCILE_BATCH_SIZE,
-        "unmatched_csv": unmatched_csv,
-        "journal_candidates": results["journal_only"],
         "custom_prompt": custom_prompt,
         "default_model_by_provider": {
             k: v for k, v in PROVIDER_DEFAULTS.items() if k != "llama_cpp"
         },
-    })
-
-
-@bp.route("/match/snap-date", methods=["POST"])
-@login_required
-def snap_match_date():
-    """日付ズレ照合の修正アクション: 仕訳の日付を CSV 日付に合わせる。
-
-    レシート起票時の日付と CSV 上の計上日がズレているケース（クレジットカードの
-    利用日 vs 計上日）で、ユーザーが「これは同じ取引」と判断したときに使う。
-    結果として `date_band: "exact"` に変わり、再照合不要で表示が更新される。
-    """
-    from datetime import date as _date
-    from flask import current_app
-
-    payload = request.get_json(silent=True) or {}
-    entry_id = payload.get("entry_id")
-    csv_date_str = payload.get("csv_date")
-
-    if not entry_id or not csv_date_str:
-        return jsonify({"error": "entry_id と csv_date が必要です"}), 400
-
-    try:
-        csv_date = _date.fromisoformat(str(csv_date_str))
-    except (ValueError, TypeError):
-        return jsonify({"error": "CSV 日付の形式が不正です"}), 400
-
-    user_id = get_effective_user_id()
-    entry = JournalEntry.query.filter_by(id=entry_id, user_id=user_id).first()
-    if entry is None:
-        return jsonify({"error": "仕訳が見つかりません"}), 404
-
-    # 移動元（現在の仕訳）が変更可能か
-    err = check_entry_modifiable(user_id, entry)
-    if err:
-        return jsonify({"error": err}), 400
-
-    # 移動先の期間がオープンか（同じ仕訳でも別月に移すとロック中の月かもしれない）
-    err = check_period_open_for_new(user_id, csv_date.year, csv_date.month)
-    if err:
-        return jsonify({"error": err}), 400
-
-    old_date = entry.date.isoformat()
-    entry.date = csv_date
-    db.session.commit()
-    current_app.logger.info(
-        "snap_match_date: entry_id=%s user=%s %s -> %s",
-        entry_id, user_id, old_date, csv_date.isoformat(),
-    )
-
-    return jsonify({
-        "success": True,
-        "entry_id": entry_id,
-        "new_date": csv_date.isoformat(),
-        "date_diff_days": 0,
-        "date_band": "exact",
     })

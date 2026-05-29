@@ -3,12 +3,16 @@
 // 旧サーバ側 find_ai_matches と等価。csv_import の
 // reconcileMode UI から呼ばれる。
 //
+// E3-F PR-D-2: 未照合 CSV 行 (unmatched) と仕訳候補 (candidates) は呼出側が
+// クライアント側 classical.findMatches の結果から渡す。サーバの
+// /csv-import/ai-reconcile-context は平文を読まず、プロンプトテンプレート +
+// バッチサイズ + custom_prompt + 既定モデルのみを返す。
+//
 // フロー:
 //   1. GET /csv-import/ai-reconcile-context
-//      → {prompt_template, batch_size, unmatched_csv, journal_candidates,
-//         custom_prompt, default_model_by_provider}
+//      → {prompt_template, batch_size, custom_prompt, default_model_by_provider}
 //   2. GET /api/v1/ai-config + decrypt
-//   3. unmatched_csv を batch_size 件ずつ分割
+//   3. unmatched を batch_size 件ずつ分割
 //   4. 各バッチで csv_text + journal_text を構築 → prompt 組立て
 //      → callLLMText (maxTokens=2000) → matches を集約
 //   5. {csv_index, entry_id, confidence, reason} の配列を返す
@@ -96,17 +100,24 @@ export function filterMatches(rawResult) {
  *
  * @param {Object} args
  * @param {Object} args.client                       SharedCryptoClient
+ * @param {Array<Object>} [args.unmatched]           未照合 CSV 行 [{csv_index, date, description, amount}]
+ * @param {Array<Object>} [args.candidates]          仕訳候補 [{entry_id, date, description, amount, category_name}]
  * @param {Function} [args.callLLMTextImpl=callLLMText]
  * @param {Function} [args.fetchImpl]
  * @returns {Promise<Array>}                         [{csv_index, entry_id, confidence, reason}]
  */
 export async function runReconcile({
-  client, callLLMTextImpl = callLLMText, fetchImpl,
+  client, unmatched = [], candidates = [],
+  callLLMTextImpl = callLLMText, fetchImpl,
 }) {
   if (!client || typeof client.decrypt !== "function") {
     throw new Error("client (SharedCryptoClient) is required");
   }
   const f = fetchImpl ?? globalThis.fetch;
+
+  // 未照合 CSV 行も仕訳候補も無ければ LLM を呼ばずに即終了 (ai-config /
+  // prompt-context の fetch も省略してレート制限を消費しない)。
+  if (unmatched.length === 0 || candidates.length === 0) return [];
 
   const [promptContext, cfg] = await Promise.all([
     _fetchPromptContext(f),
@@ -117,10 +128,6 @@ export async function runReconcile({
       "AI config が E2EE 形式ではありません。設定画面で移行してください。",
     );
   }
-
-  const unmatched = promptContext.unmatched_csv || [];
-  const candidates = promptContext.journal_candidates || [];
-  if (unmatched.length === 0 || candidates.length === 0) return [];
 
   const blob = b64decode(cfg.api_key_blob);
   const iv = b64decode(cfg.api_key_iv);

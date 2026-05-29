@@ -1,7 +1,6 @@
 """csv_import サービスのテスト"""
 
 from datetime import date
-from unittest.mock import patch, MagicMock
 
 import pytest
 
@@ -238,6 +237,19 @@ class TestParseCsvFull:
         assert rows[0]["withdrawal"] == 0
         assert rows[1]["deposit"] == 0
         assert rows[1]["withdrawal"] == 5000
+
+    def test_skips_blank_rows(self):
+        """全セル空白の行は読み飛ばす (途中の空行・末尾改行の重複)。"""
+        raw = self._make_csv(
+            "日付,摘要,入金,出金\n"
+            "2026/01/01,給料,300000,\n"
+            ",,,\n"  # 全カラム空 → スキップ
+            "2026/01/05,食費,,5000\n"
+        )
+        rows = parse_csv_full(raw, self._two_col_mapping(), "%Y/%m/%d")
+        assert len(rows) == 2
+        assert rows[0]["description"] == "給料"
+        assert rows[1]["description"] == "食費"
 
     def test_negative_withdrawal_becomes_deposit(self):
         """出金列のマイナス値（キャッシュバック等）は入金に反転"""
@@ -604,92 +616,18 @@ class TestCsvImportMappingProfile:
 # ============================================================
 
 class TestSnapMatchDate:
-    """日付ズレ修正アクション (snap-date) のテスト"""
+    """E3-F PR-D-2: 日付スナップは平文 date のみ更新し暗号化 blob を放置して
+    いたため削除。新フローはクライアントが復号済み entry を新日付で再暗号化し
+    PUT /api/v1/journals/<id> する (期間チェック / 貸借検証は PUT 側で共通)。
+    旧ルートは削除済 (404)。"""
 
-    def _make_entry(self, db, user, entry_date, amount=1500):
-        """支払元 1020 への credit を持つ仕訳を作成して返す。"""
-        from tests.conftest import make_journal
-        return make_journal(
-            db, user.id,
-            acct_debit_code="5010",
-            acct_credit_code="1020",
-            amount=amount,
-            entry_date=entry_date,
-            source="ai_receipt",
-        )
-
-    def test_updates_journal_date_to_csv_date(self, db, user, logged_in_client,
-                                              accounts, account_types):
-        entry = self._make_entry(db, user, date(2026, 5, 1))
+    def test_post_snap_date_returns_404(self, logged_in_client, accounts,
+                                        account_types):
         resp = logged_in_client.post(
             "/csv-import/match/snap-date",
-            json={"entry_id": entry.id, "csv_date": "2026-05-03"},
-        )
-        assert resp.status_code == 200
-        body = resp.get_json()
-        assert body["success"] is True
-        assert body["new_date"] == "2026-05-03"
-        assert body["date_band"] == "exact"
-        assert body["date_diff_days"] == 0
-
-        from app.models.journal import JournalEntry
-        refreshed = JournalEntry.query.get(entry.id)
-        assert refreshed.date == date(2026, 5, 3)
-
-    def test_missing_payload_returns_400(self, logged_in_client, accounts,
-                                          account_types):
-        resp = logged_in_client.post("/csv-import/match/snap-date", json={})
-        assert resp.status_code == 400
-
-    def test_invalid_date_format_returns_400(self, db, user, logged_in_client,
-                                             accounts, account_types):
-        entry = self._make_entry(db, user, date(2026, 5, 1))
-        resp = logged_in_client.post(
-            "/csv-import/match/snap-date",
-            json={"entry_id": entry.id, "csv_date": "not-a-date"},
-        )
-        assert resp.status_code == 400
-
-    def test_other_user_entry_returns_404(self, db, user, logged_in_client,
-                                          second_user, second_user_accounts,
-                                          accounts, account_types):
-        from tests.conftest import make_journal
-        their_entry = make_journal(
-            db, second_user.id,
-            acct_debit_code="5010", acct_credit_code="1010",
-            amount=1500, entry_date=date(2026, 5, 1),
-        )
-        resp = logged_in_client.post(
-            "/csv-import/match/snap-date",
-            json={"entry_id": their_entry.id, "csv_date": "2026-05-03"},
+            json={"entry_id": 1, "csv_date": "2026-05-03"},
         )
         assert resp.status_code == 404
-
-    def test_rejects_closed_period(self, db, user, logged_in_client, accounts,
-                                   account_types):
-        """移動先が確定済み月なら 400 を返し、日付は変更されない"""
-        from app.models.fiscal import FiscalClose
-        entry = self._make_entry(db, user, date(2026, 5, 1))
-        # 2026 年 4 月までを確定済みに
-        fc = FiscalClose(user_id=user.id, year=2026, closed_period=4)
-        db.session.add(fc)
-        db.session.commit()
-        # 移動先 2026-04-15 はロック中
-        resp = logged_in_client.post(
-            "/csv-import/match/snap-date",
-            json={"entry_id": entry.id, "csv_date": "2026-04-15"},
-        )
-        assert resp.status_code == 400
-        body = resp.get_json()
-        assert "確定" in body["error"]
-        # 仕訳の日付は変わらない
-        from app.models.journal import JournalEntry
-        assert JournalEntry.query.get(entry.id).date == date(2026, 5, 1)
-
-    def test_unauthenticated_redirects(self, client, accounts, account_types):
-        resp = client.post("/csv-import/match/snap-date",
-                           json={"entry_id": 1, "csv_date": "2026-05-01"})
-        assert resp.status_code in (302, 401)
 
 
 # ============================================================
