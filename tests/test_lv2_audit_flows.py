@@ -79,11 +79,35 @@ class TestJournalGetJsonLv2:
         assert "3030" in codes  # proprietor
 
 
-class TestJournalEditApiLv2:
-    def test_balanced_with_non_public(self, lv2_setup, mixed_journal, client, db):
-        """非公開行を保持した状態で公開行を更新（貸借成立）"""
-        # 非公開行: 5020 debit 200 を維持
-        # 公開行: 食費 800 → 1000 / 現金 1000 → 1200 (貸借: 1000+200 = 1200)
+class TestJournalEditGetLv2:
+    """Lv2 監査者が編集画面 (GET /journal/<id>/edit) を開いたとき、
+    非公開行を事業主集約行 (is_proprietor) にまとめた existing_lines が
+    フォームに渡る (保存自体は暗号化 PUT で行うため別経路)。"""
+
+    def test_edit_form_aggregates_non_public_into_proprietor(
+        self, lv2_setup, mixed_journal, client
+    ):
+        resp = client.get(f"/journal/{mixed_journal.id}/edit")
+        assert resp.status_code == 200
+        body = resp.get_data(as_text=True)
+        # existing_lines は JSON で埋め込まれる。公開行 + proprietor 集約行を含む。
+        assert '"is_proprietor": true' in body or '"is_proprietor":true' in body
+        assert "5010" in body
+        # 非公開コード 5020 は集約され生の科目コードとしては出ない
+        assert '"account_code": "5020"' not in body
+
+
+class TestJournalEditApiLv2Removed:
+    """旧 Lv2 モーダル編集 (/journal/<id>/edit-api) は撤去済み。
+
+    E2EE では編集が暗号化済み PUT /api/v1/journals/<id> に一本化される。
+    代理閲覧中の監査者は owner の MK を持たず暗号値を復号・再暗号化できないため、
+    PUT/batch 側の代理ガードでブロックされる (Lv2 監査者による仕訳編集は
+    アーキテクチャ上サポートされない)。ここでは旧平文エンドポイントが到達不能
+    (404/405) であることのみ担保する。
+    """
+
+    def test_edit_api_removed(self, lv2_setup, mixed_journal, client):
         resp = client.post(f"/journal/{mixed_journal.id}/edit-api", json={
             "date": "2026-02-15",
             "description": "Lv2更新",
@@ -92,43 +116,8 @@ class TestJournalEditApiLv2:
                 {"account_code": "1010", "debit_amount": 0, "credit_amount": 1200},
             ],
         })
-        assert resp.status_code == 200
-        # 5020 は残っている
-        e = db.session.get(JournalEntry, mixed_journal.id)
-        codes = {l.account_code for l in e.lines}
-        assert "5020" in codes
-        assert "5010" in codes
-        assert "1010" in codes
-
-    def test_unbalanced_rejected(self, lv2_setup, mixed_journal, client):
-        """非公開を考慮しても貸借不一致なら 400"""
-        resp = client.post(f"/journal/{mixed_journal.id}/edit-api", json={
-            "date": "2026-02-15",
-            "description": "x",
-            "lines": [
-                {"account_code": "5010", "debit_amount": 500, "credit_amount": 0},
-                {"account_code": "1010", "debit_amount": 0, "credit_amount": 100},
-            ],
-        })
-        assert resp.status_code == 400
-        body = resp.get_json()
-        assert "貸借" in body["error"]
-
-    def test_proprietor_line_skipped(self, lv2_setup, mixed_journal, client):
-        """is_proprietor=True の行は parsed から除外される"""
-        # フロント側が事業主集約行を送ってきた場合でも DB には反映されない
-        resp = client.post(f"/journal/{mixed_journal.id}/edit-api", json={
-            "date": "2026-02-15",
-            "description": "x",
-            "lines": [
-                {"account_code": "5010", "debit_amount": 1000, "credit_amount": 0},
-                {"account_code": "1010", "debit_amount": 0, "credit_amount": 1200},
-                # 事業主行 (3030) は無視される
-                {"account_code": "3030", "debit_amount": 0, "credit_amount": 200,
-                 "is_proprietor": True},
-            ],
-        })
-        assert resp.status_code == 200
+        # ルート自体が存在しないため POST は受け付けない (404 / 405)
+        assert resp.status_code in (404, 405)
 
 
 class TestJournalEditPostLv2Removed:

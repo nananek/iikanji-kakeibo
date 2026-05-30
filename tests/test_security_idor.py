@@ -24,14 +24,29 @@ class TestJournalIDOR:
     def test_cannot_edit_other_users_journal(self, app, client, db,
                                               user, second_user, accounts,
                                               second_user_accounts):
+        # 仕訳編集は暗号化済み PUT /api/v1/journals/<id> に一本化された。
+        # 他ユーザーの仕訳 id を指定しても所有者スコープで 404 になる。
         entry = make_journal(db, second_user.id,
                              "5010",
                              "1010", 2000)
         with client.session_transaction() as sess:
             sess["_user_id"] = str(user.id)
-        resp = client.post(f"/journal/{entry.id}/edit-api",
-                           json={"date": "2026-01-15", "description": "hacked",
-                                 "lines": []})
+        resp = client.put(
+            f"/api/v1/journals/{entry.id}",
+            json={
+                "date": "2026-01-15",
+                "description": "hacked",
+                "fiscal_year": 2026,
+                "encrypted_blob": "AAAA",
+                "blob_iv": "AAAA",
+                "lines": [
+                    {"account_code": "5010", "debit": 100, "credit": 0,
+                     "encrypted_blob": "AAAA", "blob_iv": "AAAA"},
+                    {"account_code": "1010", "debit": 0, "credit": 100,
+                     "encrypted_blob": "AAAA", "blob_iv": "AAAA"},
+                ],
+            },
+        )
         assert resp.status_code == 404
 
     def test_cannot_delete_other_users_journal(self, app, client, db,
