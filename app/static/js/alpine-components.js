@@ -1624,6 +1624,100 @@ async function cashbookSubmitE2EE(opts) {
 window.cashbookSubmitE2EE = cashbookSubmitE2EE;
 
 
+// medical/form.html (新規登録) から呼ばれる E2EE submit (E3-F PR-D-3)。
+//
+// 医療費登録 = (1) 出納帳仕訳 (借方: 医療費科目 / 貸方: 支払元) を batch API に
+// 暗号化 POST → 採番された entry id を取得し、(2) MedicalExpense 明細を
+// medical-expenses API に暗号化 POST する 2 段。サーバ側 view (medical.new) は
+// GET 専用で平文 POST は受け付けない。
+//
+// opts:
+//   userId, medicalAccountCode, paymentAccountCode, date, amountPaid,
+//   insuranceReimbursement, patientName, hospitalName, treatmentDescription
+async function medicalNewSubmitE2EE(opts) {
+  var sharedClientMod = await import("/static/js/crypto/shared-client.js");
+  var sharedClient = new sharedClientMod.SharedCryptoClient(
+    "/static/js/crypto/shared-worker.js",
+  );
+  try {
+    var status = await sharedClient.status();
+    if (!status.hasKey) {
+      throw new Error("MK ロック中です (設定 → 暗号鍵管理 で解除)");
+    }
+    var csrfMeta = document.querySelector('meta[name="csrf-token"]');
+    var csrfToken = csrfMeta ? csrfMeta.getAttribute("content") : "";
+
+    // (1) 出納帳仕訳を暗号化して batch API に POST。
+    var builderMod = await import("/static/js/crypto/entries_builder.js");
+    var entry = await builderMod.buildCashbookEntry({
+      client: sharedClient,
+      userId: opts.userId,
+      date: opts.date,
+      description: "医療費: " + (opts.hospitalName || ""),
+      transactionType: "expense",
+      paymentAccountCode: opts.paymentAccountCode,
+      categoryAccountCode: opts.medicalAccountCode,
+      amount: opts.amountPaid,
+      source: "cashbook",
+      fiscalPeriod: null,
+    });
+    var batchRes = await fetch("/api/v1/journals/batch", {
+      method: "POST",
+      credentials: "include",
+      headers: {
+        "Content-Type": "application/json",
+        "X-CSRFToken": csrfToken,
+      },
+      body: JSON.stringify({ entries: [entry] }),
+    });
+    var batchBody = await batchRes.json().catch(function() { return {}; });
+    if (!batchRes.ok) {
+      throw new Error(batchBody.error || ("HTTP " + batchRes.status));
+    }
+    var entryId = batchBody.entries && batchBody.entries[0]
+      ? batchBody.entries[0].id : null;
+    if (!entryId) {
+      throw new Error("仕訳の作成に失敗しました。");
+    }
+
+    // (2) MedicalExpense 明細を暗号化して medical-expenses API に POST。
+    var meMod = await import("/static/js/crypto/medical_expense_builder.js");
+    var mePayload = await meMod.buildMedicalExpense({
+      client: sharedClient,
+      userId: opts.userId,
+      journalEntryId: entryId,
+      date: opts.date,
+      patientName: opts.patientName || "",
+      hospitalName: opts.hospitalName || "",
+      treatmentDescription: opts.treatmentDescription || "",
+      providerType: null,
+      amountPaid: opts.amountPaid,
+      insuranceReimbursement: opts.insuranceReimbursement || 0,
+    });
+    var meRes = await fetch("/api/v1/medical-expenses", {
+      method: "POST",
+      credentials: "include",
+      headers: {
+        "Content-Type": "application/json",
+        "X-CSRFToken": csrfToken,
+      },
+      body: JSON.stringify(mePayload),
+    });
+    var meBody = await meRes.json().catch(function() { return {}; });
+    if (!meRes.ok) {
+      throw new Error(meBody.error || ("HTTP " + meRes.status));
+    }
+    try {
+      sessionStorage.setItem("flash:success", "医療費を登録しました。");
+    } catch (_e) { /* ignore */ }
+    window.location.href = "/medical/";
+  } finally {
+    try { sharedClient.close(); } catch (_e) { /* ignore */ }
+  }
+}
+window.medicalNewSubmitE2EE = medicalNewSubmitE2EE;
+
+
 // journal/form.html (新規 + 編集) から呼ばれる E2EE submit。
 //
 // 仕訳帳 form を JS submit に乗っ取り、N 行可変の lines を entries_builder で

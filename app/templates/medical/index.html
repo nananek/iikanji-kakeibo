@@ -2,6 +2,13 @@
 {% block title %}医療費 - いいかんじ™家計簿{% endblock %}
 
 {% block content %}
+<script id="medical-index-params" type="application/json">
+{{ {"year": year, "user_id": effective_user_id, "is_audit_proxy": session.get('acting_as_user_id') is not none} | tojson }}
+</script>
+<script id="medical-index-accounts-meta" type="application/json">
+{{ medical_accounts_meta | tojson }}
+</script>
+
 <div class="d-flex justify-content-between align-items-center mb-4">
   <h2><i class="bi bi-hospital"></i> 医療費</h2>
   <a href="{{ url_for('medical.new') }}" class="btn btn-primary">
@@ -22,12 +29,14 @@
   </div>
 </form>
 
+<div id="medical-index-status" class="d-none" role="status" aria-live="polite"></div>
+
 <div class="row mb-4">
   <div class="col-md-4">
     <div class="card shadow-sm">
       <div class="card-body text-center">
         <h6 class="text-muted">支払医療費</h6>
-        <h4>&yen;{{ "{:,}".format(total_paid) }}</h4>
+        <h4 id="medical-total-paid">&yen;0</h4>
       </div>
     </div>
   </div>
@@ -35,7 +44,7 @@
     <div class="card shadow-sm">
       <div class="card-body text-center">
         <h6 class="text-muted">保険補填額</h6>
-        <h4>&yen;{{ "{:,}".format(total_reimbursed) }}</h4>
+        <h4 id="medical-total-reimbursed">&yen;0</h4>
       </div>
     </div>
   </div>
@@ -43,14 +52,13 @@
     <div class="card shadow-sm">
       <div class="card-body text-center">
         <h6 class="text-muted">自己負担額</h6>
-        <h4>&yen;{{ "{:,}".format(net_total) }}</h4>
+        <h4 id="medical-total-net">&yen;0</h4>
       </div>
     </div>
   </div>
 </div>
 
-{% if expenses %}
-<div class="table-responsive">
+<div id="medical-index-table" class="table-responsive d-none">
   <table class="table table-hover">
     <thead class="table-light">
       <tr>
@@ -66,49 +74,14 @@
         <th></th>
       </tr>
     </thead>
-    <tbody>
-      {% for e in expenses %}
-      <tr>
-        <td>{{ e.date.strftime('%Y/%m/%d') }}</td>
-        <td>{{ e.description }}</td>
-        <td>{{ e.patient_name }}</td>
-        <td>{{ e.hospital_name }}</td>
-        <td>
-          {% if e.provider_type == 'hospital' %}
-          <span class="badge bg-primary">病院</span>
-          {% elif e.provider_type == 'pharmacy' %}
-          <span class="badge bg-success">薬局</span>
-          {% elif e.provider_type == 'nursing' %}
-          <span class="badge bg-warning text-dark">介護</span>
-          {% elif e.provider_type == 'other' %}
-          <span class="badge bg-secondary">その他</span>
-          {% endif %}
-        </td>
-        <td class="text-muted small">{{ e.treatment_description }}</td>
-        <td class="text-end">&yen;{{ "{:,}".format(e.amount) }}</td>
-        <td class="text-end">
-          {% if e.insurance_reimbursement %}
-          &yen;{{ "{:,}".format(e.insurance_reimbursement) }}
-          {% endif %}
-        </td>
-        <td class="text-end">&yen;{{ "{:,}".format(e.amount - e.insurance_reimbursement) }}</td>
-        <td>
-          <button type="button" class="btn btn-outline-secondary btn-sm" title="詳細編集"
-                  onclick="openMedicalModal({{ e.entry_id }})">
-            <i class="bi bi-pencil"></i>
-          </button>
-        </td>
-      </tr>
-      {% endfor %}
-    </tbody>
+    <tbody id="medical-index-tbody"></tbody>
   </table>
 </div>
-{% else %}
-<div class="text-center text-muted py-5">
+
+<div id="medical-index-empty" class="text-center text-muted py-5 d-none">
   <p>{{ year }}年の医療費はまだありません。</p>
   <p><small>医療費科目（税区分: 医療費控除）への仕訳が自動的に集計されます。</small></p>
 </div>
-{% endif %}
 
 <!-- 医療費詳細編集モーダル -->
 <div class="modal fade" id="medicalModal" tabindex="-1">
@@ -120,6 +93,7 @@
       </div>
       <div class="modal-body">
         <div id="medicalModalError" class="alert alert-danger d-none"></div>
+        <input type="hidden" id="medModalEntryId" value="">
 
         <div class="mb-3">
           <label for="medPatient" class="form-label">受診者</label>
@@ -160,7 +134,7 @@
       </div>
       <div class="modal-footer">
         <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">キャンセル</button>
-        <button type="button" class="btn btn-primary" id="medSaveBtn" onclick="saveMedical()">
+        <button type="button" class="btn btn-primary" id="medSaveBtn">
           <span class="spinner-border spinner-border-sm d-none" id="medSpinner"></span>
           保存
         </button>
@@ -168,104 +142,6 @@
     </div>
   </div>
 </div>
-{% endblock %}
 
-{% block scripts %}
-<script>
-(function() {
-  var editingEntryId = null;
-  var modal = null;
-  var suggestionsLoaded = false;
-
-  function getModal() {
-    if (!modal) modal = new bootstrap.Modal(document.getElementById('medicalModal'));
-    return modal;
-  }
-
-  function loadSuggestions() {
-    if (suggestionsLoaded) return;
-    suggestionsLoaded = true;
-    fetch('/medical/api/suggestions')
-      .then(function(r) { return r.json(); })
-      .then(function(data) {
-        var patientList = document.getElementById('patientList');
-        data.patients.forEach(function(name) {
-          var opt = document.createElement('option');
-          opt.value = name;
-          patientList.appendChild(opt);
-        });
-        var hospitalList = document.getElementById('hospitalList');
-        data.hospitals.forEach(function(name) {
-          var opt = document.createElement('option');
-          opt.value = name;
-          hospitalList.appendChild(opt);
-        });
-      });
-  }
-
-  window.openMedicalModal = function(entryId) {
-    editingEntryId = entryId;
-    document.getElementById('medicalModalError').classList.add('d-none');
-    loadSuggestions();
-
-    fetch('/medical/api/' + entryId)
-      .then(function(r) { return r.json(); })
-      .then(function(data) {
-        document.getElementById('medPatient').value = data.patient_name;
-        document.getElementById('medHospital').value = data.hospital_name;
-        document.getElementById('medProviderType').value = data.provider_type;
-        document.getElementById('medReimbursement').value = data.insurance_reimbursement;
-        document.getElementById('medDescription').value = data.treatment_description;
-        getModal().show();
-      });
-  };
-
-  window.saveMedical = function() {
-    var errorEl = document.getElementById('medicalModalError');
-    errorEl.classList.add('d-none');
-
-    var payload = {
-      patient_name: document.getElementById('medPatient').value,
-      hospital_name: document.getElementById('medHospital').value,
-      provider_type: document.getElementById('medProviderType').value,
-      treatment_description: document.getElementById('medDescription').value,
-      insurance_reimbursement: parseInt(document.getElementById('medReimbursement').value) || 0,
-    };
-
-    var csrfToken = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
-    var spinner = document.getElementById('medSpinner');
-    var saveBtn = document.getElementById('medSaveBtn');
-    spinner.classList.remove('d-none');
-    saveBtn.disabled = true;
-
-    fetch('/medical/api/' + editingEntryId, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-CSRFToken': csrfToken,
-      },
-      body: JSON.stringify(payload),
-    })
-    .then(function(r) { return r.json().then(function(d) { return {ok: r.ok, data: d}; }); })
-    .then(function(res) {
-      spinner.classList.add('d-none');
-      saveBtn.disabled = false;
-
-      if (!res.ok) {
-        errorEl.textContent = res.data.error || 'エラーが発生しました。';
-        errorEl.classList.remove('d-none');
-        return;
-      }
-
-      location.reload();
-    })
-    .catch(function() {
-      spinner.classList.add('d-none');
-      saveBtn.disabled = false;
-      errorEl.textContent = '通信エラーが発生しました。';
-      errorEl.classList.remove('d-none');
-    });
-  };
-})();
-</script>
+<script type="module" src="{{ url_for('static', filename='js/medical/index_renderer.mjs') }}"></script>
 {% endblock %}

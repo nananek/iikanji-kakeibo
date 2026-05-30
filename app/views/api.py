@@ -2247,6 +2247,141 @@ def list_medical_expenses():
     })
 
 
+# medical_expenses 平文カラムの長さ上限 (DB String 制約。超過すると 500 に
+# なるので API 層で切り詰める)。
+_MEDICAL_STR_CAPS = {
+    "patient_name": 100,
+    "hospital_name": 200,
+    "treatment_description": 255,
+    "provider_type": 20,
+}
+
+
+def _medical_str_field(data, key):
+    """medical-expenses POST の平文文字列フィールドを取り出して正規化。
+
+    戻り値: (value_or_None, error_message_or_None)
+    """
+    raw = data.get(key)
+    if raw is None:
+        return "", None
+    if not isinstance(raw, str):
+        return None, f"{key} は文字列で指定してください。"
+    return raw.strip()[: _MEDICAL_STR_CAPS[key]], None
+
+
+@bp.route("/medical-expenses", methods=["POST"])
+@auth_required(write=True, scope="journals:create", allow_session=True)
+@limiter.limit("60 per minute", key_func=rate_limit_key)
+def upsert_medical_expense():
+    """医療費明細 (MedicalExpense) の作成 or 更新 API (Phase E3-F PR-D-3)。
+
+    journal_entry_id で upsert する (1 仕訳 1 医療費明細という前提。既存の
+    medical.api_update と同じ create-or-update セマンティクス)。医療費 UI が
+    サーバレンダ + 平文 POST から client 描画 + client 暗号化に移行する経路。
+
+    リクエスト:
+        {
+          journal_entry_id,
+          encrypted_blob, blob_iv,            // 必須 (PR-C 同様、平文-only 拒否)
+          date, patient_name, hospital_name,  // dual-write 平文 (後続 PR で停止)
+          treatment_description, provider_type,
+          amount_paid, insurance_reimbursement,
+        }
+    レスポンス: 200 {ok, id}
+
+    仕訳不在/他人 → 404、確定済み期間/提出済みロック → 400、
+    代理閲覧中の暗号化書込み → 403。
+    """
+    from app.models.medical import MedicalExpense
+
+    data = request.get_json(silent=True)
+    if not data:
+        return jsonify({"error": "JSON ボディが必要です。"}), 400
+
+    # 代理閲覧中の暗号化書込みは AAD 不一致で復号不能になるため拒否。
+    proxy_block = _audit_proxy_blocks_encrypted_writes(data)
+    if proxy_block:
+        return proxy_block
+
+    user_id = g.auth_user.id
+
+    journal_entry_id = data.get("journal_entry_id")
+    try:
+        journal_entry_id = int(journal_entry_id)
+    except (TypeError, ValueError):
+        return jsonify({"error": "journal_entry_id は整数で指定してください。"}), 400
+
+    entry = JournalEntry.query.filter_by(
+        id=journal_entry_id, user_id=user_id,
+    ).first()
+    if not entry:
+        return jsonify({"error": "仕訳が見つかりません。"}), 404
+
+    # 確定済み期間 / 提出済みロックの伝票は医療費明細も変更不可。
+    err = check_entry_modifiable(user_id, entry)
+    if err:
+        return jsonify({"error": err}), 400
+    if is_entry_locked_for_owner(user_id, entry):
+        return jsonify({
+            "error": "提出済みの税務科目を含む伝票のため変更できません。",
+        }), 400
+
+    # E3-F PR-C: クライアント側で AES-GCM 暗号化された本体は必須。
+    blob, iv, err = _decode_record_crypto(
+        data, "medical", "encrypted_blob", "blob_iv", required=True,
+    )
+    if err:
+        return jsonify({"error": err}), 400
+
+    # --- 平文フィールド (dual-write、後続 PR で停止予定) ---
+    parsed_date = None
+    date_str = data.get("date")
+    if date_str:
+        try:
+            parsed_date = date_type.fromisoformat(date_str)
+        except (TypeError, ValueError):
+            return jsonify({"error": "date の形式が不正です（YYYY-MM-DD）。"}), 400
+
+    fields = {}
+    for key in ("patient_name", "hospital_name", "treatment_description",
+                "provider_type"):
+        value, ferr = _medical_str_field(data, key)
+        if ferr:
+            return jsonify({"error": ferr}), 400
+        fields[key] = value
+    # provider_type は空文字を null に正規化 (DB nullable)。
+    provider_type = fields["provider_type"] or None
+
+    try:
+        amount_paid = int(data.get("amount_paid") or 0)
+        insurance_reimbursement = int(data.get("insurance_reimbursement") or 0)
+    except (TypeError, ValueError):
+        return jsonify({
+            "error": "amount_paid / insurance_reimbursement は整数で指定してください。",
+        }), 400
+
+    me = MedicalExpense.query.filter_by(
+        journal_entry_id=journal_entry_id, user_id=user_id,
+    ).first()
+    if me is None:
+        me = MedicalExpense(user_id=user_id, journal_entry_id=journal_entry_id)
+        db.session.add(me)
+
+    me.date = parsed_date
+    me.patient_name = fields["patient_name"]
+    me.hospital_name = fields["hospital_name"]
+    me.treatment_description = fields["treatment_description"]
+    me.provider_type = provider_type
+    me.amount_paid = amount_paid
+    me.insurance_reimbursement = insurance_reimbursement
+    me.encrypted_blob = blob
+    me.blob_iv = iv
+    db.session.commit()
+
+    return jsonify({"ok": True, "id": me.id})
+
+
 def _mark_draft_done(draft: AIDraft, entry_number: int):
     """仕訳登録後に Discord 通知を完了マークに更新する"""
     if not draft.discord_message_id or not draft.discord_webhook_url:
