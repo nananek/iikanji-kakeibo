@@ -71,9 +71,8 @@ def index():
 # E3-F PR-B1.1: new() / edit() は GET 専用。フォーム送信は JS が
 # entries_builder で暗号化 → POST /api/v1/journals/batch (新規) /
 # PUT /api/v1/journals/<id> (更新) に直接送る (E2EE 経路)。
-# accounting.create_cashbook_entry / update_cashbook_entry は本 view からは
-# 呼ばれなくなったが、accounts.py / medical.py / tests 由来の呼出が残るため
-# 関数自体は dual-storage 完了 (PR-D) まで保持する。
+# 旧 accounting.create_cashbook_entry / update_cashbook_entry (平文 write) は
+# 全 caller 消滅により PR-D-5-4 で削除済。
 @bp.route("/new", methods=["GET"])
 @login_required
 def new():
