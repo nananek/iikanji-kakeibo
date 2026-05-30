@@ -2,6 +2,16 @@
 {% block title %}仕訳帳 - いいかんじ™家計簿{% endblock %}
 
 {% block content %}
+<script id="journal-index-params" type="application/json">
+{{ {"year": year, "user_id": effective_user_id, "is_audit_proxy": session.get('acting_as_user_id') is not none} | tojson }}
+</script>
+<script id="journal-index-accounts-meta" type="application/json">
+{{ accounts_meta | tojson }}
+</script>
+<script id="journal-index-extra" type="application/json">
+{{ {"closed_periods": closed_periods, "locked_codes": locked_codes} | tojson }}
+</script>
+
 <div class="d-flex justify-content-between align-items-center mb-4">
   <h2><i class="bi bi-journal-bookmark"></i> 仕訳帳</h2>
   <div>
@@ -14,29 +24,32 @@
   </div>
 </div>
 
-<form class="row g-3 mb-4" method="GET">
+<div class="row g-3 mb-4">
   <div class="col-auto">
-    <input type="date" name="date_from" class="form-control" value="{{ date_from }}">
+    <form class="d-flex gap-2" method="GET">
+      <select name="year" class="form-select">
+        {% for y in range(year - 3, year + 2) %}
+        <option value="{{ y }}" {% if y == year %}selected{% endif %}>{{ y }}年</option>
+        {% endfor %}
+      </select>
+      <button type="submit" class="btn btn-outline-secondary">表示</button>
+    </form>
   </div>
   <div class="col-auto">
-    <input type="date" name="date_to" class="form-control" value="{{ date_to }}">
+    {# 摘要検索はクライアント側で復号済み行を絞り込む (平文 description.ilike 撤去) #}
+    <input type="text" id="journal-search" class="form-control" placeholder="摘要で検索" autocomplete="off">
   </div>
-  <div class="col-auto">
-    <input type="text" name="search" class="form-control" value="{{ search }}" placeholder="摘要で検索">
-  </div>
-  <div class="col-auto">
-    <button type="submit" class="btn btn-outline-secondary">検索</button>
-    <a href="{{ url_for('journal.index') }}" class="btn btn-outline-secondary">リセット</a>
-  </div>
-</form>
+</div>
 
-{% if entries.items %}
+<div id="journal-index-status" class="d-none" role="status" aria-live="polite"></div>
+
 <form id="bulkForm" method="POST" action="{{ url_for('journal.bulk_delete') }}"
       x-data="bulkSelect" @submit="if (!confirmBulkDelete()) $event.preventDefault()"
       @drag-select-update="updateCount()">
   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <input type="hidden" name="redirect_url" value="{{ request.full_path }}">
 
-  <div class="table-responsive">
+  <div id="journal-index-table" class="table-responsive d-none">
     <table class="table table-hover">
       <thead class="table-light">
         <tr>
@@ -53,75 +66,7 @@
           <th></th>
         </tr>
       </thead>
-      <tbody>
-        {% for entry in entries.items %}
-        <tr>
-          <td>
-            {% if entry._modifiable %}
-            <input type="checkbox" class="form-check-input entry-cb" name="entry_ids" value="{{ entry.id }}" data-has-voucher="{{ 'true' if entry.active_vouchers else '' }}" @change="updateCount()">
-            {% endif %}
-          </td>
-          <td>{{ entry.entry_number }}</td>
-          <td>{{ entry.date.strftime('%Y/%m/%d') }}</td>
-          <td>{{ entry.description }}</td>
-          <td>
-            {% for line in entry.lines if line.debit_amount > 0 %}
-            <div>{{ line.account.name|mask_account(line.account_code) }}</div>
-            {% endfor %}
-          </td>
-          <td>
-            {% for line in entry.lines if line.credit_amount > 0 %}
-            <div>{{ line.account.name|mask_account(line.account_code) }}</div>
-            {% endfor %}
-          </td>
-          <td class="text-end">&yen;{{ "{:,}".format(entry.total_debit|int) }}</td>
-          <td class="d-mobile-none">
-            {% if entry.source == 'closing' %}
-            <span class="badge bg-dark">損益振替</span>
-            {% elif entry.source == 'cashbook' %}
-            <span class="badge bg-info">出納帳</span>
-            {% elif entry.source == 'ai_receipt' %}
-            <span class="badge bg-success">AI</span>
-            {% if entry.active_vouchers %}
-            <a href="#" onclick="openImagePreview('{{ url_for('ai_journal.voucher_image', voucher_id=entry.active_vouchers[0].id) }}');return false"
-               title="証憑画像" class="text-success"><i class="bi bi-image"></i></a>
-            {% endif %}
-            {% elif entry.source == 'csv' %}
-            <span class="badge bg-primary">CSV</span>
-            {% elif entry.source == 'ofx' %}
-            <span class="badge bg-primary">OFX</span>
-            {% elif entry.source == 'web' %}
-            <span class="badge bg-primary">Web</span>
-            {% else %}
-            <span class="badge bg-secondary">仕訳</span>
-            {% endif %}
-          </td>
-          <td>
-            {% if entry._modifiable %}
-            <div class="btn-group btn-group-sm">
-              {% if entry.source == 'cashbook' %}
-              <a href="{{ url_for('cashbook.edit', entry_id=entry.id) }}" class="btn btn-outline-secondary">
-                <i class="bi bi-pencil"></i>
-              </a>
-              {% else %}
-              <a href="{{ url_for('journal.edit', entry_id=entry.id) }}" class="btn btn-outline-secondary">
-                <i class="bi bi-pencil"></i>
-              </a>
-              {% endif %}
-              <button type="button" class="btn btn-outline-danger"
-                      hx-post="{{ url_for('journal.delete', entry_id=entry.id) }}"
-                      hx-confirm="{{ 'この仕訳には証憑画像が紐づいています。削除すると証憑が未紐付けになります。削除しますか？' if entry.active_vouchers else 'この仕訳を削除しますか？' }}"
-                      hx-target="closest tr" hx-swap="outerHTML swap:0.3s">
-                <i class="bi bi-trash"></i>
-              </button>
-            </div>
-            {% else %}
-            <i class="bi bi-lock-fill text-muted" title="変更不可"></i>
-            {% endif %}
-          </td>
-        </tr>
-        {% endfor %}
-      </tbody>
+      <tbody id="journal-index-tbody"></tbody>
     </table>
   </div>
 
@@ -135,48 +80,13 @@
   </div>
 </form>
 
-{% if entries.pages > 1 %}
-<nav>
-  <ul class="pagination justify-content-center">
-    {% if entries.has_prev %}
-    <li class="page-item">
-      <a class="page-link" href="{{ url_for('journal.index', page=entries.prev_num, date_from=date_from, date_to=date_to, search=search) }}">前へ</a>
-    </li>
-    {% endif %}
-    {% for p in entries.iter_pages() %}
-      {% if p %}
-      <li class="page-item {% if p == entries.page %}active{% endif %}">
-        <a class="page-link" href="{{ url_for('journal.index', page=p, date_from=date_from, date_to=date_to, search=search) }}">{{ p }}</a>
-      </li>
-      {% else %}
-      <li class="page-item disabled"><span class="page-link">...</span></li>
-      {% endif %}
-    {% endfor %}
-    {% if entries.has_next %}
-    <li class="page-item">
-      <a class="page-link" href="{{ url_for('journal.index', page=entries.next_num, date_from=date_from, date_to=date_to, search=search) }}">次へ</a>
-    </li>
-    {% endif %}
-  </ul>
-</nav>
-{% endif %}
-
-{% else %}
-<div class="text-center text-muted py-5">
+<div id="journal-index-empty" class="text-center text-muted py-5 d-none">
   <i class="bi bi-journal-x" style="font-size: 3rem;"></i>
-  <p class="mt-3">まだ仕訳がありません。</p>
+  <p class="mt-3">{{ year }}年の仕訳はありません。</p>
 </div>
-{% endif %}
 {% endblock %}
 
 {% block scripts %}
 <script src="{{ url_for('static', filename='js/drag_select.js') }}"></script>
-<script>
-var bulkForm = document.getElementById('bulkForm');
-if (bulkForm) {
-  initDragSelect('.table', '.entry-cb', function() {
-    bulkForm.dispatchEvent(new Event('drag-select-update'));
-  });
-}
-</script>
+<script type="module" src="{{ url_for('static', filename='js/journal/index_renderer.mjs') }}"></script>
 {% endblock %}

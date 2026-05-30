@@ -4,9 +4,9 @@ from datetime import date
 from flask import Blueprint, render_template, redirect, url_for, flash, request, jsonify, make_response
 from flask_login import login_required, current_user
 from sqlalchemy import func
-from sqlalchemy.orm import joinedload
 
 from app.extensions import db
+from app.models.account import Account
 from app.models.journal import JournalEntry, JournalEntryLine
 from app.models.voucher import Voucher
 from app.models.voucher_audit_log import VoucherAuditLog
@@ -26,55 +26,47 @@ bp = Blueprint("journal", __name__, url_prefix="/journal")
 
 
 
+def _journal_accounts_meta(user_id):
+    """仕訳帳一覧 (journal/index.html) のクライアント描画が科目名解決に使う
+    code → {name} メタ。account テーブルは非暗号化メタデータなのでサーバ側で
+    構築してよい。仕訳は無効化済み科目も参照しうるため is_active で絞らず全科目を
+    含める。監査 Lv2 では allowed_codes でフィルタ + 非公開科目名はマスクする
+    (代理閲覧時はクライアント側で復号できず空表示になる)。
+    """
+    allowed_codes = get_allowed_account_codes()
+    accounts = (
+        Account.query.filter_by(user_id=user_id)
+        .order_by(Account.code)
+        .all()
+    )
+    if allowed_codes is not None:
+        accounts = [a for a in accounts if a.code in allowed_codes]
+    return {
+        a.code: {"name": mask_account_name(a.name, a.code, allowed_codes)}
+        for a in accounts
+    }
+
+
 @bp.route("/")
 @login_required
 def index():
-    page = request.args.get("page", 1, type=int)
-    date_from = request.args.get("date_from", "")
-    date_to = request.args.get("date_to", "")
-    search = request.args.get("search", "")
+    """仕訳帳一覧 (E3-F PR-D-4-3 でクライアント描画に移行)。
 
-    allowed_codes = get_allowed_account_codes()
-
-    query = (
-        JournalEntry.query
-        .filter_by(user_id=get_effective_user_id())
-        .options(joinedload(JournalEntry.vouchers))
-        .order_by(JournalEntry.date.desc(), JournalEntry.entry_number.desc())
-    )
-
-    # Lv2: 公開科目を1つも含まない伝票を除外
-    if allowed_codes is not None:
-        query = query.filter(
-            JournalEntry.id.in_(
-                db.session.query(JournalEntryLine.journal_entry_id)
-                .filter(JournalEntryLine.account_code.in_(allowed_codes))
-            )
-        )
-
-    if date_from:
-        query = query.filter(JournalEntry.date >= date_from)
-    if date_to:
-        query = query.filter(JournalEntry.date <= date_to)
-    if search:
-        query = query.filter(JournalEntry.description.ilike(f"%{search}%"))
-
-    entries = query.paginate(page=page, per_page=20, error_out=False)
-
-    # 各 entry の編集可否フラグを付与
+    クライアントが /api/v1/journals を fiscal_year で取得・MK 復号し、編集可否
+    (modifiable) を closed_periods / locked_codes から算出してテーブルを描画する。
+    サーバ側で平文 (date / description / line.account 名) は一切読まない。旧
+    date_from/date_to 範囲 filter は fiscal_year セレクタに、description.ilike 検索
+    はクライアント側の摘要絞り込みに置換 (date / description は DROP 対象の平文)。
+    """
+    year = request.args.get("year", date.today().year, type=int)
     user_id = get_effective_user_id()
-    for entry in entries.items:
-        entry._modifiable = (
-            check_entry_modifiable(user_id, entry) is None
-            and not is_entry_locked_for_owner(user_id, entry)
-        )
-
     return render_template(
         "journal/index.html",
-        entries=entries,
-        date_from=date_from,
-        date_to=date_to,
-        search=search,
+        year=year,
+        effective_user_id=user_id,
+        accounts_meta=_journal_accounts_meta(user_id),
+        closed_periods=get_closed_periods_map(user_id),
+        locked_codes=sorted(get_submitted_account_codes(user_id)),
     )
 
 
