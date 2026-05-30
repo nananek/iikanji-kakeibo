@@ -145,3 +145,11 @@ test("空 meta は [] を返す", () => {
   assert.deepEqual(buildVoucherCards([], new Map()), []);
   assert.deepEqual(buildVoucherCards(null, null), []);
 });
+
+test("整数でない id の証憑は除外する (XSS 経路の遮断・防御的検証)", () => {
+  const cards = buildVoucherCards([
+    meta({ id: "1; alert(1)", journal_entry_id: null, uploaded_at: "2026-01-10T00:00:00" }),
+    meta({ id: 5, journal_entry_id: null, uploaded_at: "2026-01-11T00:00:00" }),
+  ], new Map());
+  assert.deepEqual(cards.map((c) => c.voucher_id), [5]);
+});

@@ -77,8 +77,13 @@ export function buildVoucherCards(voucherMeta, entryMap) {
   const map = entryMap || new Map();
   const cards = [];
   for (const v of voucherMeta || []) {
-    const attached = v.journal_entry_id != null;
-    const entry = attached ? map.get(v.journal_entry_id) : null;
+    // id 系は script タグ (DOM text) 由来。URL sink (img.src/form.action) に
+    // 流す前に数値へ強制し、非整数は除外する (XSS 経路の遮断 + 防御的検証)。
+    const voucherId = Number(v.id);
+    if (!Number.isInteger(voucherId)) continue;
+    const journalEntryId = v.journal_entry_id == null ? null : Number(v.journal_entry_id);
+    const attached = journalEntryId != null && Number.isInteger(journalEntryId);
+    const entry = attached ? map.get(journalEntryId) : null;
     const uploadedDate = _datePart(v.uploaded_at);
     const entryDate = entry && entry.date ? _datePart(entry.date) : null;
     const effectiveDate = entryDate || uploadedDate || null;
@@ -88,8 +93,8 @@ export function buildVoucherCards(voucherMeta, entryMap) {
       if (d != null && d > 67) overdueDays = d;
     }
     cards.push({
-      voucher_id: v.id,
-      journal_entry_id: v.journal_entry_id ?? null,
+      voucher_id: voucherId,
+      journal_entry_id: attached ? journalEntryId : null,
       attached,
       entry_number: v.entry_number ?? (entry ? entry.entry_number : null),
       effective_date: effectiveDate,
@@ -169,7 +174,10 @@ let _csrfToken = "";
 
 
 function _imgUrl(voucherId, thumb) {
-  return "/ai-journal/voucher/" + voucherId + "/image" + (thumb ? "?size=thumb" : "");
+  // voucherId は数値だが、念のため encodeURIComponent で URL sink を明示的に
+  // サニタイズ (CodeQL js/xss-through-dom 対策・防御的)。
+  const id = encodeURIComponent(String(voucherId));
+  return "/ai-journal/voucher/" + id + "/image" + (thumb ? "?size=thumb" : "");
 }
 
 
@@ -288,7 +296,7 @@ function _renderCard(c) {
     shield.title = "SHA-256 記録済み";
     shield.innerHTML = '<i class="bi bi-shield-check"></i>';
     fRight.appendChild(shield);
-    const vf = _postForm("/vouchers/" + c.voucher_id + "/verify", null);
+    const vf = _postForm("/vouchers/" + encodeURIComponent(String(c.voucher_id)) + "/verify", null);
     const vb = document.createElement("button");
     vb.type = "submit";
     vb.className = "btn btn-outline-secondary btn-sm py-0 px-1";
@@ -306,7 +314,7 @@ function _renderCard(c) {
 
   if (c.attached && c.journal_entry_id != null) {
     const jl = document.createElement("a");
-    jl.href = "/journal/" + c.journal_entry_id + "/edit";
+    jl.href = "/journal/" + encodeURIComponent(String(c.journal_entry_id)) + "/edit";
     jl.className = "text-decoration-none ms-1";
     jl.title = "仕訳を表示";
     jl.innerHTML = '<i class="bi bi-journal-text"></i>';
@@ -315,7 +323,7 @@ function _renderCard(c) {
 
   if (_canDelete) {
     const df = _postForm(
-      "/vouchers/" + c.voucher_id + "/delete",
+      "/vouchers/" + encodeURIComponent(String(c.voucher_id)) + "/delete",
       "この証憑を削除します。電帳法の訂正削除履歴はアプリケーションログにのみ残ります。削除しますか？",
     );
     const db_ = document.createElement("button");
