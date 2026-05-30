@@ -7,13 +7,13 @@ from flask_login import login_required, current_user
 
 from app.extensions import db
 from app.models.account import Account
-from app.models.journal import JournalEntry, JournalEntryLine
+from app.models.journal import JournalEntry
 from app.forms.cashbook import CashbookForm
 from app.services.fiscal import check_entry_modifiable, get_closed_periods_map, get_restricted_before_year
 from app.services.audit import (
     get_effective_user_id, get_allowed_account_codes,
     is_entry_locked_for_owner, is_entry_locked_for_auditor,
-    is_acting_as_auditor,
+    is_acting_as_auditor, mask_account_name,
 )
 from app.views.helpers import get_grouped_accounts
 
@@ -27,41 +27,44 @@ def _account_name(account_code, user_id):
     return a.name if a else None
 
 
+def _cashbook_accounts_meta(user_id):
+    """出納帳一覧 (cashbook/index.html) のクライアント描画が科目名解決に使う
+    code → {name} メタ。account テーブルは非暗号化メタデータなのでサーバ側で
+    構築してよい。出納帳仕訳は無効化済み科目も参照しうるため is_active で絞らず
+    全科目を含める。監査 Lv2 では allowed_codes でフィルタ + 非公開科目名は
+    マスクする (代理閲覧時はクライアント側で復号できず空表示になる)。
+    """
+    allowed_codes = get_allowed_account_codes()
+    accounts = (
+        Account.query.filter_by(user_id=user_id)
+        .order_by(Account.code)
+        .all()
+    )
+    if allowed_codes is not None:
+        accounts = [a for a in accounts if a.code in allowed_codes]
+    return {
+        a.code: {"name": mask_account_name(a.name, a.code, allowed_codes)}
+        for a in accounts
+    }
+
+
 @bp.route("/")
 @login_required
 def index():
-    page = request.args.get("page", 1, type=int)
-    date_from = request.args.get("date_from", "")
-    date_to = request.args.get("date_to", "")
+    """出納帳一覧 (E3-F PR-D-4-2 でクライアント描画に移行)。
 
-    allowed_codes = get_allowed_account_codes()
-
-    query = (
-        JournalEntry.query
-        .filter_by(user_id=get_effective_user_id(), source="cashbook")
-        .order_by(JournalEntry.date.desc(), JournalEntry.entry_number.desc())
-    )
-
-    # Lv2: 公開科目を1つも含まない伝票を除外
-    if allowed_codes is not None:
-        query = query.filter(
-            JournalEntry.id.in_(
-                db.session.query(JournalEntryLine.journal_entry_id)
-                .filter(JournalEntryLine.account_code.in_(allowed_codes))
-            )
-        )
-
-    if date_from:
-        query = query.filter(JournalEntry.date >= date_from)
-    if date_to:
-        query = query.filter(JournalEntry.date <= date_to)
-
-    entries = query.paginate(page=page, per_page=20, error_out=False)
+    クライアントが /api/v1/journals を fiscal_year で取得・MK 復号し、
+    source="cashbook" を抽出してテーブルを描画する。サーバ側で平文
+    (date / description / line.account 名) は一切読まない。旧 date_from/date_to
+    範囲 filter は fiscal_year セレクタに置換 (date は DROP 対象の平文カラム)。
+    """
+    year = request.args.get("year", date.today().year, type=int)
+    user_id = get_effective_user_id()
     return render_template(
         "cashbook/index.html",
-        entries=entries,
-        date_from=date_from,
-        date_to=date_to,
+        year=year,
+        effective_user_id=user_id,
+        accounts_meta=_cashbook_accounts_meta(user_id),
     )
 
 

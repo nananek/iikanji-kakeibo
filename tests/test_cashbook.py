@@ -11,50 +11,44 @@ from tests.conftest import make_journal
 
 
 class TestIndex:
+    """E3-F PR-D-4-2: 出納帳一覧はクライアント描画 shell に移行。
+
+    サーバは平文 date/description/金額/科目名を読まず、year + accounts_meta を
+    JSON script で渡すだけ。実際の一覧描画は index_renderer.mjs が MK 復号して
+    行う (検証は test_cashbook_index_rows.mjs)。
+    """
+
     def test_unauthenticated_redirects(self, client):
         resp = client.get("/cashbook/")
         assert resp.status_code in (302, 401)
 
-    def test_empty_index(self, logged_in_client, accounts):
-        resp = logged_in_client.get("/cashbook/")
-        assert resp.status_code == 200
-
-    def test_lists_cashbook_entries(self, db, logged_in_client, user, accounts):
-        make_journal(db, user.id, "5010", "1010", 1000,
-                     entry_date=date(2026, 2, 15), source="cashbook")
-        make_journal(db, user.id, "5010", "1010", 2000,
-                     entry_date=date(2026, 2, 16), source="cashbook")
-        # journal source は除外される
-        make_journal(db, user.id, "5010", "1010", 500,
-                     entry_date=date(2026, 2, 17), source="journal")
-
+    def test_renders_shell(self, logged_in_client, accounts):
         resp = logged_in_client.get("/cashbook/")
         assert resp.status_code == 200
         body = resp.get_data(as_text=True)
-        # 出納帳の 2 件は表示、journal の 500 円は表示されない
-        assert "1,000" in body or "1000" in body
-        assert "2,000" in body or "2000" in body
+        assert "cashbook-index-params" in body
+        assert "cashbook-index-accounts-meta" in body
+        assert "index_renderer.mjs" in body
 
-    def test_date_filter(self, db, logged_in_client, user, accounts):
-        make_journal(db, user.id, "5010", "1010", 1000,
-                     entry_date=date(2026, 1, 15), source="cashbook")
-        make_journal(db, user.id, "5010", "1010", 2000,
-                     entry_date=date(2026, 2, 15), source="cashbook")
-        resp = logged_in_client.get(
-            "/cashbook/?date_from=2026-02-01&date_to=2026-02-28"
-        )
+    def test_year_param_reflected_in_selector(self, logged_in_client, accounts):
+        resp = logged_in_client.get("/cashbook/?year=2025")
         assert resp.status_code == 200
-        body = resp.get_data(as_text=True)
-        assert "2,000" in body or "2000" in body
+        assert 'value="2025" selected' in resp.get_data(as_text=True)
 
-    def test_pagination(self, db, logged_in_client, user, accounts):
-        for i in range(25):
-            make_journal(db, user.id, "5010", "1010", 100 + i,
-                         entry_date=date(2026, 2, i + 1), source="cashbook")
-        resp1 = logged_in_client.get("/cashbook/?page=1")
-        resp2 = logged_in_client.get("/cashbook/?page=2")
-        assert resp1.status_code == 200
-        assert resp2.status_code == 200
+    def test_accounts_meta_includes_account_names(self, logged_in_client, accounts):
+        resp = logged_in_client.get("/cashbook/")
+        body = resp.get_data(as_text=True)
+        # accounts_meta JSON に科目名が含まれる (クライアントが科目名解決に使う)
+        assert "食費" in body or "5010" in body
+
+    def test_does_not_render_plaintext_entries(self, db, logged_in_client, user, accounts):
+        # サーバは平文 date/description/金額を読まない → HTML に出ない
+        make_journal(db, user.id, "5010", "1010", 13579,
+                     entry_date=date(2026, 2, 15), source="cashbook")
+        resp = logged_in_client.get("/cashbook/?year=2026")
+        body = resp.get_data(as_text=True)
+        assert "13,579" not in body
+        assert "13579" not in body
 
 
 class TestNewGet:

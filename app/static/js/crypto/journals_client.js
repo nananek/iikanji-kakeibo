@@ -61,6 +61,9 @@ async function _normalizeEntry(client, userId, apiEntry) {
   return {
     id: apiEntry.id,
     fiscal_year: apiEntry.fiscal_year,
+    // entry_number は非機密の連番 (平文カラム・DROP 対象外)。一覧 (出納帳/
+    // 仕訳帳) の "No." 列表示に使うため API レスポンスからそのまま伝播する。
+    entry_number: apiEntry.entry_number ?? null,
     // 復号できれば暗号化された値、なければ平文フォールバック
     date: body?.date ?? apiEntry.date,
     description: body?.description ?? apiEntry.description,
