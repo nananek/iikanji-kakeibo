@@ -74,6 +74,14 @@ async function _normalizeEntry(client, userId, apiEntry) {
     // fiscal_period: 復号値 → API レスポンスの平文 → null の優先順
     // (API 側 _entry_to_dict が fiscal_period を返却するよう E3-C-1b で拡張)
     fiscal_period: body?.fiscal_period ?? apiEntry.fiscal_period ?? null,
+    // 以下は非暗号化メタ (平文カラム / DROP 対象外)。一覧 (仕訳帳) の編集可否
+    // 判定・ソース/証憑バッジ描画に使う:
+    //   is_closing  : 損益振替 (自動生成) 判定。変更不可
+    //   fiscal_month: 確定済み期間判定 (period <= closed_period)
+    //   vouchers    : 証憑画像リンク ([{id, uploaded_at}])
+    is_closing: apiEntry.is_closing ?? false,
+    fiscal_month: apiEntry.fiscal_month ?? null,
+    vouchers: apiEntry.vouchers ?? [],
     lines,
   };
 }

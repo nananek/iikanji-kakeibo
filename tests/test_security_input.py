@@ -95,18 +95,20 @@ class TestOpenRedirect:
 class TestXSSEscaping:
     """テンプレートが自動エスケープされることを検証"""
 
-    def test_script_tag_in_journal_description_escaped(self, app, db,
-                                                        logged_in_client, user,
-                                                        accounts):
-        """仕訳一覧で <script> がHTMLエスケープされる"""
+    def test_script_tag_in_journal_description_not_server_rendered(self, app, db,
+                                                                   logged_in_client, user,
+                                                                   accounts):
+        """仕訳一覧 (E3-F PR-D-4-3 でクライアント描画) は平文 description を
+        サーバ出力しない。XSS ペイロードがサーバ HTML に一切現れないことを担保
+        (クライアント側 index_renderer.mjs は textContent で描画し DOM XSS も防ぐ)。"""
         make_journal(db, user.id, "5010", "1010",
                      1000, description='<script>alert("xss")</script>')
-        resp = logged_in_client.get("/journal/")
+        resp = logged_in_client.get("/journal/?year=2026")
         html = resp.data.decode()
-        # 生の <script> タグが出力されていないこと
+        # 生の <script> タグもエスケープ済み文字列も出力されない (description 非読取)
         assert '<script>alert("xss")</script>' not in html
-        # エスケープされた形式であること
-        assert '&lt;script&gt;' in html
+        assert 'alert(&#34;xss&#34;)' not in html
+        assert 'alert("xss")' not in html
 
     def test_json_endpoint_returns_json_content_type(self, app, db,
                                                       logged_in_client, user,

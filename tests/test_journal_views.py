@@ -18,6 +18,14 @@ from tests.conftest import make_journal
 
 
 class TestIndex:
+    """E3-F PR-D-4-3: 仕訳帳一覧はクライアント描画 shell に移行。
+
+    サーバは平文 date/description/金額/科目名を読まず、year + accounts_meta +
+    closed_periods + locked_codes を JSON script で渡すだけ。実際の一覧描画と
+    摘要絞り込みは index_renderer.mjs が MK 復号して行う (検証は
+    test_journal_index_rows.mjs)。
+    """
+
     def test_unauthenticated(self, client):
         resp = client.get("/journal/")
         assert resp.status_code in (302, 401)
@@ -26,40 +34,39 @@ class TestIndex:
         resp = logged_in_client.get("/journal/")
         assert resp.status_code == 200
 
-    def test_with_entries(self, db, logged_in_client, user, accounts):
-        make_journal(db, user.id, "5010", "1010", 1000,
-                     entry_date=date(2026, 2, 15), source="journal",
-                     description="ABC")
+    def test_renders_shell(self, logged_in_client, accounts):
         resp = logged_in_client.get("/journal/")
         assert resp.status_code == 200
         body = resp.get_data(as_text=True)
-        assert "ABC" in body
+        assert "journal-index-params" in body
+        assert "journal-index-accounts-meta" in body
+        assert "journal-index-extra" in body
+        assert "index_renderer.mjs" in body
 
-    def test_search_filter(self, db, logged_in_client, user, accounts):
-        make_journal(db, user.id, "5010", "1010", 1000,
-                     entry_date=date(2026, 2, 15), source="journal",
-                     description="ファミマ")
-        make_journal(db, user.id, "5010", "1010", 2000,
-                     entry_date=date(2026, 2, 16), source="journal",
-                     description="セブン")
-        resp = logged_in_client.get("/journal/?search=ファミマ")
-        body = resp.get_data(as_text=True)
-        assert "ファミマ" in body
-        assert "セブン" not in body
+    def test_year_param_reflected_in_selector(self, logged_in_client, accounts):
+        resp = logged_in_client.get("/journal/?year=2025")
+        assert resp.status_code == 200
+        assert 'value="2025" selected' in resp.get_data(as_text=True)
 
-    def test_date_range_filter(self, db, logged_in_client, user, accounts):
-        make_journal(db, user.id, "5010", "1010", 1000,
-                     entry_date=date(2026, 1, 15), source="journal",
-                     description="JAN")
-        make_journal(db, user.id, "5010", "1010", 2000,
+    def test_does_not_render_plaintext_entries(self, db, logged_in_client, user, accounts):
+        # サーバは平文 description/date/金額を読まない → HTML に出ない
+        make_journal(db, user.id, "5010", "1010", 13579,
                      entry_date=date(2026, 2, 15), source="journal",
-                     description="FEB")
-        resp = logged_in_client.get(
-            "/journal/?date_from=2026-02-01&date_to=2026-02-28"
-        )
+                     description="ZZSECRETDESC")
+        resp = logged_in_client.get("/journal/?year=2026")
         body = resp.get_data(as_text=True)
-        assert "FEB" in body
-        assert "JAN" not in body
+        assert "ZZSECRETDESC" not in body
+        assert "13,579" not in body
+        assert "13579" not in body
+
+    def test_closed_periods_in_extra(self, db, logged_in_client, user, accounts):
+        db.session.add(FiscalClose(user_id=user.id, year=2026, closed_period=3))
+        db.session.commit()
+        resp = logged_in_client.get("/journal/?year=2026")
+        body = resp.get_data(as_text=True)
+        # closed_periods マップが extra JSON に含まれる (クライアント modifiable 判定用)
+        assert "closed_periods" in body
+        assert "locked_codes" in body
 
 
 class TestNewGet:
