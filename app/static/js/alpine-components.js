@@ -133,6 +133,9 @@ document.addEventListener('alpine:init', function() {
       expenseTypeId: config.expenseTypeId,
       revenueTypeId: config.revenueTypeId,
       accountsByType: config.accountsByType,
+      userId: config.userId,
+      isProxyMode: !!config.isProxyMode,
+      fiscalYears: config.fiscalYears || [],
       editingCode: null,
       editingTypeId: null,
       wasActive: true,
@@ -154,6 +157,8 @@ document.addEventListener('alpine:init', function() {
       deactivateLoading: false,
       balanceLabel: '',
       hasBalance: false,
+      balanceValue: 0,
+      normalBalance: '',
       transferToCode: '',
       transferCandidates: [],
 
@@ -187,6 +192,9 @@ document.addEventListener('alpine:init', function() {
         this.errorMessage = '';
         this.saving = false;
         this.showDeactivate = false;
+        this.hasBalance = false;
+        this.balanceValue = 0;
+        this.normalBalance = '';
         this.transferToCode = '';
       },
 
@@ -237,6 +245,8 @@ document.addEventListener('alpine:init', function() {
             .then(function(r) { return r.json(); })
             .then(function(data) {
               self.deactivateLoading = false;
+              self.balanceValue = data.balance;
+              self.normalBalance = data.normal_balance || '';
               if (data.balance !== 0) {
                 self.hasBalance = true;
                 self.balanceLabel = '\u00a5' + Math.abs(data.balance).toLocaleString() +
@@ -252,8 +262,105 @@ document.addEventListener('alpine:init', function() {
         }
       },
 
-      save: function() {
+      // 無効化対象科目の残高を全年度の仕訳から復号して算出し、暗号化した
+      // 振替仕訳を batch API に登録する。サーバ api_update は残高がある科目の
+      // 無効化を 400 で弾くため、先にこの振替で残高を 0 にしておく。
+      // 残高計算は _get_account_balance と等価:
+      //   全年度・全期間 (closing 含む) を集計し normal_balance で d-c / c-d。
+      submitDeactivateTransfer: async function() {
+        var self = this;
+        var transferTo = this.transferCandidates.find(function(a) {
+          return a.code === self.transferToCode;
+        });
+        if (!transferTo) {
+          throw new Error('振替先の科目が見つかりません。');
+        }
+        if (typeof this.userId !== 'number' || !Number.isSafeInteger(this.userId)) {
+          throw new Error('userId が未設定です (テンプレート修正が必要)');
+        }
+        var builderMod = await import('/static/js/crypto/entries_builder.js');
+        var journalsMod = await import('/static/js/crypto/journals_client.js');
+        var balanceMod = await import('/static/js/crypto/reports/balance_cache.js');
+        var deactivateMod = await import('/static/js/crypto/deactivate_transfer.js');
+        var sharedClientMod = await import('/static/js/crypto/shared-client.js');
+        var client = new sharedClientMod.SharedCryptoClient(
+          '/static/js/crypto/shared-worker.js',
+        );
+        try {
+          var status = await client.status();
+          if (!status.hasKey) {
+            throw new Error('MK ロック中です (設定 → 暗号鍵管理 で解除)');
+          }
+          var entries = [];
+          for (var i = 0; i < this.fiscalYears.length; i++) {
+            var yearEntries = await journalsMod.fetchJournalsForYear({
+              client: client, userId: this.userId, fiscalYear: this.fiscalYears[i],
+            });
+            entries = entries.concat(yearEntries);
+          }
+          // period=16 / includeClosing=true で全期間・closing 込みを集計する
+          // (_get_account_balance は年度・期間フィルタなしの全件集計)。
+          var cache = balanceMod.computeBalanceCache(entries, {
+            period: 16, includeClosing: true,
+          });
+          var dc = cache[this.editingCode] || [0, 0];
+          var balance = this.normalBalance === 'debit'
+            ? dc[0] - dc[1] : dc[1] - dc[0];
+          if (balance === 0) {
+            // 残高ゼロなら振替不要 (api_update は残高ゼロの無効化を許可する)。
+            return;
+          }
+          var t = deactivateMod.computeDeactivateTransfer(
+            { code: this.editingCode, normalBalance: this.normalBalance },
+            { code: transferTo.code },
+            balance,
+          );
+          var entry = await builderMod.buildTransferEntry({
+            client: client,
+            userId: this.userId,
+            date: new Date().toISOString().slice(0, 10),
+            description: '科目無効化振替: ' + this.name + ' → ' + transferTo.name,
+            fromAccountCode: t.fromAccountCode,
+            toAccountCode: t.toAccountCode,
+            amount: t.amount,
+            source: 'journal',
+            fiscalPeriod: null,
+          });
+          var csrfMeta = document.querySelector('meta[name="csrf-token"]');
+          var csrfToken = csrfMeta ? csrfMeta.getAttribute('content') : '';
+          var res = await fetch('/api/v1/journals/batch', {
+            method: 'POST',
+            credentials: 'include',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-CSRFToken': csrfToken,
+            },
+            body: JSON.stringify({ entries: [entry] }),
+          });
+          var rb = await res.json().catch(function() { return {}; });
+          if (!res.ok) {
+            throw new Error(rb.error || ('HTTP ' + res.status));
+          }
+        } finally {
+          try { client.close(); } catch (_e) { /* ignore */ }
+        }
+      },
+
+      save: async function() {
         this.errorMessage = '';
+        var needsTransfer = !this.isActive && this.editingCode &&
+          this.wasActive && this.hasBalance;
+        if (needsTransfer) {
+          if (this.isProxyMode) {
+            this.errorMessage = '代理閲覧モードでは科目を無効化できません。' +
+              '本人アカウントで実行してください。';
+            return;
+          }
+          if (!this.transferToCode) {
+            this.errorMessage = '残高がある科目を無効化するには振替先を指定してください。';
+            return;
+          }
+        }
         var payload = {
           code: this.code,
           name: this.name,
@@ -263,33 +370,34 @@ document.addEventListener('alpine:init', function() {
           cost_type: this.costType,
           is_active: this.isActive,
         };
-        if (!this.isActive && this.editingCode && this.wasActive && this.transferToCode) {
-          payload.transfer_to_account_code = this.transferToCode;
-        }
         var url = this.editingCode ? ('/accounts/api/' + this.editingCode) : '/accounts/api/new';
         this.saving = true;
-        var self = this;
-        fetch(url, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-CSRFToken': document.querySelector('meta[name="csrf-token"]').content,
-          },
-          body: JSON.stringify(payload),
-        })
-        .then(function(r) { return r.json().then(function(d) { return {ok: r.ok, data: d}; }); })
-        .then(function(res) {
-          self.saving = false;
-          if (!res.ok) {
-            self.errorMessage = res.data.error || 'エラーが発生しました。';
+        try {
+          // 残高がある科目の無効化は先に暗号化振替を batch 登録して残高を 0 に
+          // してから無効化 POST する (サーバは平文の振替仕訳を作らない)。
+          if (needsTransfer) {
+            await this.submitDeactivateTransfer();
+          }
+          var r = await fetch(url, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-CSRFToken': document.querySelector('meta[name="csrf-token"]').content,
+            },
+            body: JSON.stringify(payload),
+          });
+          var data = await r.json().catch(function() { return {}; });
+          if (!r.ok) {
+            this.saving = false;
+            this.errorMessage = data.error || 'エラーが発生しました。';
             return;
           }
           location.reload();
-        })
-        .catch(function() {
-          self.saving = false;
-          self.errorMessage = '通信エラーが発生しました。';
-        });
+        } catch (err) {
+          this.saving = false;
+          this.errorMessage = (err && err.message)
+            ? err.message : '通信エラーが発生しました。';
+        }
       }
     };
   });

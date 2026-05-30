@@ -2,12 +2,20 @@
 {% block title %}勘定科目 - いいかんじ™家計簿{% endblock %}
 
 {% block content %}
-<script>var _accountsByType = {{ accounts_by_type | tojson }};</script>
+<script>
+  var _accountsByType = {{ accounts_by_type | tojson }};
+  var _accountFiscalYears = {{ fiscal_years | tojson }};
+  var _accountUserId = {{ current_user.id | tojson }};
+  var _accountIsProxyMode = {{ is_acting_as | tojson }};
+</script>
 <div x-data="accountEditor({
   expenseTypeId: {{ expense_type_id }},
   revenueTypeId: {{ revenue_type_id }},
   defaultTypeId: {{ account_types[0].id }},
-  accountsByType: _accountsByType
+  accountsByType: _accountsByType,
+  fiscalYears: _accountFiscalYears,
+  userId: _accountUserId,
+  isProxyMode: _accountIsProxyMode
 })">
 
 <div class="d-flex justify-content-between align-items-center mb-4">

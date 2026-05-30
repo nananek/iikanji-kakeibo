@@ -1,9 +1,12 @@
 """勘定科目管理 API のテスト"""
 
 import json
+from datetime import date
+
 import pytest
 
 from app.models.account import Account
+from app.models.journal import JournalEntry
 from tests.conftest import make_journal
 
 
@@ -41,6 +44,13 @@ class TestApiBalance:
     def test_balance_nonexistent(self, db, logged_in_client, accounts):
         resp = logged_in_client.get("/accounts/api/9999/balance")
         assert resp.status_code == 404
+
+    def test_balance_includes_normal_balance_and_name(self, db, logged_in_client, accounts):
+        """残高 API は normal_balance / name も返す (クライアント残高振替計算用)。"""
+        resp = logged_in_client.get("/accounts/api/5010/balance")
+        body = resp.get_json()
+        assert body["normal_balance"] == "debit"
+        assert body["name"] == "食費"
 
 
 class TestApiGet:
@@ -217,6 +227,7 @@ class TestApiUpdate:
         assert "100文字以内" in resp.get_json()["error"]
 
     def test_deactivate_with_balance_needs_transfer(self, db, logged_in_client, user, accounts):
+        """残高があると 400 + needs_transfer を返し、無効化しない。"""
         make_journal(db, user.id, "5010", "1010", 3000)
         resp = logged_in_client.post(
             "/accounts/api/5010",
@@ -227,56 +238,55 @@ class TestApiUpdate:
         data = resp.get_json()
         assert data["needs_transfer"] is True
         assert data["balance"] == 3000
+        assert Account.query.filter_by(code="5010").first().is_active is True
 
-    def test_deactivate_with_balance_invalid_transfer(self, db, logged_in_client, user, accounts):
+    def test_deactivate_with_balance_ignores_transfer_code(
+        self, db, logged_in_client, user, accounts
+    ):
+        """残高振替はクライアントの暗号化経路へ移行したため、サーバは
+        transfer_to_account_code を無視し、平文の振替仕訳を作らない。
+        残高が残っている限り 400 で弾く (安全弁)。
+        """
         make_journal(db, user.id, "5010", "1010", 3000)
+        before = JournalEntry.query.filter_by(user_id=user.id).count()
         resp = logged_in_client.post(
             "/accounts/api/5010",
             data=json.dumps({
                 "code": "5010", "name": "食費", "is_active": False,
-                "transfer_to_account_code": "9999",
+                "transfer_to_account_code": "5020",
             }),
             content_type="application/json",
         )
         assert resp.status_code == 400
-        assert "振替先の科目が無効" in resp.get_json()["error"]
+        assert resp.get_json()["needs_transfer"] is True
+        # 振替仕訳は作られない
+        after = JournalEntry.query.filter_by(user_id=user.id).count()
+        assert after == before
+        assert not any(
+            "無効化振替" in (e.description or "")
+            for e in JournalEntry.query.filter_by(user_id=user.id).all()
+        )
+        assert Account.query.filter_by(code="5010").first().is_active is True
 
-    def test_deactivate_positive_balance_debit(self, db, logged_in_client, user, accounts):
+    def test_deactivate_zero_balance_ok(self, db, logged_in_client, user, accounts):
+        """残高 0 (クライアント振替後の状態) なら無効化でき、サーバは仕訳を追加しない。"""
+        # 借方 3000 / 貸方 3000 を計上して 5010 の残高を 0 にする
         make_journal(db, user.id, "5010", "1010", 3000)
+        make_journal(db, user.id, "1010", "5010", 3000)
+        assert logged_in_client.get(
+            "/accounts/api/5010/balance"
+        ).get_json()["balance"] == 0
+        before = JournalEntry.query.filter_by(user_id=user.id).count()
         resp = logged_in_client.post(
             "/accounts/api/5010",
-            data=json.dumps({
-                "code": "5010", "name": "食費", "is_active": False,
-                "transfer_to_account_code": "5020",
-            }),
+            data=json.dumps({"code": "5010", "name": "食費", "is_active": False}),
             content_type="application/json",
         )
         assert resp.status_code == 200
-        assert Account.query.filter_by(code="5010").first().is_active is False
-
-    def test_deactivate_negative_balance_debit(self, db, logged_in_client, user, accounts):
-        make_journal(db, user.id, "1010", "5010", 2000)
-        resp = logged_in_client.post(
-            "/accounts/api/5010",
-            data=json.dumps({
-                "code": "5010", "name": "食費", "is_active": False,
-                "transfer_to_account_code": "5020",
-            }),
-            content_type="application/json",
-        )
-        assert resp.status_code == 200
-
-    def test_deactivate_credit_account(self, db, logged_in_client, user, accounts):
-        make_journal(db, user.id, "1010", "2010", 5000)
-        resp = logged_in_client.post(
-            "/accounts/api/2010",
-            data=json.dumps({
-                "code": "2010", "name": "クレジットカード", "is_active": False,
-                "transfer_to_account_code": "1010",
-            }),
-            content_type="application/json",
-        )
-        assert resp.status_code == 200
+        acct = Account.query.filter_by(code="5010").first()
+        assert acct.is_active is False
+        assert acct.deactivated_year == date.today().year
+        assert JournalEntry.query.filter_by(user_id=user.id).count() == before
 
     def test_reactivate_clears_deactivated_year(self, db, logged_in_client, user, accounts):
         acct = Account.query.filter_by(code="5010").first()
