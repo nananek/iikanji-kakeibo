@@ -1340,7 +1340,7 @@ document.addEventListener('alpine:init', function() {
         var self = this;
         // クライアント完結 E2EE フローで実行。サーバには
         // description / API キーが届かない。
-        runSuggestCategoriesE2EE(paymentAccountCode, targets)
+        runSuggestCategoriesE2EE(paymentAccountCode, targets, self.rows, userId)
           .then(function(data) {
             for (var i = 0; i < indices.length; i++) {
               var row = self.rows[indices[i]];
@@ -1630,8 +1630,19 @@ document.addEventListener('alpine:init', function() {
 
 // importConfirm.aiSuggestCategories から呼ばれる E2EE
 // クライアント完結フロー。サーバには description/API キー一切送らない。
-async function runSuggestCategoriesE2EE(paymentAccountCode, rows) {
+//
+// E3-F PR-D-6-1a: 元帳テキストはサーバが平文で返さなくなったため、
+// 年度別に仕訳を取得・復号 (fetchJournalsForYear) して orchestrator に渡し、
+// クライアントで buildPaymentLedgerContext により構築する。
+// 年度範囲は取込行 (allRows、date 付き) から導出する (classical 経路と同じ)。
+//
+// @param paymentAccountCode 支払口座コード
+// @param rows               LLM 推定対象 [{description, deposit, withdrawal}]
+// @param allRows            取込行全体 (date 付き、年度範囲導出用)
+// @param userId             復号 AAD 用
+async function runSuggestCategoriesE2EE(paymentAccountCode, rows, allRows, userId) {
   var orchestratorMod = await import("/static/js/crypto/suggest_categories_orchestrator.js");
+  var journalsMod = await import("/static/js/crypto/journals_client.js");
   var sharedClientMod = await import("/static/js/crypto/shared-client.js");
   var workerUrl = "/static/js/crypto/shared-worker.js";
   var client = new sharedClientMod.SharedCryptoClient(workerUrl);
@@ -1640,10 +1651,20 @@ async function runSuggestCategoriesE2EE(paymentAccountCode, rows) {
     if (!status.hasKey) {
       throw new Error("MK ロック中です (設定 → 暗号鍵管理 で解除)");
     }
+    var years = _suggestFiscalYears(allRows || []);
+    var entries = [];
+    for (var i = 0; i < years.length; i++) {
+      var yearEntries = await journalsMod.fetchJournalsForYear({
+        client: client, userId: userId, fiscalYear: years[i],
+      });
+      entries = entries.concat(yearEntries);
+    }
     return await orchestratorMod.runSuggestCategories({
       paymentAccountCode: paymentAccountCode,
       rows: rows,
       client: client,
+      journalEntries: entries,
+      accountNameMap: _buildAccountNameMap(),
     });
   } finally {
     try { client.close(); } catch (_e) { /* ignore */ }
