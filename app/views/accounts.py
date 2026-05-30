@@ -7,8 +7,7 @@ from sqlalchemy import func
 
 from app.extensions import db
 from app.models.account import Account, AccountType
-from app.models.journal import JournalEntryLine
-from app.services.accounting import create_transfer_entry
+from app.models.journal import JournalEntry, JournalEntryLine
 from app.services.audit import get_effective_user_id, get_allowed_account_codes
 
 
@@ -98,6 +97,16 @@ def index():
         for at in account_types
     }
 
+    # 無効化時の残高振替はクライアントで全年度の仕訳を復号して残高を計算する。
+    # 対象年度を列挙するため、ユーザーの仕訳が存在する年度の範囲を渡す。
+    year_range = db.session.query(
+        func.min(JournalEntry.fiscal_year), func.max(JournalEntry.fiscal_year)
+    ).filter(JournalEntry.user_id == get_effective_user_id()).first()
+    if year_range and year_range[0] is not None:
+        fiscal_years = list(range(int(year_range[0]), int(year_range[1]) + 1))
+    else:
+        fiscal_years = []
+
     return render_template(
         "accounts/index.html",
         grouped=grouped,
@@ -108,6 +117,7 @@ def index():
         tax_category_labels=tax_category_labels,
         cost_types=COST_TYPES,
         accounts_by_type=accounts_by_type,
+        fiscal_years=fiscal_years,
     )
 
 
@@ -149,7 +159,11 @@ def api_balance(account_code):
         user_id=get_effective_user_id(), code=account_code
     ).first_or_404()
     balance = _get_account_balance(account)
-    return jsonify({"balance": balance})
+    return jsonify({
+        "balance": balance,
+        "normal_balance": account.account_type.normal_balance,
+        "name": account.name,
+    })
 
 
 @bp.route("/api/new", methods=["POST"])
@@ -223,47 +237,16 @@ def api_update(account_code):
     if account.system_role and not new_is_active:
         return jsonify({"error": "この科目はシステムで使用されるため無効化できません。"}), 400
 
-    # 有効→無効 の場合: 残高振替チェック
+    # 有効→無効 の場合: 残高が残っていれば無効化を拒否する。
+    # 残高振替仕訳はクライアントが暗号化して batch API に登録する経路へ移行した
+    # ため、ここでは平文の振替仕訳を生成しない。残高がある科目を直接無効化する
+    # 事故を防ぐため、残高 != 0 なら 400 を返す安全弁のみ残す (クライアントが
+    # 先に振替を登録していれば到達時点で残高は 0 になっている)。
     if account.is_active and not new_is_active:
         balance = _get_account_balance(account)
         if balance != 0:
-            transfer_to_code = data.get("transfer_to_account_code")
-            if not transfer_to_code:
-                return jsonify({"error": "残高がある科目を無効化するには振替先を指定してください。",
-                                "needs_transfer": True, "balance": balance}), 400
-            transfer_to = Account.query.filter_by(
-                user_id=get_effective_user_id(), code=transfer_to_code
-            ).first()
-            if not transfer_to or not transfer_to.is_active:
-                return jsonify({"error": "振替先の科目が無効です。"}), 400
-
-            # 残高を振替
-            if balance > 0:
-                if account.account_type.normal_balance == "debit":
-                    from_code, to_code = account.code, transfer_to.code
-                else:
-                    from_code, to_code = transfer_to.code, account.code
-                create_transfer_entry(
-                    user_id=get_effective_user_id(),
-                    date=date.today(),
-                    from_account_code=from_code,
-                    to_account_code=to_code,
-                    amount=abs(balance),
-                    description=f"科目無効化振替: {account.name} → {transfer_to.name}",
-                )
-            else:
-                if account.account_type.normal_balance == "debit":
-                    from_code, to_code = transfer_to.code, account.code
-                else:
-                    from_code, to_code = account.code, transfer_to.code
-                create_transfer_entry(
-                    user_id=get_effective_user_id(),
-                    date=date.today(),
-                    from_account_code=from_code,
-                    to_account_code=to_code,
-                    amount=abs(balance),
-                    description=f"科目無効化振替: {account.name} → {transfer_to.name}",
-                )
+            return jsonify({"error": "残高がある科目を無効化するには振替先を指定してください。",
+                            "needs_transfer": True, "balance": balance}), 400
         account.deactivated_year = date.today().year
 
     # 無効→有効 の場合: deactivated_year クリア
