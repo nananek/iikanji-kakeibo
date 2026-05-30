@@ -7,12 +7,12 @@ from sqlalchemy import func
 
 from app.extensions import db
 from app.models.account import Account
-from app.models.journal import JournalEntry, JournalEntryLine
+from app.models.journal import JournalEntry
 from app.models.voucher import Voucher
 from app.models.voucher_audit_log import VoucherAuditLog
 from app.forms.journal import JournalForm
-from app.services.accounting import create_journal_entry, get_next_entry_number
-from app.services.fiscal import check_entry_modifiable, check_period_open_for_new, get_effective_period, adjust_date_for_fiscal_period, get_closed_periods_map, get_restricted_before_year, is_period_locked
+from app.services.accounting import create_journal_entry
+from app.services.fiscal import check_entry_modifiable, get_effective_period, get_closed_periods_map, get_restricted_before_year, is_period_locked
 from app.services.audit import (
     get_effective_user_id, get_allowed_account_codes, get_submitted_account_codes,
     is_entry_locked_for_owner, is_entry_locked_for_auditor,
@@ -76,9 +76,9 @@ def index():
 # accounting.create_journal_entry は本 view からは呼ばれなくなったが、ai_journal /
 # auto_import / tests 由来の呼出が残るため関数自体は dual-storage 完了 (PR-D) まで
 # 保持する。
-# Lv2 監査者の科目フィルタ (proprietor 集約 / 部分置換) は edit_api / create_api
-# (JSON API、平文経路) で従来通り。GET の existing_lines にも proprietor 集約は
-# 残すが、JS submit 側で is_proprietor 行を除外して送る。
+# get_json は編集モーダルの初期表示データを返す (Lv2 では非公開行を proprietor
+# 行に集約)。保存は暗号化済み API 側で行うため、Lv2 監査代理での暗号化 write は
+# AAD 不一致で復号不能になり PUT/batch のガードでブロックされる (E2EE 仕様)。
 @bp.route("/new", methods=["GET"])
 @login_required
 def new():
@@ -245,244 +245,6 @@ def get_json(entry_id):
             for v in entry.active_vouchers
         ],
     })
-
-
-@bp.route("/<int:entry_id>/edit-api", methods=["POST"])
-@login_required
-def edit_api(entry_id):
-    """仕訳をJSON APIで更新する（モーダル編集用）"""
-    user_id = get_effective_user_id()
-    entry = JournalEntry.query.filter_by(
-        id=entry_id, user_id=user_id
-    ).first_or_404()
-
-    allowed_codes = get_allowed_account_codes()
-
-    # 伝票ロック: 本人側
-    if not is_acting_as_auditor() and is_entry_locked_for_owner(user_id, entry):
-        return jsonify({"error": "提出済みの税務科目を含む伝票のため変更できません。"}), 400
-
-    # 確定済み期間チェック
-    err = check_entry_modifiable(user_id, entry)
-    if err:
-        return jsonify({"error": err}), 400
-
-    data = request.get_json()
-    if not data:
-        return jsonify({"error": "リクエストが不正です。"}), 400
-
-    entry_date = data.get("date")
-    description = data.get("description", "").strip()
-    lines_data = data.get("lines", [])
-
-    if not entry_date or not description:
-        return jsonify({"error": "日付と摘要は必須です。"}), 400
-
-    if not lines_data:
-        return jsonify({"error": "仕訳明細を1行以上入力してください。"}), 400
-
-    # Lv2: 事業主行（is_proprietor）を除外して公開科目の行のみ受け入れ
-    proprietor_code = get_proprietor_account_code(user_id) if allowed_codes is not None else None
-
-    parsed = []
-    for line in lines_data:
-        acode = line["account_code"]
-        # Lv2: 事業主行はスキップ（非公開行はDBに保持）
-        if allowed_codes is not None and proprietor_code and acode == proprietor_code:
-            continue
-        parsed.append({
-            "account_code": acode,
-            "debit_amount": int(line.get("debit_amount", 0) or 0),
-            "credit_amount": int(line.get("credit_amount", 0) or 0),
-            "description": line.get("description", ""),
-        })
-
-    if allowed_codes is not None:
-        # Lv2: 非公開行を保持したまま、公開行だけ差し替え
-        # 非公開行の借方/貸方合計を算出
-        non_public_debit = 0
-        non_public_credit = 0
-        non_public_lines = []
-        for line in entry.lines:
-            if line.account_code not in allowed_codes:
-                non_public_debit += int(line.debit_amount)
-                non_public_credit += int(line.credit_amount)
-                non_public_lines.append(line)
-
-        # 公開行の貸借チェック（非公開行を含めた全体で確認）
-        public_debit = sum(l["debit_amount"] for l in parsed)
-        public_credit = sum(l["credit_amount"] for l in parsed)
-        total_debit = public_debit + non_public_debit
-        total_credit = public_credit + non_public_credit
-        if total_debit != total_credit:
-            return jsonify({
-                "error": f"貸借が一致しません（借方: {total_debit:,}, 貸方: {total_credit:,}）"
-            }), 400
-
-        # 計上期間の決定
-        raw_period = data.get("fiscal_period")
-        fiscal_period = int(raw_period) if raw_period not in (None, "") else None
-        if fiscal_period == 16:
-            return jsonify({"error": "損益振替期間には手動で仕訳を追加できません。"}), 400
-        new_date = adjust_date_for_fiscal_period(date.fromisoformat(entry_date), fiscal_period)
-
-        # 変更先の期間が確定済みでないかチェック
-        new_period = fiscal_period if fiscal_period is not None else new_date.month
-        err = check_period_open_for_new(user_id, new_date.year, new_period)
-        if err:
-            return jsonify({"error": err}), 400
-
-        entry.date = new_date
-        entry.description = description
-        entry.fiscal_period = fiscal_period
-        # E3-F: 平文 fiscal_period / date と並行して新カラムも更新。
-        entry.fiscal_year = new_date.year
-        entry.fiscal_month = new_period
-
-        # 公開科目の既存行だけ削除
-        for line in entry.lines:
-            if line.account_code in allowed_codes:
-                db.session.delete(line)
-        db.session.flush()
-
-        # 公開科目の新しい行を追加
-        for line_data in parsed:
-            db.session.add(JournalEntryLine(
-                journal_entry_id=entry.id,
-                account_user_id=user_id,
-                account_code=line_data["account_code"],
-                debit_amount=line_data["debit_amount"],
-                credit_amount=line_data["credit_amount"],
-                description=line_data.get("description", ""),
-            ))
-
-        db.session.commit()
-        return jsonify({"ok": True, "entry_number": entry.entry_number})
-
-    # 通常ユーザー / Lv3: 全行差し替え
-    total_debit = sum(l["debit_amount"] for l in parsed)
-    total_credit = sum(l["credit_amount"] for l in parsed)
-    if total_debit != total_credit:
-        return jsonify({
-            "error": f"貸借が一致しません（借方: {total_debit:,}, 貸方: {total_credit:,}）"
-        }), 400
-
-    # 計上期間の決定
-    raw_period = data.get("fiscal_period")
-    fiscal_period = int(raw_period) if raw_period not in (None, "") else None
-    if fiscal_period == 16:
-        return jsonify({"error": "損益振替期間には手動で仕訳を追加できません。"}), 400
-    new_date = adjust_date_for_fiscal_period(date.fromisoformat(entry_date), fiscal_period)
-
-    # 変更先の期間が確定済みでないかチェック
-    new_period = fiscal_period if fiscal_period is not None else new_date.month
-    err = check_period_open_for_new(user_id, new_date.year, new_period)
-    if err:
-        return jsonify({"error": err}), 400
-
-    entry.date = new_date
-    entry.description = description
-    entry.fiscal_period = fiscal_period
-    # E3-F: 平文 fiscal_period / date と並行して新カラムも更新。
-    entry.fiscal_year = new_date.year
-    entry.fiscal_month = new_period
-
-    for line in entry.lines:
-        db.session.delete(line)
-    db.session.flush()
-
-    for line_data in parsed:
-        db.session.add(JournalEntryLine(
-            journal_entry_id=entry.id,
-            account_user_id=user_id,
-            account_code=line_data["account_code"],
-            debit_amount=line_data["debit_amount"],
-            credit_amount=line_data["credit_amount"],
-            description=line_data.get("description", ""),
-        ))
-
-    db.session.commit()
-    return jsonify({"ok": True, "entry_number": entry.entry_number})
-
-
-@bp.route("/create-api", methods=["POST"])
-@login_required
-def create_api():
-    """仕訳をJSON APIで新規作成する（モーダル複写用）"""
-    user_id = get_effective_user_id()
-    data = request.get_json()
-    if not data:
-        return jsonify({"error": "リクエストが不正です。"}), 400
-
-    entry_date_str = data.get("date")
-    description = data.get("description", "").strip()
-    lines_data = data.get("lines", [])
-
-    if not entry_date_str or not description:
-        return jsonify({"error": "日付と摘要は必須です。"}), 400
-    if not lines_data:
-        return jsonify({"error": "仕訳明細を1行以上入力してください。"}), 400
-
-    parsed = []
-    for line in lines_data:
-        acode = line.get("account_code")
-        if not acode:
-            continue
-        parsed.append({
-            "account_code": acode,
-            "debit_amount": int(line.get("debit_amount", 0) or 0),
-            "credit_amount": int(line.get("credit_amount", 0) or 0),
-            "description": line.get("description", ""),
-        })
-
-    if not parsed:
-        return jsonify({"error": "仕訳明細を1行以上入力してください。"}), 400
-
-    total_debit = sum(l["debit_amount"] for l in parsed)
-    total_credit = sum(l["credit_amount"] for l in parsed)
-    if total_debit != total_credit:
-        return jsonify({
-            "error": f"貸借が一致しません（借方: {total_debit:,}, 貸方: {total_credit:,}）"
-        }), 400
-
-    raw_period = data.get("fiscal_period")
-    fiscal_period = int(raw_period) if raw_period not in (None, "") else None
-    if fiscal_period == 16:
-        return jsonify({"error": "損益振替期間には手動で仕訳を追加できません。"}), 400
-
-    try:
-        entry_date = date.fromisoformat(entry_date_str)
-    except ValueError:
-        return jsonify({"error": "日付の形式が不正です。"}), 400
-
-    entry_date = adjust_date_for_fiscal_period(entry_date, fiscal_period)
-    period = fiscal_period if fiscal_period is not None else entry_date.month
-    err = check_period_open_for_new(user_id, entry_date.year, period)
-    if err:
-        return jsonify({"error": err}), 400
-
-    # 提出済みロック科目チェック
-    locked_codes = get_submitted_account_codes(user_id)
-    if locked_codes:
-        used_codes = {l["account_code"] for l in parsed}
-        if used_codes & locked_codes:
-            return jsonify({"error": "提出済みの税務科目を含むため登録できません。"}), 400
-
-    try:
-        entry = create_journal_entry(
-            user_id=user_id,
-            date=entry_date,
-            description=description,
-            lines_data=parsed,
-            source="journal",
-            fiscal_period=fiscal_period,
-        )
-        db.session.commit()
-        return jsonify({"ok": True, "entry_number": entry.entry_number})
-    except ValueError as e:
-        from flask import current_app
-        current_app.logger.exception("create_journal_entry failed (journal)")
-        return jsonify({"error": safe_user_error(e)}), 400
 
 
 def log_voucher_orphan(entry, user_id):

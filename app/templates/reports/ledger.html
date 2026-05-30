@@ -614,6 +614,10 @@ function copyEntry() {
   document.querySelectorAll('#modalLinesBody .modal-remove-btn').forEach(function(btn) { btn.style.display = ''; });
 }
 
+// 仕訳帳一覧の編集・新規と同じく、entry + 各 line をクライアントで AES-GCM
+// 暗号化し、暗号化済み API (編集: PUT /api/v1/journals/<id> / 複写:
+// POST /api/v1/journals/batch) に送る。平文 WRITE エンドポイントは使わない。
+// 暗号化は entries_builder.buildJournalEntry を再利用する。
 function saveEntry() {
   var lines = [];
   document.querySelectorAll('#modalLinesBody tr').forEach(function(tr) {
@@ -621,47 +625,102 @@ function saveEntry() {
     var debit = parseInt(tr.querySelector('.modal-debit').value) || 0;
     var credit = parseInt(tr.querySelector('.modal-credit').value) || 0;
     var desc = tr.querySelector('.modal-line-desc').value;
+    // entries_builder の line 形式 (debit / credit)。account_code 非空かつ
+    // 片側のみ非ゼロの行だけを送る。
     if (accountCode && (debit > 0 || credit > 0)) {
-      lines.push({ account_code: accountCode, debit_amount: debit, credit_amount: credit, description: desc });
+      lines.push({ account_code: accountCode, debit: debit, credit: credit, description: desc });
     }
   });
 
-  var fpVal = document.getElementById('modalFiscalPeriod').value;
-  var payload = {
-    date: document.getElementById('modalDate').value,
-    description: document.getElementById('modalDesc').value,
-    fiscal_period: fpVal !== '' ? fpVal : null,
-    lines: lines,
-  };
+  if (lines.length < 2) {
+    document.getElementById('modalError').textContent = '仕訳明細は2行以上必要です。';
+    document.getElementById('modalError').classList.remove('d-none');
+    return;
+  }
 
+  var fpVal = document.getElementById('modalFiscalPeriod').value;
   var saveBtn = document.getElementById('modalSaveBtn');
   saveBtn.disabled = true;
+  document.getElementById('modalError').classList.add('d-none');
 
-  var apiUrl = isCopyMode ? '/journal/create-api' : '/journal/' + currentEntryId + '/edit-api';
-  fetch(apiUrl, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-CSRFToken': csrfToken,
-    },
-    body: JSON.stringify(payload),
+  submitLedgerEntry({
+    copyMode: isCopyMode,
+    entryId: currentEntryId,
+    date: document.getElementById('modalDate').value,
+    description: document.getElementById('modalDesc').value,
+    fiscalPeriod: fpVal !== '' ? parseInt(fpVal, 10) : null,
+    lines: lines,
   })
-  .then(function(r) { return r.json().then(function(d) { return { ok: r.ok, data: d }; }); })
-  .then(function(result) {
-    saveBtn.disabled = false;
-    if (!result.ok || result.data.error) {
-      document.getElementById('modalError').textContent = result.data.error || 'エラーが発生しました。';
-      document.getElementById('modalError').classList.remove('d-none');
-      return;
-    }
+  .then(function() {
     editModal.hide();
     window.location.reload();
   })
-  .catch(function() {
+  .catch(function(err) {
     saveBtn.disabled = false;
-    document.getElementById('modalError').textContent = '通信エラーが発生しました。';
+    document.getElementById('modalError').textContent =
+      (err && err.message) ? err.message : '保存に失敗しました。';
     document.getElementById('modalError').classList.remove('d-none');
   });
+}
+
+// MK 復号 → buildJournalEntry で暗号化 → 暗号化済み API へ送信。
+// MK ロック中・監査代理中は暗号化 write 不可なのでエラーメッセージで弾く
+// (仕訳帳一覧の暗号化 submit と同じ扱い)。
+async function submitLedgerEntry(opts) {
+  var paramsEl = document.getElementById('ledger-server-params');
+  if (!paramsEl) throw new Error('ページ情報の取得に失敗しました。');
+  var params = JSON.parse(paramsEl.textContent);
+  if (params.is_audit_proxy) {
+    throw new Error('監査代理閲覧中は仕訳を編集できません。');
+  }
+  if (typeof params.user_id !== 'number') {
+    throw new Error('ユーザー情報の取得に失敗しました。');
+  }
+
+  var builderMod = await import(
+    "{{ url_for('static', filename='js/crypto/entries_builder.js') }}"
+  );
+  var sharedClientMod = await import(
+    "{{ url_for('static', filename='js/crypto/shared-client.js') }}"
+  );
+  var workerUrl =
+    "{{ url_for('static', filename='js/crypto/shared-worker.js') }}";
+  var client = new sharedClientMod.SharedCryptoClient(workerUrl);
+  try {
+    var status = await client.status();
+    if (!status.hasKey) {
+      throw new Error('暗号鍵 (MK) がロックされています。設定 → 暗号鍵管理 で解除してください。');
+    }
+    var entry = await builderMod.buildJournalEntry({
+      client: client,
+      userId: params.user_id,
+      date: opts.date,
+      description: opts.description,
+      lines: opts.lines,
+      source: 'journal',
+      fiscalPeriod: opts.fiscalPeriod,
+    });
+    var url = opts.copyMode
+      ? '/api/v1/journals/batch'
+      : '/api/v1/journals/' + opts.entryId;
+    var method = opts.copyMode ? 'POST' : 'PUT';
+    var payload = opts.copyMode ? { entries: [entry] } : entry;
+    var res = await fetch(url, {
+      method: method,
+      headers: {
+        'Content-Type': 'application/json',
+        'X-CSRFToken': csrfToken,
+      },
+      credentials: 'include',
+      body: JSON.stringify(payload),
+    });
+    var body = await res.json().catch(function() { return {}; });
+    if (!res.ok) {
+      throw new Error(body.error || ('HTTP ' + res.status));
+    }
+  } finally {
+    try { client.close(); } catch (_e) { /* ignore */ }
+  }
 }
 
 // --- 証憑添付 ---

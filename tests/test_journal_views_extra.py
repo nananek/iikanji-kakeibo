@@ -1,16 +1,14 @@
 """仕訳帳ビューの追加テスト
 
 test_journal_views.py で扱った index/new/delete/bulk_delete に加えて、
-get_json / edit_api / suggest_categories / ai_suggest_categories /
-delete_batch を網羅。
+get_json / suggest-categories / ai-suggest-categories / delete_batch を網羅。
 
 E3-F PR-B2 以降、フォーム POST (edit) は廃止 (test_journal_views.py で 405 を担保)。
-更新の本流は PUT /api/v1/journals/<id> (test_api.py::TestUpdateJournal) と
-モーダル経由の /journal/<id>/edit-api (TestEditApi、本ファイル) の 2 経路。
+更新の本流は PUT /api/v1/journals/<id> (test_api.py::TestUpdateJournal)。元帳モーダル
+経由の旧平文 /journal/<id>/edit-api は撤去済み (TestEditApiRemoved で 404/405 を担保)。
 """
 
 from datetime import date
-from unittest.mock import patch
 
 from app.models.fiscal import FiscalClose
 from app.models.journal import JournalEntry, JournalEntryLine
@@ -60,68 +58,21 @@ class TestGetJson:
         assert data["is_readonly"] is True
 
 
-class TestEditApi:
+class TestEditApiRemoved:
+    """旧 POST /journal/<id>/edit-api は撤去済み。
+
+    仕訳編集はクライアント側 AES-GCM 暗号化 + PUT /api/v1/journals/<id> に
+    一本化された (E2EE 平文 WRITE 停止)。サーバ側バリデーション (貸借・確定
+    期間・提出ロック・損益振替拒否・IDOR) は test_api.py の PUT テストで網羅。
+    ここでは旧エンドポイントが到達不能 (404/405) であることのみ担保する。
+    """
+
     def _make_entry(self, db, user_id):
         return make_journal(db, user_id, "5010", "1010", 1000,
                             entry_date=date(2026, 2, 15),
                             source="journal", description="ORIG")
 
-    def test_unauthenticated(self, client):
-        resp = client.post("/journal/1/edit-api", json={})
-        assert resp.status_code in (302, 401)
-
-    def test_404(self, logged_in_client, accounts):
-        resp = logged_in_client.post("/journal/9999/edit-api", json={})
-        assert resp.status_code == 404
-
-    def test_idor(self, db, logged_in_client, accounts,
-                  second_user, second_user_accounts):
-        other = make_journal(
-            db, second_user.id, "5010", "1010", 100,
-            entry_date=date(2026, 2, 15), source="journal",
-        )
-        resp = logged_in_client.post(f"/journal/{other.id}/edit-api", json={
-            "date": "2026-02-15", "description": "x",
-            "lines": [{"account_code": "5010", "debit_amount": 100, "credit_amount": 0}],
-        })
-        assert resp.status_code == 404
-
-    def test_no_body(self, db, logged_in_client, user, accounts):
-        entry = self._make_entry(db, user.id)
-        resp = logged_in_client.post(f"/journal/{entry.id}/edit-api",
-                                      json=None,
-                                      content_type="application/json")
-        assert resp.status_code == 400
-
-    def test_missing_required(self, db, logged_in_client, user, accounts):
-        entry = self._make_entry(db, user.id)
-        resp = logged_in_client.post(f"/journal/{entry.id}/edit-api", json={
-            "date": "", "description": "",
-            "lines": [],
-        })
-        assert resp.status_code == 400
-
-    def test_no_lines(self, db, logged_in_client, user, accounts):
-        entry = self._make_entry(db, user.id)
-        resp = logged_in_client.post(f"/journal/{entry.id}/edit-api", json={
-            "date": "2026-02-15", "description": "x", "lines": [],
-        })
-        assert resp.status_code == 400
-
-    def test_unbalanced(self, db, logged_in_client, user, accounts):
-        entry = self._make_entry(db, user.id)
-        resp = logged_in_client.post(f"/journal/{entry.id}/edit-api", json={
-            "date": "2026-02-15",
-            "description": "x",
-            "lines": [
-                {"account_code": "5010", "debit_amount": 1000, "credit_amount": 0},
-                {"account_code": "1010", "debit_amount": 0, "credit_amount": 500},
-            ],
-        })
-        assert resp.status_code == 400
-        assert "貸借" in resp.get_json()["error"]
-
-    def test_success(self, db, logged_in_client, user, accounts):
+    def test_edit_api_removed(self, db, logged_in_client, user, accounts):
         entry = self._make_entry(db, user.id)
         resp = logged_in_client.post(f"/journal/{entry.id}/edit-api", json={
             "date": "2026-02-20",
@@ -131,38 +82,8 @@ class TestEditApi:
                 {"account_code": "1010", "debit_amount": 0, "credit_amount": 3000},
             ],
         })
-        assert resp.status_code == 200
-        body = resp.get_json()
-        assert body["ok"] is True
-        db.session.refresh(entry)
-        assert entry.description == "更新済み"
-        assert entry.date == date(2026, 2, 20)
-
-    def test_locked_entry_rejected(self, db, logged_in_client, user, accounts):
-        entry = self._make_entry(db, user.id)
-        db.session.add(FiscalClose(user_id=user.id, year=2026, closed_period=2))
-        db.session.commit()
-        resp = logged_in_client.post(f"/journal/{entry.id}/edit-api", json={
-            "date": "2026-02-15", "description": "x",
-            "lines": [
-                {"account_code": "5010", "debit_amount": 100, "credit_amount": 0},
-                {"account_code": "1010", "debit_amount": 0, "credit_amount": 100},
-            ],
-        })
-        assert resp.status_code == 400
-
-    def test_fiscal_period_16_blocked(self, db, logged_in_client, user, accounts):
-        entry = self._make_entry(db, user.id)
-        resp = logged_in_client.post(f"/journal/{entry.id}/edit-api", json={
-            "date": "2026-02-15", "description": "x",
-            "fiscal_period": "16",
-            "lines": [
-                {"account_code": "5010", "debit_amount": 100, "credit_amount": 0},
-                {"account_code": "1010", "debit_amount": 0, "credit_amount": 100},
-            ],
-        })
-        assert resp.status_code == 400
-        assert "損益振替" in resp.get_json()["error"]
+        # ルート自体が存在しないため POST は受け付けない (404 / 405)
+        assert resp.status_code in (404, 405)
 
 
 class TestSuggestCategoriesRemoved:
