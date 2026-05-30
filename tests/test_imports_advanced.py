@@ -104,10 +104,15 @@ class TestMedicalEdgeCases:
             amount_paid=5000, insurance_reimbursement=1000,
         ))
         db.session.commit()
+        # E3-F PR-D-3: 一覧はクライアント描画に移行。サーバは平文金額を
+        # 埋め込まず、クライアント描画用の bootstrap (params/accounts-meta) を返す。
         resp = logged_in_client.get("/medical/?year=2026")
         assert resp.status_code == 200
         body = resp.get_data(as_text=True)
-        assert "5,000" in body or "5000" in body
+        assert "medical-index-params" in body
+        assert "medical-index-accounts-meta" in body
+        # 平文金額はサーバ HTML に出ない (E2EE)
+        assert "5,000" not in body
 
 
 class TestReportsBalanceWithCache:

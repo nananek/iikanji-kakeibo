@@ -1259,6 +1259,152 @@ class TestMedicalExpenses:
         assert body["total"] == 0
 
 
+class TestMedicalExpensesUpsert:
+    """POST /api/v1/medical-expenses (E3-F PR-D-3, 作成 or 更新)"""
+
+    def _payload(self, entry_id, **kwargs):
+        p = {
+            "journal_entry_id": entry_id,
+            "date": "2026-05-01",
+            "patient_name": "本人",
+            "hospital_name": "A病院",
+            "treatment_description": "内科",
+            "provider_type": "hospital",
+            "amount_paid": 5000,
+            "insurance_reimbursement": 1000,
+            **encrypted_payload(),
+        }
+        p.update(kwargs)
+        return p
+
+    def test_unauthenticated(self, client):
+        resp = client.post("/api/v1/medical-expenses", json={"journal_entry_id": 1})
+        assert resp.status_code in (302, 401)
+
+    def test_create_new(self, client, db, user, accounts, auth_header):
+        from app.models.medical import MedicalExpense
+        entry = make_journal(db, user.id, "5010", "1010", 5000,
+                             entry_date=date(2026, 5, 1))
+        resp = client.post("/api/v1/medical-expenses",
+                           json=self._payload(entry.id), headers=auth_header)
+        assert resp.status_code == 200
+        body = resp.get_json()
+        assert body["ok"] is True
+        me = MedicalExpense.query.filter_by(journal_entry_id=entry.id).first()
+        assert me is not None
+        assert me.id == body["id"]
+        # dual-write 平文
+        assert me.patient_name == "本人"
+        assert me.hospital_name == "A病院"
+        assert me.amount_paid == 5000
+        assert me.insurance_reimbursement == 1000
+        assert me.provider_type == "hospital"
+        # 暗号化 blob も保存
+        assert me.encrypted_blob is not None
+        assert me.blob_iv is not None
+
+    def test_update_existing_keeps_id(self, client, db, user, accounts, auth_header):
+        from app.models.medical import MedicalExpense
+        entry = make_journal(db, user.id, "5010", "1010", 5000,
+                             entry_date=date(2026, 5, 1))
+        r1 = client.post("/api/v1/medical-expenses",
+                         json=self._payload(entry.id), headers=auth_header)
+        me_id = r1.get_json()["id"]
+        r2 = client.post("/api/v1/medical-expenses",
+                         json=self._payload(entry.id, patient_name="更新後",
+                                            insurance_reimbursement=200),
+                         headers=auth_header)
+        assert r2.status_code == 200
+        assert r2.get_json()["id"] == me_id
+        assert MedicalExpense.query.filter_by(journal_entry_id=entry.id).count() == 1
+        me = db.session.get(MedicalExpense, me_id)
+        db.session.refresh(me)
+        assert me.patient_name == "更新後"
+        assert me.insurance_reimbursement == 200
+
+    def test_missing_blob_400(self, client, db, user, accounts, auth_header):
+        entry = make_journal(db, user.id, "5010", "1010", 5000,
+                             entry_date=date(2026, 5, 1))
+        payload = self._payload(entry.id)
+        del payload["encrypted_blob"]
+        del payload["blob_iv"]
+        resp = client.post("/api/v1/medical-expenses", json=payload,
+                           headers=auth_header)
+        assert resp.status_code == 400
+
+    def test_journal_not_found_404(self, client, db, user, accounts, auth_header):
+        resp = client.post("/api/v1/medical-expenses",
+                           json=self._payload(999999), headers=auth_header)
+        assert resp.status_code == 404
+
+    def test_idor_other_user_journal_404(
+        self, client, db, user, auditor, accounts, second_user,
+        second_user_accounts, auth_header,
+    ):
+        other = make_journal(db, second_user.id, "5010", "1010", 100,
+                             entry_date=date(2026, 5, 1))
+        resp = client.post("/api/v1/medical-expenses",
+                           json=self._payload(other.id), headers=auth_header)
+        assert resp.status_code == 404
+
+    def test_invalid_journal_entry_id_400(self, client, db, user, accounts, auth_header):
+        resp = client.post("/api/v1/medical-expenses",
+                           json=self._payload("abc"), headers=auth_header)
+        assert resp.status_code == 400
+
+    def test_invalid_date_400(self, client, db, user, accounts, auth_header):
+        entry = make_journal(db, user.id, "5010", "1010", 5000,
+                             entry_date=date(2026, 5, 1))
+        resp = client.post("/api/v1/medical-expenses",
+                           json=self._payload(entry.id, date="2026/05/01"),
+                           headers=auth_header)
+        assert resp.status_code == 400
+
+    def test_provider_type_non_string_400(self, client, db, user, accounts, auth_header):
+        entry = make_journal(db, user.id, "5010", "1010", 5000,
+                             entry_date=date(2026, 5, 1))
+        resp = client.post("/api/v1/medical-expenses",
+                           json=self._payload(entry.id, provider_type=123),
+                           headers=auth_header)
+        assert resp.status_code == 400
+
+    def test_amount_non_int_400(self, client, db, user, accounts, auth_header):
+        entry = make_journal(db, user.id, "5010", "1010", 5000,
+                             entry_date=date(2026, 5, 1))
+        resp = client.post("/api/v1/medical-expenses",
+                           json=self._payload(entry.id, amount_paid="x"),
+                           headers=auth_header)
+        assert resp.status_code == 400
+
+    def test_closed_period_400(self, client, db, user, accounts, auth_header):
+        from app.models.fiscal import FiscalClose
+        entry = make_journal(db, user.id, "5010", "1010", 5000,
+                             entry_date=date(2026, 5, 1))
+        db.session.add(FiscalClose(user_id=user.id, year=2026, closed_period=5))
+        db.session.commit()
+        resp = client.post("/api/v1/medical-expenses",
+                           json=self._payload(entry.id), headers=auth_header)
+        assert resp.status_code == 400
+
+    def test_empty_body_400(self, client, db, user, accounts, auth_header):
+        resp = client.post("/api/v1/medical-expenses", json=None,
+                           headers=auth_header)
+        assert resp.status_code == 400
+
+    def test_provider_type_empty_becomes_null(
+        self, client, db, user, accounts, auth_header,
+    ):
+        from app.models.medical import MedicalExpense
+        entry = make_journal(db, user.id, "5010", "1010", 5000,
+                             entry_date=date(2026, 5, 1))
+        resp = client.post("/api/v1/medical-expenses",
+                           json=self._payload(entry.id, provider_type=""),
+                           headers=auth_header)
+        assert resp.status_code == 200
+        me = MedicalExpense.query.filter_by(journal_entry_id=entry.id).first()
+        assert me.provider_type is None
+
+
 # --- 残高キャッシュ blob (E3-E-1) ---
 
 
