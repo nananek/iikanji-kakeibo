@@ -1,7 +1,7 @@
 """AI 証憑仕訳ビュー (ai_journal.py) の追加テスト
 
-未到達範囲: image 配信、review POST (simple/advanced モード)、
-_update_discord_done など。quick-accept は E3-F PR-B3 で view 撤去済。
+review は GET 専用 (登録はクライアント暗号化 → batch API 経由)。
+image 配信・upload クリーンアップ・review レンダリングを網羅する。
 """
 
 import io
@@ -170,6 +170,8 @@ class TestDraftsReview:
 
 
 class TestReview:
+    """review エンドポイント (GET 専用) のテスト"""
+
     def _setup(self, db, logged_in_client, user, suggestions=None):
         d = _draft(db, user.id, suggestions=suggestions)
         with logged_in_client.session_transaction() as sess:
@@ -177,110 +179,51 @@ class TestReview:
         return d
 
     def test_no_session(self, logged_in_client, accounts):
-        resp = logged_in_client.get("/ai-journal/review")
-        assert resp.status_code in (302, 303)
+        resp = logged_in_client.get("/ai-journal/review", follow_redirects=False)
+        assert resp.status_code == 302
 
     def test_get(self, db, logged_in_client, user, accounts):
         self._setup(db, logged_in_client, user)
         resp = logged_in_client.get("/ai-journal/review")
         assert resp.status_code == 200
+        assert "セブン".encode() in resp.data
+
+    def test_get_embeds_draft_db_id(self, db, logged_in_client, user, accounts):
+        # クライアント暗号化登録に使う実 draft id がページに埋め込まれる
+        d = self._setup(db, logged_in_client, user)
+        resp = logged_in_client.get("/ai-journal/review")
+        assert resp.status_code == 200
+        assert ("_reviewDraftId = %d" % d.id).encode() in resp.data
 
     def test_get_with_idx(self, db, logged_in_client, user, accounts):
-        self._setup(db, logged_in_client, user)
-        resp = logged_in_client.get("/ai-journal/review?idx=0")
+        suggestions = [
+            {"title": "案1", "description": "一件目の説明", "date": "2026-02-15",
+             "entry_description": "一件目",
+             "lines": [
+                 {"account_code": "5010", "debit_amount": 100, "credit_amount": 0},
+                 {"account_code": "1010", "debit_amount": 0, "credit_amount": 100},
+             ]},
+            {"title": "案2", "description": "二件目の説明", "date": "2026-02-16",
+             "entry_description": "二件目",
+             "lines": [
+                 {"account_code": "5010", "debit_amount": 200, "credit_amount": 0},
+                 {"account_code": "1010", "debit_amount": 0, "credit_amount": 200},
+             ]},
+        ]
+        self._setup(db, logged_in_client, user, suggestions=suggestions)
+        resp = logged_in_client.get("/ai-journal/review?idx=1")
         assert resp.status_code == 200
+        assert "二件目".encode() in resp.data
 
     def test_get_with_invalid_idx_clamps_to_zero(self, db, logged_in_client, user, accounts):
         self._setup(db, logged_in_client, user)
         resp = logged_in_client.get("/ai-journal/review?idx=999")
         assert resp.status_code == 200
+        assert "セブン".encode() in resp.data
 
-    def test_post_simple_mode_success(self, db, logged_in_client, user, accounts):
+    def test_post_not_allowed(self, db, logged_in_client, user, accounts):
+        # 登録はクライアント暗号化 → batch API 経由。平文 POST は受け付けない。
         self._setup(db, logged_in_client, user)
-        with patch("app.views.ai_journal.create_voucher_from_draft"):
-            resp = logged_in_client.post("/ai-journal/review", data={
-                "mode": "simple",
-                "date": "2026-02-15",
-                "description": "ファミマ",
-                "amount": "300",
-                "category_account_code": "5010",
-                "payment_account_code": "1010",
-            })
-        assert resp.status_code in (302, 303)
-        from app.models.journal import JournalEntry
-        assert JournalEntry.query.filter_by(
-            user_id=user.id, source="ai_receipt"
-        ).count() == 1
-
-    def test_post_simple_missing_required(self, db, logged_in_client, user, accounts):
-        self._setup(db, logged_in_client, user)
-        resp = logged_in_client.post("/ai-journal/review", data={
-            "mode": "simple",
-            "date": "",
-            "description": "",
-        })
-        # 200 でフォーム再表示
-        assert resp.status_code == 200
-
-    def test_post_simple_missing_amount(self, db, logged_in_client, user, accounts):
-        self._setup(db, logged_in_client, user)
-        resp = logged_in_client.post("/ai-journal/review", data={
-            "mode": "simple",
-            "date": "2026-02-15",
-            "description": "x",
-            "amount": "0",
-            "category_account_code": "",
-            "payment_account_code": "",
-        })
-        assert resp.status_code == 200
-
-    def test_post_invalid_date(self, db, logged_in_client, user, accounts):
-        self._setup(db, logged_in_client, user)
-        resp = logged_in_client.post("/ai-journal/review", data={
-            "mode": "simple",
-            "date": "BAD",
-            "description": "x",
-        })
-        assert resp.status_code == 200
-
-    def test_post_advanced_mode(self, db, logged_in_client, user, accounts):
-        self._setup(db, logged_in_client, user)
-        with patch("app.views.ai_journal.create_voucher_from_draft"):
-            resp = logged_in_client.post("/ai-journal/review", data={
-                "mode": "advanced",
-                "date": "2026-02-15",
-                "description": "詳細モード",
-                "lines_json": json.dumps([
-                    {"account_code": "5010", "debit_amount": 200, "credit_amount": 0},
-                    {"account_code": "1010", "debit_amount": 0, "credit_amount": 200},
-                ]),
-            })
-        assert resp.status_code in (302, 303)
-
-    def test_post_advanced_invalid_lines(self, db, logged_in_client, user, accounts):
-        self._setup(db, logged_in_client, user)
-        resp = logged_in_client.post("/ai-journal/review", data={
-            "mode": "advanced",
-            "date": "2026-02-15",
-            "description": "x",
-            "lines_json": "not-json{",
-        })
-        assert resp.status_code == 200
-
-    def test_post_no_lines(self, db, logged_in_client, user, accounts):
-        self._setup(db, logged_in_client, user)
-        resp = logged_in_client.post("/ai-journal/review", data={
-            "mode": "advanced",
-            "date": "2026-02-15",
-            "description": "x",
-            "lines_json": json.dumps([]),
-        })
-        assert resp.status_code == 200
-
-    def test_post_locked_period(self, db, logged_in_client, user, accounts):
-        self._setup(db, logged_in_client, user)
-        db.session.add(FiscalClose(user_id=user.id, year=2026, closed_period=2))
-        db.session.commit()
         resp = logged_in_client.post("/ai-journal/review", data={
             "mode": "simple",
             "date": "2026-02-15",
@@ -289,41 +232,43 @@ class TestReview:
             "category_account_code": "5010",
             "payment_account_code": "1010",
         })
+        assert resp.status_code == 405
+
+    def test_post_advanced_not_allowed(self, db, logged_in_client, user, accounts):
+        self._setup(db, logged_in_client, user)
+        resp = logged_in_client.post("/ai-journal/review", data={
+            "mode": "advanced",
+            "date": "2026-02-15",
+            "description": "x",
+            "lines_json": json.dumps([
+                {"account_code": "5010", "debit_amount": 100, "credit_amount": 0},
+                {"account_code": "1010", "debit_amount": 0, "credit_amount": 100},
+            ]),
+        })
+        assert resp.status_code == 405
+
+    def test_get_idor_redirects(self, db, logged_in_client, accounts, second_user):
+        # 他ユーザーの draft を指す session は draft=None 扱いで upload へ redirect
+        d = _draft(db, second_user.id)
+        with logged_in_client.session_transaction() as sess:
+            sess["ai_journal_draft_id"] = d.id
+        resp = logged_in_client.get("/ai-journal/review", follow_redirects=False)
+        assert resp.status_code == 302
+        assert "/ai-journal" in resp.headers["Location"]
+
+    def test_get_deadline_exceeded(self, db, logged_in_client, user, accounts):
+        # 受領日から大きく経過したレシートは入力期限超過の警告を表示する
+        suggestions = [{
+            "title": "案1", "date": "2000-01-01", "entry_description": "古い摘要",
+            "lines": [
+                {"account_code": "5010", "debit_amount": 100, "credit_amount": 0},
+                {"account_code": "1010", "debit_amount": 0, "credit_amount": 100},
+            ],
+        }]
+        self._setup(db, logged_in_client, user, suggestions=suggestions)
+        resp = logged_in_client.get("/ai-journal/review")
         assert resp.status_code == 200
-
-
-class TestUpdateDiscordDone:
-    """_update_discord_done のロジック (Webhook 編集)"""
-
-    def test_no_discord_url(self, db, user, accounts):
-        d = _draft(db, user.id)
-        # 設定なし → 何も起きない
-        from app.views.ai_journal import _update_discord_done
-        _update_discord_done(d, 1)
-
-    def test_with_discord_url(self, db, user, accounts):
-        d = _draft(db, user.id)
-        d.discord_webhook_url = "https://discord.com/api/webhooks/x/y"
-        d.discord_message_id = "msg-1"
-        from app.extensions import db as _db
-        _db.session.commit()
-        with patch("app.services.notify.update_discord_message") as mock_upd:
-            from app.views.ai_journal import _update_discord_done
-            _update_discord_done(d, 99)
-            mock_upd.assert_called_once()
-
-    def test_invalid_suggestions_json(self, db, user, accounts):
-        d = _draft(db, user.id)
-        d.discord_webhook_url = "https://x"
-        d.discord_message_id = "msg"
-        d.suggestions_json = "not-json{"
-        from app.extensions import db as _db
-        _db.session.commit()
-        with patch("app.services.notify.update_discord_message") as mock_upd:
-            from app.views.ai_journal import _update_discord_done
-            _update_discord_done(d, 99)
-            # 例外を起こさず呼ばれる
-            mock_upd.assert_called_once()
+        assert "入力期限超過の可能性".encode() in resp.data
 
 
 class TestAiJournalE2EEBanner:

@@ -13,15 +13,13 @@ from app.extensions import db
 from app.models.ai_config import UserAIConfig
 from app.models.ai_draft import AIDraft
 from app.models.user import User
-from app.services.audit import get_effective_user_id, get_submitted_account_codes
-from app.services.accounting import create_journal_entry
-from app.services.fiscal import check_period_open_for_new, get_closed_periods_map, get_restricted_before_year
+from app.services.audit import get_effective_user_id
+from app.services.fiscal import get_closed_periods_map, get_restricted_before_year
 from app.services.image import serve_image
 from app.services.storage import (
     get_storage_backend, make_thumbnail_key,
 )
 from app.services.storage_quota import record_delete
-from app.services.voucher import create_voucher_from_draft
 from app.models.voucher import Voucher
 from app.views.helpers import get_grouped_accounts, check_deadline
 
@@ -235,10 +233,10 @@ def drafts_review(draft_id):
 
 # --- review ---
 
-@bp.route("/review", methods=["GET", "POST"])
+@bp.route("/review", methods=["GET"])
 @login_required
 def review():
-    """仕訳案の確認・編集・保存"""
+    """仕訳案の確認・編集画面を表示する（登録はクライアント暗号化経由）"""
     draft_id = session.get("ai_journal_draft_id")
     draft = None
     if draft_id:
@@ -251,9 +249,7 @@ def review():
         flash("AI解析データがありません。もう一度アップロードしてください。", "warning")
         return redirect(url_for("ai_journal.upload"))
 
-    suggestions_json = draft.suggestions_json
-
-    suggestions = json.loads(suggestions_json)
+    suggestions = json.loads(draft.suggestions_json)
     suggestion_index = request.args.get("idx", 0, type=int)
     if suggestion_index < 0 or suggestion_index >= len(suggestions):
         suggestion_index = 0
@@ -265,169 +261,6 @@ def review():
     closed_periods = get_closed_periods_map(user_id)
     restricted_before = get_restricted_before_year(user_id)
     is_saved_draft = draft.status == "analyzed"
-
-    if request.method == "POST":
-        mode = request.form.get("mode", "simple")
-        entry_date_str = request.form.get("date", "")
-        description = request.form.get("description", "").strip()
-
-        if not entry_date_str or not description:
-            flash("日付と摘要を入力してください。", "danger")
-            return render_template(
-                "ai_journal/review.html",
-                suggestions=suggestions,
-                selected=selected,
-                selected_index=suggestion_index,
-                grouped_accounts=grouped_accounts,
-                draft_id=is_saved_draft,
-                closed_periods=closed_periods,
-                restricted_before_year=restricted_before,
-            )
-
-        try:
-            entry_date = date_type.fromisoformat(entry_date_str)
-        except ValueError:
-            flash("日付の形式が不正です。", "danger")
-            return render_template(
-                "ai_journal/review.html",
-                suggestions=suggestions,
-                selected=selected,
-                selected_index=suggestion_index,
-                grouped_accounts=grouped_accounts,
-                draft_id=is_saved_draft,
-                closed_periods=closed_periods,
-                restricted_before_year=restricted_before,
-            )
-
-        if mode == "simple":
-            amount = request.form.get("amount", 0, type=int)
-            category_code = request.form.get("category_account_code", "")
-            pay_account_code = request.form.get(
-                "payment_account_code", ""
-            )
-
-            if amount <= 0 or not category_code or not pay_account_code:
-                flash("金額・費目・支払元を入力してください。", "danger")
-                return render_template(
-                    "ai_journal/review.html",
-                    suggestions=suggestions,
-                    selected=selected,
-                    selected_index=suggestion_index,
-                    grouped_accounts=grouped_accounts,
-                    draft_id=is_saved_draft,
-                    closed_periods=closed_periods,
-                    restricted_before_year=restricted_before,
-                )
-
-            lines_data = [
-                {
-                    "account_code": category_code,
-                    "debit_amount": amount,
-                    "credit_amount": 0,
-                    "description": "",
-                },
-                {
-                    "account_code": pay_account_code,
-                    "debit_amount": 0,
-                    "credit_amount": amount,
-                    "description": "",
-                },
-            ]
-        else:
-            lines_json = request.form.get("lines_json", "[]")
-            try:
-                raw_lines = json.loads(lines_json)
-            except json.JSONDecodeError:
-                flash("明細データが不正です。", "danger")
-                return render_template(
-                    "ai_journal/review.html",
-                    suggestions=suggestions,
-                    selected=selected,
-                    selected_index=suggestion_index,
-                    grouped_accounts=grouped_accounts,
-                    draft_id=is_saved_draft,
-                    closed_periods=closed_periods,
-                    restricted_before_year=restricted_before,
-                )
-
-            lines_data = [
-                {
-                    "account_code": line["account_code"],
-                    "debit_amount": int(line.get("debit_amount", 0) or 0),
-                    "credit_amount": int(line.get("credit_amount", 0) or 0),
-                    "description": line.get("description", ""),
-                }
-                for line in raw_lines
-                if line.get("account_code")
-            ]
-
-        if not lines_data:
-            flash("仕訳明細を入力してください。", "danger")
-            return render_template(
-                "ai_journal/review.html",
-                suggestions=suggestions,
-                selected=selected,
-                selected_index=suggestion_index,
-                grouped_accounts=grouped_accounts,
-                draft_id=is_saved_draft,
-                closed_periods=closed_periods,
-                restricted_before_year=restricted_before,
-            )
-
-        # 提出済みロック科目チェック
-        locked_codes = get_submitted_account_codes(get_effective_user_id())
-        if locked_codes:
-            used_codes = {line["account_code"] for line in lines_data}
-            if used_codes & locked_codes:
-                flash("提出済みの税務科目を含むため登録できません。", "danger")
-                return render_template(
-                    "ai_journal/review.html",
-                    suggestions=suggestions,
-                    selected=selected,
-                    selected_index=suggestion_index,
-                    grouped_accounts=grouped_accounts,
-                    draft_id=is_saved_draft,
-                    closed_periods=closed_periods,
-                    restricted_before_year=restricted_before,
-                )
-
-        # 確定済み期間チェック
-        err = check_period_open_for_new(
-            get_effective_user_id(), entry_date.year, entry_date.month
-        )
-        if err:
-            flash(err, "danger")
-            return render_template(
-                "ai_journal/review.html",
-                suggestions=suggestions,
-                selected=selected,
-                selected_index=suggestion_index,
-                grouped_accounts=grouped_accounts,
-                draft_id=is_saved_draft,
-                closed_periods=closed_periods,
-                restricted_before_year=restricted_before,
-            )
-
-        try:
-            entry = create_journal_entry(
-                user_id=get_effective_user_id(),
-                date=entry_date,
-                description=description,
-                lines_data=lines_data,
-                source="ai_receipt",
-            )
-            session.pop("ai_journal_draft_id", None)
-            _update_discord_done(draft, entry.entry_number)
-            create_voucher_from_draft(draft, entry.id)
-            db.session.commit()
-
-            flash(f"伝票 #{entry.entry_number} を登録しました。", "success")
-
-            if is_saved_draft:
-                return redirect(url_for("ai_journal.drafts"))
-            return redirect(url_for("journal.index"))
-        except ValueError as e:
-            flash(str(e), "danger")
 
     # 入力期限チェック
     deadline_exceeded = False
@@ -447,41 +280,9 @@ def review():
         selected_index=suggestion_index,
         grouped_accounts=grouped_accounts,
         draft_id=is_saved_draft,
+        draft_db_id=draft.id,
+        is_saved_draft=is_saved_draft,
         closed_periods=closed_periods,
         restricted_before_year=restricted_before,
         deadline_exceeded=deadline_exceeded,
-    )
-
-
-def _update_discord_done(draft, entry_number):
-    """仕訳登録後に Discord 通知を完了マークに更新する"""
-    if not draft.discord_message_id or not draft.discord_webhook_url:
-        return
-    from app.services.notify import update_discord_message
-
-    original_desc = ""
-    if draft.suggestions_json:
-        try:
-            suggestions = json.loads(draft.suggestions_json)
-            if suggestions:
-                s = suggestions[0]
-                parts = []
-                if s.get("date"):
-                    parts.append(s["date"])
-                if s.get("entry_description"):
-                    parts.append(s["entry_description"])
-                original_desc = " ".join(parts)
-        except (json.JSONDecodeError, IndexError):
-            pass
-
-    msg = ""
-    if original_desc:
-        msg += f"~~{original_desc}~~\n"
-    msg += f"仕訳を登録しました（伝票 #{entry_number}）"
-
-    update_discord_message(
-        webhook_url=draft.discord_webhook_url,
-        message_id=draft.discord_message_id,
-        title="✅ いいかんじ™家計簿 AI仕訳",
-        message=msg,
     )

@@ -1970,6 +1970,71 @@ async function aiDraftQuickAcceptE2EE(opts) {
 window.aiDraftQuickAcceptE2EE = aiDraftQuickAcceptE2EE;
 
 
+// review 画面の仕訳登録: 入力値から仕訳を組み立て暗号化し、draft_id 付きで
+// batch API に送る。simple は buildCashbookEntry (expense) で費目=借方/支払元
+// =貸方の 2 行、advanced は明細をそのまま buildJournalEntry に渡す。voucher
+// 永続化・Discord 通知・draft 完了処理は batch API 側の commit 内で完結する。
+async function aiReviewSubmitE2EE(opts) {
+  var sharedClientMod = await import("/static/js/crypto/shared-client.js");
+  var sharedClient = new sharedClientMod.SharedCryptoClient(
+    "/static/js/crypto/shared-worker.js",
+  );
+  try {
+    var status = await sharedClient.status();
+    if (!status.hasKey) {
+      throw new Error("MK ロック中です (設定 → 暗号鍵管理 で解除)");
+    }
+    var builderMod = await import("/static/js/crypto/entries_builder.js");
+    var entry;
+    if (opts.mode === "advanced") {
+      entry = await builderMod.buildJournalEntry({
+        client: sharedClient,
+        userId: opts.userId,
+        date: opts.date,
+        description: opts.description || "",
+        lines: opts.lines,
+        source: "ai_receipt",
+      });
+    } else {
+      entry = await builderMod.buildCashbookEntry({
+        client: sharedClient,
+        userId: opts.userId,
+        date: opts.date,
+        description: opts.description || "",
+        transactionType: "expense",
+        paymentAccountCode: opts.paymentCode,
+        categoryAccountCode: opts.categoryCode,
+        amount: opts.amount,
+        source: "ai_receipt",
+      });
+    }
+    var csrfMeta = document.querySelector('meta[name="csrf-token"]');
+    var csrfToken = csrfMeta ? csrfMeta.getAttribute("content") : "";
+    var body = {
+      entries: [Object.assign({}, entry, { draft_id: opts.draftId })],
+    };
+    var res = await fetch("/api/v1/journals/batch", {
+      method: "POST",
+      credentials: "include",
+      headers: {
+        "Content-Type": "application/json",
+        "X-CSRFToken": csrfToken,
+      },
+      body: JSON.stringify(body),
+    });
+    var rb = await res.json().catch(function() { return {}; });
+    if (!res.ok) {
+      throw new Error(rb.error || ("HTTP " + res.status));
+    }
+    var entries = rb.entries || [];
+    return entries[0] && entries[0].entry_number;
+  } finally {
+    try { sharedClient.close(); } catch (_e) { /* ignore */ }
+  }
+}
+window.aiReviewSubmitE2EE = aiReviewSubmitE2EE;
+
+
 // grouped_accounts (account_selector.html) から {code: name} マップを構築。
 // classical.findMatches の相手科目名解決に渡す (サーバ Account.name 相当)。
 function _buildAccountNameMap() {

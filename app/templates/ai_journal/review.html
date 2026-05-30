@@ -2,6 +2,13 @@
 {% block title %}確認・保存 - AI証憑仕訳 - いいかんじ™家計簿{% endblock %}
 
 {% block content %}
+<script>
+  // クライアント側暗号化での仕訳登録 (batch API draft_id 連携) に使う。
+  var _userId = {{ current_user.id|tojson }};
+  var _isProxyMode = {{ is_acting_as|tojson }};
+  var _reviewDraftId = {{ draft_db_id|tojson }};
+  var _reviewRedirect = {{ (url_for('ai_journal.drafts') if is_saved_draft else url_for('journal.index'))|tojson }};
+</script>
 <h2><i class="bi bi-robot"></i> AI証憑仕訳</h2>
 
 <!-- 仕訳案の一覧（選択用） -->
@@ -135,13 +142,13 @@
               {filter: 'payment', activeTab: 'bs', currentCode: this.paymentCode});
           }
         }">
-        <form method="POST" id="simpleForm"
+        <form id="simpleForm"
               x-data="fiscalPeriodChecker({
                 closedPeriods: _closedPeriods,
                 restrictedBefore: _restrictedBefore,
                 dateValue: '{{ selected.date or '' }}'
-              })">
-          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              })"
+              @submit.prevent="submitReviewSimple($el, categoryCode, paymentCode)">
           <input type="hidden" name="mode" value="simple">
 
           <div class="row mb-3">
@@ -218,12 +225,10 @@
       <!-- 仕訳モード -->
       <script>var _advancedLines = {{ selected.lines | tojson if selected.lines else '[]' }};</script>
       <div class="tab-pane fade {{ 'show active' if active_tab == 'advanced' }}" id="advancedMode" role="tabpanel">
-        <form method="POST" id="advancedForm"
+        <form id="advancedForm"
               x-data="journalLines({ lines: _advancedLines })"
-              @submit="serializeLines()">
-          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              @submit.prevent="submitReviewAdvanced($el, lines)">
           <input type="hidden" name="mode" value="advanced">
-          <input type="hidden" name="lines_json" x-ref="linesJson">
 
           <div x-data="fiscalPeriodChecker({
             closedPeriods: _closedPeriods,
@@ -379,6 +384,71 @@
 {% endif %}
 
 {% include "_partials/account_selector.html" %}
+
+<script>
+// review 画面の仕訳登録: クライアント暗号化 → batch API (draft_id 連携)。
+// voucher 永続化・Discord 通知・draft 完了処理は batch 側 commit 内で完結する。
+function submitReviewSimple(formEl, categoryCode, paymentCode) {
+  if (_isProxyMode) {
+    showToast('代理閲覧モードでは登録できません。本人アカウントで実行してください。', 'danger');
+    return;
+  }
+  var date = formEl.querySelector('[name=date]').value;
+  var description = formEl.querySelector('[name=description]').value.trim();
+  var amount = parseInt(formEl.querySelector('[name=amount]').value, 10) || 0;
+  if (!date || !description) {
+    showToast('日付と摘要を入力してください。', 'danger');
+    return;
+  }
+  if (amount <= 0 || !categoryCode || !paymentCode) {
+    showToast('金額・費目・支払元を入力してください。', 'danger');
+    return;
+  }
+  _submitReview({
+    mode: 'simple', date: date, description: description,
+    amount: amount, categoryCode: categoryCode, paymentCode: paymentCode,
+  });
+}
+
+function submitReviewAdvanced(formEl, lines) {
+  if (_isProxyMode) {
+    showToast('代理閲覧モードでは登録できません。本人アカウントで実行してください。', 'danger');
+    return;
+  }
+  var date = formEl.querySelector('[name=date]').value;
+  var description = formEl.querySelector('[name=description]').value.trim();
+  if (!date || !description) {
+    showToast('日付と摘要を入力してください。', 'danger');
+    return;
+  }
+  var cleaned = (lines || []).filter(function(l) { return l.account_code; }).map(function(l) {
+    return {
+      account_code: l.account_code,
+      debit: parseInt(l.debit_amount, 10) || 0,
+      credit: parseInt(l.credit_amount, 10) || 0,
+      description: l.description || '',
+    };
+  });
+  if (!cleaned.length) {
+    showToast('仕訳明細を入力してください。', 'danger');
+    return;
+  }
+  _submitReview({
+    mode: 'advanced', date: date, description: description, lines: cleaned,
+  });
+}
+
+function _submitReview(payload) {
+  payload.userId = _userId;
+  payload.draftId = _reviewDraftId;
+  window.aiReviewSubmitE2EE(payload).then(function(entryNumber) {
+    showToast('伝票 #' + entryNumber + ' を登録しました。', 'success');
+    setTimeout(function() { window.location.href = _reviewRedirect; }, 800);
+  }).catch(function(e) {
+    showToast(e.message || '登録に失敗しました。', 'danger');
+  });
+}
+</script>
 
 {% if suggestions|length > 1 %}
 <script>
