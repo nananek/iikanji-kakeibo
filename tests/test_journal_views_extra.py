@@ -165,53 +165,18 @@ class TestEditApi:
         assert "損益振替" in resp.get_json()["error"]
 
 
-class TestSuggestCategories:
-    def test_unauthenticated(self, client):
-        resp = client.post("/journal/api/suggest-categories", json={})
-        assert resp.status_code in (302, 401)
+class TestSuggestCategoriesRemoved:
+    """非AI /journal/api/suggest-categories は E3-F PR-D-4 で廃止。
 
-    def test_no_body(self, logged_in_client, accounts):
-        resp = logged_in_client.post(
-            "/journal/api/suggest-categories",
-            json=None, content_type="application/json",
-        )
-        assert resp.status_code == 400
+    平文 description/date 読取を撤去し、クライアントが復号済み仕訳から推定する
+    (crypto/suggest_categories_classical.js)。POST すると 404 を返すことを担保。
+    """
 
-    def test_empty_descriptions(self, logged_in_client, accounts):
+    def test_endpoint_returns_404(self, logged_in_client, accounts):
         resp = logged_in_client.post("/journal/api/suggest-categories", json={
-            "descriptions": [], "payment_account_code": "1010",
+            "descriptions": ["ファミマ"], "payment_account_code": "1010",
         })
-        assert resp.status_code == 200
-        assert resp.get_json() == {}
-
-    def test_only_empty_strings(self, logged_in_client, accounts):
-        resp = logged_in_client.post("/journal/api/suggest-categories", json={
-            "descriptions": ["", "", ""],
-            "payment_account_code": "1010",
-        })
-        assert resp.status_code == 200
-        assert resp.get_json() == {}
-
-    def test_returns_recent_match(self, db, logged_in_client, user, accounts):
-        # 過去に「ファミマ」で 5010/1010 仕訳がある
-        make_journal(db, user.id, "5010", "1010", 100,
-                     entry_date=date(2026, 1, 15), source="cashbook",
-                     description="ファミマ")
-        resp = logged_in_client.post("/journal/api/suggest-categories", json={
-            "descriptions": ["ファミマ"],
-            "payment_account_code": "1010",
-        })
-        assert resp.status_code == 200
-        body = resp.get_json()
-        assert body["ファミマ"]["account_code"] == "5010"
-
-    def test_no_match(self, logged_in_client, accounts):
-        resp = logged_in_client.post("/journal/api/suggest-categories", json={
-            "descriptions": ["未知の摘要"],
-            "payment_account_code": "1010",
-        })
-        body = resp.get_json()
-        assert "未知の摘要" not in body
+        assert resp.status_code == 404
 
 
 class TestAiSuggestCategoriesRemoved:

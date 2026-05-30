@@ -7,7 +7,6 @@ from sqlalchemy import func
 from sqlalchemy.orm import joinedload
 
 from app.extensions import db
-from app.models.account import Account
 from app.models.journal import JournalEntry, JournalEntryLine
 from app.models.voucher import Voucher
 from app.models.voucher_audit_log import VoucherAuditLog
@@ -714,57 +713,12 @@ def delete_batch(batch_id):
     return redirect(url_for("journal.batches"))
 
 
-@bp.route("/api/suggest-categories", methods=["POST"])
-@login_required
-def suggest_categories():
-    """摘要から過去の仕訳の科目を推定して返す
-
-    POST: {"descriptions": ["摘要1", "摘要2", ...], "payment_account_code": "1010"}
-    Response: {"摘要1": {"account_code": "5010", "account_name": "食費"}, ...}
-    """
-    data = request.get_json()
-    if not data:
-        return jsonify({}), 400
-
-    descriptions = data.get("descriptions", [])
-    payment_account_code = data.get("payment_account_code")
-    if not descriptions:
-        return jsonify({})
-
-    user_id = get_effective_user_id()
-    unique_descs = list(set(d for d in descriptions if d))
-    if not unique_descs:
-        return jsonify({})
-
-    # 摘要ごとに最新の仕訳から相手科目を取得
-    result = {}
-    for desc in unique_descs:
-        entry = (
-            JournalEntry.query
-            .filter(
-                JournalEntry.user_id == user_id,
-                JournalEntry.description == desc,
-            )
-            .order_by(JournalEntry.date.desc(), JournalEntry.id.desc())
-            .first()
-        )
-        if not entry:
-            continue
-
-        # 支払口座以外の科目を取得（= 相手科目）
-        for line in entry.lines:
-            if payment_account_code and line.account_code == payment_account_code:
-                continue
-            account = Account.query.filter_by(user_id=user_id, code=line.account_code).first()
-            if account and account.is_active:
-                result[desc] = {
-                    "account_code": account.code,
-                    "account_name": account.name,
-                }
-                break
-
-    return jsonify(result)
-
+# /journal/api/suggest-categories は E3-F PR-D-4 で廃止。
+# 旧実装は平文 JournalEntry.description / JournalEntry.date を読んで
+# 「同一摘要の最新仕訳の相手科目」を返していたが、E2EE 化に伴い平文読取を
+# 撤去した。クライアントが復号済み仕訳から推定する
+# (crypto/suggest_categories_classical.js + alpine runSuggestCategoriesClassical)。
+# サーバには raw description が届かない。
 
 # /journal/api/ai-suggest-categories は廃止。
 # クライアントが直接 /api/v1/suggest-categories/prompt-context + ai-config +

@@ -1184,21 +1184,23 @@ document.addEventListener('alpine:init', function() {
       },
 
       _suggestCategories: function() {
+        // E3-F PR-D-4: 非AI 科目推定を client 完結フローに切替。サーバには
+        // 平文 description を送らず、復号済み過去仕訳から相手科目を推定する。
+        // 自動補完 (best-effort) なので MK ロック中・代理閲覧・エラーは静かに
+        // スキップする (旧サーバ POST も .catch で握り潰していた)。
+        if (isProxyMode) return; // 代理閲覧では owner データを復号できない
         var descriptions = [];
         for (var i = 0; i < this.rows.length; i++) {
           if (this.rows[i].description) descriptions.push(this.rows[i].description);
         }
         if (descriptions.length === 0) return;
         var self = this;
-        fetch('/journal/api/suggest-categories', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-CSRFToken': Alpine.store('csrf').token,
-          },
-          body: JSON.stringify({ descriptions: descriptions, payment_account_code: paymentAccountCode }),
+        runSuggestCategoriesClassical({
+          userId: userId,
+          paymentAccountCode: paymentAccountCode,
+          descriptions: descriptions,
+          rows: this.rows,
         })
-          .then(function(res) { return res.json(); })
           .then(function(suggestions) {
             if (!suggestions || typeof suggestions !== 'object') return;
             for (var i = 0; i < self.rows.length; i++) {
@@ -1209,7 +1211,7 @@ document.addEventListener('alpine:init', function() {
               }
             }
           })
-          .catch(function() { /* ignore */ });
+          .catch(function() { /* MK ロック等は静かにスキップ */ });
       },
 
       aiSuggestCategories: function() {
@@ -1941,6 +1943,67 @@ async function runReconcileClassical(opts) {
   }
 }
 window.runReconcileClassical = runReconcileClassical;
+
+
+// 取込確認 rows の日付が跨ぐ会計年度 (= 暦年) を列挙する。非AI 科目推定は
+// 「同一摘要の過去仕訳」を探すため、取込対象の年に加えて 1 年前まで遡って
+// 取得する (電気代・家賃など定期的な摘要は前年・前月にも出現するため)。
+// E2EE では全年度スキャン (旧サーバ実装) は重いので取得窓を限定する。
+// 該当窓に過去仕訳が無ければ推定はスキップされる (best-effort 補完)。
+function _suggestFiscalYears(rows) {
+  var minY = null, maxY = null;
+  for (var i = 0; i < rows.length; i++) {
+    var d = rows[i] && rows[i].date;
+    if (typeof d !== "string") continue;
+    var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(d);
+    if (!m) continue;
+    var y = Number(m[1]);
+    if (minY === null || y < minY) minY = y;
+    if (maxY === null || y > maxY) maxY = y;
+  }
+  if (minY === null) return [];
+  var years = [];
+  for (var yy = minY - 1; yy <= maxY; yy++) years.push(yy);
+  return years;
+}
+
+
+// importConfirm._suggestCategories から呼ばれる client 完結の非AI 科目推定。
+// 旧サーバ POST /journal/api/suggest-categories (平文 description/date 読取) を
+// 置換する。年度別に仕訳を取得・復号し suggest_categories_classical で
+// 「同一摘要の最新仕訳の相手科目」を求める。
+// 戻り値: {description: {account_code, account_name}}
+async function runSuggestCategoriesClassical(opts) {
+  var classicalMod = await import("/static/js/crypto/suggest_categories_classical.js");
+  var journalsMod = await import("/static/js/crypto/journals_client.js");
+  var sharedClientMod = await import("/static/js/crypto/shared-client.js");
+  var client = new sharedClientMod.SharedCryptoClient(
+    "/static/js/crypto/shared-worker.js",
+  );
+  try {
+    var status = await client.status();
+    if (!status.hasKey) {
+      throw new Error("MK ロック中です (設定 → 暗号鍵管理 で解除)");
+    }
+    var years = _suggestFiscalYears(opts.rows);
+    var entries = [];
+    for (var i = 0; i < years.length; i++) {
+      var yearEntries = await journalsMod.fetchJournalsForYear({
+        client: client, userId: opts.userId, fiscalYear: years[i],
+      });
+      entries = entries.concat(yearEntries);
+    }
+    return classicalMod.suggestCategoriesByHistory({
+      descriptions: opts.descriptions,
+      paymentAccountCode: opts.paymentAccountCode,
+      journalEntries: entries,
+      accountNameMap: _buildAccountNameMap(),
+    });
+  } finally {
+    try { client.close(); } catch (_e) { /* ignore */ }
+  }
+}
+window.runSuggestCategoriesClassical = runSuggestCategoriesClassical;
 
 
 // reconcileMode.snapDate から呼ばれる E2EE フロー。
