@@ -2333,3 +2333,21 @@ class TestUpdateJournal:
                               **encrypted_payload(),
                           })
         assert resp.status_code == 400
+
+    def test_fiscal_period_16_rejected(self, client, db, user, accounts, auth_header):
+        """損益振替期間 (fiscal_period=16) は手動入力禁止なので PUT でも 400。"""
+        entry = make_journal(
+            db, user.id, accounts["5010"].code, accounts["1010"].code, 100,
+        )
+        resp = client.put(f"/api/v1/journals/{entry.id}",
+                          headers=auth_header,
+                          json={
+                              "date": "2026-03-15", "description": "x",
+                              "fiscal_period": 16,
+                              "lines": encrypt_lines([
+                                  {"account_code": accounts["5010"].code, "debit": 100},
+                                  {"account_code": accounts["1010"].code, "credit": 100},
+                              ]),
+                              **encrypted_payload(),
+                          })
+        assert resp.status_code == 400
