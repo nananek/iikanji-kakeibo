@@ -64,6 +64,7 @@ def upload():
         has_config=bool(config),
         config_is_e2ee=config_is_e2ee,
         draft_count=draft_count,
+        effective_user_id=user_id,
     )
 
 

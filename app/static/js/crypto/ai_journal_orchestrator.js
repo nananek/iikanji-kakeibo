@@ -11,7 +11,8 @@
 //      → SharedCryptoClient.decrypt で api_key 復号
 //   3. GET /api/v1/ai/prompt-context (Round 1+2 プロンプト材料一括取得)
 //   4. runRound1 (画像 → DocumentAnalysis + compliance)
-//   5. needs_ledger=true なら ledger-context fetch → runRound2 で仕訳案生成
+//   5. needs_ledger=true なら復号済み仕訳から元帳構築 → runRound2 で仕訳案生成
+//      (E3-F PR-D-6-1b: 旧サーバ POST /ai/ledger-context への依存を撤去)
 //   6. PATCH /api/v1/ai/drafts/<id>/suggestions (結果保存 + AIUsageLog 記録)
 //
 // セキュリティ:
@@ -22,6 +23,7 @@
 import { runRound1 } from "./llm/round1.js";
 import { runRound2 } from "./llm/round2.js";
 import { b64decode } from "./b64.js";
+import { fetchJournalsForYear } from "./journals_client.js";
 
 
 function _csrf() {
@@ -94,14 +96,20 @@ async function _saveSuggestions(fetchImpl, draftId, body) {
  * @param {File|Blob} args.file
  * @param {string} [args.comment]
  * @param {Object} args.client                   SharedCryptoClient (decrypt 必須)
+ * @param {number} [args.userId]                 元帳取得 (復号 AAD) 用。未指定なら
+ *                                               Round 2 の元帳は空になる
+ * @param {number} [args.currentYear]            元帳取得の基準年 (テスト DI)。
+ *                                               既定は実行時の西暦年
  * @param {Function} [args.runRound1Impl=runRound1]   テスト DI
  * @param {Function} [args.runRound2Impl=runRound2]
+ * @param {Function} [args.fetchJournalsForYearImpl=fetchJournalsForYear]
  * @param {Function} [args.fetchImpl=globalThis.fetch]
  * @returns {Promise<{draft_id, suggestions, analysis, complianceResult, provider, usage}>}
  */
 export async function analyzeReceiptFull({
-  file, comment = "", client,
-  runRound1Impl = runRound1, runRound2Impl = runRound2, fetchImpl,
+  file, comment = "", client, userId, currentYear,
+  runRound1Impl = runRound1, runRound2Impl = runRound2,
+  fetchJournalsForYearImpl = fetchJournalsForYear, fetchImpl,
 }) {
   if (!file) throw new Error("file is required");
   if (!client || typeof client.decrypt !== "function") {
@@ -145,10 +153,33 @@ export async function analyzeReceiptFull({
   });
 
   // 5. Round 2 (Round 1 結果 + 元帳 → 仕訳案)
+  // needs_ledger=true かつ userId があれば、元帳構築用に復号済み仕訳を取得する。
+  // AIDraft には日付が無く対象年を特定できないため、基準年を中心に直近年度
+  // (前々年〜翌年) を取得する。MK アンロック前提 (upload 画面で status 確認済)。
+  let journalEntries = [];
+  const r1NeedsLedger = !!r1.analysis?.needs_ledger
+    && Array.isArray(r1.analysis?.requested_accounts)
+    && r1.analysis.requested_accounts.length > 0;
+  if (r1NeedsLedger && userId !== undefined && userId !== null) {
+    const baseYear = Number.isInteger(currentYear)
+      ? currentYear
+      : new Date().getFullYear();
+    for (let y = baseYear - 2; y <= baseYear + 1; y++) {
+      try {
+        const yearEntries = await fetchJournalsForYearImpl({
+          client, userId, fiscalYear: y, fetchImpl: f,
+        });
+        journalEntries = journalEntries.concat(yearEntries);
+      } catch (_e) {
+        // 1 年度の取得失敗で全体を止めない (元帳は補助情報)。
+      }
+    }
+  }
   const r2 = await runRound2Impl({
     promptContext, round1Analysis: r1.analysis,
     provider, apiKey, model, imageBytes,
     mimeType: file.type || "image/jpeg",
+    journalEntries,
     fetchImpl: f,
   });
 

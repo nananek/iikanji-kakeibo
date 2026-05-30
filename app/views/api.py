@@ -1747,47 +1747,10 @@ def web_import_prompt_context():
     })
 
 
-@bp.route("/ai/ledger-context", methods=["POST"])
-@auth_required(write=False)
-@limiter.limit("60 per hour", key_func=rate_limit_key)
-def ai_ledger_context():
-    """Round 2 LLM 入力用に、requested_accounts の元帳テキストを返却。
-
-    クライアントは Round 1 結果 (needs_ledger=true) の requested_accounts を
-    送信し、本 endpoint が _get_ledger_context() でテキスト整形して返す。
-
-    Body (JSON):
-      account_names: list[str] — 元帳取得対象の科目名 (Round 1 LLM の出力由来)
-
-    Returns:
-      { ledger_text: "整形済テキスト" }
-      該当科目なしや空入力なら ledger_text="".
-
-    注意: 本 endpoint は v5.0 (E2EE プレビュー段階) では仕訳データが平文の
-    まま返却される。E3 (仕訳暗号化) 以降は、クライアントが復号済仕訳から
-    自分でテキスト構築する設計に変更が必要 (本 endpoint は廃止予定)。
-    """
-    user_id = g.auth_user.id
-    # `_get_ledger_context` は ai_receipt.py の内部関数 (`_` プレフィックス)
-    # だが、本 endpoint は移行期間の互換層であり、ai_receipt.py 全体削除時に
-    # 本 endpoint も同時に削除予定 (E3 では仕訳暗号化でクライアント側 ledger
-    # 構築に変わる)。短命なので意図的に内部関数を直接流用している。
-    from app.services.ai_receipt import _get_ledger_context
-
-    payload = request.get_json(silent=True) or {}
-    account_names = payload.get("account_names")
-    if not isinstance(account_names, list):
-        return jsonify({"error": "account_names must be a list"}), 400
-    # 文字列のみ受理、最大 20 個 (LLM がリクエストする科目数は通常 1-5 個)
-    filtered = [
-        n for n in account_names
-        if isinstance(n, str) and 0 < len(n) <= 100
-    ][:20]
-    if not filtered:
-        return jsonify({"ledger_text": ""})
-
-    ledger_text = _get_ledger_context(user_id, filtered)
-    return jsonify({"ledger_text": ledger_text})
+# 旧 POST /api/v1/ai/ledger-context (AI証憑 Round2 の元帳テキスト返却) は
+# E3-F PR-D-6-1b で削除。平文 JournalEntry.date / description を読んでいたため、
+# クライアント (ai_journal_orchestrator.js → crypto/ledger_context.js
+# buildAccountsLedgerContext) が復号済み仕訳から構築する。
 
 
 # クライアント側 LLM 呼出フロー用 endpoint。
