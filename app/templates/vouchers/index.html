@@ -2,149 +2,53 @@
 {% block title %}証憑一覧 - いいかんじ™家計簿{% endblock %}
 
 {% block content %}
+<script id="vouchers-index-params" type="application/json">
+{{ {"user_id": effective_user_id, "can_delete": can_delete, "is_audit_proxy": session.get('acting_as_user_id') is not none} | tojson }}
+</script>
+<script id="vouchers-index-meta" type="application/json">
+{{ voucher_meta | tojson }}
+</script>
+
 <h2><i class="bi bi-file-image"></i> 証憑一覧</h2>
 
-<form class="row g-2 mb-4 mt-3" method="GET">
+{# 電帳法 検索 (日付・金額・摘要) はクライアント側で復号済みカードを絞り込む。 #}
+<div class="row g-2 mb-4 mt-3">
   <div class="col-auto">
-    <input type="date" name="date_from" class="form-control form-control-sm"
-           value="{{ date_from }}" placeholder="開始日">
+    <input type="date" id="v-date-from" class="form-control form-control-sm" placeholder="開始日">
   </div>
   <div class="col-auto d-flex align-items-center">〜</div>
   <div class="col-auto">
-    <input type="date" name="date_to" class="form-control form-control-sm"
-           value="{{ date_to }}" placeholder="終了日">
+    <input type="date" id="v-date-to" class="form-control form-control-sm" placeholder="終了日">
   </div>
   <div class="col-auto">
     <div class="input-group input-group-sm">
       <span class="input-group-text">&yen;</span>
-      <input type="number" name="amount_from" class="form-control" style="width:100px;"
-             value="{{ amount_from }}" placeholder="最小" min="0">
+      <input type="number" id="v-amount-from" class="form-control" style="width:100px;" placeholder="最小" min="0">
     </div>
   </div>
   <div class="col-auto d-flex align-items-center">〜</div>
   <div class="col-auto">
     <div class="input-group input-group-sm">
       <span class="input-group-text">&yen;</span>
-      <input type="number" name="amount_to" class="form-control" style="width:100px;"
-             value="{{ amount_to }}" placeholder="最大" min="0">
+      <input type="number" id="v-amount-to" class="form-control" style="width:100px;" placeholder="最大" min="0">
     </div>
   </div>
   <div class="col-auto">
-    <input type="text" name="search" class="form-control form-control-sm"
-           value="{{ search }}" placeholder="摘要で検索">
+    <input type="text" id="v-search" class="form-control form-control-sm" placeholder="摘要で検索">
   </div>
   <div class="col-auto">
-    <button type="submit" class="btn btn-outline-secondary btn-sm">検索</button>
-    <a href="{{ url_for('vouchers.index') }}" class="btn btn-outline-secondary btn-sm">リセット</a>
+    <a href="#" id="v-reset" class="btn btn-outline-secondary btn-sm">リセット</a>
   </div>
-</form>
-
-{% if vouchers.items %}
-<div class="row g-3">
-  {% for v in vouchers.items %}
-  {% set entry = v.journal_entry %}
-  <div class="col-md-6 col-lg-4">
-    <div class="card shadow-sm h-100">
-      <div class="card-header d-flex justify-content-between align-items-center">
-        {% if entry %}
-        <small class="text-muted">{{ entry.date.strftime('%Y/%m/%d') }}</small>
-        <span>
-          <span class="badge bg-secondary">#{{ entry.entry_number }}</span>
-          {% if v.uploaded_at and (v.uploaded_at.date() - entry.date).days > 67 %}
-          <span class="badge bg-warning text-dark" title="入力期限超過（{{ (v.uploaded_at.date() - entry.date).days }}日）">
-            <i class="bi bi-clock-history"></i>
-          </span>
-          {% endif %}
-        </span>
-        {% else %}
-        <small class="text-muted">{{ v.uploaded_at.strftime('%Y/%m/%d %H:%M') }}</small>
-        <span class="badge bg-warning text-dark">未紐付け</span>
-        {% endif %}
-      </div>
-      <div class="card-body">
-        <div class="text-center mb-2">
-          <a href="#" onclick="openImagePreview('{{ url_for('ai_journal.voucher_image', voucher_id=v.id) }}');return false">
-            <img src="{{ url_for('ai_journal.voucher_image', voucher_id=v.id, size='thumb') }}"
-                 class="img-fluid rounded" style="max-height: 200px; cursor: pointer;" alt="証憑"
-                 loading="lazy">
-          </a>
-        </div>
-        {% if entry %}
-        <p class="mb-1"><strong>{{ entry.description }}</strong></p>
-        <div class="text-primary fw-bold">&yen;{{ "{:,}".format(entry.total_debit|int) }}</div>
-        {% endif %}
-      </div>
-      <div class="card-footer d-flex justify-content-between align-items-center">
-        <small class="text-muted">
-          <i class="bi bi-clock"></i> 保存: {{ v.uploaded_at.strftime('%Y/%m/%d %H:%M') }}
-        </small>
-        <span>
-          {% if v.file_hash %}
-          <span class="text-success" title="SHA-256: {{ v.file_hash[:16] }}...">
-            <i class="bi bi-shield-check"></i>
-          </span>
-          <form method="POST" action="{{ url_for('vouchers.verify', voucher_id=v.id) }}" class="d-inline">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-            <button type="submit" class="btn btn-outline-secondary btn-sm py-0 px-1" title="ハッシュ検証">
-              <i class="bi bi-check2-circle"></i>
-            </button>
-          </form>
-          {% else %}
-          <span class="text-muted" title="ハッシュ未記録"><i class="bi bi-shield-x"></i></span>
-          {% endif %}
-          {% if entry %}
-          <a href="{{ url_for('journal.edit', entry_id=entry.id) }}"
-             class="text-decoration-none ms-1" title="仕訳を表示">
-            <i class="bi bi-journal-text"></i>
-          </a>
-          {% endif %}
-          {% if can_delete %}
-          <form method="POST" action="{{ url_for('vouchers.delete', voucher_id=v.id) }}"
-                class="d-inline ms-1"
-                onsubmit="return confirm('この証憑を削除します。電帳法の訂正削除履歴はアプリケーションログにのみ残ります。削除しますか？');">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-            <button type="submit" class="btn btn-outline-danger btn-sm py-0 px-1" title="削除">
-              <i class="bi bi-trash"></i>
-            </button>
-          </form>
-          {% endif %}
-        </span>
-      </div>
-    </div>
-  </div>
-  {% endfor %}
 </div>
 
-{% if vouchers.pages > 1 %}
-<nav class="mt-4">
-  <ul class="pagination justify-content-center">
-    {% if vouchers.has_prev %}
-    <li class="page-item">
-      <a class="page-link" href="{{ url_for('vouchers.index', page=vouchers.prev_num, date_from=date_from, date_to=date_to, amount_from=amount_from, amount_to=amount_to, search=search) }}">前へ</a>
-    </li>
-    {% endif %}
-    {% for p in vouchers.iter_pages() %}
-      {% if p %}
-      <li class="page-item {% if p == vouchers.page %}active{% endif %}">
-        <a class="page-link" href="{{ url_for('vouchers.index', page=p, date_from=date_from, date_to=date_to, amount_from=amount_from, amount_to=amount_to, search=search) }}">{{ p }}</a>
-      </li>
-      {% else %}
-      <li class="page-item disabled"><span class="page-link">...</span></li>
-      {% endif %}
-    {% endfor %}
-    {% if vouchers.has_next %}
-    <li class="page-item">
-      <a class="page-link" href="{{ url_for('vouchers.index', page=vouchers.next_num, date_from=date_from, date_to=date_to, amount_from=amount_from, amount_to=amount_to, search=search) }}">次へ</a>
-    </li>
-    {% endif %}
-  </ul>
-</nav>
-{% endif %}
+<div id="vouchers-index-status" class="d-none" role="status" aria-live="polite"></div>
 
-{% else %}
-<div class="text-center text-muted py-5">
+<div id="vouchers-index-grid" class="row g-3 d-none"></div>
+
+<div id="vouchers-index-empty" class="text-center text-muted py-5 d-none">
   <i class="bi bi-file-image" style="font-size: 3rem;"></i>
   <p class="mt-3">証憑が見つかりません。</p>
 </div>
-{% endif %}
+
+<script type="module" src="{{ url_for('static', filename='js/vouchers/index_renderer.mjs') }}"></script>
 {% endblock %}

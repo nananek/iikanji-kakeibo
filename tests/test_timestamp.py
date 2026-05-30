@@ -46,10 +46,16 @@ class TestCheckDeadline:
 
 
 class TestVoucherListDeadline:
-    """証憑一覧での期限超過バッジ表示テスト"""
+    """証憑一覧 (E3-F PR-D-4-4 でクライアント描画) の期限超過バッジ。
 
-    def test_deadline_badge_shown(self, db, logged_in_client, user, accounts):
-        """期限超過の証憑にバッジが表示される"""
+    期限超過 (uploaded - 仕訳日 > 67日) の判定・バッジ描画は仕訳日 (平文 date)
+    に依存するため、サーバではなくクライアント (index_renderer.mjs の
+    buildVoucherCards) が復号済み仕訳日から算出する。サーバ HTML には
+    バッジが出ないことを担保 (ロジック検証は test_voucher_index_cards.mjs、
+    Bearer API の deadline_exceeded は TestAPIDeadline でサーバ側を担保)。
+    """
+
+    def test_badge_not_server_rendered(self, db, logged_in_client, user, accounts):
         old_date = date(2025, 10, 1)
         entry = make_journal(
             db, user.id, "5010", "1010", 1000,
@@ -67,27 +73,10 @@ class TestVoucherListDeadline:
 
         resp = logged_in_client.get("/vouchers/")
         html = resp.data.decode()
-        assert "bi-clock-history" in html
-
-    def test_no_badge_within_deadline(self, db, logged_in_client, user, accounts):
-        """期限内の証憑にはバッジなし"""
-        entry = make_journal(
-            db, user.id, "5010", "1010", 1000,
-            source="ai_receipt", entry_date=date(2026, 1, 10),
-        )
-        v = Voucher(
-            user_id=user.id,
-            journal_entry_id=entry.id,
-            image_key="vouchers/1/2.jpg",
-            image_mime="image/jpeg",
-            uploaded_at=datetime(2026, 1, 15, tzinfo=timezone.utc),  # 5 days
-        )
-        db.session.add(v)
-        db.session.commit()
-
-        resp = logged_in_client.get("/vouchers/")
-        html = resp.data.decode()
+        # バッジはクライアント描画 → サーバ HTML には出ない。
         assert "bi-clock-history" not in html
+        # クライアントが期限判定するための非暗号化メタ (uploaded_at) は渡る。
+        assert "uploaded_at" in html
 
 
 class TestAPIDeadline:

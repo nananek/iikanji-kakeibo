@@ -157,33 +157,29 @@ class TestSoftDeletedHiddenFromQueries:
     def test_hidden_from_voucher_index(
         self, logged_in_client, db, user, mock_storage, reset_limiter,
     ):
-        from flask import url_for
-
+        # E3-F PR-D-4-4: 一覧はクライアント描画。サーバは証憑メタ JSON
+        # (vouchers-index-meta) を渡すだけなので、論理削除済が meta から
+        # 除外されることを検証する (画像 URL は client が meta から構築)。
         v = _make_voucher(db, user)
-        # voucher 一覧に出ているはずの URL (画像表示用)
-        with logged_in_client.application.test_request_context():
-            voucher_img_path = url_for(
-                "ai_journal.voucher_image", voucher_id=v.id,
-            )
+        id_token = f'"id": {v.id}'
 
-        # 1. 削除前は一覧の HTML に voucher_id が含まれている
+        # 1. 削除前は meta に voucher id が含まれる
         resp = logged_in_client.get("/vouchers/")
         assert resp.status_code == 200
         body_before = resp.get_data(as_text=True)
-        assert voucher_img_path in body_before
-        assert "証憑が見つかりません" not in body_before
+        assert id_token in body_before
 
         # 2. 削除
         logged_in_client.post(
             f"/vouchers/{v.id}/delete", follow_redirects=False,
         )
 
-        # 3. 削除後は voucher が一覧から消え、empty state が表示される
+        # 3. 削除後は meta が空配列になり voucher id が消える
         resp = logged_in_client.get("/vouchers/")
         assert resp.status_code == 200
         body_after = resp.get_data(as_text=True)
-        assert "証憑が見つかりません" in body_after
-        assert voucher_img_path not in body_after
+        assert id_token not in body_after
+        assert '<script id="vouchers-index-meta" type="application/json">\n[]' in body_after
 
     def test_hidden_from_verify_endpoint(
         self, logged_in_client, db, user, mock_storage, reset_limiter,

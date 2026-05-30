@@ -9,14 +9,13 @@ from flask import (
     jsonify, session,
 )
 from flask_login import login_required, current_user
-from sqlalchemy import func
 from sqlalchemy.orm import joinedload
 
 from app.extensions import db, limiter
 from app.models.user import User
 from app.models.voucher import Voucher
 from app.models.voucher_audit_log import VoucherAuditLog
-from app.models.journal import JournalEntry, JournalEntryLine
+from app.models.journal import JournalEntry
 from app.services.audit import get_effective_user_id
 from app.services.storage import get_storage_backend, make_thumbnail_key
 from app.services.storage_quota import QuotaExceededError, record_delete
@@ -31,86 +30,44 @@ bp = Blueprint("vouchers", __name__, url_prefix="/vouchers")
 @bp.route("/")
 @login_required
 def index():
-    """証憑一覧（日付・金額・摘要で検索可能）"""
-    user_id = get_effective_user_id()
-    page = request.args.get("page", 1, type=int)
-    date_from = request.args.get("date_from", "")
-    date_to = request.args.get("date_to", "")
-    amount_from = request.args.get("amount_from", "")
-    amount_to = request.args.get("amount_to", "")
-    search = request.args.get("search", "")
+    """証憑一覧（E3-F PR-D-4-4 でクライアント描画に移行）。
 
-    # 論理削除 (Phase 5 #70 電帳法証跡永続化) されたものを除外
-    query = (
+    電帳法 検索要件 (日付・金額・摘要) のうち、日付/摘要/金額はいずれも紐付け仕訳の
+    平文 (JournalEntry.date/description, JournalEntryLine.debit_amount 合計) に
+    依存していた。E2EE 化で平文列を DROP するため、仕訳由来の表示・検索を
+    クライアント復号描画に移す。サーバ shell は証憑の非暗号化メタのみを渡す
+    (id / journal_entry_id / entry_number / fiscal_year / uploaded_at / has_hash)。
+    クライアントが紐付け仕訳を MK 復号して日付・摘要・金額を補完し、検索も
+    クライアント側で行う。サーバ側で entry.date / description / total_debit は
+    一切読まない (entry_number / fiscal_year は DROP 対象外の平文メタ)。
+    """
+    user_id = get_effective_user_id()
+
+    vouchers = (
         Voucher.active()
-        .outerjoin(JournalEntry, Voucher.journal_entry_id == JournalEntry.id)
         .options(joinedload(Voucher.journal_entry))
         .filter(Voucher.user_id == user_id)
+        .all()
     )
-
-    # 日付フィルタ
-    if date_from:
-        query = query.filter(
-            db.or_(
-                JournalEntry.date >= date_from,
-                db.and_(
-                    Voucher.journal_entry_id.is_(None),
-                    func.date(Voucher.uploaded_at) >= date_from,
-                ),
-            )
-        )
-    if date_to:
-        query = query.filter(
-            db.or_(
-                JournalEntry.date <= date_to,
-                db.and_(
-                    Voucher.journal_entry_id.is_(None),
-                    func.date(Voucher.uploaded_at) <= date_to,
-                ),
-            )
-        )
-
-    # 摘要フィルタ
-    if search:
-        query = query.filter(JournalEntry.description.ilike(f"%{search}%"))
-
-    # 金額フィルタ
-    if amount_from or amount_to:
-        amount_subq = (
-            db.session.query(
-                JournalEntryLine.journal_entry_id,
-                func.sum(JournalEntryLine.debit_amount).label("total"),
-            )
-            .group_by(JournalEntryLine.journal_entry_id)
-            .subquery()
-        )
-        query = query.outerjoin(
-            amount_subq,
-            JournalEntry.id == amount_subq.c.journal_entry_id,
-        )
-        if amount_from:
-            query = query.filter(amount_subq.c.total >= int(amount_from))
-        if amount_to:
-            query = query.filter(amount_subq.c.total <= int(amount_to))
-
-    query = query.order_by(
-        func.coalesce(JournalEntry.date, func.date(Voucher.uploaded_at)).desc(),
-        Voucher.id.desc(),
-    )
-
-    vouchers = query.paginate(page=page, per_page=20, error_out=False)
+    voucher_meta = [
+        {
+            "id": v.id,
+            "journal_entry_id": v.journal_entry_id,
+            "entry_number": v.journal_entry.entry_number if v.journal_entry else None,
+            "fiscal_year": v.journal_entry.fiscal_year if v.journal_entry else None,
+            "uploaded_at": v.uploaded_at.isoformat() if v.uploaded_at else None,
+            "has_hash": bool(v.file_hash),
+        }
+        for v in vouchers
+    ]
 
     # 削除ボタンは本人モード時のみ表示 (代理閲覧中の auditor は破壊操作禁止)
     can_delete = session.get("acting_as_user_id") is None
 
     return render_template(
         "vouchers/index.html",
-        vouchers=vouchers,
-        date_from=date_from,
-        date_to=date_to,
-        amount_from=amount_from,
-        amount_to=amount_to,
-        search=search,
+        voucher_meta=voucher_meta,
+        effective_user_id=user_id,
         can_delete=can_delete,
     )
 
