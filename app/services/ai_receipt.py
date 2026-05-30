@@ -12,11 +12,7 @@ E2EE 化以降、サーバ側 LLM 呼出 (_call_ai / _PROVIDER_HANDLERS 等) は
 import logging
 from dataclasses import dataclass, field
 
-from sqlalchemy import func
-
-from app.extensions import db
 from app.models.account import Account, AccountType
-from app.models.journal import JournalEntry, JournalEntryLine
 
 logger = logging.getLogger(__name__)
 
@@ -293,80 +289,10 @@ def _build_suggestion_prompt(account_list_text, ledger_text="",
 
 # --- 元帳データ取得ヘルパー ---
 
-
-def _get_ledger_context(user_id: int, account_names: list[str]) -> str:
-    """指定された科目名に関連する元帳データをテキスト形式で返す"""
-    accounts = Account.query.filter(
-        Account.user_id == user_id,
-        Account.is_active.is_(True),
-    ).all()
-
-    matched_accounts = []
-    for acct in accounts:
-        for name in account_names:
-            if name in acct.name or acct.name in name:
-                matched_accounts.append(acct)
-                break
-
-    if not matched_accounts:
-        return ""
-
-    lines = []
-    for acct in matched_accounts:
-        entries = (
-            db.session.query(
-                JournalEntry.date,
-                JournalEntry.description,
-                JournalEntryLine.debit_amount,
-                JournalEntryLine.credit_amount,
-            )
-            .join(JournalEntry, JournalEntry.id == JournalEntryLine.journal_entry_id)
-            .filter(
-                db.and_(
-                    JournalEntryLine.account_user_id == acct.user_id,
-                    JournalEntryLine.account_code == acct.code,
-                ),
-            )
-            .order_by(JournalEntry.date.desc())
-            .limit(20)
-            .all()
-        )
-
-        if entries:
-            lines.append(f"\n【{acct.name}】（{acct.code}）")
-            lines.append("日付 | 摘要 | 借方 | 貸方")
-            lines.append("-" * 50)
-            for e in entries:
-                d = int(e.debit_amount)
-                c = int(e.credit_amount)
-                lines.append(
-                    f"{e.date} | {e.description} | "
-                    f"{'¥' + f'{d:,}' if d else '-'} | "
-                    f"{'¥' + f'{c:,}' if c else '-'}"
-                )
-
-            # 残高集計
-            totals = (
-                db.session.query(
-                    func.coalesce(func.sum(JournalEntryLine.debit_amount), 0),
-                    func.coalesce(func.sum(JournalEntryLine.credit_amount), 0),
-                )
-                .join(JournalEntry, JournalEntry.id == JournalEntryLine.journal_entry_id)
-                .filter(
-                    db.and_(
-                        JournalEntryLine.account_user_id == acct.user_id,
-                        JournalEntryLine.account_code == acct.code,
-                    )
-                )
-                .first()
-            )
-            if totals:
-                lines.append(
-                    f"累計: 借方合計 ¥{int(totals[0]):,} / "
-                    f"貸方合計 ¥{int(totals[1]):,}"
-                )
-
-    return "\n".join(lines)
+# _get_ledger_context (AI証憑 Round2 用の科目別元帳テキスト構築) は E3-F
+# PR-D-6-1b で削除。平文 JournalEntry.date / description を読んでいたため、
+# クライアント側 (ai_journal_orchestrator.js → crypto/ledger_context.js
+# buildAccountsLedgerContext) が復号済み仕訳から構築する。
 
 
 def _get_account_list_text(user_id: int) -> str:

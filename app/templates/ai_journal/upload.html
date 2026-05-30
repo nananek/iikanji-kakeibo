@@ -287,6 +287,7 @@
       }
       return await orchestratorMod.analyzeReceiptFull({
         file: file, comment: comment, client: client,
+        userId: {{ effective_user_id|tojson }},
       });
     } finally {
       try { client.close(); } catch (_e) { /* ignore */ }

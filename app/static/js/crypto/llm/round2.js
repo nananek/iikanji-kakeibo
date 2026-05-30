@@ -1,8 +1,9 @@
 // Round 2: Round 1 結果 + 元帳 → 仕訳案生成。
 //
 // サーバ側 ai_receipt.py analyze_and_suggest() の Round 2 部分と等価:
-//   1. Round 1 結果 (needs_ledger / requested_accounts) を元に
-//      POST /api/v1/ai/ledger-context で元帳テキスト取得
+//   1. Round 1 結果 (needs_ledger / requested_accounts) を元に、呼出側が渡した
+//      復号済み仕訳 (journalEntries) から元帳テキストをクライアント側で構築
+//      (E3-F PR-D-6-1b: 旧 POST /api/v1/ai/ledger-context への依存を撤去)
 //   2. prompt-context の round2_prompt_template_(no|with)_ledger を選択
 //      → __ACCOUNT_LIST_TEXT__ / __LEDGER_TEXT__ を置換
 //   3. callLLM で provider 別 LLM 呼出
@@ -11,6 +12,7 @@
 // 戻り値: { suggestions, usage, raw, validCodeCount }
 
 import { callLLM } from "./index.js";
+import { buildAccountsLedgerContext } from "../ledger_context.js";
 
 
 /**
@@ -26,34 +28,6 @@ export function parseAccountCodes(accountListText) {
     if (m) codes.add(m[1]);
   }
   return codes;
-}
-
-
-/** POST /api/v1/ai/ledger-context を呼んで ledger_text を取得。 */
-async function _fetchLedgerContext(fetchImpl, accountNames) {
-  const r = await fetchImpl("/api/v1/ai/ledger-context", {
-    method: "POST",
-    credentials: "include",
-    headers: {
-      "Content-Type": "application/json",
-      "X-CSRFToken": _csrf(),
-    },
-    body: JSON.stringify({ account_names: accountNames }),
-  });
-  if (!r.ok) {
-    const e = await r.json().catch(() => ({}));
-    throw new Error(
-      `ledger-context fetch failed: ${e.error || `HTTP ${r.status}`}`,
-    );
-  }
-  const data = await r.json();
-  return data.ledger_text || "";
-}
-
-function _csrf() {
-  if (typeof document === "undefined") return "";
-  const meta = document.querySelector('meta[name="csrf-token"]');
-  return meta ? meta.getAttribute("content") : "";
 }
 
 
@@ -148,6 +122,7 @@ export function validateSuggestions(rawSuggestions, validCodeSet) {
  * @param {string} args.model
  * @param {Uint8Array} args.imageBytes
  * @param {string} args.mimeType
+ * @param {Array<Object>} [args.journalEntries]  復号済み仕訳 (元帳テキスト構築用)
  * @param {AbortSignal} [args.signal]
  * @param {Function} [args.callLLMImpl=callLLM]
  * @param {Function} [args.fetchImpl]
@@ -155,7 +130,8 @@ export function validateSuggestions(rawSuggestions, validCodeSet) {
  */
 export async function runRound2({
   promptContext, round1Analysis, provider, apiKey, model,
-  imageBytes, mimeType, signal, callLLMImpl = callLLM, fetchImpl,
+  imageBytes, mimeType, journalEntries = [], signal,
+  callLLMImpl = callLLM, fetchImpl,
 }) {
   if (!promptContext || typeof promptContext !== "object") {
     throw new Error("promptContext is required");
@@ -165,13 +141,18 @@ export async function runRound2({
   }
   const f = fetchImpl ?? globalThis.fetch;
 
-  // 1. needs_ledger=true なら ledger-context を取得
+  // 1. needs_ledger=true なら、呼出側が渡した復号済み仕訳から元帳テキストを
+  //    クライアント側で構築する (E3-F PR-D-6-1b: 旧 POST /ai/ledger-context 撤去)。
   let ledgerText = "";
   const needsLedger = !!round1Analysis.needs_ledger
     && Array.isArray(round1Analysis.requested_accounts)
     && round1Analysis.requested_accounts.length > 0;
   if (needsLedger) {
-    ledgerText = await _fetchLedgerContext(f, round1Analysis.requested_accounts);
+    ledgerText = buildAccountsLedgerContext({
+      accountNames: round1Analysis.requested_accounts,
+      journalEntries,
+      accountListText: promptContext.account_list_text,
+    });
   }
 
   // 2. プロンプト構築

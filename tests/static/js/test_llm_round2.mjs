@@ -178,23 +178,20 @@ test("validateSuggestions: 配列でない入力で空配列", () => {
 });
 
 
-// ============ runRound2 (fetch + LLM 全モック) ============
+// ============ runRound2 (元帳構築 + LLM モック) ============
 
-function jsonResp(body, ok = true, status = 200) {
-  return {
-    ok, status,
-    json: async () => body,
-    text: async () => JSON.stringify(body),
-  };
-}
+// 元帳構築用の復号済み仕訳サンプル (fetchJournalsForYear 正規化形式)。
+// 食費 (5010) を現金 (1010) で支払った仕訳。
+const LEDGER_ENTRIES = [{
+  id: 1, date: "2026-05-23", description: "セブン",
+  lines: [
+    { account_code: "5010", debit: 500, credit: 0 },
+    { account_code: "1010", debit: 0, credit: 500 },
+  ],
+}];
 
 
-test("runRound2: needs_ledger=false なら ledger-context 呼ばずに Round 2 のみ", async () => {
-  let fetchCalls = [];
-  const fetchImpl = async (url, init) => {
-    fetchCalls.push({ url, init });
-    throw new Error("should not be called when needs_ledger=false");
-  };
+test("runRound2: needs_ledger=false なら元帳構築せず Round 2 のみ", async () => {
   let llmArgs;
   const callLLMImpl = async (args) => {
     llmArgs = args;
@@ -210,9 +207,9 @@ test("runRound2: needs_ledger=false なら ledger-context 呼ばずに Round 2 �
     round1Analysis: { needs_ledger: false, requested_accounts: [] },
     provider: "openai", apiKey: "k", model: "gpt-4o",
     imageBytes: img(), mimeType: "image/jpeg",
-    callLLMImpl, fetchImpl,
+    journalEntries: LEDGER_ENTRIES,
+    callLLMImpl,
   });
-  assert.equal(fetchCalls.length, 0);
   assert.equal(r.suggestions.length, 1);
   assert.equal(r.ledgerText, "");
   // プロンプトは no_ledger テンプレート (LEDGER: が含まれない)
@@ -220,14 +217,7 @@ test("runRound2: needs_ledger=false なら ledger-context 呼ばずに Round 2 �
 });
 
 
-test("runRound2: needs_ledger=true で ledger-context fetch + with_ledger テンプレート", async () => {
-  let fetchCalls = [];
-  const fetchImpl = async (url, init) => {
-    fetchCalls.push({ url, init });
-    return jsonResp({
-      ledger_text: "【食費】\n2026-05-23 セブン",
-    });
-  };
+test("runRound2: needs_ledger=true で journalEntries から元帳構築 + with_ledger テンプレート", async () => {
   let llmArgs;
   const callLLMImpl = async (args) => {
     llmArgs = args;
@@ -245,21 +235,21 @@ test("runRound2: needs_ledger=true で ledger-context fetch + with_ledger テン
     },
     provider: "openai", apiKey: "k", model: "gpt-4o",
     imageBytes: img(), mimeType: "image/jpeg",
-    callLLMImpl, fetchImpl,
+    journalEntries: LEDGER_ENTRIES,
+    callLLMImpl,
   });
-  assert.equal(fetchCalls.length, 1);
-  assert.equal(fetchCalls[0].url, "/api/v1/ai/ledger-context");
-  const sentBody = JSON.parse(fetchCalls[0].init.body);
-  assert.deepEqual(sentBody.account_names, ["食費"]);
-  // ledger_text が prompt に埋め込まれている
-  assert(llmArgs.prompt.includes("【食費】"));
+  // CTX.account_list_text に "5010 食費" があり、requested_accounts=["食費"] と
+  // 部分一致 → 元帳テキストが構築されて prompt に埋め込まれる。
+  assert(llmArgs.prompt.includes("LEDGER:"));
+  assert(llmArgs.prompt.includes("【食費】（5010）"));
   assert(llmArgs.prompt.includes("セブン"));
-  assert.equal(r.ledgerText, "【食費】\n2026-05-23 セブン");
+  assert(r.ledgerText.includes("【食費】（5010）"));
+  // 累計行は廃止 (E3-F PR-D-6-1b)
+  assert(!r.ledgerText.includes("累計"));
 });
 
 
-test("runRound2: needs_ledger=true でも空 ledger なら ledgerText 空のまま LLM", async () => {
-  const fetchImpl = async () => jsonResp({ ledger_text: "" });
+test("runRound2: needs_ledger=true でも該当仕訳なしなら ledgerText 空のまま LLM", async () => {
   let llmArgs;
   const callLLMImpl = async (args) => {
     llmArgs = args;
@@ -268,32 +258,34 @@ test("runRound2: needs_ledger=true でも空 ledger なら ledgerText 空のま�
   await runRound2({
     promptContext: CTX,
     round1Analysis: {
-      needs_ledger: true, requested_accounts: ["旅費"],
+      // CTX.account_list_text に無い科目名 → 解決されず元帳空
+      needs_ledger: true, requested_accounts: ["旅費交通費"],
     },
     provider: "openai", apiKey: "k", model: "gpt-4o",
     imageBytes: img(), mimeType: "image/jpeg",
-    callLLMImpl, fetchImpl,
+    journalEntries: LEDGER_ENTRIES,
+    callLLMImpl,
   });
   // 空 ledger は no_ledger フローと等価 (LEDGER: ヘッダなし)
   assert(!llmArgs.prompt.includes("LEDGER:"));
 });
 
 
-test("runRound2: ledger-context HTTP エラーで throw", async () => {
-  const fetchImpl = async () => jsonResp({ error: "x" }, false, 500);
-  const callLLMImpl = async () => ({ result: {}, usage: {} });
-  await assert.rejects(
-    () => runRound2({
-      promptContext: CTX,
-      round1Analysis: {
-        needs_ledger: true, requested_accounts: ["x"],
-      },
-      provider: "openai", apiKey: "k", model: "gpt-4o",
-      imageBytes: img(), mimeType: "image/jpeg",
-      callLLMImpl, fetchImpl,
-    }),
-    /ledger-context fetch failed/,
-  );
+test("runRound2: journalEntries 未指定でも throw せず元帳空", async () => {
+  let llmArgs;
+  const callLLMImpl = async (args) => {
+    llmArgs = args;
+    return { result: { suggestions: [] }, usage: {} };
+  };
+  await runRound2({
+    promptContext: CTX,
+    round1Analysis: { needs_ledger: true, requested_accounts: ["食費"] },
+    provider: "openai", apiKey: "k", model: "gpt-4o",
+    imageBytes: img(), mimeType: "image/jpeg",
+    callLLMImpl,
+  });
+  // journalEntries 既定 [] → 元帳空 → LEDGER: なし
+  assert(!llmArgs.prompt.includes("LEDGER:"));
 });
 
 
