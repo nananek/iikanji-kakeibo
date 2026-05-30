@@ -1,7 +1,5 @@
 """青色申告決算書の欄定義・マッピング管理"""
 
-from datetime import date
-
 from sqlalchemy import func
 
 from app.extensions import db
@@ -175,19 +173,16 @@ def get_business_income(user_id, year, month=None):
     if not biz_codes:
         return {"revenue": 0, "expense": 0, "income": 0, "has_mappings": False}
 
-    start = date(year, month or 1, 1)
-    if month:
-        if month == 12:
-            end = date(year + 1, 1, 1)
-        else:
-            end = date(year, month + 1, 1)
-    else:
-        end = date(year + 1, 1, 1)
-
+    # E3-F (PR-D-6-2): 平文 date 範囲ではなく fiscal_year / fiscal_month で
+    # 期間を絞る (date 列は D-6-5 で DROP 予定)。年間は fiscal_year のみ、
+    # 月次指定時は fiscal_month も一致させる。
     revenue_type = AccountType.query.filter_by(code="revenue").first()
     expense_type = AccountType.query.filter_by(code="expense").first()
 
     def _sum(type_id, amount_col):
+        period_filters = [JournalEntry.fiscal_year == year]
+        if month:
+            period_filters.append(JournalEntry.fiscal_month == month)
         return (
             db.session.query(
                 func.coalesce(func.sum(amount_col), 0)
@@ -199,8 +194,7 @@ def get_business_income(user_id, year, month=None):
             ))
             .filter(
                 JournalEntry.user_id == user_id,
-                JournalEntry.date >= start,
-                JournalEntry.date < end,
+                *period_filters,
                 JournalEntry.is_closing.is_(False),
                 Account.account_type_id == type_id,
                 Account.code.in_(biz_codes),

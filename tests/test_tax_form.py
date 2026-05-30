@@ -309,6 +309,7 @@ class TestBusinessIncome:
         entry1 = JournalEntry(
             user_id=user.id, date=date(2026, 3, 1),
             entry_number=1, description="売上", source="journal",
+            fiscal_year=2026, fiscal_month=3,
         )
         entry1.lines = [
             JournalEntryLine(account_user_id=user.id, account_code="1010",
@@ -322,6 +323,7 @@ class TestBusinessIncome:
         entry2 = JournalEntry(
             user_id=user.id, date=date(2026, 3, 5),
             entry_number=2, description="租税公課", source="journal",
+            fiscal_year=2026, fiscal_month=3,
         )
         entry2.lines = [
             JournalEntryLine(account_user_id=user.id, account_code="9210",
@@ -353,7 +355,8 @@ class TestBusinessIncome:
             entry = JournalEntry(
                 user_id=user.id, date=date(2026, m, 15),
                 entry_number=m, description=f"{m}月売上", source="journal",
-            )
+            fiscal_year=2026, fiscal_month=m,
+        )
             entry.lines = [
                 JournalEntryLine(account_user_id=user.id, account_code="1010",
                                  debit_amount=10000, credit_amount=0),
@@ -406,6 +409,7 @@ class TestPLBusinessCollapse:
         entry = JournalEntry(
             user_id=user.id, date=date(2026, 1, 15),
             entry_number=1, description="売上", source="journal",
+            fiscal_year=2026, fiscal_month=1,
         )
         entry.lines = [
             JournalEntryLine(account_user_id=user.id, account_code="1010",
@@ -431,6 +435,7 @@ class TestPLBusinessCollapse:
         entry = JournalEntry(
             user_id=user.id, date=date(2026, 1, 15),
             entry_number=1, description="給与", source="journal",
+            fiscal_year=2026, fiscal_month=1,
         )
         entry.lines = [
             JournalEntryLine(account_user_id=user.id, account_code="1010",
@@ -466,6 +471,7 @@ class TestPLBusinessCollapse:
         e1 = JournalEntry(
             user_id=user.id, date=date(2026, 1, 10),
             entry_number=1, description="スーパー", source="journal",
+            fiscal_year=2026, fiscal_month=1,
         )
         e1.lines = [
             JournalEntryLine(account_user_id=user.id, account_code="5010",
@@ -476,6 +482,7 @@ class TestPLBusinessCollapse:
         e2 = JournalEntry(
             user_id=user.id, date=date(2026, 1, 15),
             entry_number=2, description="税金", source="journal",
+            fiscal_year=2026, fiscal_month=1,
         )
         e2.lines = [
             JournalEntryLine(account_user_id=user.id, account_code="9210",
@@ -512,7 +519,9 @@ class TestBusinessIncomeEdgeCases:
 
         # 通常仕訳
         e1 = JournalEntry(user_id=user.id, date=date(2026, 6, 1),
-                          entry_number=1, description="売上", source="journal")
+                          entry_number=1, description="売上", source="journal",
+            fiscal_year=2026, fiscal_month=6,
+        )
         e1.lines = [
             JournalEntryLine(account_user_id=user.id, account_code="1010",
                              debit_amount=100000, credit_amount=0),
@@ -548,7 +557,9 @@ class TestBusinessIncomeEdgeCases:
         db.session.commit()
 
         e1 = JournalEntry(user_id=user.id, date=date(2026, 3, 1),
-                          entry_number=1, description="税金", source="journal")
+                          entry_number=1, description="税金", source="journal",
+            fiscal_year=2026, fiscal_month=3,
+        )
         e1.lines = [
             JournalEntryLine(account_user_id=user.id, account_code="9210",
                              debit_amount=50000, credit_amount=0),
