@@ -444,64 +444,10 @@ __ROWS_TEXT__
 {"results": [{"index": 0, "account_code": "科目コード"}, ...]}"""
 
 
-def _get_payment_ledger_context(user_id: int, payment_account_code: str,
-                                limit: int = 100) -> str:
-    """支払口座の元帳データをテキスト形式で返す（相手科目名つき）"""
-    account = Account.query.filter_by(
-        user_id=user_id, code=payment_account_code
-    ).first()
-    if not account:
-        return ""
-
-    entries = (
-        db.session.query(
-            JournalEntry.date,
-            JournalEntry.description,
-            JournalEntryLine.debit_amount,
-            JournalEntryLine.credit_amount,
-            JournalEntry.id.label("entry_id"),
-        )
-        .join(JournalEntry, JournalEntry.id == JournalEntryLine.journal_entry_id)
-        .filter(
-            JournalEntryLine.account_user_id == user_id,
-            JournalEntryLine.account_code == payment_account_code,
-            JournalEntry.user_id == user_id,
-        )
-        .order_by(JournalEntry.date.desc())
-        .limit(limit)
-        .all()
-    )
-
-    if not entries:
-        return "(元帳データなし)"
-
-    lines = [f"【{account.name}】の元帳（直近{len(entries)}件）"]
-    lines.append("日付 | 摘要 | 相手科目 | 入金 | 出金")
-    lines.append("-" * 60)
-
-    for e in entries:
-        counter_lines = (
-            JournalEntryLine.query
-            .filter(
-                JournalEntryLine.journal_entry_id == e.entry_id,
-                JournalEntryLine.account_code != payment_account_code,
-            )
-            .all()
-        )
-        counter_names = ", ".join(
-            a.account.name for a in counter_lines if a.account
-        ) if counter_lines else "?"
-
-        d = int(e.debit_amount)
-        c = int(e.credit_amount)
-        lines.append(
-            f"{e.date} | {e.description} | {counter_names} | "
-            f"{'¥' + f'{d:,}' if d else '-'} | "
-            f"{'¥' + f'{c:,}' if c else '-'}"
-        )
-
-    return "\n".join(lines)
-
+# _get_payment_ledger_context (支払口座の元帳テキスト構築) は E3-F PR-D-6-1a で
+# 削除。平文 JournalEntry.date / description を読んでいたため、クライアント側
+# (suggest_categories_orchestrator.js → crypto/ledger_context.js
+# buildPaymentLedgerContext) が復号済み仕訳から等価のテキストを構築する。
 
 # suggest_categories_by_ai は E2EE 化に伴い削除済。
 # クライアント側 suggest_categories_orchestrator.js が等価の処理を実行。

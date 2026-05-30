@@ -188,6 +188,71 @@ test("正常フロー: prompt-context + ai-config → decrypt → LLM → normal
   assert.equal(llmArgs.maxTokens, 4000);
 });
 
+test("journalEntries から元帳テキストを構築しプロンプトに埋め込む", async () => {
+  // E3-F PR-D-6-1a: ledger_context はサーバ (promptContext) ではなく
+  // 呼出側が渡す journalEntries + accountNameMap から構築される。
+  let llmArgs;
+  const fetchImpl = makeFetch([
+    [/\/suggest-categories\/prompt-context\?/, () => jsonResp(PROMPT_CTX)],
+    ["/api/v1/ai-config", () => jsonResp({
+      provider: "openai", model_name: "gpt-4o",
+      api_key_blob: "AA==", api_key_iv: "AA==", is_e2ee: true,
+    })],
+  ]);
+  const client = makeClient(async () => ({
+    plaintext: new TextEncoder().encode("sk-test"),
+  }));
+  const ret = await runSuggestCategories({
+    paymentAccountCode: "1010",
+    rows: [{ description: "セブン", deposit: 0, withdrawal: 500 }],
+    journalEntries: [{
+      id: 1, date: "2026-02-15", description: "過去のセブン",
+      lines: [
+        { account_code: "5010", debit: 500, credit: 0 },
+        { account_code: "1010", debit: 0, credit: 500 },
+      ],
+    }],
+    accountNameMap: { "5010": "食費", "1010": "現金" },
+    client, fetchImpl,
+    callLLMTextImpl: async (args) => {
+      llmArgs = args;
+      return { result: { results: [{ index: 0, account_code: "5010" }] }, usage: {} };
+    },
+  });
+  assert.deepEqual(ret, {
+    "セブン": { account_code: "5010", account_name: "食費" },
+  });
+  // 構築された元帳テキスト (過去仕訳の摘要 + 相手科目) がプロンプトに入る
+  assert.match(llmArgs.prompt, /過去のセブン/);
+  assert.match(llmArgs.prompt, /食費/);
+  // promptContext.ledger_context (サンプル) はもう使われない
+  assert.doesNotMatch(llmArgs.prompt, /元帳サンプル/);
+});
+
+test("journalEntries 未指定なら (元帳データなし) で動作", async () => {
+  let llmArgs;
+  const fetchImpl = makeFetch([
+    [/\/suggest-categories\/prompt-context\?/, () => jsonResp(PROMPT_CTX)],
+    ["/api/v1/ai-config", () => jsonResp({
+      provider: "openai", model_name: "gpt-4o",
+      api_key_blob: "AA==", api_key_iv: "AA==", is_e2ee: true,
+    })],
+  ]);
+  const client = makeClient(async () => ({
+    plaintext: new TextEncoder().encode("sk-test"),
+  }));
+  await runSuggestCategories({
+    paymentAccountCode: "1010",
+    rows: [{ description: "x", deposit: 0, withdrawal: 100 }],
+    client, fetchImpl,
+    callLLMTextImpl: async (args) => {
+      llmArgs = args;
+      return { result: { results: [] }, usage: {} };
+    },
+  });
+  assert.match(llmArgs.prompt, /元帳データなし/);
+});
+
 test("model_name 空ならデフォルトモデル使用", async () => {
   let llmArgs;
   const fetchImpl = makeFetch([

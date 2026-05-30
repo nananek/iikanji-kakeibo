@@ -463,8 +463,10 @@ class TestSuggestCategoriesPromptContext:
         assert "__ROWS_TEXT__" in body["prompt_template"]
         # 口座名
         assert body["payment_account_name"]  # 1010 = 現金 等
-        # ledger_context / account_list / account_map
-        assert "ledger_context" in body
+        # E3-F PR-D-6-1a: ledger_context はサーバから返さなくなった
+        # (クライアントが復号済み仕訳から buildPaymentLedgerContext で構築)。
+        assert "ledger_context" not in body
+        # account_list / account_map
         assert "account_list" in body
         assert isinstance(body["account_map"], dict)
         assert "5010" in body["account_map"]

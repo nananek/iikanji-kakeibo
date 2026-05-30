@@ -6,10 +6,13 @@
 //
 // フロー:
 //   1. GET /api/v1/suggest-categories/prompt-context?payment_account_code=
-//      → {prompt_template, payment_account_name, ledger_context,
+//      → {prompt_template, payment_account_name,
 //         account_list, account_map, default_model_by_provider, custom_prompt}
+//      (E3-F PR-D-6-1a: 平文 ledger_context はサーバから返らなくなった。
+//       呼出側が復号済み仕訳を journalEntries で渡し、クライアントで構築する。)
 //   2. GET /api/v1/ai-config + decrypt
-//   3. クライアント側で rows_text を構築、プロンプト組立て
+//   3. クライアント側で元帳テキスト (buildPaymentLedgerContext) + rows_text を
+//      構築、プロンプト組立て
 //   4. callLLMText → {results: [{index, account_code}]}
 //   5. account_map で account_code → account_name 解決
 //   6. {description: {account_code, account_name}} のマップを返す
@@ -17,6 +20,7 @@
 
 import { callLLMText } from "./llm/index.js";
 import { b64decode } from "./b64.js";
+import { buildPaymentLedgerContext } from "./ledger_context.js";
 
 
 function _fmtYen(n) {
@@ -103,12 +107,14 @@ export function normalizeSuggestions(raw, rows, accountMap) {
  * @param {string} args.paymentAccountCode
  * @param {Array} args.rows                          [{description, deposit, withdrawal}, ...]
  * @param {Object} args.client                       SharedCryptoClient
+ * @param {Array<Object>} [args.journalEntries]      復号済み仕訳 (元帳テキスト構築用)
+ * @param {Object} [args.accountNameMap]             {code: name} (相手科目名解決用)
  * @param {Function} [args.callLLMTextImpl=callLLMText]
  * @param {Function} [args.fetchImpl]
  * @returns {Promise<Object>}                        {description: {account_code, account_name}}
  */
 export async function runSuggestCategories({
-  paymentAccountCode, rows, client,
+  paymentAccountCode, rows, client, journalEntries = [], accountNameMap = {},
   callLLMTextImpl = callLLMText, fetchImpl,
 }) {
   if (!paymentAccountCode) {
@@ -147,11 +153,20 @@ export async function runSuggestCategories({
     throw new Error(`unsupported provider for client-side analysis: ${provider}`);
   }
 
+  // E3-F PR-D-6-1a: 元帳テキストはサーバの平文ではなく、呼出側が渡した
+  // 復号済み仕訳から構築する。
+  const ledgerContext = buildPaymentLedgerContext({
+    accountName: promptContext.payment_account_name,
+    paymentAccountCode,
+    journalEntries,
+    accountNameMap,
+  });
+
   const rowsText = buildRowsText(rows);
   const prompt = buildSuggestCategoriesPrompt({
     promptTemplate: promptContext.prompt_template,
     paymentAccountName: promptContext.payment_account_name,
-    ledgerContext: promptContext.ledger_context,
+    ledgerContext,
     accountList: promptContext.account_list,
     rowsText,
   });

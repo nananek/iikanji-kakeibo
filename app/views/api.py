@@ -1638,17 +1638,21 @@ def ai_prompt_context():
 def suggest_categories_prompt_context():
     """E2EE suggest-categories: クライアント側 LLM 呼出しのためのプロンプト材料を返す。
 
-    payment_account_code クエリパラメータ必須 (元帳テキストを構築するため)。
+    payment_account_code クエリパラメータ必須 (口座名・account_map のため)。
     レスポンスには勘定科目コード → 名前マップ (account_map) も含めて、
     クライアントが LLM 出力の account_code から account_name を解決できる
     ようにする。
+
+    E3-F PR-D-6-1a: 元帳テキスト (ledger_context) はサーバ側で平文
+    JournalEntry.date / description を読んで構築していたが撤去した。
+    クライアント (suggest_categories_orchestrator.js) が復号済み仕訳から
+    buildPaymentLedgerContext で組み立てる。
     """
     from app.models.account import Account
     from app.services.ai_receipt import (
         AI_SUGGEST_CATEGORIES_PROMPT_TEMPLATE,
         PROVIDER_DEFAULTS,
         _get_account_list_text,
-        _get_payment_ledger_context,
     )
 
     user_id = g.auth_user.id
@@ -1665,7 +1669,6 @@ def suggest_categories_prompt_context():
     config = UserAIConfig.query.filter_by(user_id=user_id).first()
     custom_prompt = config.custom_prompt if config else ""
 
-    ledger_context = _get_payment_ledger_context(user_id, payment_account_code)
     account_list = _get_account_list_text(user_id)
 
     accounts = Account.query.filter_by(
@@ -1677,7 +1680,6 @@ def suggest_categories_prompt_context():
         "ok": True,
         "prompt_template": AI_SUGGEST_CATEGORIES_PROMPT_TEMPLATE,
         "payment_account_name": account.name,
-        "ledger_context": ledger_context,
         "account_list": account_list,
         "account_map": account_map,
         "custom_prompt": custom_prompt,
