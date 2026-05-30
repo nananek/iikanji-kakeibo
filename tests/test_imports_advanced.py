@@ -88,13 +88,17 @@ class TestMedicalEdgeCases:
         db.session.add(a)
         db.session.commit()
         # MedicalExpense + JournalEntry を作る
-        from app.services.accounting import create_cashbook_entry
-        entry = create_cashbook_entry(
+        from app.services.accounting import create_journal_entry
+        entry = create_journal_entry(
             user_id=user.id, date=date(2026, 2, 15),
-            transaction_type="expense",
-            payment_account_code="1010",
-            category_account_code="6010",
-            amount=5000, description="医療費",
+            description="医療費",
+            lines_data=[
+                {"account_code": "6010",
+                 "debit_amount": 5000, "credit_amount": 0},
+                {"account_code": "1010",
+                 "debit_amount": 0, "credit_amount": 5000},
+            ],
+            source="cashbook",
         )
         db.session.add(MedicalExpense(
             user_id=user.id, journal_entry_id=entry.id,

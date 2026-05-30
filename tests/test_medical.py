@@ -71,13 +71,17 @@ class TestNew:
 
 class TestDelete:
     def _make_expense(self, db, user_id, medical_account):
-        from app.services.accounting import create_cashbook_entry
-        entry = create_cashbook_entry(
+        from app.services.accounting import create_journal_entry
+        entry = create_journal_entry(
             user_id=user_id, date=date(2026, 2, 15),
-            transaction_type="expense",
-            payment_account_code="1010",
-            category_account_code=medical_account.code,
-            amount=2000, description="医療費",
+            description="医療費",
+            lines_data=[
+                {"account_code": medical_account.code,
+                 "debit_amount": 2000, "credit_amount": 0},
+                {"account_code": "1010",
+                 "debit_amount": 0, "credit_amount": 2000},
+            ],
+            source="cashbook",
         )
         e = MedicalExpense(
             user_id=user_id, journal_entry_id=entry.id,
