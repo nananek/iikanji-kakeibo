@@ -374,14 +374,14 @@ def _restore_journal_entries(
                 fiscal_month = fiscal_period
             elif entry_date is not None:
                 fiscal_month = entry_date.month
+        # E3-F PR-D-6-4: 平文 date / description / source / fiscal_period 列は
+        # 書き込まない (本体は encrypted_blob のみ)。entry_date / fiscal_period /
+        # source は旧フォーマット backup の forward-compat で fiscal_month /
+        # is_closing を導出するためにのみ読む。
         entry = JournalEntry(
             user_id=user_id,
-            date=entry_date,
             entry_number=r.get("entry_number"),
-            description=r.get("description", "") or "",
-            source=r.get("source", "journal") or "journal",
             batch_id=r.get("batch_id"),
-            fiscal_period=fiscal_period,
             fiscal_year=r.get("fiscal_year"),
             is_closing=bool(is_closing),
             fiscal_month=fiscal_month,
@@ -407,13 +407,13 @@ def _restore_journal_entry_lines(
             raise BackupValidationError(
                 f"journal_entry_lines: unmapped journal_entry_id {old_eid}",
             )
+        # E3-F PR-D-6-4: 平文 description 列は書き込まない (encrypted_blob のみ)。
         db.session.add(JournalEntryLine(
             journal_entry_id=new_eid,
             account_user_id=user_id,
             account_code=r.get("account_code"),
             debit_amount=int(r.get("debit_amount") or 0),
             credit_amount=int(r.get("credit_amount") or 0),
-            description=r.get("description", "") or "",
             encrypted_blob=_b64_decode(r.get("encrypted_blob")),
             blob_iv=_b64_decode(r.get("blob_iv")),
         ))
@@ -427,16 +427,12 @@ def _restore_medical_expenses(
     for r in rows:
         old_eid = r.get("journal_entry_id")
         new_eid = entry_id_map.get(old_eid) if old_eid is not None else None
+        # E3-F PR-D-6-4: 平文列 (date / patient_name / hospital_name /
+        # treatment_description / provider_type / amount_paid /
+        # insurance_reimbursement) は書き込まない (本体は encrypted_blob のみ)。
         db.session.add(MedicalExpense(
             user_id=user_id,
             journal_entry_id=new_eid,
-            date=_parse_date(r.get("date")),
-            patient_name=r.get("patient_name", "") or "",
-            hospital_name=r.get("hospital_name", "") or "",
-            treatment_description=r.get("treatment_description", "") or "",
-            provider_type=r.get("provider_type"),
-            amount_paid=int(r.get("amount_paid") or 0),
-            insurance_reimbursement=int(r.get("insurance_reimbursement") or 0),
             encrypted_blob=_b64_decode(r.get("encrypted_blob")),
             blob_iv=_b64_decode(r.get("blob_iv")),
         ))

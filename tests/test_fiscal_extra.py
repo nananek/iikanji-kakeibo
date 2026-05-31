@@ -289,7 +289,8 @@ class TestGenerateClosingEntries:
         # 振替仕訳が生成されるか None が返る (生成されたら closing source の entry が増える)
         if result is None:
             from app.models.journal import JournalEntry as JE
-            count = JE.query.filter_by(user_id=user.id, source="closing").count()
+            # E3-F PR-D-6-4: closing は is_closing で識別 (平文 source は書かない)。
+            count = JE.query.filter_by(user_id=user.id, is_closing=True).count()
             assert count >= 1
 
 

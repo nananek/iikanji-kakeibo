@@ -399,16 +399,14 @@ class TestBackupRestoreHappyPath:
         )
         assert resp.status_code == 200
 
-        # 「既存仕訳」が消えていること
-        existing_q = JournalEntry.query.filter_by(
-            user_id=user.id, description="既存仕訳",
-        ).count()
-        assert existing_q == 0
-        # backup の「テスト仕訳」のみ存在
-        new_q = JournalEntry.query.filter_by(
-            user_id=user.id, description="テスト仕訳",
-        ).count()
-        assert new_q == 1
+        # 既存データは全削除され backup の 1 件のみ残る。E3-F PR-D-6-4 で平文
+        # description は復元しないため、件数 + backup 由来の entry_number /
+        # fiscal_year / encrypted_blob で復元仕訳を識別する。
+        entries = JournalEntry.query.filter_by(user_id=user.id).all()
+        assert len(entries) == 1
+        assert entries[0].entry_number == 1
+        assert entries[0].fiscal_year == 2026
+        assert entries[0].encrypted_blob
         # 既存 fiscal_close (year=2025) が消えて backup の 2026 に置き換わる
         fcs = FiscalClose.query.filter_by(user_id=user.id).all()
         assert len(fcs) == 1

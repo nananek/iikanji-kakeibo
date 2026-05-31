@@ -348,7 +348,8 @@ class TestCreateJournalsBatch:
         assert resp.status_code == 201
         created_id = resp.get_json()["entries"][0]["id"]
         entry = db.session.get(JournalEntry, created_id)
-        assert entry.fiscal_period == 0
+        # E3-F PR-D-6-4: fiscal_period 平文列は書かず fiscal_month メタ列へ反映する。
+        assert entry.fiscal_month == 0
 
     def test_invalid_source_rejected(self, client, db, user, accounts, auth_header):
         resp = client.post("/api/v1/journals/batch", headers=auth_header, json={
@@ -1404,13 +1405,9 @@ class TestMedicalExpensesUpsert:
         me = MedicalExpense.query.filter_by(journal_entry_id=entry.id).first()
         assert me is not None
         assert me.id == body["id"]
-        # dual-write 平文
-        assert me.patient_name == "本人"
-        assert me.hospital_name == "A病院"
-        assert me.amount_paid == 5000
-        assert me.insurance_reimbursement == 1000
-        assert me.provider_type == "hospital"
-        # 暗号化 blob も保存
+        # E3-F PR-D-6-4: 平文列 (patient_name 等) は書き込まれない。本体は
+        # encrypted_blob のみに保存する。
+        assert me.patient_name != "本人"
         assert me.encrypted_blob is not None
         assert me.blob_iv is not None
 
@@ -1427,11 +1424,12 @@ class TestMedicalExpensesUpsert:
                          headers=auth_header)
         assert r2.status_code == 200
         assert r2.get_json()["id"] == me_id
+        # E3-F PR-D-6-4: 同一 journal_entry_id は upsert で 1 行を維持 (id 不変)。
+        # 平文列は書かないため値の比較ではなく行数・id の同一性で検証する。
         assert MedicalExpense.query.filter_by(journal_entry_id=entry.id).count() == 1
         me = db.session.get(MedicalExpense, me_id)
         db.session.refresh(me)
-        assert me.patient_name == "更新後"
-        assert me.insurance_reimbursement == 200
+        assert me.encrypted_blob is not None
 
     def test_missing_blob_400(self, client, db, user, accounts, auth_header):
         entry = make_journal(db, user.id, "5010", "1010", 5000,
@@ -1463,29 +1461,10 @@ class TestMedicalExpensesUpsert:
                            json=self._payload("abc"), headers=auth_header)
         assert resp.status_code == 400
 
-    def test_invalid_date_400(self, client, db, user, accounts, auth_header):
-        entry = make_journal(db, user.id, "5010", "1010", 5000,
-                             entry_date=date(2026, 5, 1))
-        resp = client.post("/api/v1/medical-expenses",
-                           json=self._payload(entry.id, date="2026/05/01"),
-                           headers=auth_header)
-        assert resp.status_code == 400
-
-    def test_provider_type_non_string_400(self, client, db, user, accounts, auth_header):
-        entry = make_journal(db, user.id, "5010", "1010", 5000,
-                             entry_date=date(2026, 5, 1))
-        resp = client.post("/api/v1/medical-expenses",
-                           json=self._payload(entry.id, provider_type=123),
-                           headers=auth_header)
-        assert resp.status_code == 400
-
-    def test_amount_non_int_400(self, client, db, user, accounts, auth_header):
-        entry = make_journal(db, user.id, "5010", "1010", 5000,
-                             entry_date=date(2026, 5, 1))
-        resp = client.post("/api/v1/medical-expenses",
-                           json=self._payload(entry.id, amount_paid="x"),
-                           headers=auth_header)
-        assert resp.status_code == 400
+    # E3-F PR-D-6-4: 平文フィールド (date / provider_type / amount_paid 等) の
+    # 検証は撤去した (サーバは保存しないため)。旧 test_invalid_date_400 /
+    # test_provider_type_non_string_400 / test_amount_non_int_400 を削除。
+    # 不正値はクライアント側 (暗号化前) で検証する責務に移行。
 
     def test_closed_period_400(self, client, db, user, accounts, auth_header):
         from app.models.fiscal import FiscalClose
@@ -1763,10 +1742,21 @@ class TestBackupExport:
         assert any(a["code"] == "5010" for a in data["accounts"])
         # 仕訳が含まれる
         assert len(data["journal_entries"]) == 1
-        assert data["journal_entries"][0]["description"] == "食費"
-        # ライン (借方=5010, 貸方=1010) が両方とも含まれる
+        e0 = data["journal_entries"][0]
+        # E3-F PR-D-6-4: 平文 date/description/source/fiscal_period は export されない
+        # (クライアントが encrypted_blob を復号して平文 JSON を組み立てる)。
+        assert "description" not in e0
+        assert "date" not in e0
+        assert "source" not in e0
+        assert "fiscal_period" not in e0
+        # 年度フィルタ・closing 合成用の平文メタは残る
+        assert e0["fiscal_year"] == 2026
+        assert e0["fiscal_month"] == 2
+        assert e0["is_closing"] is False
+        # ライン (借方=5010, 貸方=1010) が両方とも含まれる。description は出ない。
         codes = {l["account_code"] for l in data["journal_entry_lines"]}
         assert codes == {"5010", "1010"}
+        assert all("description" not in l for l in data["journal_entry_lines"])
 
     def test_other_user_data_excluded(
         self, app, client, db, user, accounts, auth_header,
@@ -1831,15 +1821,12 @@ class TestBackupExport:
             fc["year"] != 2026 or fc["closed_period"] != 5
             for fc in data["fiscal_closes"]
         )
-        # 他人の journal_entries / lines
-        assert all(e["description"] != "他人の仕訳" for e in data["journal_entries"])
-        assert all(
-            l["debit_amount"] != 999 for l in data["journal_entry_lines"]
-        )
-        # 他人の medical_expense
-        assert all(
-            m["amount_paid"] != 12345 for m in data["medical_expenses"]
-        )
+        # 他人の journal_entries / lines / medical は一切含まれない (auth user は
+        # 自分の仕訳・医療費を持たないので各リストは空)。E3-F PR-D-6-4 で平文
+        # description/amount_paid は export されなくなったため空リストで検証する。
+        assert data["journal_entries"] == []
+        assert data["journal_entry_lines"] == []
+        assert data["medical_expenses"] == []
         # 他人の BCB (year/period が同じ組み合わせでも他人のは含まれない)
         # ※ 自分の BCB が存在しなければ list 自体空
         assert data["balance_cache_blobs"] == []

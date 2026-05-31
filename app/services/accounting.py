@@ -31,6 +31,12 @@ def create_journal_entry(user_id, date, description, lines_data,
             暗号化版)。両方セット or 両方 None。
         fiscal_year: Phase E3 - 平文の年度フィルタ用 (date 暗号化後の代替)。
             None なら date.year を使用。
+
+    E3-F PR-D-6-4: 平文 WRITE 停止。date / description / source / fiscal_period
+        は DB の平文列へは書き込まなくなった (本体は encrypted_blob のみ)。
+        date / fiscal_period 引数は fiscal_year / fiscal_month の平文メタ列を
+        導出するためにのみ使用する。description / source 引数は wire 互換のため
+        残置 (request 平文の撤去は follow-up D-6-6)。
         commit: False を指定するとセッションを commit せず flush のみ行う。
             複数 entry をまとめて 1 トランザクションにする batch API 用。
     """
@@ -51,16 +57,14 @@ def create_journal_entry(user_id, date, description, lines_data,
 
     entry = JournalEntry(
         user_id=user_id,
-        date=date,
         entry_number=get_next_entry_number(user_id),
-        description=description,
-        source=source,
         batch_id=batch_id,
-        fiscal_period=fiscal_period,
         encrypted_blob=encrypted_blob,
         blob_iv=blob_iv,
+        # E3-F PR-D-6-4: 平文 date / description / source / fiscal_period 列は
+        # 書き込まない (encrypted_blob に格納済)。fiscal_year / fiscal_month の
+        # 平文メタ列のみ date / fiscal_period 引数から導出して populate する。
         fiscal_year=fiscal_year if fiscal_year is not None else date.year,
-        # E3-F: 平文 fiscal_period / date と並行して新カラムを populate。
         fiscal_month=fiscal_period if fiscal_period is not None else date.month,
     )
     db.session.add(entry)
@@ -83,7 +87,7 @@ def create_journal_entry(user_id, date, description, lines_data,
             account_code=line_data["account_code"],
             debit_amount=line_data["debit_amount"],
             credit_amount=line_data["credit_amount"],
-            description=line_data.get("description", ""),
+            # E3-F PR-D-6-4: 平文 description 列は書き込まない (encrypted_blob のみ)。
             encrypted_blob=line_blob,
             blob_iv=line_iv,
         )
