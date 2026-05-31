@@ -10,9 +10,10 @@ const M = new URL(
 const { computeLedger } = await import(M.href);
 
 
+// E3-F PR-D-6-3b: 集計は保持列 fiscal_month / is_closing を読む。
 function entry(id, fp, source, lines, date = "2026-05-01", desc = "") {
   return {
-    id, fiscal_period: fp, source, date, description: desc,
+    id, fiscal_month: fp, is_closing: source === "closing", date, description: desc,
     lines: lines.map(([code, debit, credit]) => ({
       account_code: code, debit, credit,
     })),
@@ -181,7 +182,7 @@ test("同 entry 内に対象科目の複数 line があれば合算 (debit+debit
 
 test("account_code が null の counterpart line は無視", () => {
   const entries = [
-    {id: 1, fiscal_period: 5, source: "journal", date: "2026-05-01",
+    {id: 1, fiscal_month: 5, is_closing: false, date: "2026-05-01",
      description: "",
      lines: [
        {account_code: "1010", debit: 100, credit: 0},

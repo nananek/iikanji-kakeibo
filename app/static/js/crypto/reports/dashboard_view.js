@@ -6,9 +6,9 @@
 //
 // サーバ仕様 (app/services/tax.get_income_expense_summary):
 //   - 月別: 当該月の収益 (income) - 費用 (expense)
-//   - 年累計: 当年全期間 (fiscal_period 0..15, closing 除外)
+//   - 年累計: 当年全期間 (fiscal_month 0..15, closing 除外)
 //   - 月別の判定は **JournalEntry.date.month** ベースだった。クライアントは
-//     date が暗号化される将来を見据え、fiscal_period (1..12) で月を判定
+//     date が暗号化される将来を見据え、fiscal_month (1..12) で月を判定
 //     する (試算表/月次比較と同じ方針)。fp=0 (期首振戻) と fp=13..15
 //     (決算整理) と fp=16 (損益振替) は月別合計から除外。年累計には
 //     fp=0..15 を含める (E2EE 化前 server 仕様と最も近い)。
@@ -47,8 +47,10 @@ export function composeDashboardView(entries, accountsMeta, options = {}) {
   let yearlyExpense = 0;
 
   for (const entry of entries) {
-    if (entry.source === "closing") continue;
-    const fp = entry.fiscal_period;
+    // E3-F PR-D-6-3b: 平文 source / fiscal_period は API から撤去済。closing 判定は
+    // is_closing、期間判定は保持列 fiscal_month を使う。
+    if (entry.is_closing) continue;
+    const fp = entry.fiscal_month;
     if (typeof fp !== "number") continue;
     if (!ALLOWED_FP_YEARLY.has(fp)) continue;
 

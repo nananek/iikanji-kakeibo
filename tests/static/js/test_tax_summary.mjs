@@ -25,9 +25,10 @@ const NAMES = {
   "5070": "ふるさと納税", "5099": "医療費",
 };
 
+// E3-F PR-D-6-3b: 集計は保持列 fiscal_month / is_closing を読む。
 function entry(id, source, lines) {
   return {
-    id, fiscal_period: 5, source,
+    id, fiscal_month: 5, is_closing: source === "closing",
     lines: lines.map(([code, debit, credit]) => ({
       account_code: code, debit, credit,
     })),
@@ -166,7 +167,7 @@ test("total<0 (credit > debit 返金超過) は結果に含める (サーバ整�
 
 test("account_code null の line はスキップ (復号失敗対応)", () => {
   const entries = [
-    {id: 1, fiscal_period: 5, source: "journal", lines: [
+    {id: 1, fiscal_month: 5, is_closing: false, lines: [
       {account_code: null, debit: 100, credit: 0},
       {account_code: "5050", debit: 200, credit: 0},
     ]},

@@ -26,9 +26,11 @@ const NAMES = {
   "4010": "売上高", "4020": "雑収入", "5010": "食費", "5020": "消耗品費",
 };
 
+// E3-F PR-D-6-3b: レポート集計は保持列 fiscal_month / is_closing を読む
+// (平文 fiscal_period / source は API から撤去済)。
 function entry(id, fp, source, lines) {
   return {
-    id, fiscal_period: fp, source,
+    id, fiscal_month: fp, is_closing: source === "closing",
     lines: lines.map(([code, debit, credit]) => ({
       account_code: code, debit, credit,
     })),
@@ -175,7 +177,7 @@ test("account_code 不明 (account マスタにない) は無視", () => {
 
 test("account_code が null の line はスキップ", () => {
   const entries = [
-    {id: 1, fiscal_period: 5, source: "journal", lines: [
+    {id: 1, fiscal_month: 5, is_closing: false, lines: [
       {account_code: null, debit: 100, credit: 0},   // 復号失敗
       {account_code: "5010", debit: 200, credit: 0},
     ]},

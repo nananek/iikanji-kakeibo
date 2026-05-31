@@ -8,8 +8,8 @@
 //
 // 設計上の制約:
 //   サーバ側は date.month で月を判定するが、クライアントは date が暗号化
-//   されているため fiscal_period (1..12) で月を判定する。
-//   - fp=0 (期首振戻)、fp=13..15 (決算整理)、fp=16 (損益振替)、source=closing
+//   されているため fiscal_month (1..12) で月を判定する。
+//   - fp=0 (期首振戻)、fp=13..15 (決算整理)、fp=16 (損益振替)、is_closing
 //     は月次比較から除外する。これらは年度内全期間集計には P/L 関数で
 //     拾えるが、12 ヶ月の月別棒グラフという表示形式には乗らない。
 
@@ -48,8 +48,10 @@ export function computeMonthlyComparison(entries, options) {
   const incomeByCode = new Map();
 
   for (const entry of entries) {
-    if (entry.source === "closing") continue;
-    const fp = entry.fiscal_period;
+    // E3-F PR-D-6-3b: 平文 source / fiscal_period は API から撤去済。closing 判定は
+    // is_closing、月判定は保持列 fiscal_month を使う。
+    if (entry.is_closing) continue;
+    const fp = entry.fiscal_month;
     if (typeof fp !== "number") continue;
     if (fp < 1 || fp > 12) continue;  // 期首/決算整理/振替は除外
     const monthIdx = fp - 1;

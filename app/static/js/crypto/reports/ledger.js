@@ -77,9 +77,11 @@ export function computeLedger(entries, options) {
   let total_credit = 0;
 
   for (const entry of sorted) {
-    const fp = entry.fiscal_period ?? 0;
+    // E3-F PR-D-6-3b: 平文 fiscal_period / source は API から撤去済。期間判定は
+    // 保持列 fiscal_month、closing 判定は is_closing を使う。
+    const fp = entry.fiscal_month ?? 0;
     if (fp < fiscalPeriodFrom || fp > fiscalPeriodTo) continue;
-    if (!includeClosing && entry.source === "closing") continue;
+    if (!includeClosing && entry.is_closing) continue;
 
     // 当該科目の line のみ抽出 (1 entry 内に同科目の複数 line もあり得る)
     let entryDebit = 0;

@@ -14,7 +14,7 @@
  *
  * @param {Array<Object>} entries
  *   journals_client.fetchJournalsForYear の戻り値形式
- *   [{fiscal_period, source, lines: [{account_code, debit, credit}]}]
+ *   [{fiscal_month, is_closing, lines: [{account_code, debit, credit}]}]
  * @param {Object} options
  * @param {Object} options.accountTypeByCode
  *   {[account_code]: "revenue"|"expense"|"asset"|...} のマッピング。
@@ -23,7 +23,7 @@
  * @param {Object} [options.accountNameByCode]
  *   {[account_code]: 表示名} 任意。breakdown の account_name に使う。
  * @param {number} [options.month]
- *   1..12 を指定すると当該月 (fiscal_period == month) のみ集計。
+ *   1..12 を指定すると当該月 (fiscal_month == month) のみ集計。
  *   未指定なら期首 (fp=0) と通常月 1..12 と決算整理 13..15 を含み、
  *   損益振替 (fp=16) と closing 仕訳は除外 (= 年間 P/L)。
  *
@@ -55,9 +55,11 @@ export function computeProfitLoss(entries, options) {
   const sums = new Map();
 
   for (const entry of entries) {
-    const fp = entry.fiscal_period ?? 0;
+    // E3-F PR-D-6-3b: 平文 fiscal_period / source は API から撤去済。期間判定は
+    // 保持列 fiscal_month、closing 判定は is_closing を使う (両者は書込時に同期)。
+    const fp = entry.fiscal_month ?? 0;
     // closing 仕訳は除外
-    if (entry.source === "closing") continue;
+    if (entry.is_closing) continue;
     // 月指定なら当該月のみ。それ以外は fp=16 (損益振替) を除外
     if (month != null) {
       if (fp !== month) continue;

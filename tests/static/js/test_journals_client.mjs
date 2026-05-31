@@ -212,12 +212,15 @@ test("encrypted entry + lines を復号して正規化する", async () => {
   assert.equal(got.lines[1].credit, 1000);
 });
 
-test("dual-read: blob/iv が null の entry は平文フォールバック", async () => {
+test("blob/iv が null の非 closing entry は date=null/description=空 (平文フォールバック廃止)", async () => {
+  // E3-F PR-D-6-3b: API は平文 date/description/source/fiscal_period を返さない。
+  // 復号不能 (blob/iv null) かつ非 closing の entry は date=null/description=""。
+  // line.account_code 等の平文フォールバックは本 PR の対象外で継続する。
   const client = makeMockClient();
   const fetchImpl = makeFetch([{
     id: 1, fiscal_year: 2026,
-    date: "2026-01-01", description: "未移行行",
-    source: "journal", encrypted_blob: null, blob_iv: null,
+    is_closing: false, fiscal_month: 1,
+    encrypted_blob: null, blob_iv: null,
     lines: [
       { account_code: "5010", debit: 500, credit: 0, description: "",
         encrypted_blob: null, blob_iv: null },
@@ -227,10 +230,38 @@ test("dual-read: blob/iv が null の entry は平文フォールバック", asy
     client, userId: 1, fiscalYear: 2026, fetchImpl,
   });
   assert.equal(result.length, 1);
-  assert.equal(result[0].date, "2026-01-01");
-  assert.equal(result[0].description, "未移行行");
+  assert.equal(result[0].date, null);
+  assert.equal(result[0].description, "");
+  assert.equal(result[0].source, "");
+  assert.equal(result[0].fiscal_period, null);
+  assert.equal(result[0].fiscal_month, 1);
   assert.equal(result[0].lines[0].account_code, "5010");
   assert.equal(result[0].lines[0].debit, 500);
+});
+
+test("closing 仕訳 (空 blob) は保持列から date/description/source/fiscal_period を合成", async () => {
+  // E3-F PR-D-6-3b: サーバは MK を持たず closing を暗号化できないため encrypted_blob
+  // は空。is_closing/fiscal_month/fiscal_year からクライアントが合成する。
+  const client = makeMockClient();
+  const fetchImpl = makeFetch([{
+    id: 9, fiscal_year: 2026,
+    is_closing: true, fiscal_month: 16,
+    encrypted_blob: "", blob_iv: "",
+    lines: [
+      { account_code: "3020", debit: 0, credit: 1000, description: "",
+        encrypted_blob: null, blob_iv: null },
+    ],
+  }]);
+  const result = await fetchJournalsForYear({
+    client, userId: 1, fiscalYear: 2026, fetchImpl,
+  });
+  assert.equal(result.length, 1);
+  assert.equal(result[0].is_closing, true);
+  assert.equal(result[0].date, "2026-12-31");
+  assert.equal(result[0].description, "損益振替仕訳（自動生成）");
+  assert.equal(result[0].source, "closing");
+  assert.equal(result[0].fiscal_period, 16);
+  assert.equal(result[0].fiscal_month, 16);
 });
 
 test("ページネーションで全件取得", async () => {
@@ -239,8 +270,7 @@ test("ページネーションで全件取得", async () => {
   for (let i = 1; i <= 150; i++) {
     entries.push({
       id: i, fiscal_year: 2026,
-      date: `2026-01-${String((i % 28) + 1).padStart(2, "0")}`,
-      description: `entry-${i}`, source: "journal",
+      is_closing: false, fiscal_month: (i % 12) + 1,
       encrypted_blob: null, blob_iv: null,
       lines: [],
     });
@@ -250,9 +280,10 @@ test("ページネーションで全件取得", async () => {
   const result = await fetchJournalsForYear({
     client, userId: 1, fiscalYear: 2026, fetchImpl,
   });
+  // 平文 description は API から撤去済のため id で順序を検証する。
   assert.equal(result.length, 150);
-  assert.equal(result[0].description, "entry-1");
-  assert.equal(result[149].description, "entry-150");
+  assert.equal(result[0].id, 1);
+  assert.equal(result[149].id, 150);
 });
 
 test("HTTP エラーで throw", async () => {
@@ -282,10 +313,10 @@ test("AAD すり替え (別 user_id) は平文フォールバックする (全�
     client, userId: 2, fiscalYear: 2026, fetchImpl,  // userId mismatch
   });
   assert.equal(result.length, 1);
-  // 平文フォールバック値が透過 (null だが throw はしない)
+  // 復号失敗 + 非 closing → date=null / description="" (平文フォールバック廃止)
   assert.equal(result[0].id, 100);
   assert.equal(result[0].date, null);
-  assert.equal(result[0].description, null);
+  assert.equal(result[0].description, "");
 });
 
 test("Option B: encrypted line は line.id が無くても復号成功する", async () => {
@@ -314,34 +345,38 @@ test("Option B: encrypted line は line.id が無くても復号成功する", a
   assert.equal(result[0].lines[0].debit, 100);
 });
 
-test("batch_id も dual-read で平文フォールバック (W-1 修正)", async () => {
+test("batch_id は API レスポンス平文からは取得しない (null)", async () => {
+  // E3-F PR-D-6-3b: batch_id は entryBody に含まれず (batch top-level に集約)、
+  // 平文フォールバックも廃止したため復号不能 entry では null になる。
   const client = makeMockClient();
   const fetchImpl = makeFetch([{
     id: 1, fiscal_year: 2026,
-    date: "2026-01-01", description: "未移行",
-    source: "csv", batch_id: "test-batch-uuid-123",
+    is_closing: false, fiscal_month: 1,
+    batch_id: "test-batch-uuid-123",
     encrypted_blob: null, blob_iv: null,
     lines: [],
   }]);
   const result = await fetchJournalsForYear({
     client, userId: 1, fiscalYear: 2026, fetchImpl,
   });
-  assert.equal(result[0].batch_id, "test-batch-uuid-123");
+  assert.equal(result[0].batch_id, null);
 });
 
-test("fiscal_period が API レスポンスから取れる (dual-read)", async () => {
+test("fiscal_period は復号 blob から取れる (平文フォールバック廃止)", async () => {
+  // E3-F PR-D-6-3b: API は平文 fiscal_period を返さない。期首振戻 (fp=0) も
+  // 暗号文 (body.fiscal_period) から復元する。
   const client = makeMockClient();
-  const fetchImpl = makeFetch([{
-    id: 1, fiscal_year: 2026,
-    date: "2026-01-01", description: "期首",
-    source: "journal", fiscal_period: 0,  // 期首振戻
-    encrypted_blob: null, blob_iv: null,
-    lines: [],
-  }]);
+  const userId = 1;
+  const entry = await makeEncryptedEntry(client, userId, 1, {
+    v: 1, date: "2026-01-01", description: "期首",
+    source: "journal", fiscal_period: 0, fiscal_year: 2026,
+  });
+  const fetchImpl = makeFetch([entry]);
   const result = await fetchJournalsForYear({
-    client, userId: 1, fiscalYear: 2026, fetchImpl,
+    client, userId, fiscalYear: 2026, fetchImpl,
   });
   assert.equal(result[0].fiscal_period, 0);
+  assert.equal(result[0].source, "journal");
 });
 
 test("ページネ: total=0 + journals 非空のサーババグでも全件取得する", async () => {

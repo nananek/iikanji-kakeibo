@@ -12,9 +12,10 @@ const { computeTrialBalance, balanceOf } = await import(M.href);
 
 // --- helper ---
 
+// E3-F PR-D-6-3b: 集計は保持列 fiscal_month / is_closing を読む。
 function entry(id, fp, source, lines) {
   return {
-    id, fiscal_year: 2026, fiscal_period: fp, source,
+    id, fiscal_year: 2026, fiscal_month: fp, is_closing: source === "closing",
     date: "2026-05-01", description: "test",
     lines: lines.map(([code, debit, credit]) => ({
       account_code: code, debit, credit, description: "",
@@ -76,11 +77,11 @@ test("fiscal_period フィルタで範囲外を除外", () => {
   assert.equal(r[0].debit, 200);
 });
 
-test("fiscal_period が null/undefined なら 0 扱い", () => {
+test("fiscal_month が null/undefined なら 0 扱い", () => {
   const entries = [
-    {id: 1, fiscal_period: null, source: "journal",
+    {id: 1, fiscal_month: null, is_closing: false,
      lines: [{account_code: "1010", debit: 100, credit: 0}]},
-    {id: 2, fiscal_period: undefined, source: "journal",
+    {id: 2, fiscal_month: undefined, is_closing: false,
      lines: [{account_code: "1010", debit: 200, credit: 0}]},
   ];
   const r = computeTrialBalance(entries, {
@@ -115,7 +116,7 @@ test("includeClosing=true で source=closing も含める", () => {
 
 test("account_code が null の line はスキップ (復号失敗のフォールバック対応)", () => {
   const entries = [
-    {id: 1, fiscal_period: 5, source: "journal",
+    {id: 1, fiscal_month: 5, is_closing: false,
      lines: [
        {account_code: null, debit: 100, credit: 0},  // 復号失敗
        {account_code: "5010", debit: 200, credit: 0},

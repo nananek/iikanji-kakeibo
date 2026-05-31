@@ -36,8 +36,12 @@ function makeView(opts = {}) {
   };
 }
 
+// E3-F PR-D-6-3b: closing 判定は保持列 is_closing を読む。
 function entry(date, lines, source) {
-  return { id: 1, fiscal_year: 2026, fiscal_period: 5, source: source || "journal", date, lines };
+  return {
+    id: 1, fiscal_year: 2026, fiscal_month: 5,
+    is_closing: source === "closing", date, lines,
+  };
 }
 
 

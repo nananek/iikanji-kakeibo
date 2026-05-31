@@ -15,13 +15,13 @@
  *
  * @param {Array<Object>} entries
  *   journals_client.fetchJournalsForYear() の戻り値形式:
- *   [{id, fiscal_year, fiscal_period, source, lines: [{account_code,
+ *   [{id, fiscal_year, fiscal_month, is_closing, lines: [{account_code,
  *     debit, credit}]}]
  * @param {Object} [options]
- * @param {number} [options.fiscalPeriodFrom=0]  集計対象の最小 fiscal_period
- * @param {number} [options.fiscalPeriodTo=16]   集計対象の最大 fiscal_period
+ * @param {number} [options.fiscalPeriodFrom=0]  集計対象の最小 fiscal_month
+ * @param {number} [options.fiscalPeriodTo=16]   集計対象の最大 fiscal_month
  * @param {boolean} [options.includeClosing=false]
- *   true なら closing 仕訳 (source === "closing") も含める
+ *   true なら closing 仕訳 (is_closing) も含める
  * @returns {Array<Object>}
  *   [{account_code, debit, credit}] (account_code でソート済)
  *
@@ -43,11 +43,12 @@ export function computeTrialBalance(entries, options = {}) {
   const sums = new Map();
 
   for (const entry of entries) {
-    // fiscal_period フィルタ (null は 0 扱い)
-    const fp = entry.fiscal_period ?? 0;
+    // E3-F PR-D-6-3b: 平文 fiscal_period / source は API から撤去済。期間判定は
+    // 保持列 fiscal_month、closing 判定は is_closing を使う (null は 0 扱い)。
+    const fp = entry.fiscal_month ?? 0;
     if (fp < fiscalPeriodFrom || fp > fiscalPeriodTo) continue;
     // closing 仕訳の除外
-    if (!includeClosing && entry.source === "closing") continue;
+    if (!includeClosing && entry.is_closing) continue;
 
     for (const line of entry.lines || []) {
       const code = line.account_code;

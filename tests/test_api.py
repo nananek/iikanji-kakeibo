@@ -980,10 +980,16 @@ class TestListJournals:
         assert resp.status_code == 200
         data = resp.get_json()
         assert data["total"] == 1
-        # 新フィールド (fiscal_period / line.id) が含まれる
+        # E3-F PR-D-6-3b: 平文 date/description/source/fiscal_period は撤去済。
+        # 保持列 fiscal_year/fiscal_month/is_closing + 暗号化 blob を返す。
         e = data["journals"][0]
-        assert "fiscal_period" in e
         assert "fiscal_year" in e
+        assert "fiscal_month" in e
+        assert "is_closing" in e
+        assert "date" not in e
+        assert "description" not in e
+        assert "source" not in e
+        assert "fiscal_period" not in e
         assert all("id" in l for l in e["lines"])
 
     def test_list_scope_required_for_api_key(
@@ -1061,9 +1067,12 @@ class TestGetJournal:
         assert resp.status_code == 200
         j = resp.get_json()["journal"]
         assert j["id"] == entry.id
-        # E3 で追加した新フィールドも返る
-        assert "fiscal_period" in j
+        # E3-F PR-D-6-3b: 平文 fiscal_period 等は撤去済、保持列のみ返る
         assert "fiscal_year" in j
+        assert "fiscal_month" in j
+        assert "is_closing" in j
+        assert "fiscal_period" not in j
+        assert "source" not in j
 
     def test_get_scope_required_for_api_key(
         self, client, db, user, accounts,

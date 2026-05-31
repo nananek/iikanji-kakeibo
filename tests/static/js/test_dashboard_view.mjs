@@ -12,12 +12,14 @@ const { composeDashboardView } = await import(M.href);
 
 // --- helpers ---
 
+// E3-F PR-D-6-3b: 集計は保持列 fiscal_month / is_closing を読む。呼出は従来の
+// fiscal_period / source 指定でも書けるよう互換変換する。
 function entry(opts) {
   return {
     id: opts.id ?? 1,
     fiscal_year: opts.fiscal_year ?? 2026,
-    fiscal_period: opts.fiscal_period ?? 5,
-    source: opts.source || "journal",
+    fiscal_month: opts.fiscal_month ?? opts.fiscal_period ?? 5,
+    is_closing: opts.is_closing ?? (opts.source === "closing"),
     date: opts.date || "2026-05-15",
     description: opts.description || "",
     lines: opts.lines || [],

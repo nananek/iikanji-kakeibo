@@ -65,7 +65,7 @@ export function computeTaxSummary(entries, options) {
   const byCategory = new Map();
 
   for (const entry of entries) {
-    if (entry.source === "closing") continue;
+    if (entry.is_closing) continue;  // E3-F PR-D-6-3b: 平文 source → 保持列 is_closing
     for (const line of entry.lines || []) {
       const code = line.account_code;
       if (code == null) continue;
