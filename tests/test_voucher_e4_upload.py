@@ -26,6 +26,23 @@ _META_IV = bytes(range(12))
 _FILE_HASH_PLAIN = "a" * 64
 
 
+@pytest.fixture(autouse=True)
+def _reset_limiter():
+    """各テスト前に limiter ストレージをリセットする。
+
+    limiter は singleton で、RateLimitTestConfig (RATELIMIT_ENABLED=True) を
+    使う別テストが先行するとフルスイートでは enabled 状態が leak する。本
+    ファイルは同一 user (id=1) で init/PUT を多数呼ぶため、init の 10/min 上限に
+    累積で達して 429 になり得る。各テストでカウンタをリセットして独立させる。
+    """
+    from app.extensions import limiter
+    try:
+        limiter.reset()
+    except Exception:
+        pass
+    yield
+
+
 def _b64(b: bytes) -> str:
     return b64encode(b).decode()
 
