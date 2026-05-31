@@ -11,8 +11,9 @@ const M = new URL(
 const { syncBalanceCacheForPeriod, syncBalanceCacheForPeriods } = await import(M.href);
 
 
+// E3-F PR-D-6-3b: 集計は保持列 fiscal_month / is_closing を読む。
 function _entry(fp, lines, source = "journal") {
-  return { id: fp, fiscal_period: fp, source, lines };
+  return { id: fp, fiscal_month: fp, is_closing: source === "closing", lines };
 }
 
 

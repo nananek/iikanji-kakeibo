@@ -5,17 +5,18 @@
 // 結果を暗号化 → PUT する用途。
 //
 // 計算ルール (compute_balance_cache と同等):
-//   - 集計対象: fiscal_period <= period の entries
-//     fiscal_period が null/未設定 (旧データ救済) なら date の月を使う
-//   - source="closing" の仕訳は period >= 16 (= includeClosing=true) でのみ含める
+//   - 集計対象: fiscal_month <= period の entries
+//     fiscal_month が null/未設定 (旧データ救済) なら date の月を使う
+//   - is_closing の仕訳は period >= 16 (= includeClosing=true) でのみ含める
 //   - 結果は {account_code: [debit, credit]} の dict、両方 0 の account は除外
 
 
 function _effectivePeriod(entry) {
-  const fp = entry.fiscal_period;
+  // E3-F PR-D-6-3b: 平文 fiscal_period は API から撤去済。保持列 fiscal_month を使う。
+  const fp = entry.fiscal_month;
   if (typeof fp === "number") return fp;
   // NULL/未設定: date の月にフォールバック (サーバ period_condition と同じ救済)
-  // 新規 entries は fiscal_period 必須なので発生しないはずだが、旧データ対策
+  // fiscal_month は backfill 済なので発生しないはずだが、旧データ対策
   const d = entry.date;
   if (typeof d === "string" && /^\d{4}-\d{2}/.test(d)) {
     return parseInt(d.substring(5, 7), 10);
@@ -29,7 +30,7 @@ function _effectivePeriod(entry) {
  *
  * @param {Array<Object>} entries
  *   journals_client.fetchJournalsForYear の戻り値形式
- *   [{fiscal_period, source, date, lines: [{account_code, debit, credit}]}]
+ *   [{fiscal_month, is_closing, date, lines: [{account_code, debit, credit}]}]
  * @param {Object} options
  * @param {number} options.period         0..16
  * @param {boolean} [options.includeClosing]
@@ -55,7 +56,7 @@ export function computeBalanceCache(entries, options) {
   for (const entry of entries) {
     const fp = _effectivePeriod(entry);
     if (fp > period) continue;
-    if (!includeClosing && entry.source === "closing") continue;
+    if (!includeClosing && entry.is_closing) continue;
     for (const line of entry.lines || []) {
       const code = line.account_code;
       if (code == null) continue;

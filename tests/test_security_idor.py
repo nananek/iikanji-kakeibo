@@ -333,19 +333,20 @@ class TestAPIJournalLineIDOR:
                                                       accounts, second_user_accounts,
                                                       api_key_raw):
         """API で仕訳一覧を取得しても他人の仕訳が含まれないこと"""
-        make_journal(db, second_user.id, "5010", "1010", 55555,
-                     description="他人の仕訳")
-        make_journal(db, user.id, "5010", "1010", 1000,
-                     description="自分の仕訳")
+        # E3-F PR-D-6-3b: 平文 description は応答から撤去済のため id で検証する。
+        other_entry = make_journal(db, second_user.id, "5010", "1010", 55555,
+                                    description="他人の仕訳")
+        own_entry = make_journal(db, user.id, "5010", "1010", 1000,
+                                 description="自分の仕訳")
 
         raw_key, _ = api_key_raw
         resp = client.get("/api/v1/journals",
                           headers={"Authorization": f"Bearer {raw_key}"})
         assert resp.status_code == 200
         data = resp.get_json()
-        descriptions = [j["description"] for j in data["journals"]]
-        assert "自分の仕訳" in descriptions
-        assert "他人の仕訳" not in descriptions
+        ids = [j["id"] for j in data["journals"]]
+        assert own_entry.id in ids
+        assert other_entry.id not in ids
 
     def test_api_journal_detail_lines_scoped(self, client, db,
                                                user, second_user,

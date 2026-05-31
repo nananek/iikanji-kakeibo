@@ -1135,18 +1135,18 @@ def _entry_to_dict(entry):
     """JournalEntry を API レスポンス用 dict に変換。
 
     Phase E3: encrypted_blob / blob_iv / fiscal_year を base64 で含める。
-    クライアントは blob/iv がセットされていれば自分の MK で復号、なければ
-    旧平文フィールド (date / description / lines[].account_code 等) を使う。
+    クライアントは blob/iv を自分の MK で復号して date / description / source /
+    fiscal_period 等を取り出す。
+
+    E3-F PR-D-6-3b: 平文 date / description / source / fiscal_period の返却を
+    撤去した (これらの列は D-6-5 で DROP 予定)。期間判定・closing 判定はクラ
+    イアントが保持列 fiscal_month / is_closing から行い、closing 仕訳 (暗号化
+    不能で encrypted_blob 空) の date / description は fiscal_year から合成する
+    (journals_client.js _normalizeEntry 参照)。
     """
     return {
         "id": entry.id,
-        "date": entry.date.isoformat() if entry.date else None,
         "entry_number": entry.entry_number,
-        "description": entry.description,
-        "source": entry.source,
-        # E3-C: クライアント側 dual-read 時に fiscal_period が必要 (期首仕訳
-        # 等の月次集計、設計書 §12.7)。
-        "fiscal_period": entry.fiscal_period,
         "fiscal_year": entry.fiscal_year,
         # E3-F: source / fiscal_period DROP 後の平文代替。is_closing は
         # 自動生成された損益振替仕訳 (encrypted_blob 空) の識別にも使う。

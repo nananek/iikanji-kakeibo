@@ -62,7 +62,8 @@ function _collectAmounts(entries, accountsMeta, options = {}) {
   // code → {debit, credit}
   const sums = new Map();
   for (const entry of entries) {
-    if (!includeClosing && entry.source === "closing") continue;
+    // E3-F PR-D-6-3b: 平文 source は API から撤去済。closing 判定は is_closing。
+    if (!includeClosing && entry.is_closing) continue;
     if (fiscalYearOnly != null && entry.fiscal_year !== fiscalYearOnly) {
       continue;
     }

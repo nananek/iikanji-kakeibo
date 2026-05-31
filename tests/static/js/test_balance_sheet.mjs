@@ -31,9 +31,10 @@ const NAMES = {
   "4010": "売上", "5010": "食費",
 };
 
+// E3-F PR-D-6-3b: 集計は保持列 fiscal_month / is_closing を読む。
 function entry(id, fp, source, lines) {
   return {
-    id, fiscal_period: fp, source,
+    id, fiscal_month: fp, is_closing: source === "closing",
     lines: lines.map(([code, debit, credit]) => ({
       account_code: code, debit, credit,
     })),
@@ -187,7 +188,7 @@ test("複数科目の breakdown とソート", () => {
 
 test("account_code 不明・null は無視", () => {
   const entries = [
-    {id: 1, fiscal_period: 5, source: "journal", lines: [
+    {id: 1, fiscal_month: 5, is_closing: false, lines: [
       {account_code: null, debit: 100, credit: 0},   // 復号失敗
       {account_code: "UNKNOWN", debit: 200, credit: 0},  // マスタにない
       {account_code: "1010", debit: 300, credit: 0},
@@ -207,7 +208,7 @@ test("priorCumulative: 前年累計を初期値として加算", () => {
   // 前年 累計: 1010 (現金) +5000, 2010 (未払金) +1000
   // 当年 entries: 1010 +2000
   const entries = [
-    {id: 1, fiscal_period: 5, source: "journal", lines: [
+    {id: 1, fiscal_month: 5, is_closing: false, lines: [
       {account_code: "1010", debit: 2000, credit: 0},
       {account_code: "3010", debit: 0, credit: 2000},
     ]},
@@ -231,7 +232,7 @@ test("priorCumulative: 前年累計を初期値として加算", () => {
 
 test("priorCumulative: 当年 closing で has_closing=true (priorCumulative は無関係)", () => {
   const entries = [
-    {id: 1, fiscal_period: 16, source: "closing", lines: [
+    {id: 1, fiscal_month: 16, is_closing: true, lines: [
       {account_code: "3020", debit: 0, credit: 1000},
     ]},
   ];
@@ -246,7 +247,7 @@ test("priorCumulative: 当年 closing で has_closing=true (priorCumulative は�
 
 test("priorCumulative 未指定なら従来挙動 (空 = 初期値 0)", () => {
   const entries = [
-    {id: 1, fiscal_period: 5, source: "journal", lines: [
+    {id: 1, fiscal_month: 5, is_closing: false, lines: [
       {account_code: "1010", debit: 1000, credit: 0},
       {account_code: "3010", debit: 0, credit: 1000},
     ]},
