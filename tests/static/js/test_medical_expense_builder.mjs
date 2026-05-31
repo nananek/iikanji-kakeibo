@@ -114,9 +114,15 @@ test("encrypted: encrypted_blob / blob_iv が付き、round-trip で復号でき
   });
   assert.ok(typeof p.encrypted_blob === "string" && p.encrypted_blob.length > 0);
   assert.ok(typeof p.blob_iv === "string" && p.blob_iv.length > 0);
-  // 平文も併送 (dual-write)
-  assert.equal(p.patient_name, "家族");
-  assert.equal(p.amount_paid, 8000);
+  assert.equal(p.journal_entry_id, 42);
+  // E3-F PR-D-6-6: 平文は wire に乗らない (encrypted_blob 内のみ)。
+  assert.equal(p.patient_name, undefined);
+  assert.equal(p.hospital_name, undefined);
+  assert.equal(p.treatment_description, undefined);
+  assert.equal(p.provider_type, undefined);
+  assert.equal(p.amount_paid, undefined);
+  assert.equal(p.insurance_reimbursement, undefined);
+  assert.equal(p.date, undefined);
 
   const aad = buildAAD("me", userId);
   const body = await decryptRecord(

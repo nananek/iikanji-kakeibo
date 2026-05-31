@@ -2229,14 +2229,13 @@ def upsert_medical_expense():
     medical.api_update と同じ create-or-update セマンティクス)。医療費 UI が
     サーバレンダ + 平文 POST から client 描画 + client 暗号化に移行する経路。
 
-    リクエスト:
+    リクエスト (E3-F PR-D-6-6: wire 平文除去後):
         {
           journal_entry_id,
           encrypted_blob, blob_iv,            // 必須 (PR-C 同様、平文-only 拒否)
-          // E3-F PR-D-6-4: date / patient_name / hospital_name /
-          // treatment_description / provider_type / amount_paid /
-          // insurance_reimbursement は wire 互換で送られ得るが保存しない
-          // (本体は encrypted_blob のみ。request からの撤去は D-6-6)。
+          // 平文 date / patient_name / hospital_name / treatment_description /
+          // provider_type / amount_paid / insurance_reimbursement は受け取らない
+          // (本体は encrypted_blob のみ。列は 055 で DROP 済)。
         }
     レスポンス: 200 {ok, id}
 
@@ -2284,11 +2283,10 @@ def upsert_medical_expense():
     if err:
         return jsonify({"error": err}), 400
 
-    # E3-F PR-D-6-4: 平文列 (date / patient_name / hospital_name /
+    # E3-F PR-D-6-6: 平文列 (date / patient_name / hospital_name /
     # treatment_description / provider_type / amount_paid /
-    # insurance_reimbursement) の WRITE を停止。本体は encrypted_blob のみに
-    # 格納する。request は wire 互換でこれらを送り続けるが (撤去は D-6-6)、
-    # サーバは保存も検証もしない。
+    # insurance_reimbursement) は wire からも撤去済。本体は encrypted_blob のみ
+    # に格納する (列は 055 で DROP 済)。
     me = MedicalExpense.query.filter_by(
         journal_entry_id=journal_entry_id, user_id=user_id,
     ).first()

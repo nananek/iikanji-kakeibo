@@ -4,19 +4,21 @@
 // 暗号化して POST する」ロジックを JS 純粋関数として実装する。医療費 UI が
 // サーバレンダ → client 描画 + client 暗号化に移行する際に使う。
 //
-// 戻り値: POST /api/v1/medical-expenses にそのまま送れる形:
+// 戻り値: POST /api/v1/medical-expenses にそのまま送れる形
+// (E3-F PR-D-6-6: wire 平文除去後):
 //   {
 //     journal_entry_id,
-//     date, patient_name, hospital_name, treatment_description,
-//     provider_type, amount_paid, insurance_reimbursement,
 //     encrypted_blob, blob_iv,
 //   }
 //
-// dual-storage 期間中は旧平文フィールドも併送する (サーバ側が両方を保存し、
-// バックアップ等の既存平文リーダ互換を保つ)。平文 WRITE 停止は後続 PR。
+// 平文 date / patient_name / hospital_name / treatment_description /
+// provider_type / amount_paid / insurance_reimbursement は wire に乗せない
+// (本体は encrypted_blob に格納済、列は 055 で DROP 済)。サーバが平文で必要と
+// するメタは journal_entry_id のみ。
 //
-// client + userId を渡すと body 全体を MK で AES-GCM 暗号化し encrypted_blob /
-// blob_iv を付与する。client なしでは平文 payload を返す (テスト用途)。
+// client + userId を渡すと body 全体を MK で AES-GCM 暗号化し
+// {journal_entry_id, encrypted_blob, blob_iv} を返す。client なしでは暗号化前の
+// 論理レコード (全フィールド) を同期返却する (テスト用途)。
 // AAD は Option B (buildAAD("me", userId)、medical_expenses は user_id のみで
 // 一意。entry_id 等は含めない — record.js / §12.2 参照)。
 
@@ -62,8 +64,8 @@ function _assertIntAmount(amount, label) {
  * @param {number} [opts.amountPaid=0]        支払額 (非負整数)
  * @param {number} [opts.insuranceReimbursement=0]  保険補填額 (非負整数)
  * @returns {Promise<Object>|Object} medical-expenses POST 用 payload
- *   - client 指定時: Promise<encrypted payload>
- *   - client 未指定時: 平文 payload (同期)
+ *   - client 指定時: Promise<{journal_entry_id, encrypted_blob, blob_iv}>
+ *   - client 未指定時: 暗号化前の論理レコード (全フィールド・同期)
  */
 export function buildMedicalExpense({
   client,
@@ -86,7 +88,9 @@ export function buildMedicalExpense({
   // provider_type は空文字を null に正規化 (DB は nullable)。
   const provider = providerType ? providerType : null;
 
-  const payload = {
+  // 暗号化前の論理レコード (medical_expenses_client._normalize が復号で期待する
+  // shape と同じ)。client なしのときはこれをそのまま返す (テスト用途)。
+  const record = {
     journal_entry_id: journalEntryId,
     date: date || null,
     patient_name: patientName || "",
@@ -98,25 +102,26 @@ export function buildMedicalExpense({
   };
 
   if (!client) {
-    return payload;
+    return record;
   }
 
   _validateUserId(userId);
 
-  // 暗号化 body は medical_expenses_client._normalize が復号で期待する shape。
   const body = {
     v: 1,
-    date: payload.date,
-    patient_name: payload.patient_name,
-    hospital_name: payload.hospital_name,
-    treatment_description: payload.treatment_description,
-    provider_type: payload.provider_type,
-    amount_paid: payload.amount_paid,
-    insurance_reimbursement: payload.insurance_reimbursement,
+    date: record.date,
+    patient_name: record.patient_name,
+    hospital_name: record.hospital_name,
+    treatment_description: record.treatment_description,
+    provider_type: record.provider_type,
+    amount_paid: record.amount_paid,
+    insurance_reimbursement: record.insurance_reimbursement,
   };
   const aad = buildAAD("me", userId);
+  // E3-F PR-D-6-6: wire に乗せる平文は journal_entry_id のみ。明細の実値は
+  // encrypted_blob に格納する。
   return encryptRecord(client, body, aad).then((enc) => ({
-    ...payload,
+    journal_entry_id: journalEntryId,
     encrypted_blob: b64encode(enc.blob),
     blob_iv: b64encode(enc.iv),
   }));
