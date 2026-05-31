@@ -178,6 +178,7 @@ let _client = null;
 let _userId = null;
 let _canDecrypt = false;
 let _decryptImage = null;  // voucher_download.fetchAndDecryptVoucherImage
+let _sniffMime = null;     // voucher_download.sniffImageMime
 let _fullPreviewUrl = null;  // 直近の本体プレビュー blob URL (revoke 用)
 
 
@@ -238,7 +239,9 @@ function _openDecryptedFull(voucherId) {
       if (_fullPreviewUrl) {
         try { URL.revokeObjectURL(_fullPreviewUrl); } catch (_e) { /* ignore */ }
       }
-      _fullPreviewUrl = URL.createObjectURL(new Blob([bytes]));
+      _fullPreviewUrl = URL.createObjectURL(
+        new Blob([bytes], { type: _sniffMime(bytes) }),
+      );
       if (typeof globalThis.openImagePreview === "function") {
         globalThis.openImagePreview(_fullPreviewUrl);
       }
@@ -295,7 +298,9 @@ function _renderCardImage(wrap, c) {
   // サムネを非同期復号 → blob URL。失敗時はロック表示に差し替え。
   _decryptImage({ client: _client, userId: _userId, voucherId: c.voucher_id, thumb: true })
     .then((bytes) => {
-      const url = URL.createObjectURL(new Blob([bytes]));
+      const url = URL.createObjectURL(
+        new Blob([bytes], { type: _sniffMime(bytes) }),
+      );
       // 表示完了後に revoke してメモリリークを防ぐ。
       img.onload = () => { try { URL.revokeObjectURL(url); } catch (_e) { /* ignore */ } };
       img.src = url;
@@ -552,10 +557,15 @@ async function _run() {
     _client = client;
     _canDecrypt = true;
     _decryptImage = voucherDl.fetchAndDecryptVoucherImage;
-    // ページ離脱時にクライアント (SharedWorker port) を明示クローズ。
+    _sniffMime = voucherDl.sniffImageMime;
+    // ページ離脱時にクライアント (SharedWorker port) を明示クローズし、保持中の
+    // プレビュー blob URL も revoke する。
     if (typeof window !== "undefined") {
       window.addEventListener("beforeunload", () => {
         try { if (_client) _client.close(); } catch (_e) { /* ignore */ }
+        if (_fullPreviewUrl) {
+          try { URL.revokeObjectURL(_fullPreviewUrl); } catch (_e) { /* ignore */ }
+        }
       }, { once: true });
     }
 
