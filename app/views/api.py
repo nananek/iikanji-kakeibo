@@ -1201,19 +1201,10 @@ def list_journals():
 
     query = JournalEntry.query.filter_by(user_id=user_id)
 
-    date_from = request.args.get("date_from")
-    if date_from:
-        try:
-            query = query.filter(JournalEntry.date >= date_type.fromisoformat(date_from))
-        except ValueError:
-            return jsonify({"error": "date_from の形式が不正です（YYYY-MM-DD）。"}), 400
-
-    date_to = request.args.get("date_to")
-    if date_to:
-        try:
-            query = query.filter(JournalEntry.date <= date_type.fromisoformat(date_to))
-        except ValueError:
-            return jsonify({"error": "date_to の形式が不正です（YYYY-MM-DD）。"}), 400
+    # E3-F PR-D-6-3: 平文 date による絞り込み (date_from / date_to) は撤去した
+    # (date 列は D-6-5 で DROP 予定)。ブラウザクライアントは fiscal_year 単位で
+    # 全件取得し、復号後にクライアント側で日付フィルタする。旧 Bearer 外部
+    # クライアント (date_from/to 利用) は既に deprecate 済み。
 
     # Phase E3: fiscal_year フィルタ (date 暗号化後にレポート集計が依存)。
     # POST 時の検証と同じ範囲 1900〜2200 を要求する。
@@ -1230,8 +1221,15 @@ def list_journals():
         query = query.filter(JournalEntry.fiscal_year == fy)
 
     total = query.count()
+    # E3-F PR-D-6-3: 平文 date 順から fiscal_year / fiscal_month / entry_number
+    # 順へ移行 (date 列は D-6-5 で DROP)。entry_number はユーザー単位の連番で
+    # 一意なので最終 tiebreaker として順序を確定させる。
     entries = (
-        query.order_by(JournalEntry.date.desc(), JournalEntry.entry_number.desc())
+        query.order_by(
+            JournalEntry.fiscal_year.desc(),
+            JournalEntry.fiscal_month.desc(),
+            JournalEntry.entry_number.desc(),
+        )
         .offset((page - 1) * per_page)
         .limit(per_page)
         .all()
@@ -1956,37 +1954,10 @@ def list_vouchers():
         .filter(Voucher.user_id == user_id)
     )
 
-    date_from = request.args.get("date_from")
-    if date_from:
-        try:
-            d = date_type.fromisoformat(date_from)
-            query = query.filter(
-                db.or_(
-                    JournalEntry.date >= d,
-                    db.and_(Voucher.journal_entry_id.is_(None),
-                            func.date(Voucher.uploaded_at) >= date_from),
-                )
-            )
-        except ValueError:
-            return jsonify({"error": "date_from の形式が不正です。"}), 400
-
-    date_to = request.args.get("date_to")
-    if date_to:
-        try:
-            d = date_type.fromisoformat(date_to)
-            query = query.filter(
-                db.or_(
-                    JournalEntry.date <= d,
-                    db.and_(Voucher.journal_entry_id.is_(None),
-                            func.date(Voucher.uploaded_at) <= date_to),
-                )
-            )
-        except ValueError:
-            return jsonify({"error": "date_to の形式が不正です。"}), 400
-
-    search = request.args.get("search")
-    if search:
-        query = query.filter(JournalEntry.description.ilike(f"%{search}%"))
+    # E3-F PR-D-6-3: 平文 date / description による絞り込み (date_from /
+    # date_to / search) は撤去した (両列は D-6-5 で DROP)。電帳法の検索要件は
+    # ブラウザの証憑一覧 (クライアント側で復号データを検索) が満たす。本 Bearer
+    # API は外部クライアント専用で既に deprecate 済み。
 
     amount_from = request.args.get("amount_from", type=int)
     amount_to = request.args.get("amount_to", type=int)
@@ -2008,9 +1979,11 @@ def list_vouchers():
             query = query.filter(amount_subq.c.total <= amount_to)
 
     total = query.count()
+    # E3-F PR-D-6-3: 平文 date によるソートを撤去し uploaded_at (証憑の保存
+    # 時刻、DROP 対象外) 降順に変更した。
     vouchers = (
         query.order_by(
-            func.coalesce(JournalEntry.date, func.date(Voucher.uploaded_at)).desc(),
+            Voucher.uploaded_at.desc(),
             Voucher.id.desc(),
         )
         .offset((page - 1) * per_page)
@@ -2028,18 +2001,15 @@ def list_vouchers():
             "uploaded_at": v.uploaded_at.isoformat() if v.uploaded_at else None,
         }
         if entry:
+            # E3-F PR-D-6-3: 平文 date / description の返却を撤去した
+            # (D-6-5 で DROP)。amount は line.debit_amount 由来で平文保持。
+            # 入力期限警告 (deadline_exceeded) は date 依存のため撤去 (電帳法
+            # の期限チェックはブラウザ証憑一覧が担う)。
             d["journal"] = {
-                "date": entry.date.isoformat(),
-                "description": entry.description,
                 "amount": int(entry.total_debit),
             }
-            if v.uploaded_at:
-                d["deadline_exceeded"] = (v.uploaded_at.date() - entry.date).days > 67
-            else:
-                d["deadline_exceeded"] = False
         else:
             d["journal"] = None
-            d["deadline_exceeded"] = False
         result.append(d)
 
     return jsonify({

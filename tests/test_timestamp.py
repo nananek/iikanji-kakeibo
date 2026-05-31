@@ -51,8 +51,9 @@ class TestVoucherListDeadline:
     期限超過 (uploaded - 仕訳日 > 67日) の判定・バッジ描画は仕訳日 (平文 date)
     に依存するため、サーバではなくクライアント (index_renderer.mjs の
     buildVoucherCards) が復号済み仕訳日から算出する。サーバ HTML には
-    バッジが出ないことを担保 (ロジック検証は test_voucher_index_cards.mjs、
-    Bearer API の deadline_exceeded は TestAPIDeadline でサーバ側を担保)。
+    バッジが出ないことを担保 (ロジック検証は test_voucher_index_cards.mjs)。
+    E3-F PR-D-6-3: Bearer API の deadline_exceeded フィールドは date 依存の
+    ため撤去した (旧 TestAPIDeadline は削除)。
     """
 
     def test_badge_not_server_rendered(self, db, logged_in_client, user, accounts):
@@ -79,58 +80,6 @@ class TestVoucherListDeadline:
         assert "uploaded_at" in html
 
 
-class TestAPIDeadline:
-    """API 証憑一覧 deadline_exceeded フィールドのテスト"""
-
-    def test_api_deadline_exceeded(self, client, db, user, accounts, auth_header):
-        old_date = date(2025, 10, 1)
-        entry = make_journal(
-            db, user.id, "5010", "1010", 500,
-            source="ai_receipt", entry_date=old_date,
-        )
-        v = Voucher(
-            user_id=user.id,
-            journal_entry_id=entry.id,
-            image_key="vouchers/1/api1.jpg",
-            image_mime="image/jpeg",
-            uploaded_at=datetime(2026, 1, 15, tzinfo=timezone.utc),
-        )
-        db.session.add(v)
-        db.session.commit()
-
-        resp = client.get("/api/v1/vouchers", headers=auth_header)
-        data = resp.get_json()
-        assert data["vouchers"][0]["deadline_exceeded"] is True
-
-    def test_api_within_deadline(self, client, db, user, accounts, auth_header):
-        entry = make_journal(
-            db, user.id, "5010", "1010", 500,
-            source="ai_receipt", entry_date=date(2026, 1, 10),
-        )
-        v = Voucher(
-            user_id=user.id,
-            journal_entry_id=entry.id,
-            image_key="vouchers/1/api2.jpg",
-            image_mime="image/jpeg",
-            uploaded_at=datetime(2026, 1, 15, tzinfo=timezone.utc),
-        )
-        db.session.add(v)
-        db.session.commit()
-
-        resp = client.get("/api/v1/vouchers", headers=auth_header)
-        data = resp.get_json()
-        assert data["vouchers"][0]["deadline_exceeded"] is False
-
-    def test_api_orphan_no_deadline(self, client, db, user, auth_header):
-        v = Voucher(
-            user_id=user.id,
-            journal_entry_id=None,
-            image_key="vouchers/1/orphan.jpg",
-            image_mime="image/jpeg",
-        )
-        db.session.add(v)
-        db.session.commit()
-
-        resp = client.get("/api/v1/vouchers", headers=auth_header)
-        data = resp.get_json()
-        assert data["vouchers"][0]["deadline_exceeded"] is False
+# E3-F PR-D-6-3: 旧 TestAPIDeadline (Bearer 証憑 API の deadline_exceeded
+# フィールド検証) は削除した。期限超過判定は date (D-6-5 で DROP) に依存する
+# ため API 応答から撤去し、ブラウザ証憑一覧 (復号済み仕訳日から算出) が担う。

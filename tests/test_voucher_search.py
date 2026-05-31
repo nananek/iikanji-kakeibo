@@ -108,7 +108,8 @@ class TestAPIVoucherList:
         assert len(data["vouchers"]) == 1
         v = data["vouchers"][0]
         assert v["journal"]["amount"] == 1000
-        assert v["journal"]["description"] is not None
+        # E3-F PR-D-6-3: 平文 date / description は応答から撤去した。amount
+        # (line.debit_amount 由来・平文保持) のみ返す。
 
     def test_api_list_empty(self, client, db, user, auth_header):
         resp = client.get("/api/v1/vouchers", headers=auth_header)
@@ -117,39 +118,10 @@ class TestAPIVoucherList:
         assert data["total"] == 0
         assert data["vouchers"] == []
 
-    def test_api_date_filter(self, client, db, user, accounts, auth_header):
-        e1 = make_journal(
-            db, user.id, "5010", "1010", 500,
-            source="ai_receipt", entry_date=date(2025, 1, 15),
-        )
-        make_voucher(db, user.id, journal_entry_id=e1.id)
-        e2 = make_journal(
-            db, user.id, "5010", "1010", 800,
-            source="ai_receipt", entry_date=date(2025, 3, 20),
-        )
-        make_voucher(db, user.id, journal_entry_id=e2.id)
-
-        resp = client.get(
-            "/api/v1/vouchers?date_from=2025-03-01",
-            headers=auth_header,
-        )
-        data = resp.get_json()
-        assert data["total"] == 1
-        assert data["vouchers"][0]["journal"]["amount"] == 800
-
-    def test_api_search_filter(self, client, db, user, accounts, auth_header):
-        e1 = make_journal(
-            db, user.id, "5010", "1010", 500,
-            source="ai_receipt", description="タクシー代",
-        )
-        make_voucher(db, user.id, journal_entry_id=e1.id)
-
-        resp = client.get(
-            "/api/v1/vouchers?search=タクシー",
-            headers=auth_header,
-        )
-        data = resp.get_json()
-        assert data["total"] == 1
+    # E3-F PR-D-6-3: Bearer 証憑 API の date_from/date_to/search による絞り込みは
+    # 撤去した (平文 date / description は D-6-5 で DROP)。電帳法の検索要件は
+    # ブラウザ証憑一覧 (クライアント側で復号データを検索) が満たす。関連テスト
+    # (test_api_date_filter / test_api_search_filter) を削除した。
 
     def test_api_orphan_voucher(self, client, db, user, auth_header):
         v = Voucher(
