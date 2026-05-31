@@ -935,31 +935,9 @@ class TestListJournals:
         assert isinstance(line["credit"], int), \
             f"credit should be int, got {type(line['credit']).__name__}"
 
-    def test_date_filter(self, client, db, user, accounts, auth_header):
-        make_journal(db, user.id, "5010", "1010",
-                     1000, entry_date=date(2026, 1, 15))
-        make_journal(db, user.id, "5010", "1010",
-                     2000, entry_date=date(2026, 2, 15))
-        resp = client.get("/api/v1/journals?date_from=2026-02-01",
-                          headers=auth_header)
-        data = resp.get_json()
-        assert data["total"] == 1
-
-    def test_date_from_invalid_format_returns_400(
-        self, client, db, user, accounts, auth_header,
-    ):
-        resp = client.get("/api/v1/journals?date_from=2026/02/01",
-                          headers=auth_header)
-        assert resp.status_code == 400
-        assert "date_from" in resp.get_json()["error"]
-
-    def test_date_to_invalid_format_returns_400(
-        self, client, db, user, accounts, auth_header,
-    ):
-        resp = client.get("/api/v1/journals?date_to=not-a-date",
-                          headers=auth_header)
-        assert resp.status_code == 400
-        assert "date_to" in resp.get_json()["error"]
+    # E3-F PR-D-6-3: date_from / date_to による絞り込みは撤去したため
+    # 関連テスト (test_date_filter / test_date_*_invalid_format) を削除した。
+    # 年度別取得は test_fiscal_year_filter が担保する。
 
     def test_fiscal_year_filter(self, client, db, user, accounts, auth_header):
         """Phase E3: fiscal_year パラメータで年度別取得 (date 暗号化後の代替)。"""

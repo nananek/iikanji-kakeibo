@@ -127,7 +127,9 @@ def edit(entry_id):
 
     form.date.data = entry.date
     form.description.data = entry.description
-    form.fiscal_period.data = str(entry.fiscal_period) if entry.fiscal_period is not None else ""
+    # E3-F PR-D-6-3: 平文 fiscal_period から保持列 fiscal_month へ移行
+    # (fiscal_period 列は D-6-5 で DROP)。両者は書込時に同期されており等価。
+    form.fiscal_period.data = str(entry.fiscal_month) if entry.fiscal_month is not None else ""
     # 仕訳明細から元のデータを復元（3方向検出）
     lines = entry.lines
     if len(lines) == 2:

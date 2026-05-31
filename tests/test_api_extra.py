@@ -162,36 +162,10 @@ class TestVouchersList:
         assert body["total"] == 1
         assert body["vouchers"][0]["journal"] is None
 
-    def test_date_from_filter(self, db, client, user, auth_header, accounts):
-        e1 = make_journal(db, user.id, "5010", "1010", 100,
-                          entry_date=date(2026, 1, 15), source="ai_receipt")
-        e2 = make_journal(db, user.id, "5010", "1010", 200,
-                          entry_date=date(2026, 2, 15), source="ai_receipt")
-        make_voucher(db, user.id, journal_entry_id=e1.id, image_key="vouchers/1/1.jpg")
-        make_voucher(db, user.id, journal_entry_id=e2.id, image_key="vouchers/1/2.jpg")
-        resp = client.get("/api/v1/vouchers?date_from=2026-02-01",
-                          headers=auth_header)
-        body = resp.get_json()
-        assert body["total"] == 1
-
-    def test_invalid_date_from(self, client, auth_header, accounts):
-        resp = client.get("/api/v1/vouchers?date_from=BAD",
-                          headers=auth_header)
-        assert resp.status_code == 400
-
-    def test_search_filter(self, db, client, user, auth_header, accounts):
-        e1 = make_journal(db, user.id, "5010", "1010", 100,
-                          entry_date=date(2026, 2, 15), source="ai_receipt",
-                          description="セブン")
-        e2 = make_journal(db, user.id, "5010", "1010", 200,
-                          entry_date=date(2026, 2, 16), source="ai_receipt",
-                          description="ファミマ")
-        make_voucher(db, user.id, journal_entry_id=e1.id, image_key="vouchers/1/1.jpg")
-        make_voucher(db, user.id, journal_entry_id=e2.id, image_key="vouchers/1/2.jpg")
-        resp = client.get("/api/v1/vouchers?search=セブン",
-                          headers=auth_header)
-        body = resp.get_json()
-        assert body["total"] == 1
+    # E3-F PR-D-6-3: Bearer 証憑 API の date_from / date_to / search 絞り込みは
+    # 撤去した (平文 date / description は D-6-5 で DROP)。関連テスト
+    # (test_date_from_filter / test_invalid_date_from / test_search_filter) を削除。
+    # amount 絞り込み (line.debit_amount 由来・平文保持) は test_amount_filter で継続。
 
     def test_amount_filter(self, db, client, user, auth_header, accounts):
         e1 = make_journal(db, user.id, "5010", "1010", 100,

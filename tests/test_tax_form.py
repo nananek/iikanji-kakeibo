@@ -355,8 +355,8 @@ class TestBusinessIncome:
             entry = JournalEntry(
                 user_id=user.id, date=date(2026, m, 15),
                 entry_number=m, description=f"{m}月売上", source="journal",
-            fiscal_year=2026, fiscal_month=m,
-        )
+                fiscal_year=2026, fiscal_month=m,
+            )
             entry.lines = [
                 JournalEntryLine(account_user_id=user.id, account_code="1010",
                                  debit_amount=10000, credit_amount=0),
