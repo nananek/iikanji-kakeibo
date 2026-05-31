@@ -365,6 +365,9 @@ var currentHasVoucher = false;
 // E3-F PR-D-6-5: モーダルで復号した entry メタ (date/description)。voucher-attach
 // の AI プロンプトに渡す (サーバは平文 journal_date/description を返さなくなった)。
 var currentEntryMeta = null;
+// E4 PR-C2: 暗号化証憑添付時の AI 解析プロンプト用に借方合計 (平文・非暗号化)
+// を保持する。サーバ attach レスポンスは廃止したためモーダル open 時に控える。
+var currentEntryDebitTotal = 0;
 var editModal = null;
 
 var _isMobile = window.innerWidth <= 576;
@@ -501,6 +504,9 @@ async function openEditModal(entryId) {
     // entry レベルの date / description / fiscal_period は blob 復号で取得
     var meta = await decryptModalEntry(data);
     currentEntryMeta = meta;
+    // 借方合計 (平文・行レベル金額は E3 でも非暗号化) を AI プロンプト用に控える。
+    currentEntryDebitTotal = (data.lines || []).reduce(
+      function(s, l) { return s + (l.debit || 0); }, 0);
 
     currentHasVoucher = data.has_voucher || false;
     renderVoucherPreview(document.getElementById('modalVoucherPreview'), data.vouchers);
@@ -789,58 +795,79 @@ function toggleVoucherUpload() {
   }
 }
 
-function uploadVoucher() {
+async function uploadVoucher() {
   var input = document.getElementById('voucherFileInput');
   if (!input.files.length) return;
   var file = input.files[0];
 
-  var formData = new FormData();
-  formData.append('image', file);
+  var paramsEl = document.getElementById('ledger-server-params');
+  var params = paramsEl ? JSON.parse(paramsEl.textContent) : {};
+  if (typeof params.user_id !== 'number') {
+    showVoucherError('初期化エラー (user_id)。');
+    return;
+  }
 
   document.getElementById('voucherUploadProgress').classList.remove('d-none');
   document.getElementById('voucherCheckResult').classList.add('d-none');
 
-  // サーバ側 AI 解析は廃止。attach レスポンスは voucher_id +
-  // entry メタ (journal_date/amount/description) のみ。AI 解析は E2EE モード
-  // のクライアント側で別途実行する。
-  fetch('/vouchers/attach/' + currentEntryId, {
-    method: 'POST',
-    headers: { 'X-CSRFToken': csrfToken },
-    body: formData,
-  })
-  .then(function(r) { return r.json().then(function(d) { return { ok: r.ok, data: d }; }); })
-  .then(function(result) {
-    if (!result.ok || result.data.error) {
-      document.getElementById('voucherUploadProgress').classList.add('d-none');
-      showVoucherError(result.data.error || 'エラーが発生しました。');
-      return;
+  // E4 PR-C2: クライアント完結 E2EE 暗号化 upload (2 段階)。原画像・サムネ・
+  // メタはクライアントが MK で暗号化し、サーバは暗号文のみ受け取る。
+  var uploadMod = await import(
+    "{{ url_for('static', filename='js/crypto/voucher_upload.js') }}"
+  );
+  var thumbMod = await import(
+    "{{ url_for('static', filename='js/vouchers/thumbnail.js') }}"
+  );
+  var sharedClientMod = await import(
+    "{{ url_for('static', filename='js/crypto/shared-client.js') }}"
+  );
+  var workerUrl =
+    "{{ url_for('static', filename='js/crypto/shared-worker.js') }}";
+  var client = new sharedClientMod.SharedCryptoClient(workerUrl);
+  try {
+    var status = await client.status();
+    if (!status.hasKey) {
+      throw new Error(
+        '暗号鍵 (MK) がロックされています。設定→暗号鍵管理 で解除してください。',
+      );
     }
+    await uploadMod.uploadEncryptedVoucher({
+      client: client,
+      userId: params.user_id,
+      file: file,
+      journalEntryId: currentEntryId,
+      makeThumbnail: thumbMod.makeThumbnail,
+      csrf: csrfToken,
+    });
     refreshVoucherPreview();
     input.value = '';
-
-    // E2EE モード時はクライアント側で AI 解析を実行 (compliance + consistency)
-    // ai-config が未設定なら静かにスキップ (添付成功のみ通知)
-    return runVoucherAttachAiIfE2EE(file, result.data)
-      .then(function(aiData) {
-        document.getElementById('voucherUploadProgress').classList.add('d-none');
-        if (aiData) {
-          renderAICheckResult(aiData);
-        } else {
-          showVoucherSuccess('証憑を添付しました。');
-        }
-      })
-      .catch(function(err) {
-        document.getElementById('voucherUploadProgress').classList.add('d-none');
-        // 添付自体は成功しているので success + AI エラー注記
-        showVoucherSuccess(
-          '証憑を添付しました (AI 解析エラー: ' + (err.message || err) + ')',
-        );
-      });
-  })
-  .catch(function() {
+  } catch (err) {
     document.getElementById('voucherUploadProgress').classList.add('d-none');
-    showVoucherError('通信エラーが発生しました。');
-  });
+    showVoucherError(
+      '証憑の暗号化アップロードに失敗しました: ' + (err.message || err),
+    );
+    try { client.close(); } catch (_e) { /* ignore */ }
+    return;
+  }
+  try { client.close(); } catch (_e) { /* ignore */ }
+
+  // E2EE モード時はクライアント側で AI 解析を実行 (compliance + consistency)。
+  // ai-config が未設定なら静かにスキップ (添付成功のみ通知)。
+  runVoucherAttachAiIfE2EE(file, { journal_amount: currentEntryDebitTotal })
+    .then(function(aiData) {
+      document.getElementById('voucherUploadProgress').classList.add('d-none');
+      if (aiData) {
+        renderAICheckResult(aiData);
+      } else {
+        showVoucherSuccess('証憑を暗号化して添付しました。');
+      }
+    })
+    .catch(function(err) {
+      document.getElementById('voucherUploadProgress').classList.add('d-none');
+      showVoucherSuccess(
+        '証憑を暗号化して添付しました (AI 解析エラー: ' + (err.message || err) + ')',
+      );
+    });
 }
 
 

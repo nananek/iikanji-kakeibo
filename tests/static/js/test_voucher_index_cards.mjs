@@ -22,6 +22,7 @@ function meta(o) {
     fiscal_year: o.fiscal_year ?? null,
     uploaded_at: o.uploaded_at ?? null,
     has_hash: o.has_hash ?? false,
+    encrypted: o.encrypted ?? false,
   };
 }
 
@@ -68,6 +69,19 @@ test("紐付けだが仕訳未復号 (entryMap に無い) は uploaded_at fallba
   assert.equal(c.entry_number, 7); // メタから取れる
   assert.equal(c.effective_date, "2026-04-01"); // uploaded fallback
   assert.equal(c.amount, null);
+});
+
+test("encrypted フラグをカードに伝播 (E4 PR-C2)", () => {
+  const cards = buildVoucherCards(
+    [
+      meta({ id: 1, journal_entry_id: null, uploaded_at: "2026-03-01T00:00:00", encrypted: true }),
+      meta({ id: 2, journal_entry_id: null, uploaded_at: "2026-03-02T00:00:00", encrypted: false }),
+    ],
+    new Map(),
+  );
+  const byId = Object.fromEntries(cards.map((c) => [c.voucher_id, c]));
+  assert.equal(byId[1].encrypted, true);
+  assert.equal(byId[2].encrypted, false);
 });
 
 test("入力期限超過 (uploaded - 仕訳日 > 67日) で overdue_days を設定", () => {

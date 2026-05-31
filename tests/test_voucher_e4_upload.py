@@ -324,6 +324,34 @@ class TestAuditLogEncryptedDetail:
         assert by_action["deleted"]["detail_iv"] is None
 
 
+class TestIndexEncryptedFlag:
+    """E4 PR-C2: vouchers/index の voucher_meta に encrypted フラグが載る。"""
+
+    def test_index_exposes_encrypted_flag(self, logged_in_client, db, user):
+        import json as _json
+
+        plain = make_voucher(db, user.id)  # encrypted_meta_blob なし
+        enc = Voucher(
+            user_id=user.id, image_key="vouchers/1/9.bin",
+            image_mime="application/octet-stream",
+            encrypted_meta_blob=b"blob", meta_iv=bytes(12),
+        )
+        db.session.add(enc)
+        db.session.commit()
+
+        resp = logged_in_client.get("/vouchers/")
+        assert resp.status_code == 200
+        html = resp.get_data(as_text=True)
+        start = html.index('id="vouchers-index-meta"')
+        snippet = html[start:start + 600]
+        json_start = snippet.index(">") + 1
+        json_end = snippet.index("</script>")
+        meta = _json.loads(snippet[json_start:json_end])
+        by_id = {m["id"]: m for m in meta}
+        assert by_id[plain.id]["encrypted"] is False
+        assert by_id[enc.id]["encrypted"] is True
+
+
 class TestServeEncryptedVoucher:
     def test_serves_ciphertext_octet_stream(self, logged_in_client, user):
         vid = _init_voucher(logged_in_client).get_json()["voucher_id"]
