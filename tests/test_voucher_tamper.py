@@ -75,8 +75,9 @@ class TestOrphanLogging:
         logs = VoucherAuditLog.query.filter_by(voucher_id=v.id).all()
         assert len(logs) == 1
         assert logs[0].action == "orphaned"
-        detail = json.loads(logs[0].detail)
-        assert detail["journal_entry_id"] == entry.id
+        # E4 PR-D: 平文 detail は書かない。"orphaned" action 自体が「紐付け
+        # 仕訳が削除された事実」(電帳法 訂正削除の事実) を担保する。
+        assert logs[0].detail is None
 
     def test_bulk_delete_logs_orphan(self, db, logged_in_client, user, accounts):
         entry = make_journal(

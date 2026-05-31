@@ -1,7 +1,6 @@
 """証憑ヘルパー — Voucher 作成・管理"""
 
 import hashlib
-import json
 
 from app.extensions import db
 from app.models.user import User
@@ -112,14 +111,14 @@ def create_voucher_from_upload(
     store_image_with_thumbnail(key, image_bytes, mime_type)
     voucher.image_key = key
 
+    # E4 PR-D: 平文 detail は書かない。紐付け先 (journal_entry_id) は
+    # voucher.journal_entry_id 列に保持されており冗長。action + voucher_id +
+    # created_at で証跡は足りる (encrypted_detail_blob はクライアント供給の
+    # 暗号化ノート用に予約、valog AAD)。
     db.session.add(VoucherAuditLog(
         voucher_id=voucher.id,
         user_id=user_id,
         action="attached",
-        detail=json.dumps(
-            {"journal_entry_id": journal_entry_id},
-            ensure_ascii=False,
-        ),
     ))
 
     # ON CONFLICT upsert で StorageUsage を加算 (commit せず単一 tx 内に保持)
@@ -250,15 +249,12 @@ def finalize_voucher_upload(
     voucher.file_hash_plain = file_hash_plain
     voucher.file_size = size
 
+    # E4 PR-D: 平文 detail は書かない (journal_entry_id は voucher 行に保持済で
+    # 冗長)。encrypted_detail_blob はクライアント供給の暗号化ノート用に予約。
     db.session.add(VoucherAuditLog(
         voucher_id=voucher.id,
         user_id=voucher.user_id,
         action="attached",
-        # detail の暗号化は PR-D で実施。dual-write 期は平文の非機微情報 (FK) のみ。
-        detail=json.dumps(
-            {"journal_entry_id": voucher.journal_entry_id},
-            ensure_ascii=False,
-        ),
     ))
 
     record_upload(user, size, suppress_commit=True)

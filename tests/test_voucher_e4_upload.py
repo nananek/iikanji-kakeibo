@@ -15,7 +15,7 @@ from app.models.storage import StorageUsage
 from app.models.voucher import Voucher
 from app.models.voucher_audit_log import VoucherAuditLog
 from app.services.storage import get_storage_backend
-from tests.conftest import make_journal
+from tests.conftest import make_journal, make_voucher
 
 
 # iv(12B) || ciphertext || GCM tag(16B) を模した opaque blob。
@@ -277,6 +277,51 @@ class TestAtomicClaim:
                     v, _IMAGE_CT, _THUMB_CT, _META_BLOB, _META_IV,
                     _FILE_HASH_PLAIN,
                 )
+
+
+class TestAuditLogEncryptedDetail:
+    """E4 PR-D: api_voucher_logs が平文 detail を返さず encrypted_detail_blob /
+    detail_iv (b64) を返す。サーバ生成ログは detail=NULL。"""
+
+    def test_logs_api_returns_encrypted_detail_not_plaintext(
+        self, client, db, user, auth_header,
+    ):
+        from app.models.voucher_audit_log import VoucherAuditLog
+        v = make_voucher(db, user.id)
+        # クライアント供給の暗号化ノートを持つログ
+        blob = b"\x10\x11encrypted-note"
+        iv = bytes(range(12))
+        db.session.add(VoucherAuditLog(
+            voucher_id=v.id, user_id=user.id, action="attached",
+            encrypted_detail_blob=blob, detail_iv=iv,
+        ))
+        # detail を持たないサーバ生成ログ
+        db.session.add(VoucherAuditLog(
+            voucher_id=v.id, user_id=user.id, action="deleted",
+        ))
+        db.session.commit()
+
+        resp = client.get(
+            f"/api/v1/vouchers/{v.id}/logs",
+            headers=auth_header,
+        )
+        assert resp.status_code == 200
+        data = resp.get_json()
+        logs = data["logs"]
+        assert len(logs) == 2
+        # 平文 detail は応答に含めない
+        for lg in logs:
+            assert "detail" not in lg
+            assert "encrypted_detail_blob" in lg
+            assert "detail_iv" in lg
+        by_action = {lg["action"]: lg for lg in logs}
+        # 暗号化ノートあり → b64 で返る
+        from base64 import b64decode
+        assert b64decode(by_action["attached"]["encrypted_detail_blob"]) == blob
+        assert b64decode(by_action["attached"]["detail_iv"]) == iv
+        # サーバ生成ログ → null
+        assert by_action["deleted"]["encrypted_detail_blob"] is None
+        assert by_action["deleted"]["detail_iv"] is None
 
 
 class TestServeEncryptedVoucher:

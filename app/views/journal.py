@@ -295,16 +295,15 @@ def log_voucher_orphan(entry, user_id):
     # 「仕訳が消えた」事実を追記すべき。電帳法の連環的な証跡保全)
     vouchers = Voucher.query.filter_by(journal_entry_id=entry.id).all()
     for v in vouchers:
+        # E4 PR-D: 平文 detail は記録しない。"orphaned" action + voucher_id +
+        # created_at で「紐付け仕訳が削除された事実」(電帳法 訂正削除の事実) は
+        # 担保される。削除された仕訳の entry_number 自体も消えるため、detail に
+        # 控えても整合する参照先は残らない (encrypted_detail_blob は将来のクラ
+        # イアント供給暗号化ノート用、valog AAD)。
         db.session.add(VoucherAuditLog(
             voucher_id=v.id,
             user_id=user_id,
             action="orphaned",
-            # E3-F PR-D-6-5-pre1: 平文 description は記録しない (D-6-4 以降は空、
-            # E2EE で本体は encrypted_blob にあり復号不能。識別は entry_number で足りる)。
-            detail=json.dumps({
-                "journal_entry_id": entry.id,
-                "entry_number": entry.entry_number,
-            }, ensure_ascii=False),
         ))
 
 

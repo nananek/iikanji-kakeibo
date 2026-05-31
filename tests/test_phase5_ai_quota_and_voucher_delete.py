@@ -428,12 +428,15 @@ class TestVoucherDelete:
         assert len(logs) == 2
         assert logs[0].action == "attached"
         assert logs[1].action == "deleted"
-        # detail に image_key / file_hash / file_size が記録されている
-        import json as _json
-        deleted_detail = _json.loads(logs[1].detail or "{}")
-        assert "image_key" in deleted_detail
-        assert "file_hash" in deleted_detail
-        assert deleted_detail.get("file_size") == 1 * MB
+        # E4 PR-D: 平文 detail は書かない。削除された内容 (image_key /
+        # file_hash / file_size) は論理削除で残る voucher 行の各列に保持される。
+        assert logs[1].detail is None
+        from app.models.voucher import Voucher
+        persisted = db.session.get(Voucher, voucher.id)
+        assert persisted.deleted_at is not None
+        assert persisted.image_key
+        assert persisted.file_hash
+        assert persisted.file_size == 1 * MB
 
     def test_delete_null_file_size_skipped(
         self, logged_in_client, db, user, app, mock_storage, reset_limiter,

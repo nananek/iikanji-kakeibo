@@ -92,7 +92,9 @@ class TestCreateVoucherFromUpload:
             voucher_id=voucher.id, action="attached",
         ).first()
         assert log is not None
-        assert str(entry.id) in log.detail
+        # E4 PR-D: 平文 detail は書かない (journal_entry_id は voucher 行に保持)。
+        assert log.detail is None
+        assert voucher.journal_entry_id == entry.id
 
 
 class TestAttachEndpoint:
