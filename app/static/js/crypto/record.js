@@ -65,24 +65,38 @@ const NUL = TEXT_ENC.encode("\0");
 //
 // je / jel / me は Option B で 0 個 (user_id のみで一意)。
 // bcb は (year, period) を含む 1 個 (year*100 + period) のまま。
+//
+// E4 (#111) 証憑画像は voucher_id を含む 1 個。画像は件数が少なく 1 件ずつ
+// 2 段階 upload (init で採番 → AAD 束縛) するため、entry-to-entry swap も
+// voucher_id で検知できる (journal の Option B より強い束縛)。
+//   vimg   = 画像本体        (id: voucher_id)
+//   vthumb = サムネイル      (id: voucher_id)
+//   vmeta  = メタ情報 JSON   (id: voucher_id)
+//   valog  = 監査ログ detail (id: voucher_id) ※ PR-D で使用
 const TABLE_ID_COUNT = {
   je: 0,    // journal_entries (user_id のみ)
   jel: 0,   // journal_entry_lines (user_id のみ)
   me: 0,    // medical_expenses (user_id のみ)
   bcb: 1,   // balance_cache_blobs (year*100+period)
+  vimg: 1,  // vouchers 画像本体 (voucher_id)
+  vthumb: 1, // vouchers サムネイル (voucher_id)
+  vmeta: 1, // vouchers メタ情報 (voucher_id)
+  valog: 1, // voucher_audit_logs detail (voucher_id)
 };
 
 
 /**
  * AAD バイト列を構築。
  *
- * @param {"je"|"jel"|"me"|"bcb"} tableType  テーブル種別プレフィックス
+ * @param {"je"|"jel"|"me"|"bcb"|"vimg"|"vthumb"|"vmeta"|"valog"} tableType
+ *   テーブル種別プレフィックス
  *   - "je"  = journal_entries (ids: なし)
  *   - "jel" = journal_entry_lines (ids: なし)
  *   - "me"  = medical_expenses (ids: なし)
  *   - "bcb" = balance_cache_blobs (ids: year*100+period)
+ *   - "vimg"/"vthumb"/"vmeta"/"valog" = vouchers 系 (ids: voucher_id)
  * @param {number|bigint} userId
- * @param {Array<number|bigint>} ids  追加識別 ID 列 (bcb のみ使用)
+ * @param {Array<number|bigint>} ids  追加識別 ID 列 (bcb / vouchers 系で使用)
  * @returns {Uint8Array}
  */
 export function buildAAD(tableType, userId, ...ids) {

@@ -26,6 +26,23 @@ _META_IV = bytes(range(12))
 _FILE_HASH_PLAIN = "a" * 64
 
 
+@pytest.fixture(autouse=True)
+def _reset_limiter():
+    """各テスト前に limiter ストレージをリセットする。
+
+    limiter は singleton で、RateLimitTestConfig (RATELIMIT_ENABLED=True) を
+    使う別テストが先行するとフルスイートでは enabled 状態が leak する。本
+    ファイルは同一 user (id=1) で init/PUT を多数呼ぶため、init の 10/min 上限に
+    累積で達して 429 になり得る。各テストでカウンタをリセットして独立させる。
+    """
+    from app.extensions import limiter
+    try:
+        limiter.reset()
+    except Exception:
+        pass
+    yield
+
+
 def _b64(b: bytes) -> str:
     return b64encode(b).decode()
 
@@ -234,6 +251,32 @@ class TestProxyBlocked:
             sess["acting_as_permission_level"] = 3
         resp = _upload(client, v.id)
         assert resp.status_code == 403
+
+
+class TestAtomicClaim:
+    """PR-B レビュー ①: finalize_voucher_upload の原子的クレーム。"""
+
+    def test_finalize_conflict_when_already_claimed(self, app, db, user):
+        """DB 上で image_key が既に確定済みの行を finalize すると
+        VoucherUploadConflict を送出する (並行 PUT の敗者)。"""
+        from app.services.voucher import (
+            VoucherUploadConflict, finalize_voucher_upload,
+        )
+
+        v = Voucher(
+            user_id=user.id,
+            image_key="vouchers/x/already.bin",  # 既に確定済み (勝者が claim 済)
+            image_mime="application/octet-stream",
+        )
+        db.session.add(v)
+        db.session.commit()
+
+        with app.app_context():
+            with pytest.raises(VoucherUploadConflict):
+                finalize_voucher_upload(
+                    v, _IMAGE_CT, _THUMB_CT, _META_BLOB, _META_IV,
+                    _FILE_HASH_PLAIN,
+                )
 
 
 class TestServeEncryptedVoucher:
