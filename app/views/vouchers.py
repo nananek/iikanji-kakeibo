@@ -1,7 +1,6 @@
 """証憑一覧ビュー — 電帳法検索要件対応"""
 
 import hashlib
-import json
 from datetime import datetime, timezone
 
 from flask import (
@@ -210,17 +209,14 @@ def delete(voucher_id):
 
     from flask import current_app
     # 電帳法の訂正削除証跡を DB に永続化 (`action="deleted"` の AuditLog)。
-    # detail に画像 key / hash / サイズを格納し、ファイル本体が削除されて
-    # も「何が削除されたか」を後から検証可能にする。
+    # E4 PR-D: 平文 detail は書かない。「何が削除されたか」(image_key /
+    # file_hash(cipher) / file_size) は論理削除後も残る voucher 行の各列に
+    # 保持されており冗長 (画像本体のみストレージから削除、行は残す)。
+    # action="deleted" + created_at + 持続行で訂正削除の事実と内容を確認できる。
     db.session.add(VoucherAuditLog(
         voucher_id=voucher.id,
         user_id=user_id,
         action="deleted",
-        detail=json.dumps({
-            "image_key": image_key,
-            "file_hash": file_hash,
-            "file_size": size_to_release,
-        }, ensure_ascii=False),
     ))
     # 論理削除: deleted_at を立てる。物理 row は残るため FK RESTRICT も
     # 満たす。`Voucher.active()` 経由の query から透過的に除外される。

@@ -2286,13 +2286,25 @@ def api_voucher_logs(voucher_id):
         .all()
     )
 
+    # E4 PR-D: 平文 detail は返さない (server 生成ログは detail を持たず、
+    # 証跡は action + created_at + 持続する voucher 行で担保)。代わりに
+    # encrypted_detail_blob / detail_iv (base64、valog AAD) を返す。これらは
+    # クライアントが供給した暗号化ノートがある場合のみ非 null で、クライアント
+    # が MK で復号する。平文 detail 列は PR-F で DROP 予定。
     return jsonify({
         "ok": True,
         "logs": [
             {
                 "id": log.id,
                 "action": log.action,
-                "detail": log.detail,
+                "encrypted_detail_blob": (
+                    b64encode(log.encrypted_detail_blob).decode()
+                    if log.encrypted_detail_blob else None
+                ),
+                "detail_iv": (
+                    b64encode(log.detail_iv).decode()
+                    if log.detail_iv else None
+                ),
                 "created_at": log.created_at.isoformat(),
                 "user_id": log.user_id,
             }

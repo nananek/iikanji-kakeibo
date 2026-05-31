@@ -198,6 +198,29 @@ test("encryptRecord/decryptRecord: round-trip", async () => {
   assert.deepEqual(decoded, record);
 });
 
+test("valog: 監査ログ detail の round-trip (E4 PR-D)", async () => {
+  // VoucherAuditLog.encrypted_detail_blob のクライアント暗号化機構を検証。
+  // AAD = "valog" + user_id + voucher_id。
+  const client = makeMockClient();
+  const detail = { v: 1, note: "誤った領収書を削除", at: "2026-06-01" };
+  const aad = buildAAD("valog", 7, 42);
+  const { blob, iv } = await encryptRecord(client, detail, aad);
+  const decoded = await decryptRecord(client, blob, iv, aad);
+  assert.deepEqual(decoded, detail);
+});
+
+test("valog: voucher_id すり替えで throw (E4 PR-D)", async () => {
+  const client = makeMockClient();
+  const detail = { v: 1, note: "secret" };
+  const aadCorrect = buildAAD("valog", 7, 42);
+  const aadEvil = buildAAD("valog", 7, 43);  // 別 voucher
+  const { blob, iv } = await encryptRecord(client, detail, aadCorrect);
+  await assert.rejects(
+    () => decryptRecord(client, blob, iv, aadEvil),
+    /AAD mismatch/,
+  );
+});
+
 test("decryptRecord: AAD すり替えで throw (user_id 違い)", async () => {
   const client = makeMockClient();
   const record = { v: 1, x: "secret" };

@@ -102,21 +102,25 @@ class TestSoftDeletePersistsAuditLog:
         self, logged_in_client, db, user, mock_storage, reset_limiter,
     ):
         v = _make_voucher(db, user, file_size=512)
+        image_key, file_hash, vid = v.image_key, v.file_hash, v.id
         resp = logged_in_client.post(
-            f"/vouchers/{v.id}/delete", follow_redirects=False,
+            f"/vouchers/{vid}/delete", follow_redirects=False,
         )
         assert resp.status_code == 302
 
         logs = VoucherAuditLog.query.filter_by(
-            voucher_id=v.id, action="deleted",
+            voucher_id=vid, action="deleted",
         ).all()
         assert len(logs) == 1
-        detail = json.loads(logs[0].detail or "{}")
-        # 電帳法の「訂正削除の事実と内容を確認できる」要件:
-        # 何が削除されたか (image_key / file_hash / file_size) が DB に残る
-        assert detail["image_key"] == v.image_key
-        assert detail["file_hash"] == v.file_hash
-        assert detail["file_size"] == 512
+        # E4 PR-D: 平文 detail は書かない。電帳法の「訂正削除の事実と内容を
+        # 確認できる」要件は action="deleted" + 論理削除で残る voucher 行の
+        # 各列 (image_key / file_hash(cipher) / file_size) で担保される。
+        assert logs[0].detail is None
+        deleted = db.session.get(Voucher, vid)
+        assert deleted is not None and deleted.deleted_at is not None
+        assert deleted.image_key == image_key
+        assert deleted.file_hash == file_hash
+        assert deleted.file_size == 512
 
     def test_delete_row_remains_in_db(
         self, logged_in_client, db, user, mock_storage, reset_limiter,
