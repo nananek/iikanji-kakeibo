@@ -14,29 +14,25 @@ def get_next_entry_number(user_id):
     return (max_num or 0) + 1
 
 
-def create_journal_entry(user_id, date, description, lines_data,
-                         source="journal", batch_id=None, fiscal_period=None,
-                         *, encrypted_blob=None, blob_iv=None,
-                         fiscal_year=None, commit=True):
+def create_journal_entry(user_id, lines_data, *, fiscal_year, fiscal_month,
+                         batch_id=None, encrypted_blob=None, blob_iv=None,
+                         commit=True):
     """仕訳伝票を直接作成する
 
     Args:
         lines_data: list of dict with keys: account_code, debit_amount,
-            credit_amount, description, optional encrypted_blob/blob_iv
+            credit_amount, optional encrypted_blob/blob_iv
             (Phase E3: クライアント側で AES-GCM 暗号化済の line 本体)
-        source: 仕訳の入力元（"journal", "ai_receipt" 等）
-        fiscal_period: 計上期間（None=日付の月で自動判定）
+        fiscal_year: 平文の年度フィルタ用メタ列 (date 暗号化後の代替)。
+        fiscal_month: 平文の計上期間メタ列 (0=期首, 1-12=月, 13-15=決算整理)。
         encrypted_blob/blob_iv: Phase E3 - クライアント側で AES-GCM 暗号化された
             entry 本体 (date / description / source / batch_id / fiscal_period の
             暗号化版)。両方セット or 両方 None。
-        fiscal_year: Phase E3 - 平文の年度フィルタ用 (date 暗号化後の代替)。
-            None なら date.year を使用。
 
-    E3-F PR-D-6-4: 平文 WRITE 停止。date / description / source / fiscal_period
-        は DB の平文列へは書き込まなくなった (本体は encrypted_blob のみ)。
-        date / fiscal_period 引数は fiscal_year / fiscal_month の平文メタ列を
-        導出するためにのみ使用する。description / source 引数は wire 互換のため
-        残置 (request 平文の撤去は follow-up D-6-6)。
+    E3-F PR-D-6-6: wire 平文除去。date / description / source / fiscal_period は
+        request からも引数からも撤去した。entry の平文メタは fiscal_year /
+        fiscal_month のみ (両者ともクライアントが算出して必須送信する)。entry
+        本体の実値 (日付・摘要・source 等) は encrypted_blob に格納済。
         commit: False を指定するとセッションを commit せず flush のみ行う。
             複数 entry をまとめて 1 トランザクションにする batch API 用。
     """
@@ -61,11 +57,11 @@ def create_journal_entry(user_id, date, description, lines_data,
         batch_id=batch_id,
         encrypted_blob=encrypted_blob,
         blob_iv=blob_iv,
-        # E3-F PR-D-6-4: 平文 date / description / source / fiscal_period 列は
-        # 書き込まない (encrypted_blob に格納済)。fiscal_year / fiscal_month の
-        # 平文メタ列のみ date / fiscal_period 引数から導出して populate する。
-        fiscal_year=fiscal_year if fiscal_year is not None else date.year,
-        fiscal_month=fiscal_period if fiscal_period is not None else date.month,
+        # E3-F PR-D-6-6: 平文 date / description / source / fiscal_period 列は
+        # DROP 済 (055)。entry の平文メタは fiscal_year / fiscal_month のみ
+        # (クライアント算出値をそのまま populate する)。
+        fiscal_year=fiscal_year,
+        fiscal_month=fiscal_month,
     )
     db.session.add(entry)
     db.session.flush()

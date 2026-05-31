@@ -62,10 +62,11 @@ class TestAuth:
 
 
 class TestCreateJournal:
+    # E3-F PR-D-6-6: wire 平文除去後、POST /journals は平文 date/description/
+    # source を受け取らず、fiscal_year / fiscal_month を必須メタとして要求する。
     def test_success(self, client, db, user, accounts, auth_header):
         resp = client.post("/api/v1/journals", headers=auth_header, json={
-            "date": "2026-02-15",
-            "description": "食材購入",
+            "fiscal_year": 2026, "fiscal_month": 2,
             "lines": encrypt_lines([
                 {"account_code": accounts["5010"].code, "debit": 3000},
                 {"account_code": accounts["1010"].code, "credit": 3000},
@@ -78,55 +79,51 @@ class TestCreateJournal:
         assert "id" in data
         assert "entry_number" in data
 
-    def test_missing_date(self, client, db, user, accounts, auth_header):
+    def test_missing_fiscal_year(self, client, db, user, accounts, auth_header):
         resp = client.post("/api/v1/journals", headers=auth_header, json={
-            "description": "テスト",
-            "lines": [{"account_code": "1010", "debit": 100}],
+            "fiscal_month": 2,
+            "lines": encrypt_lines([
+                {"account_code": accounts["5010"].code, "debit": 100},
+                {"account_code": accounts["1010"].code, "credit": 100},
+            ]),
+            **encrypted_payload(),
         })
         assert resp.status_code == 400
-        assert "date" in resp.get_json()["error"]
+        assert "fiscal_year" in resp.get_json()["error"]
 
-    def test_missing_description(self, client, db, user, accounts, auth_header):
+    def test_missing_fiscal_month(self, client, db, user, accounts, auth_header):
         resp = client.post("/api/v1/journals", headers=auth_header, json={
-            "date": "2026-02-15",
-            "description": "",
-            "lines": [{"account_code": "1010", "debit": 100}],
+            "fiscal_year": 2026,
+            "lines": encrypt_lines([
+                {"account_code": accounts["5010"].code, "debit": 100},
+                {"account_code": accounts["1010"].code, "credit": 100},
+            ]),
+            **encrypted_payload(),
         })
         assert resp.status_code == 400
+        assert "fiscal_month" in resp.get_json()["error"]
 
     def test_missing_lines(self, client, db, user, accounts, auth_header):
         resp = client.post("/api/v1/journals", headers=auth_header, json={
-            "date": "2026-02-15",
-            "description": "テスト",
-        })
-        assert resp.status_code == 400
-
-    def test_invalid_date_format(self, client, db, user, accounts, auth_header):
-        resp = client.post("/api/v1/journals", headers=auth_header, json={
-            "date": "2026/02/15",
-            "description": "テスト",
-            "lines": [
-                {"account_code": accounts["5010"].code, "debit": 100},
-                {"account_code": accounts["1010"].code, "credit": 100},
-            ],
+            "fiscal_year": 2026, "fiscal_month": 2,
         })
         assert resp.status_code == 400
 
     def test_unbalanced_entry(self, client, db, user, accounts, auth_header):
         resp = client.post("/api/v1/journals", headers=auth_header, json={
-            "date": "2026-02-15",
-            "description": "不正",
-            "lines": [
+            "fiscal_year": 2026, "fiscal_month": 2,
+            "lines": encrypt_lines([
                 {"account_code": accounts["5010"].code, "debit": 3000},
                 {"account_code": accounts["1010"].code, "credit": 2000},
-            ],
+            ]),
+            **encrypted_payload(),
         })
         assert resp.status_code == 400
+        assert "一致" in resp.get_json()["error"]
 
     def test_invalid_draft_id(self, client, db, user, accounts, auth_header):
         resp = client.post("/api/v1/journals", headers=auth_header, json={
-            "date": "2026-02-15",
-            "description": "テスト",
+            "fiscal_year": 2026, "fiscal_month": 2,
             "lines": encrypt_lines([
                 {"account_code": accounts["5010"].code, "debit": 100},
                 {"account_code": accounts["1010"].code, "credit": 100},
@@ -139,8 +136,7 @@ class TestCreateJournal:
 
     def test_nonexistent_draft_id(self, client, db, user, accounts, auth_header):
         resp = client.post("/api/v1/journals", headers=auth_header, json={
-            "date": "2026-02-15",
-            "description": "テスト",
+            "fiscal_year": 2026, "fiscal_month": 2,
             "lines": encrypt_lines([
                 {"account_code": accounts["5010"].code, "debit": 100},
                 {"account_code": accounts["1010"].code, "credit": 100},
@@ -156,22 +152,25 @@ class TestCreateJournal:
         db.session.add(fc)
         db.session.commit()
         resp = client.post("/api/v1/journals", headers=auth_header, json={
-            "date": "2026-02-15",
-            "description": "確定済み月",
-            "lines": [
+            "fiscal_year": 2026, "fiscal_month": 2,
+            "lines": encrypt_lines([
                 {"account_code": accounts["5010"].code, "debit": 100},
                 {"account_code": accounts["1010"].code, "credit": 100},
-            ],
+            ]),
+            **encrypted_payload(),
         })
         assert resp.status_code == 400
+        assert "確定済み" in resp.get_json()["error"]
 
 
 class TestCreateJournalsBatch:
+    # E3-F PR-D-6-6: 各 entry は平文 date/description/source を持たず、
+    # fiscal_year / fiscal_month を必須メタとして要求する。
     def test_success_multiple_entries(self, client, db, user, accounts, auth_header):
         resp = client.post("/api/v1/journals/batch", headers=auth_header, json={
             "entries": [
                 {
-                    "date": "2026-02-01", "description": "ランチ",
+                    "fiscal_year": 2026, "fiscal_month": 2,
                     "lines": encrypt_lines([
                         {"account_code": accounts["5010"].code, "debit": 800},
                         {"account_code": accounts["1010"].code, "credit": 800},
@@ -179,7 +178,7 @@ class TestCreateJournalsBatch:
                     **encrypted_payload(),
                 },
                 {
-                    "date": "2026-02-02", "description": "コーヒー",
+                    "fiscal_year": 2026, "fiscal_month": 2,
                     "lines": encrypt_lines([
                         {"account_code": accounts["5010"].code, "debit": 500},
                         {"account_code": accounts["1010"].code, "credit": 500},
@@ -202,7 +201,7 @@ class TestCreateJournalsBatch:
         resp = client.post("/api/v1/journals/batch", headers=auth_header, json={
             "batch_id": "my-import-2026-02",
             "entries": [{
-                "date": "2026-02-15", "description": "test",
+                "fiscal_year": 2026, "fiscal_month": 2,
                 "lines": encrypt_lines([
                     {"account_code": accounts["5010"].code, "debit": 100},
                     {"account_code": accounts["1010"].code, "credit": 100},
@@ -223,7 +222,7 @@ class TestCreateJournalsBatch:
         resp = client.post("/api/v1/journals/batch", headers=auth_header, json={
             "entries": [
                 {
-                    "date": "2026-02-01", "description": f"e{i}",
+                    "fiscal_year": 2026, "fiscal_month": 2,
                     "lines": [
                         {"account_code": accounts["5010"].code, "debit": 1},
                         {"account_code": accounts["1010"].code, "credit": 1},
@@ -240,19 +239,21 @@ class TestCreateJournalsBatch:
         resp = client.post("/api/v1/journals/batch", headers=auth_header, json={
             "entries": [
                 {
-                    "date": "2026-02-01", "description": "valid",
-                    "lines": [
+                    "fiscal_year": 2026, "fiscal_month": 2,
+                    "lines": encrypt_lines([
                         {"account_code": accounts["5010"].code, "debit": 100},
                         {"account_code": accounts["1010"].code, "credit": 100},
-                    ],
+                    ]),
+                    **encrypted_payload(),
                 },
                 {
                     # 貸借不一致: create_journal_entry が ValueError
-                    "date": "2026-02-02", "description": "invalid",
-                    "lines": [
+                    "fiscal_year": 2026, "fiscal_month": 2,
+                    "lines": encrypt_lines([
                         {"account_code": accounts["5010"].code, "debit": 100},
                         {"account_code": accounts["1010"].code, "credit": 99},
-                    ],
+                    ]),
+                    **encrypted_payload(),
                 },
             ],
         })
@@ -260,29 +261,19 @@ class TestCreateJournalsBatch:
         # valid 側も保存されていない (rollback)
         assert JournalEntry.query.filter_by(user_id=user.id).count() == 0
 
-    def test_invalid_date_format(self, client, db, user, accounts, auth_header):
+    def test_missing_fiscal_month(self, client, db, user, accounts, auth_header):
         resp = client.post("/api/v1/journals/batch", headers=auth_header, json={
             "entries": [{
-                "date": "not-a-date", "description": "x",
-                "lines": [
+                "fiscal_year": 2026,
+                "lines": encrypt_lines([
                     {"account_code": accounts["5010"].code, "debit": 1},
                     {"account_code": accounts["1010"].code, "credit": 1},
-                ],
+                ]),
+                **encrypted_payload(),
             }],
         })
         assert resp.status_code == 400
-
-    def test_missing_description(self, client, db, user, accounts, auth_header):
-        resp = client.post("/api/v1/journals/batch", headers=auth_header, json={
-            "entries": [{
-                "date": "2026-02-01",
-                "lines": [
-                    {"account_code": accounts["5010"].code, "debit": 1},
-                    {"account_code": accounts["1010"].code, "credit": 1},
-                ],
-            }],
-        })
-        assert resp.status_code == 400
+        assert "fiscal_month" in resp.get_json()["error"]
 
     def test_scope_required(self, client, db, user, accounts):
         """journals:read のみのキーでは batch 起票不可。"""
@@ -310,12 +301,11 @@ class TestCreateJournalsBatch:
         resp = client.post("/api/v1/journals/batch", json={"entries": []})
         assert resp.status_code == 401
 
-    def test_fiscal_period_16_rejected(self, client, db, user, accounts, auth_header):
-        """fp=16 (損益振替) は自動生成専用なので batch から起票できない。"""
+    def test_fiscal_month_16_rejected(self, client, db, user, accounts, auth_header):
+        """fiscal_month=16 (損益振替) は自動生成専用なので batch から起票できない。"""
         resp = client.post("/api/v1/journals/batch", headers=auth_header, json={
             "entries": [{
-                "date": "2026-02-01", "description": "損益振替",
-                "fiscal_period": 16,
+                "fiscal_year": 2026, "fiscal_month": 16,
                 "lines": encrypt_lines([
                     {"account_code": accounts["5010"].code, "debit": 100},
                     {"account_code": accounts["1010"].code, "credit": 100},
@@ -326,18 +316,16 @@ class TestCreateJournalsBatch:
         assert resp.status_code == 400
         assert "損益振替" in resp.get_json()["error"]
 
-    def test_fiscal_period_zero_accepted(self, client, db, user, accounts, auth_header):
-        """fp=0 (期首振戻) は batch から起票できる。
+    def test_fiscal_month_zero_accepted(self, client, db, user, accounts, auth_header):
+        """fiscal_month=0 (期首振戻) は batch から起票できる。
 
-        PR-B1.1 で cashbook 経路の test_fiscal_period_special を削除したため、
         手動入力可能な特殊期間 (0=期首振戻、13-15=決算整理) のうち最も使われる
         0 を batch API レベルで担保しておく。
         """
         from app.models.journal import JournalEntry
         resp = client.post("/api/v1/journals/batch", headers=auth_header, json={
             "entries": [{
-                "date": "2026-02-01", "description": "期首振戻",
-                "fiscal_period": 0,
+                "fiscal_year": 2026, "fiscal_month": 0,
                 "lines": encrypt_lines([
                     {"account_code": accounts["5010"].code, "debit": 100},
                     {"account_code": accounts["1010"].code, "credit": 100},
@@ -348,42 +336,13 @@ class TestCreateJournalsBatch:
         assert resp.status_code == 201
         created_id = resp.get_json()["entries"][0]["id"]
         entry = db.session.get(JournalEntry, created_id)
-        # E3-F PR-D-6-4: fiscal_period 平文列は書かず fiscal_month メタ列へ反映する。
         assert entry.fiscal_month == 0
-
-    def test_invalid_source_rejected(self, client, db, user, accounts, auth_header):
-        resp = client.post("/api/v1/journals/batch", headers=auth_header, json={
-            "entries": [{
-                "date": "2026-02-01", "description": "x", "source": "malicious",
-                "lines": encrypt_lines([
-                    {"account_code": accounts["5010"].code, "debit": 1},
-                    {"account_code": accounts["1010"].code, "credit": 1},
-                ]),
-                **encrypted_payload(),
-            }],
-        })
-        assert resp.status_code == 400
-        assert "source" in resp.get_json()["error"]
-
-    def test_description_too_long_rejected(self, client, db, user, accounts, auth_header):
-        """description が 256 文字以上だと DB エラー (500) になるので 400 で弾く。"""
-        resp = client.post("/api/v1/journals/batch", headers=auth_header, json={
-            "entries": [{
-                "date": "2026-02-01", "description": "x" * 256,
-                "lines": [
-                    {"account_code": accounts["5010"].code, "debit": 1},
-                    {"account_code": accounts["1010"].code, "credit": 1},
-                ],
-            }],
-        })
-        assert resp.status_code == 400
-        assert "255" in resp.get_json()["error"]
 
     def test_invalid_account_code_rejected(self, client, db, user, accounts, auth_header):
         """存在しない account_code は FK 違反 (500) ではなく 400 で返す。"""
         resp = client.post("/api/v1/journals/batch", headers=auth_header, json={
             "entries": [{
-                "date": "2026-02-01", "description": "x",
+                "fiscal_year": 2026, "fiscal_month": 2,
                 "lines": encrypt_lines([
                     {"account_code": "9999", "debit": 100},
                     {"account_code": accounts["1010"].code, "credit": 100},
@@ -398,7 +357,7 @@ class TestCreateJournalsBatch:
         """float の debit/credit は切り捨てで貸借不一致を隠すので拒否する。"""
         resp = client.post("/api/v1/journals/batch", headers=auth_header, json={
             "entries": [{
-                "date": "2026-02-01", "description": "x",
+                "fiscal_year": 2026, "fiscal_month": 2,
                 "lines": encrypt_lines([
                     {"account_code": accounts["5010"].code, "debit": 100.5},
                     {"account_code": accounts["1010"].code, "credit": 100.5},
@@ -413,7 +372,7 @@ class TestCreateJournalsBatch:
         """bool は int サブクラスなので明示的に弾く (True→1 の意図しない仕訳化防止)。"""
         resp = client.post("/api/v1/journals/batch", headers=auth_header, json={
             "entries": [{
-                "date": "2026-02-01", "description": "x",
+                "fiscal_year": 2026, "fiscal_month": 2,
                 "lines": encrypt_lines([
                     {"account_code": accounts["5010"].code, "debit": True},
                     {"account_code": accounts["1010"].code, "credit": True},
@@ -456,8 +415,7 @@ class TestCreateJournalsBatchDraftId:
         d = self._make_draft(db, user.id)
         resp = client.post("/api/v1/journals/batch", headers=auth_header, json={
             "entries": [{
-                "date": "2026-02-15", "description": "AI受領",
-                "source": "ai_receipt",
+                "fiscal_year": 2026, "fiscal_month": 2,
                 "draft_id": d.id,
                 "lines": encrypt_lines([
                     {"account_code": accounts["5010"].code, "debit": 500},
@@ -488,7 +446,7 @@ class TestCreateJournalsBatchDraftId:
         d = self._make_draft(db, other.id)
         resp = client.post("/api/v1/journals/batch", headers=auth_header, json={
             "entries": [{
-                "date": "2026-02-15", "description": "x",
+                "fiscal_year": 2026, "fiscal_month": 2,
                 "draft_id": d.id,
                 "lines": encrypt_lines([
                     {"account_code": accounts["5010"].code, "debit": 100},
@@ -510,12 +468,13 @@ class TestCreateJournalsBatchDraftId:
     ):
         resp = client.post("/api/v1/journals/batch", headers=auth_header, json={
             "entries": [{
-                "date": "2026-02-15", "description": "x",
+                "fiscal_year": 2026, "fiscal_month": 2,
                 "draft_id": 99999,
-                "lines": [
+                "lines": encrypt_lines([
                     {"account_code": accounts["5010"].code, "debit": 100},
                     {"account_code": accounts["1010"].code, "credit": 100},
-                ],
+                ]),
+                **encrypted_payload(),
             }],
         })
         assert resp.status_code == 400
@@ -528,12 +487,13 @@ class TestCreateJournalsBatchDraftId:
         d = self._make_draft(db, user.id, status="done")
         resp = client.post("/api/v1/journals/batch", headers=auth_header, json={
             "entries": [{
-                "date": "2026-02-15", "description": "x",
+                "fiscal_year": 2026, "fiscal_month": 2,
                 "draft_id": d.id,
-                "lines": [
+                "lines": encrypt_lines([
                     {"account_code": accounts["5010"].code, "debit": 100},
                     {"account_code": accounts["1010"].code, "credit": 100},
-                ],
+                ]),
+                **encrypted_payload(),
             }],
         })
         assert resp.status_code == 400
@@ -544,7 +504,7 @@ class TestCreateJournalsBatchDraftId:
     ):
         resp = client.post("/api/v1/journals/batch", headers=auth_header, json={
             "entries": [{
-                "date": "2026-02-15", "description": "x",
+                "fiscal_year": 2026, "fiscal_month": 2,
                 "draft_id": "abc",
                 "lines": encrypt_lines([
                     {"account_code": accounts["5010"].code, "debit": 100},
@@ -568,20 +528,22 @@ class TestCreateJournalsBatchDraftId:
         resp = client.post("/api/v1/journals/batch", headers=auth_header, json={
             "entries": [
                 {
-                    "date": "2026-02-15", "description": "draft 紐付き",
+                    "fiscal_year": 2026, "fiscal_month": 2,
                     "draft_id": d.id,
-                    "lines": [
+                    "lines": encrypt_lines([
                         {"account_code": accounts["5010"].code, "debit": 100},
                         {"account_code": accounts["1010"].code, "credit": 100},
-                    ],
+                    ]),
+                    **encrypted_payload(),
                 },
                 {
                     # 貸借不一致で fail
-                    "date": "2026-02-16", "description": "fail",
-                    "lines": [
+                    "fiscal_year": 2026, "fiscal_month": 2,
+                    "lines": encrypt_lines([
                         {"account_code": accounts["5010"].code, "debit": 100},
                         {"account_code": accounts["1010"].code, "credit": 99},
-                    ],
+                    ]),
+                    **encrypted_payload(),
                 },
             ],
         })
@@ -610,13 +572,12 @@ class TestCreateJournalE2EE:
         """blob/iv 両方指定で DB に保存される。"""
         from app.models.journal import JournalEntry
         resp = client.post("/api/v1/journals", headers=auth_header, json={
-            "date": "2026-02-15", "description": "テスト",
+            "fiscal_year": 2026, "fiscal_month": 2,
             "lines": encrypt_lines([
                 {"account_code": accounts["5010"].code, "debit": 100},
                 {"account_code": accounts["1010"].code, "credit": 100},
             ]),
             **encrypted_payload(),
-            "fiscal_year": 2026,
         })
         assert resp.status_code == 201
         entry = JournalEntry.query.get(resp.get_json()["id"])
@@ -628,44 +589,27 @@ class TestCreateJournalE2EE:
             assert line.encrypted_blob == b"\x42" * 48
             assert line.blob_iv == b"\x42" * 12
 
-    def test_fiscal_year_defaults_to_date_year(
+    def test_fiscal_meta_populated_and_returned(
         self, client, db, user, accounts, auth_header,
     ):
+        """E3-F PR-D-6-6: POST で fiscal_year / fiscal_month / is_closing(False)
+        が populate され、GET レスポンスにも含まれる。"""
         from app.models.journal import JournalEntry
         resp = client.post("/api/v1/journals", headers=auth_header, json={
-            "date": "2024-08-15", "description": "x",
+            "fiscal_year": 2026, "fiscal_month": 8,
             "lines": encrypt_lines([
                 {"account_code": accounts["5010"].code, "debit": 100},
                 {"account_code": accounts["1010"].code, "credit": 100},
             ]),
             **encrypted_payload(),
-        })
-        assert resp.status_code == 201
-        entry = JournalEntry.query.get(resp.get_json()["id"])
-        assert entry.fiscal_year == 2024
-
-    def test_new_columns_populated_and_returned(
-        self, client, db, user, accounts, auth_header,
-    ):
-        """E3-F: POST で is_closing(False)/fiscal_month が populate され、
-        GET レスポンスにも含まれる。"""
-        from app.models.journal import JournalEntry
-        resp = client.post("/api/v1/journals", headers=auth_header, json={
-            "date": "2026-08-15", "description": "x",
-            "lines": encrypt_lines([
-                {"account_code": accounts["5010"].code, "debit": 100},
-                {"account_code": accounts["1010"].code, "credit": 100},
-            ]),
-            **encrypted_payload(),
-            "fiscal_year": 2026,
         })
         assert resp.status_code == 201
         eid = resp.get_json()["id"]
         entry = JournalEntry.query.get(eid)
         assert entry.is_closing is False
-        # fiscal_period 未指定 → date.month から導出。
+        assert entry.fiscal_year == 2026
         assert entry.fiscal_month == 8
-        # GET レスポンスに新フィールドが含まれる。
+        # GET レスポンスに保持列メタが含まれる。
         got = client.get(f"/api/v1/journals/{eid}", headers=auth_header)
         journal = got.get_json()["journal"]
         assert journal["is_closing"] is False
@@ -829,7 +773,7 @@ class TestCreateJournalE2EE:
         resp = client.post("/api/v1/journals/batch", headers=auth_header, json={
             "entries": [
                 {
-                    "date": "2026-02-01", "description": "正常",
+                    "fiscal_year": 2026, "fiscal_month": 2,
                     "lines": encrypt_lines([
                         {"account_code": accounts["5010"].code, "debit": 100},
                         {"account_code": accounts["1010"].code, "credit": 100},
@@ -838,7 +782,7 @@ class TestCreateJournalE2EE:
                 },
                 {
                     # encrypted_blob 欠落の不正 entry
-                    "date": "2026-02-02", "description": "平文のみ",
+                    "fiscal_year": 2026, "fiscal_month": 2,
                     "lines": [
                         {"account_code": accounts["5010"].code, "debit": 100},
                         {"account_code": accounts["1010"].code, "credit": 100},
@@ -879,7 +823,7 @@ class TestCreateJournalE2EE:
         from base64 import b64decode
         # まず E2EE 形式で 1 件作成 (PR-C 以降 全 line に blob 必須)
         post_resp = client.post("/api/v1/journals", headers=auth_header, json={
-            "date": "2026-02-15", "description": "x",
+            "fiscal_year": 2026, "fiscal_month": 2,
             "lines": [
                 {"account_code": accounts["5010"].code, "debit": 100,
                  "encrypted_blob": self._b64(32), "blob_iv": self._b64(12)},
@@ -888,7 +832,6 @@ class TestCreateJournalE2EE:
             ],
             "encrypted_blob": self._b64(48),
             "blob_iv": self._b64(12),
-            "fiscal_year": 2026,
         })
         eid = post_resp.get_json()["id"]
         # GET (詳細 API は {"journal": {...}} 形式)
@@ -2252,11 +2195,9 @@ class TestUpdateJournal:
         resp = client.put(f"/api/v1/journals/{entry.id}",
                           headers=auth_header,
                           json={
-                              "date": "2026-03-20",
-                              "description": "暗号化更新",
+                              "fiscal_year": 2026, "fiscal_month": 3,
                               "encrypted_blob": base64.b64encode(b"\x00" * 48).decode(),
                               "blob_iv": base64.b64encode(b"\x00" * 12).decode(),
-                              "fiscal_year": 2026,
                               "lines": [
                                   {"account_code": accounts["5010"].code, "debit": 500,
                                    "encrypted_blob": base64.b64encode(b"\x11" * 48).decode(),
@@ -2304,7 +2245,7 @@ class TestUpdateJournal:
         resp = client.put(f"/api/v1/journals/{entry.id}",
                           headers=auth_header,
                           json={
-                              "date": "2026-03-15", "description": "x",
+                              "fiscal_year": 2026, "fiscal_month": 3,
                               "lines": encrypt_lines([
                                   {"account_code": accounts["5010"].code, "debit": 200},
                                   {"account_code": accounts["1010"].code, "credit": 100},
@@ -2312,6 +2253,7 @@ class TestUpdateJournal:
                               **encrypted_payload(),
                           })
         assert resp.status_code == 400
+        assert "一致" in resp.get_json()["error"]
 
     def test_locked_period_returns_400(self, client, db, user, accounts, auth_header):
         from app.models.fiscal import FiscalClose
@@ -2389,7 +2331,7 @@ class TestUpdateJournal:
     def test_new_date_in_locked_period_returns_400(
             self, client, db, user, accounts, auth_header,
     ):
-        # 既存 entry は未確定、PUT の新 date が確定済み月 → 400
+        # 既存 entry は未確定、PUT の新 fiscal_month が確定済み月 → 400
         # (check_period_open_for_new 分岐のカバー)
         from app.models.fiscal import FiscalClose
         entry = make_journal(
@@ -2402,8 +2344,7 @@ class TestUpdateJournal:
         resp = client.put(f"/api/v1/journals/{entry.id}",
                           headers=auth_header,
                           json={
-                              "date": "2026-03-10",  # 確定済み月
-                              "description": "x",
+                              "fiscal_year": 2026, "fiscal_month": 3,  # 確定済み月
                               "lines": encrypt_lines([
                                   {"account_code": accounts["5010"].code, "debit": 100},
                                   {"account_code": accounts["1010"].code, "credit": 100},
@@ -2411,17 +2352,17 @@ class TestUpdateJournal:
                               **encrypted_payload(),
                           })
         assert resp.status_code == 400
+        assert "確定済み" in resp.get_json()["error"]
 
-    def test_fiscal_period_16_rejected(self, client, db, user, accounts, auth_header):
-        """損益振替期間 (fiscal_period=16) は手動入力禁止なので PUT でも 400。"""
+    def test_fiscal_month_16_rejected(self, client, db, user, accounts, auth_header):
+        """損益振替期間 (fiscal_month=16) は手動入力禁止なので PUT でも 400。"""
         entry = make_journal(
             db, user.id, accounts["5010"].code, accounts["1010"].code, 100,
         )
         resp = client.put(f"/api/v1/journals/{entry.id}",
                           headers=auth_header,
                           json={
-                              "date": "2026-03-15", "description": "x",
-                              "fiscal_period": 16,
+                              "fiscal_year": 2026, "fiscal_month": 16,
                               "lines": encrypt_lines([
                                   {"account_code": accounts["5010"].code, "debit": 100},
                                   {"account_code": accounts["1010"].code, "credit": 100},
@@ -2429,3 +2370,4 @@ class TestUpdateJournal:
                               **encrypted_payload(),
                           })
         assert resp.status_code == 400
+        assert "損益振替" in resp.get_json()["error"]

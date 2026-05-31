@@ -190,8 +190,7 @@ class TestMarkDraftDone:
         with patch("app.views.api.create_voucher_from_draft"), \
              patch("app.services.notify.update_discord_message") as mock_upd:
             resp = client.post("/api/v1/journals", headers=auth_header, json={
-                "date": "2026-02-15",
-                "description": "ファミマ",
+                "fiscal_year": 2026, "fiscal_month": 2,
                 "lines": encrypt_lines([
                     {"account_code": "5010", "debit": 100, "credit": 0},
                     {"account_code": "1010", "debit": 0, "credit": 100},
@@ -226,8 +225,7 @@ class TestMarkDraftDone:
         with patch("app.views.api.create_voucher_from_draft"), \
              patch("app.services.notify.update_discord_message") as mock_upd:
             resp = client.post("/api/v1/journals", headers=auth_header, json={
-                "date": "2026-02-15",
-                "description": "ファミマ",
+                "fiscal_year": 2026, "fiscal_month": 2,
                 "lines": encrypt_lines([
                     {"account_code": "5010", "debit": 100, "credit": 0},
                     {"account_code": "1010", "debit": 0, "credit": 100},

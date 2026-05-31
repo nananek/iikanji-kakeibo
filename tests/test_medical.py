@@ -7,7 +7,6 @@ Phase E3-F PR-D-3 で医療費 UI はクライアント描画 + クライアン�
 - 削除 (delete) はサーバ側に残る (平文を読まない、伝票ロック判定のみ)。
 """
 
-from datetime import date
 
 import pytest
 
@@ -73,15 +72,14 @@ class TestDelete:
     def _make_expense(self, db, user_id, medical_account):
         from app.services.accounting import create_journal_entry
         entry = create_journal_entry(
-            user_id=user_id, date=date(2026, 2, 15),
-            description="医療費",
+            user_id=user_id,
             lines_data=[
                 {"account_code": medical_account.code,
                  "debit_amount": 2000, "credit_amount": 0},
                 {"account_code": "1010",
                  "debit_amount": 0, "credit_amount": 2000},
             ],
-            source="cashbook",
+            fiscal_year=2026, fiscal_month=2,
         )
         e = MedicalExpense(
             user_id=user_id, journal_entry_id=entry.id,

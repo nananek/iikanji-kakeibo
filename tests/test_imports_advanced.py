@@ -89,15 +89,14 @@ class TestMedicalEdgeCases:
         # MedicalExpense + JournalEntry を作る
         from app.services.accounting import create_journal_entry
         entry = create_journal_entry(
-            user_id=user.id, date=date(2026, 2, 15),
-            description="医療費",
+            user_id=user.id,
             lines_data=[
                 {"account_code": "6010",
                  "debit_amount": 5000, "credit_amount": 0},
                 {"account_code": "1010",
                  "debit_amount": 0, "credit_amount": 5000},
             ],
-            source="cashbook",
+            fiscal_year=2026, fiscal_month=2,
         )
         db.session.add(MedicalExpense(
             user_id=user.id, journal_entry_id=entry.id,

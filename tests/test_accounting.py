@@ -1,7 +1,5 @@
 """accounting.py のテスト — 仕訳作成・残高バランス"""
 
-from datetime import date
-
 import pytest
 
 from app.services.accounting import (
@@ -26,119 +24,103 @@ class TestGetNextEntryNumber:
 
 
 class TestCreateJournalEntry:
+    # E3-F PR-D-6-6: wire 平文除去後、create_journal_entry の平文メタは
+    # fiscal_year / fiscal_month のみ (date / description / source / fiscal_period
+    # 引数は撤去)。entry 本体はクライアントが暗号化して encrypted_blob に格納する。
     def test_balanced_entry(self, db, user, accounts):
         entry = create_journal_entry(
             user_id=user.id,
-            date=date(2026, 2, 15),
-            description="食材購入",
             lines_data=[
                 {"account_code": accounts["5010"].code, "debit_amount": 3000, "credit_amount": 0},
                 {"account_code": accounts["1010"].code, "debit_amount": 0, "credit_amount": 3000},
             ],
+            fiscal_year=2026, fiscal_month=2,
         )
         assert entry.id is not None
         assert entry.is_balanced
         assert entry.total_debit == 3000
         assert entry.total_credit == 3000
         assert entry.entry_number == 1
+        assert entry.fiscal_year == 2026
+        assert entry.fiscal_month == 2
 
     def test_unbalanced_raises(self, db, user, accounts):
         with pytest.raises(ValueError, match="一致"):
             create_journal_entry(
                 user_id=user.id,
-                date=date(2026, 2, 15),
-                description="不正仕訳",
                 lines_data=[
                     {"account_code": accounts["5010"].code, "debit_amount": 3000, "credit_amount": 0},
                     {"account_code": accounts["1010"].code, "debit_amount": 0, "credit_amount": 2000},
                 ],
+                fiscal_year=2026, fiscal_month=2,
             )
 
     def test_multi_line_entry(self, db, user, accounts):
         entry = create_journal_entry(
             user_id=user.id,
-            date=date(2026, 2, 25),
-            description="給与",
             lines_data=[
                 {"account_code": accounts["1020"].code, "debit_amount": 250000, "credit_amount": 0},
                 {"account_code": accounts["5020"].code, "debit_amount": 50000, "credit_amount": 0},
                 {"account_code": accounts["4010"].code, "debit_amount": 0, "credit_amount": 300000},
             ],
+            fiscal_year=2026, fiscal_month=2,
         )
         assert entry.is_balanced
         assert len(entry.lines) == 3
         assert entry.total_debit == 300000
 
-    def test_custom_source(self, db, user, accounts):
-        entry = create_journal_entry(
-            user_id=user.id,
-            date=date(2026, 2, 15),
-            description="CSV取込",
-            lines_data=[
-                {"account_code": accounts["5010"].code, "debit_amount": 500, "credit_amount": 0},
-                {"account_code": accounts["1010"].code, "debit_amount": 0, "credit_amount": 500},
-            ],
-            source="csv",
-        )
-        # E3-F PR-D-6-5: source 平文列は DROP 済。引数はエラーなく受理され entry
-        # は作成される (本体は encrypted_blob、source はクライアントが blob に格納)。
-        assert entry.id is not None
-
     def test_batch_id(self, db, user, accounts):
         entry = create_journal_entry(
             user_id=user.id,
-            date=date(2026, 2, 15),
-            description="バッチ",
             lines_data=[
                 {"account_code": accounts["5010"].code, "debit_amount": 100, "credit_amount": 0},
                 {"account_code": accounts["1010"].code, "debit_amount": 0, "credit_amount": 100},
             ],
+            fiscal_year=2026, fiscal_month=2,
             batch_id="batch-001",
         )
         assert entry.batch_id == "batch-001"
 
-    def test_fiscal_period_override(self, db, user, accounts):
+    def test_fiscal_month_special_period(self, db, user, accounts):
+        # 決算整理 (fiscal_month=13) はクライアントが算出して渡す。
         entry = create_journal_entry(
             user_id=user.id,
-            date=date(2026, 12, 31),
-            description="決算整理",
             lines_data=[
                 {"account_code": accounts["5010"].code, "debit_amount": 100, "credit_amount": 0},
                 {"account_code": accounts["1010"].code, "debit_amount": 0, "credit_amount": 100},
             ],
-            fiscal_period=13,
+            fiscal_year=2026, fiscal_month=13,
         )
-        # E3-F PR-D-6-5: fiscal_period 平文列は DROP 済。fiscal_month メタ列へ反映する。
         assert entry.fiscal_month == 13
 
-    def test_line_description(self, db, user, accounts):
+    def test_line_extra_keys_ignored(self, db, user, accounts):
+        # lines_data に余分な description キーがあっても無視される (列は DROP 済)。
         entry = create_journal_entry(
             user_id=user.id,
-            date=date(2026, 2, 15),
-            description="日用品",
             lines_data=[
                 {"account_code": accounts["5010"].code, "debit_amount": 500, "credit_amount": 0,
                  "description": "洗剤"},
                 {"account_code": accounts["1010"].code, "debit_amount": 0, "credit_amount": 500},
             ],
+            fiscal_year=2026, fiscal_month=2,
         )
-        # E3-F PR-D-6-5: line description 平文列は DROP 済 (本体は encrypted_blob)。
-        # 行は作成されるが摘要は column に残らない。
         assert len(entry.lines) == 2
 
     def test_sequential_entry_numbers(self, db, user, accounts):
         e1 = create_journal_entry(
-            user_id=user.id, date=date(2026, 1, 1), description="1件目",
+            user_id=user.id,
             lines_data=[
                 {"account_code": accounts["5010"].code, "debit_amount": 100, "credit_amount": 0},
                 {"account_code": accounts["1010"].code, "debit_amount": 0, "credit_amount": 100},
             ],
+            fiscal_year=2026, fiscal_month=1,
         )
         e2 = create_journal_entry(
-            user_id=user.id, date=date(2026, 1, 2), description="2件目",
+            user_id=user.id,
             lines_data=[
                 {"account_code": accounts["5010"].code, "debit_amount": 200, "credit_amount": 0},
                 {"account_code": accounts["1010"].code, "debit_amount": 0, "credit_amount": 200},
             ],
+            fiscal_year=2026, fiscal_month=1,
         )
         assert e2.entry_number == e1.entry_number + 1
