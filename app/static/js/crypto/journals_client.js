@@ -14,14 +14,20 @@ import { buildAAD, decryptRecord } from "./record.js";
 
 
 /**
- * 1 つの API entry を復号 (または平文) して正規化形式に変換。
+ * API entry の encrypted_blob を復号し、entry レベルの非 line フィールド
+ * (date / description / source / batch_id / fiscal_period) を取り出す。
  *
- * 復号できない場合 (AAD 不一致等) や blob/iv が null の場合は旧平文
- * フィールドを使う。lines も同様。
+ * 復号できない場合 (AAD 不一致 / bit flip / 鍵不一致 / blob 欠落) は closing
+ * (損益振替・自動生成) 仕訳なら保持列から合成し、それ以外は null/空を返す
+ * (E3-F PR-D-6-3b で平文フォールバックは廃止)。closing 仕訳はサーバが MK を
+ * 持たず暗号化できないため encrypted_blob が空 (body=null) で、is_closing /
+ * fiscal_year の保持列から date=年末 12/31・description="損益振替仕訳（自動
+ * 生成）"・source="closing"・fiscal_period=16 を合成する (サーバ
+ * fiscal.generate_closing_entries と一致)。
  *
- * @returns {Promise<Object>} {id, fiscal_year, date, description, source, lines: [{account_code, debit, credit, description}]}
+ * @returns {Promise<{date, description, source, batch_id, fiscal_period}>}
  */
-async function _normalizeEntry(client, userId, apiEntry) {
+export async function decryptEntryMeta(client, userId, apiEntry) {
   let body = null;
   if (apiEntry.encrypted_blob && apiEntry.blob_iv) {
     try {
@@ -30,15 +36,35 @@ async function _normalizeEntry(client, userId, apiEntry) {
       const aad = buildAAD("je", userId);
       body = await decryptRecord(client, blob, iv, aad);
     } catch (e) {
-      // 復号失敗 (AAD 不一致 / bit flip / 鍵不一致) は dual-read 設計通り
-      // 平文フォールバックする。1 件の異常で全件取得が失敗しないよう
-      // entry 単位で局所化する。
+      // 1 件の異常で全件取得が失敗しないよう entry 単位で局所化する。
       console.warn(
-        `journals_client: entry ${apiEntry.id} decrypt failed, ` +
-        `falling back to plaintext: ${e?.message || e}`,
+        `journals_client: entry ${apiEntry.id} decrypt failed: ` +
+        `${e?.message || e}`,
       );
     }
   }
+  const isClosing = apiEntry.is_closing ?? false;
+  return {
+    date: body?.date ?? (isClosing ? `${apiEntry.fiscal_year}-12-31` : null),
+    description: body?.description ?? (isClosing ? "損益振替仕訳（自動生成）" : ""),
+    source: body?.source ?? (isClosing ? "closing" : ""),
+    // batch_id は entryBody に含まれない (batch top-level に集約) ため body には
+    // 無い。平文カラムは保持されるが API レスポンスには含めない方針。
+    batch_id: body?.batch_id ?? null,
+    fiscal_period: body?.fiscal_period ?? (isClosing ? 16 : null),
+  };
+}
+
+
+/**
+ * 1 つの API entry を復号して正規化形式に変換。
+ *
+ * entry レベルは decryptEntryMeta、line は _normalizeLine で復号する。
+ *
+ * @returns {Promise<Object>} {id, fiscal_year, date, description, source, lines: [{account_code, debit, credit, description}]}
+ */
+async function _normalizeEntry(client, userId, apiEntry) {
+  const meta = await decryptEntryMeta(client, userId, apiEntry);
   // _normalizeLine 内の throw (apiLine.id 欠落等) が Promise.all を突き抜け
   // て fetchJournalsForYear 全体を reject させないよう、line 単位で catch して
   // 平文フォールバックに局所化する (entry の try/catch と同じ方針)。
@@ -58,12 +84,6 @@ async function _normalizeEntry(client, userId, apiEntry) {
       }),
     ),
   );
-  // closing (損益振替・自動生成) 仕訳はサーバが MK を持たず暗号化できないため
-  // encrypted_blob が空 (b"") = body は null。is_closing / fiscal_month /
-  // fiscal_year の保持列から date / description / source / fiscal_period を
-  // クライアント側で合成する (サーバ fiscal.generate_closing_entries と一致:
-  // date=年末 12/31・description="損益振替仕訳（自動生成）"・fiscal_period=16)。
-  const isClosing = apiEntry.is_closing ?? false;
   return {
     id: apiEntry.id,
     fiscal_year: apiEntry.fiscal_year,
@@ -71,22 +91,20 @@ async function _normalizeEntry(client, userId, apiEntry) {
     // 仕訳帳) の "No." 列表示に使うため API レスポンスからそのまま伝播する。
     entry_number: apiEntry.entry_number ?? null,
     // E3-F PR-D-6-3b: 平文 date/description/source/fiscal_period は API から
-    // 撤去済 (date 列等は D-6-5 で DROP)。通常仕訳は復号 blob (body) から、
-    // closing 仕訳は保持列から合成する。復号失敗 (body=null) かつ非 closing は
-    // null/空 (dual-read 平文フォールバックは廃止)。
-    date: body?.date ?? (isClosing ? `${apiEntry.fiscal_year}-12-31` : null),
-    description: body?.description ?? (isClosing ? "損益振替仕訳（自動生成）" : ""),
-    source: body?.source ?? (isClosing ? "closing" : ""),
-    // batch_id は entryBody に含まれない (batch top-level に集約) ため body には
-    // 無い。平文カラムは保持されるが API レスポンスには含めない方針。
-    batch_id: body?.batch_id ?? null,
-    fiscal_period: body?.fiscal_period ?? (isClosing ? 16 : null),
+    // 撤去済 (date 列等は D-6-5 で DROP)。decryptEntryMeta が通常仕訳は復号
+    // blob から、closing 仕訳は保持列から合成する (復号失敗 + 非 closing は
+    // null/空。dual-read 平文フォールバックは廃止)。
+    date: meta.date,
+    description: meta.description,
+    source: meta.source,
+    batch_id: meta.batch_id,
+    fiscal_period: meta.fiscal_period,
     // 以下は非暗号化メタ (平文カラム / DROP 対象外)。一覧 (仕訳帳) の編集可否
     // 判定・ソース/証憑バッジ描画・レポートの期間/closing 判定に使う:
     //   is_closing  : 損益振替 (自動生成) 判定。変更不可
     //   fiscal_month: 確定済み期間判定 (period <= closed_period) + 集計の期間判定
     //   vouchers    : 証憑画像リンク ([{id, uploaded_at}])
-    is_closing: isClosing,
+    is_closing: apiEntry.is_closing ?? false,
     fiscal_month: apiEntry.fiscal_month ?? null,
     vouchers: apiEntry.vouchers ?? [],
     lines,
@@ -181,4 +199,46 @@ export async function fetchJournalsForYear({
     }
   }
   return all;
+}
+
+
+/**
+ * 単一仕訳の entry レベルフィールド (date / description / source / fiscal_period
+ * / batch_id) を `GET /api/v1/journals/<id>` から取得 + 復号して返す。
+ *
+ * 編集フォーム (仕訳帳 / 出納帳) の date/description prefill 用。サーバは平文
+ * date/description を返さなくなった (E3-F PR-D-6-3b-3) ため、クライアントが
+ * 自分の MK で復号して値を埋める。/api/v1/journals/<id> は本人 (g.auth_user)
+ * の仕訳のみを返す = 編集は本人操作前提なので適合する (監査代理は編集 submit
+ * 自体がブロックされる)。
+ *
+ * @param {Object} args
+ * @param {Object} args.client          SharedCryptoClient (decrypt 用)
+ * @param {number|bigint} args.userId   復号 AAD に使う
+ * @param {number} args.entryId
+ * @param {Function} [args.fetchImpl]   テスト DI
+ * @returns {Promise<{date, description, source, batch_id, fiscal_period}>}
+ */
+export async function fetchEntryFields({ client, userId, entryId, fetchImpl }) {
+  if (!client || typeof client.decrypt !== "function") {
+    throw new Error("client (SharedCryptoClient) is required");
+  }
+  if (userId === undefined || userId === null) {
+    throw new Error("userId is required");
+  }
+  if (entryId === undefined || entryId === null) {
+    throw new Error("entryId is required");
+  }
+  const f = fetchImpl ?? globalThis.fetch;
+  const r = await f(`/api/v1/journals/${entryId}`, { credentials: "include" });
+  if (!r.ok) {
+    const e = await r.json().catch(() => ({}));
+    throw new Error(`fetchEntryFields: HTTP ${r.status} ${e.error || ""}`);
+  }
+  const body = await r.json();
+  const apiEntry = body.journal;
+  if (!apiEntry) {
+    throw new Error("fetchEntryFields: response missing journal");
+  }
+  return decryptEntryMeta(client, userId, apiEntry);
 }
