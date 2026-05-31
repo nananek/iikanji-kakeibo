@@ -279,10 +279,11 @@ def log_voucher_orphan(entry, user_id):
             voucher_id=v.id,
             user_id=user_id,
             action="orphaned",
+            # E3-F PR-D-6-5-pre1: 平文 description は記録しない (D-6-4 以降は空、
+            # E2EE で本体は encrypted_blob にあり復号不能。識別は entry_number で足りる)。
             detail=json.dumps({
                 "journal_entry_id": entry.id,
                 "entry_number": entry.entry_number,
-                "description": entry.description,
             }, ensure_ascii=False),
         ))
 

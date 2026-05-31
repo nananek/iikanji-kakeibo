@@ -20,26 +20,25 @@ async function _normalize(client, userId, apiExpense) {
       const aad = buildAAD("me", userId);
       body = await decryptRecord(client, blob, iv, aad);
     } catch (e) {
-      // 復号失敗 → 平文フォールバック (dual-read 設計通り)
+      // E3-F PR-D-6-5-pre1: 復号失敗時はフィールドを空にする (サーバは平文を
+      // 返さなくなったため平文フォールバックは無い)。
       console.warn(
-        `medical_expenses_client: expense ${apiExpense.id} decrypt failed, ` +
-        `falling back to plaintext: ${e?.message || e}`,
+        `medical_expenses_client: expense ${apiExpense.id} decrypt failed: ` +
+        `${e?.message || e}`,
       );
     }
   }
   return {
     id: apiExpense.id,
     journal_entry_id: apiExpense.journal_entry_id,
-    // 復号値 → API レスポンス平文 → null の優先順
-    date: body?.date ?? apiExpense.date ?? null,
-    patient_name: body?.patient_name ?? apiExpense.patient_name ?? "",
-    hospital_name: body?.hospital_name ?? apiExpense.hospital_name ?? "",
-    treatment_description:
-      body?.treatment_description ?? apiExpense.treatment_description ?? "",
-    provider_type: body?.provider_type ?? apiExpense.provider_type ?? "",
-    amount_paid: body?.amount_paid ?? apiExpense.amount_paid ?? 0,
-    insurance_reimbursement:
-      body?.insurance_reimbursement ?? apiExpense.insurance_reimbursement ?? 0,
+    // E3-F PR-D-6-5-pre1: 平文列は復号 body からのみ取得 (サーバ平文は撤去)。
+    date: body?.date ?? null,
+    patient_name: body?.patient_name ?? "",
+    hospital_name: body?.hospital_name ?? "",
+    treatment_description: body?.treatment_description ?? "",
+    provider_type: body?.provider_type ?? "",
+    amount_paid: body?.amount_paid ?? 0,
+    insurance_reimbursement: body?.insurance_reimbursement ?? 0,
   };
 }
 

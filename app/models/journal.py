@@ -85,7 +85,11 @@ class JournalEntry(db.Model):
         return self.total_debit == self.total_credit
 
     def __repr__(self):
-        return f"<JournalEntry #{self.entry_number} {self.date}>"
+        # E3-F PR-D-6-5-pre1: 平文 date は参照しない (D-6-5 で DROP)。
+        return (
+            f"<JournalEntry #{self.entry_number} "
+            f"{self.fiscal_year}-{self.fiscal_month}>"
+        )
 
 
 class JournalEntryLine(db.Model):

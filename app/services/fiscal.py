@@ -62,14 +62,11 @@ def adjust_date_for_fiscal_period(entry_date, fiscal_period):
 def get_effective_period(entry):
     """仕訳の実効期間を返す
 
-    E3-F: fiscal_month を優先。移行期の安全のため未設定時は旧 fiscal_period、
-    それも無ければ date.month にフォールバックする。
+    E3-F PR-D-6-5-pre1: fiscal_month を使用 (マイグレ 054 で全行 backfill 済、
+    全 WRITE 経路も populate 済)。旧 fiscal_period / date.month フォールバックは
+    撤去 (date / fiscal_period 列は D-6-5 で DROP)。
     """
-    if entry.fiscal_month is not None:
-        return entry.fiscal_month
-    if entry.fiscal_period is not None:
-        return entry.fiscal_period
-    return entry.date.month
+    return entry.fiscal_month
 
 
 def get_closed_period(user_id, year):
@@ -126,7 +123,9 @@ def check_entry_modifiable(user_id, entry):
     """仕訳が変更可能か判定。不可ならエラーメッセージを返す"""
     if entry.is_closing:
         return "損益振替仕訳（自動生成）は変更できません。"
-    year = entry.fiscal_year if entry.fiscal_year is not None else entry.date.year
+    # E3-F PR-D-6-5-pre1: fiscal_year を使用 (全 WRITE 経路で populate 済)。
+    # 旧 date.year フォールバックは撤去 (date 列は D-6-5 で DROP)。
+    year = entry.fiscal_year
     period = get_effective_period(entry)
     if is_period_locked(user_id, year, period):
         label = PERIOD_LABELS.get(period, f"{period}月")

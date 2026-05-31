@@ -69,6 +69,9 @@ with app.app_context():
             user_id=u.id, date=date(2026, 1, 15),
             entry_number=get_next_entry_number(u.id),
             description='E2Eテスト仕訳', source='journal',
+            # E3-F PR-D-6-5-pre1: 実エントリ同様に fiscal_year/fiscal_month を
+            # populate (check_entry_modifiable / get_effective_period が参照)。
+            fiscal_year=2026, fiscal_month=1,
         )
         entry.lines = [
             JournalEntryLine(account_user_id=u.id, account_code=food.code,

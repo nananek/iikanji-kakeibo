@@ -140,6 +140,9 @@ class TestDeleteBatch:
                 user_id=user.id, date=date(2026, 2, i + 1),
                 entry_number=i + 1, description=f"row{i}",
                 source="csv", batch_id=bid,
+                # E3-F: 実エントリ同様に fiscal_year/fiscal_month を populate
+                # (check_entry_modifiable は fiscal_year/fiscal_month を読む)。
+                fiscal_year=2026, fiscal_month=2,
             )
             e.lines = [
                 JournalEntryLine(account_user_id=user.id, account_code="5010",
@@ -163,6 +166,7 @@ class TestDeleteBatch:
                 user_id=user.id, date=date(2026, m, 1),
                 entry_number=i + 1, description=f"row{i}",
                 source="csv", batch_id=bid,
+                fiscal_year=2026, fiscal_month=m,
             )
             e.lines = [
                 JournalEntryLine(account_user_id=user.id, account_code="5010",
@@ -177,4 +181,4 @@ class TestDeleteBatch:
         # 1月分は残る、2月分は削除
         remaining = JournalEntry.query.filter_by(batch_id=bid).all()
         assert len(remaining) == 1
-        assert remaining[0].date.month == 1
+        assert remaining[0].fiscal_month == 1

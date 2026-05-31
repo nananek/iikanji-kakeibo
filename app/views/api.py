@@ -1160,7 +1160,9 @@ def _entry_to_dict(entry):
                 "account_code": line.account_code,
                 "debit": int(line.debit_amount or 0),
                 "credit": int(line.credit_amount or 0),
-                "description": line.description or "",
+                # E3-F PR-D-6-5-pre1: 平文 description は返さない (line 本体は
+                # encrypted_blob。一覧は journals_client._normalizeLine が復号
+                # body.description を使う。これらの列は D-6-5 で DROP)。
                 "encrypted_blob": _b64_or_none(line.encrypted_blob),
                 "blob_iv": _b64_or_none(line.blob_iv),
             }
@@ -2238,15 +2240,11 @@ def list_medical_expenses():
             {
                 "id": e.id,
                 "journal_entry_id": e.journal_entry_id,
-                # 平文 (dual-read 互換)。Phase E7 で削除予定。
-                "date": e.date.isoformat() if e.date else None,
-                "patient_name": e.patient_name,
-                "hospital_name": e.hospital_name,
-                "treatment_description": e.treatment_description,
-                "provider_type": e.provider_type,
-                "amount_paid": int(e.amount_paid or 0),
-                "insurance_reimbursement": int(e.insurance_reimbursement or 0),
-                # Phase E3: クライアント MK で AES-GCM 暗号化済の本体
+                # E3-F PR-D-6-5-pre1: 平文 (date/patient_name/hospital_name/
+                # treatment_description/provider_type/amount_paid/
+                # insurance_reimbursement) は返さない。client は
+                # medical_expenses_client._normalizeExpense で encrypted_blob を
+                # 復号して取り出す (これらの列は D-6-5 で DROP)。
                 "encrypted_blob": _b64_or_none(e.encrypted_blob),
                 "blob_iv": _b64_or_none(e.blob_iv),
             }

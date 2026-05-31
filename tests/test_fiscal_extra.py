@@ -57,11 +57,14 @@ class TestAdjustDateForFiscalPeriod:
 
 
 class TestGetEffectivePeriod:
-    def test_with_fiscal_period(self, db, user, accounts):
+    def test_with_fiscal_month(self, db, user, accounts):
+        # E3-F PR-D-6-5-pre1: get_effective_period は fiscal_month を使用する
+        # (旧 fiscal_period / date.month フォールバックは撤去済)。
         e = JournalEntry(
             user_id=user.id, date=date(2026, 5, 15),
             entry_number=1, description="x",
             source="journal", fiscal_period=13,
+            fiscal_month=13, fiscal_year=2026,
         )
         e.lines = [
             JournalEntryLine(account_user_id=user.id, account_code="5010",
@@ -73,10 +76,10 @@ class TestGetEffectivePeriod:
         db.session.commit()
         assert get_effective_period(e) == 13
 
-    def test_without_fiscal_period(self, db, user, accounts):
+    def test_fiscal_month_from_date(self, db, user, accounts):
+        # make_journal は fiscal_month を date.month で populate する。
         e = make_journal(db, user.id, "5010", "1010", 100,
                           entry_date=date(2026, 5, 15))
-        # fiscal_period=None なので date.month
         assert get_effective_period(e) == 5
 
 

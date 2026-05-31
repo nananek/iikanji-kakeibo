@@ -133,7 +133,9 @@ async function _normalizeLine(client, userId, entryId, apiLine) {
     account_code: body?.account_code ?? apiLine.account_code,
     debit: body?.debit_amount ?? apiLine.debit ?? 0,
     credit: body?.credit_amount ?? apiLine.credit ?? 0,
-    description: body?.description ?? apiLine.description ?? "",
+    // E3-F PR-D-6-5-pre1: サーバは平文 description を返さない。復号 body のみ
+    // (復号失敗時は空文字)。account_code/debit/credit の平文メタは継続。
+    description: body?.description ?? "",
   };
 }
 
