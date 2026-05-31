@@ -69,8 +69,8 @@ class TestAPIKey:
 class TestJournalEntry:
     def test_is_balanced(self, db, user, accounts):
         entry = JournalEntry(
-            user_id=user.id, date=date(2026, 1, 1),
-            entry_number=1, description="test",
+            user_id=user.id,
+            entry_number=1,
         )
         entry.lines = [
             JournalEntryLine(account_user_id=user.id,

@@ -103,8 +103,11 @@ def new():
 def edit(entry_id):
     user_id = get_effective_user_id()
     allowed_codes = get_allowed_account_codes()
+    # E3-F PR-D-6-5: source 列は DROP 済のため source="cashbook" で絞れない。
+    # 出納帳一覧はクライアントが復号 blob の source で抽出する (client 描画)。
+    # サーバは id + user_id で本人の仕訳のみに限定する。
     entry = JournalEntry.query.filter_by(
-        id=entry_id, user_id=user_id, source="cashbook"
+        id=entry_id, user_id=user_id
     ).first_or_404()
 
     # 伝票ロックチェック
@@ -177,8 +180,11 @@ def edit(entry_id):
 def delete(entry_id):
     user_id = get_effective_user_id()
     allowed_codes = get_allowed_account_codes()
+    # E3-F PR-D-6-5: source 列は DROP 済のため source="cashbook" で絞れない。
+    # 出納帳一覧はクライアントが復号 blob の source で抽出する (client 描画)。
+    # サーバは id + user_id で本人の仕訳のみに限定する。
     entry = JournalEntry.query.filter_by(
-        id=entry_id, user_id=user_id, source="cashbook"
+        id=entry_id, user_id=user_id
     ).first_or_404()
 
     def _hx_error(msg):

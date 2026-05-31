@@ -161,14 +161,16 @@ def attach(entry_id):
     # クライアントが E2EE モードなら別途 /api/v1/voucher-attach/prompt-context
     # を叩いてクライアント側で LLM 呼出し → 結果は UI 表示のみ (現状の挙動と
     # 同様、DB には保存しない)。サーバが返すのは voucher_id + entry メタのみ。
+    # E3-F PR-D-6-5 (055): 平文 journal_date / journal_description は返さない
+    # (列 DROP 済)。AI プロンプト用の日付・摘要はクライアントが復号済み entry
+    # メタ (ledger モーダルの decryptModalEntry 由来) から渡す。journal_amount は
+    # line.debit_amount 合計 (平文メタ・DROP 対象外) なので継続。
     response_data = {
         "ok": True,
         "voucher_id": voucher.id,
-        "journal_date": entry.date.isoformat(),
         "journal_amount": int(sum(
             line.debit_amount for line in entry.lines
         )),
-        "journal_description": entry.description or "",
     }
 
     db.session.commit()

@@ -41,7 +41,6 @@ class TestCreateJournalEntry:
         assert entry.total_debit == 3000
         assert entry.total_credit == 3000
         assert entry.entry_number == 1
-        assert entry.source == "journal"
 
     def test_unbalanced_raises(self, db, user, accounts):
         with pytest.raises(ValueError, match="一致"):
@@ -81,10 +80,9 @@ class TestCreateJournalEntry:
             ],
             source="csv",
         )
-        # E3-F PR-D-6-4: source 平文列は書き込まれない (本体は encrypted_blob)。
-        # 引数はエラーなく受理され entry は作成されるが column には残らない。
+        # E3-F PR-D-6-5: source 平文列は DROP 済。引数はエラーなく受理され entry
+        # は作成される (本体は encrypted_blob、source はクライアントが blob に格納)。
         assert entry.id is not None
-        assert entry.source != "csv"
 
     def test_batch_id(self, db, user, accounts):
         entry = create_journal_entry(
@@ -110,9 +108,8 @@ class TestCreateJournalEntry:
             ],
             fiscal_period=13,
         )
-        # E3-F PR-D-6-4: fiscal_period 平文列は書かず fiscal_month メタ列へ反映する。
+        # E3-F PR-D-6-5: fiscal_period 平文列は DROP 済。fiscal_month メタ列へ反映する。
         assert entry.fiscal_month == 13
-        assert entry.fiscal_period is None
 
     def test_line_description(self, db, user, accounts):
         entry = create_journal_entry(
@@ -125,9 +122,9 @@ class TestCreateJournalEntry:
                 {"account_code": accounts["1010"].code, "debit_amount": 0, "credit_amount": 500},
             ],
         )
-        # E3-F PR-D-6-4: line description 平文列は書き込まれない (本体は encrypted_blob)。
-        descs = [line.description for line in entry.lines]
-        assert "洗剤" not in descs
+        # E3-F PR-D-6-5: line description 平文列は DROP 済 (本体は encrypted_blob)。
+        # 行は作成されるが摘要は column に残らない。
+        assert len(entry.lines) == 2
 
     def test_sequential_entry_numbers(self, db, user, accounts):
         e1 = create_journal_entry(

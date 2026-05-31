@@ -39,8 +39,8 @@ def mock_backend(monkeypatch):
 class TestBackfillFileSizes:
     def test_backfills_null_voucher(self, db, user, mock_backend):
         entry = JournalEntry(
-            user_id=user.id, date=date_type(2026, 5, 1),
-            entry_number=1, description="x",
+            user_id=user.id,
+            entry_number=1,
         )
         db.session.add(entry)
         db.session.flush()
@@ -107,8 +107,8 @@ class TestBackfillFileSizes:
 class TestMeasureUserUsage:
     def test_sums_voucher_and_draft_file_sizes(self, db, user):
         entry = JournalEntry(
-            user_id=user.id, date=date_type(2026, 5, 1),
-            entry_number=1, description="x",
+            user_id=user.id,
+            entry_number=1,
         )
         db.session.add(entry)
         db.session.flush()
@@ -132,8 +132,8 @@ class TestAuditStorageUsage:
     def test_no_drift_reported(self, db, user):
         # voucher 1 件, file_size=100、StorageUsage も 100
         entry = JournalEntry(
-            user_id=user.id, date=date_type(2026, 5, 1),
-            entry_number=1, description="x",
+            user_id=user.id,
+            entry_number=1,
         )
         db.session.add(entry)
         db.session.flush()
@@ -151,8 +151,8 @@ class TestAuditStorageUsage:
 
     def test_detects_drift_without_fix(self, db, user):
         entry = JournalEntry(
-            user_id=user.id, date=date_type(2026, 5, 1),
-            entry_number=1, description="x",
+            user_id=user.id,
+            entry_number=1,
         )
         db.session.add(entry)
         db.session.flush()
@@ -175,8 +175,8 @@ class TestAuditStorageUsage:
 
     def test_fixes_drift(self, db, user):
         entry = JournalEntry(
-            user_id=user.id, date=date_type(2026, 5, 1),
-            entry_number=1, description="x",
+            user_id=user.id,
+            entry_number=1,
         )
         db.session.add(entry)
         db.session.flush()
@@ -194,8 +194,8 @@ class TestAuditStorageUsage:
 
     def test_creates_usage_row_when_missing(self, db, user):
         entry = JournalEntry(
-            user_id=user.id, date=date_type(2026, 5, 1),
-            entry_number=1, description="x",
+            user_id=user.id,
+            entry_number=1,
         )
         db.session.add(entry)
         db.session.flush()

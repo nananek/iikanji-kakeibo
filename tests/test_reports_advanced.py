@@ -73,9 +73,8 @@ class TestBalanceWithPref:
         # pt=16 だと closing 仕訳も含む
         from app.models.journal import JournalEntry, JournalEntryLine
         e = JournalEntry(
-            user_id=user.id, date=date(2026, 12, 31),
-            entry_number=1, description="closing",
-            source="closing", fiscal_period=16,
+            user_id=user.id,
+            entry_number=1,
         )
         e.lines = [
             JournalEntryLine(account_user_id=user.id, account_code="5010",
@@ -217,9 +216,8 @@ class TestBsAdvanced:
         from app.models.journal import JournalEntry, JournalEntryLine
         # closing 仕訳あり → has_closing=True で当期純利益を加算しない
         e = JournalEntry(
-            user_id=user.id, date=date(2026, 12, 31),
-            entry_number=1, description="closing",
-            source="closing", fiscal_period=16,
+            user_id=user.id,
+            entry_number=1,
         )
         e.lines = [
             JournalEntryLine(account_user_id=user.id, account_code="3020",

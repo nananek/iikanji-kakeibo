@@ -52,8 +52,8 @@ _entry_counter = [0]
 def _make_voucher(db, user, *, file_size=1 * MB):
     _entry_counter[0] += 1
     entry = JournalEntry(
-        user_id=user.id, date=date_type(2026, 5, 1),
-        entry_number=_entry_counter[0], description="x",
+        user_id=user.id,
+        entry_number=_entry_counter[0],
     )
     db.session.add(entry)
     db.session.flush()

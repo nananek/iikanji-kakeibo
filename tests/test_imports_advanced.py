@@ -67,9 +67,8 @@ class TestCashbookLockedAccounts:
             "fiscal_period": "",
         })
         assert resp.status_code == 405
-        assert JournalEntry.query.filter_by(
-            user_id=user.id, source="cashbook"
-        ).count() == 0
+        # E3-F PR-D-6-5: source 列 DROP 済のため user_id で件数判定する。
+        assert JournalEntry.query.filter_by(user_id=user.id).count() == 0
 
 
 class TestMedicalEdgeCases:
@@ -102,10 +101,6 @@ class TestMedicalEdgeCases:
         )
         db.session.add(MedicalExpense(
             user_id=user.id, journal_entry_id=entry.id,
-            date=date(2026, 2, 15),
-            patient_name="本人", hospital_name="○病院",
-            treatment_description="風邪",
-            amount_paid=5000, insurance_reimbursement=1000,
         ))
         db.session.commit()
         # E3-F PR-D-3: 一覧はクライアント描画に移行。サーバは平文金額を

@@ -61,8 +61,8 @@ def _make_user_with_data(db, *, username, email):
 
     # Journal Entry
     entry = JournalEntry(
-        user_id=user.id, date=date_type(2026, 5, 1),
-        entry_number=1, description="テスト仕訳",
+        user_id=user.id,
+        entry_number=1,
     )
     db.session.add(entry)
     db.session.flush()
@@ -359,7 +359,6 @@ class TestJournalEntryDeletionOrder:
             account_user_id=user.id,
             account_code="9999",
             debit_amount=100, credit_amount=0,
-            description="テスト",
         ))
         db.session.commit()
         assert JournalEntryLine.query.filter_by(

@@ -1256,13 +1256,6 @@ class TestMedicalExpenses:
         e = MedicalExpense(
             user_id=user_id,
             journal_entry_id=entry.id,
-            date=kwargs.get("date", _date(2026, 5, 1)),
-            patient_name=kwargs.get("patient_name", "本人"),
-            hospital_name=kwargs.get("hospital_name", "A病院"),
-            treatment_description=kwargs.get("treatment_description", ""),
-            provider_type=kwargs.get("provider_type", "hospital"),
-            amount_paid=kwargs.get("amount_paid", 5000),
-            insurance_reimbursement=kwargs.get("insurance_reimbursement", 0),
         )
         db.session.add(e)
         db.session.commit()
@@ -1362,10 +1355,6 @@ class TestMedicalExpenses:
         other_exp = MedicalExpense(
             user_id=auditor.id,
             journal_entry_id=None,
-            date=_date(2026, 6, 1),
-            patient_name="他人",
-            hospital_name="X病院",
-            amount_paid=999,
         )
         db.session.add(other_exp)
         db.session.commit()
@@ -1409,9 +1398,8 @@ class TestMedicalExpensesUpsert:
         me = MedicalExpense.query.filter_by(journal_entry_id=entry.id).first()
         assert me is not None
         assert me.id == body["id"]
-        # E3-F PR-D-6-4: 平文列 (patient_name 等) は書き込まれない。本体は
+        # E3-F PR-D-6-5: 平文列 (patient_name 等) は DROP 済。本体は
         # encrypted_blob のみに保存する。
-        assert me.patient_name != "本人"
         assert me.encrypted_blob is not None
         assert me.blob_iv is not None
 
@@ -1485,18 +1473,8 @@ class TestMedicalExpensesUpsert:
                            headers=auth_header)
         assert resp.status_code == 400
 
-    def test_provider_type_empty_becomes_null(
-        self, client, db, user, accounts, auth_header,
-    ):
-        from app.models.medical import MedicalExpense
-        entry = make_journal(db, user.id, "5010", "1010", 5000,
-                             entry_date=date(2026, 5, 1))
-        resp = client.post("/api/v1/medical-expenses",
-                           json=self._payload(entry.id, provider_type=""),
-                           headers=auth_header)
-        assert resp.status_code == 200
-        me = MedicalExpense.query.filter_by(journal_entry_id=entry.id).first()
-        assert me.provider_type is None
+    # E3-F PR-D-6-5: provider_type 平文列は DROP 済 (サーバは保存も正規化も
+    # しない)。旧 test_provider_type_empty_becomes_null を削除。
 
 
 # --- 残高キャッシュ blob (E3-E-1) ---
@@ -1794,8 +1772,8 @@ class TestBackupExport:
             user_id=other.id, year=2026, closed_period=5,
         ))
         je = JournalEntry(
-            user_id=other.id, date=d(2026, 3, 15),
-            entry_number=1, description="他人の仕訳",
+            user_id=other.id,
+            entry_number=1,
         )
         db.session.add(je)
         db.session.flush()
@@ -1805,9 +1783,7 @@ class TestBackupExport:
             debit_amount=999, credit_amount=0,
         ))
         db.session.add(MedicalExpense(
-            user_id=other.id, date=d(2026, 4, 1),
-            patient_name="他人", hospital_name="他人病院",
-            amount_paid=12345, insurance_reimbursement=0,
+            user_id=other.id,
         ))
         db.session.add(BalanceCacheBlob(
             user_id=other.id, year=2026, period=5,

@@ -62,15 +62,13 @@ with app.app_context():
 
     # テスト用仕訳を作成（残高試算表E2Eテスト用）
     from app.models.journal import JournalEntry, JournalEntryLine
-    from datetime import date
     if not JournalEntry.query.filter_by(user_id=u.id).first():
         from app.services.accounting import get_next_entry_number
+        # E3-F PR-D-6-5 (055): 平文 date/description/source 列は DROP 済。
+        # fiscal_year/fiscal_month のみ populate する (本番 create_journal_entry 同様)。
         entry = JournalEntry(
-            user_id=u.id, date=date(2026, 1, 15),
+            user_id=u.id,
             entry_number=get_next_entry_number(u.id),
-            description='E2Eテスト仕訳', source='journal',
-            # E3-F PR-D-6-5-pre1: 実エントリ同様に fiscal_year/fiscal_month を
-            # populate (check_entry_modifiable / get_effective_period が参照)。
             fiscal_year=2026, fiscal_month=1,
         )
         entry.lines = [
