@@ -125,10 +125,11 @@ def edit(entry_id):
     closed_periods = get_closed_periods_map(user_id)
     restricted_before = get_restricted_before_year(user_id)
 
-    form.date.data = entry.date
-    form.description.data = entry.description
-    # E3-F PR-D-6-3: 平文 fiscal_period から保持列 fiscal_month へ移行
-    # (fiscal_period 列は D-6-5 で DROP)。両者は書込時に同期されており等価。
+    # E3-F PR-D-6-3b-3: 平文 date / description の prefill 読取を撤去
+    # (これらの列は D-6-5 で DROP)。クライアント (edit_form_prefill.js) が
+    # encrypted_blob を MK で復号して date / description フィールドを埋める。
+    # E3-F PR-D-6-3: fiscal_period prefill は保持列 fiscal_month から行う
+    # (両者は書込時に同期されており等価)。
     form.fiscal_period.data = str(entry.fiscal_month) if entry.fiscal_month is not None else ""
     # 仕訳明細から元のデータを復元（3方向検出）
     lines = entry.lines

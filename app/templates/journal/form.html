@@ -161,4 +161,25 @@ renderVoucherPreview(
 );
 </script>
 {% endif %}
+{% if is_edit %}
+{# E3-F PR-D-6-3b-3: date/description はサーバ平文を使わずクライアント復号で prefill #}
+<script type="module">
+  import { hydrateEditForm } from "{{ url_for('static', filename='js/crypto/edit_form_prefill.js') }}";
+  var workerUrl = "{{ url_for('static', filename='js/crypto/shared-worker.js') }}";
+  function _runPrefill() {
+    hydrateEditForm({
+      isEdit: window._isEdit,
+      entryId: window._entryId,
+      userId: window._userId,
+      isProxyMode: window._isProxyMode,
+      dateInput: document.querySelector('#journalForm input[name=date]'),
+      descInput: document.querySelector('#journalForm input[name=description], #journalForm textarea[name=description]'),
+      workerUrl: workerUrl,
+      alpine: window.Alpine,
+    }).catch(function (e) { console.warn('edit prefill failed:', e); });
+  }
+  if (window.Alpine) _runPrefill();
+  else document.addEventListener('alpine:initialized', _runPrefill, { once: true });
+</script>
+{% endif %}
 {% endblock %}

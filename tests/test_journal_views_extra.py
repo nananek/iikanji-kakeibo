@@ -32,8 +32,18 @@ class TestGetJson:
         assert resp.status_code == 200
         data = resp.get_json()
         assert data["id"] == entry.id
-        assert data["description"] == "JSON取得"
-        assert data["date"] == "2026-02-15"
+        # E3-F PR-D-6-3b-3: 平文 date / description / fiscal_period / source は
+        # 返さない (D-6-5 で DROP)。クライアントが blob を MK 復号して取り出す。
+        assert "date" not in data
+        assert "description" not in data
+        assert "fiscal_period" not in data
+        assert "source" not in data
+        # blob / closing メタ + lines は引き続き返す。
+        assert "encrypted_blob" in data
+        assert "blob_iv" in data
+        assert data["is_closing"] is False
+        assert data["fiscal_year"] == 2026
+        assert data["fiscal_month"] == 2
         assert len(data["lines"]) == 2
         assert data["lines"][0]["debit_amount"] in (0, 1500)
 

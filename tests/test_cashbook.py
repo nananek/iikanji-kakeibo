@@ -92,12 +92,18 @@ class TestEdit:
         resp = client.get("/cashbook/1/edit")
         assert resp.status_code in (302, 401)
 
-    def test_get_renders_form_with_existing(self, db, logged_in_client, user, accounts):
+    def test_get_renders_form_without_plaintext_desc(self, db, logged_in_client, user, accounts):
+        """E3-F PR-D-6-3b-3: 平文 description はサーバ描画に焼き込まれず、
+        クライアント (edit_form_prefill.js) が encrypted_blob を MK 復号して
+        date / description を埋める。フォーム自体は描画される。"""
         entry = self._make_cashbook(db, user.id)
         resp = logged_in_client.get(f"/cashbook/{entry.id}/edit")
         assert resp.status_code == 200
         body = resp.get_data(as_text=True)
-        assert "編集対象" in body
+        # 平文 description は HTML に出力されない
+        assert "編集対象" not in body
+        # クライアント hydration スクリプトが読み込まれる
+        assert "edit_form_prefill.js" in body
 
     def test_404_for_nonexistent(self, logged_in_client, accounts):
         resp = logged_in_client.get("/cashbook/9999/edit")

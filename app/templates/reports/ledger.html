@@ -448,77 +448,111 @@ function modalUpdateTotals() {
 var PERIOD_NAMES = {'0':'期首振戻月','13':'決算月1','14':'決算月2','15':'決算月3','16':'損益振替'};
 var isCopyMode = false;
 
-function openEditModal(entryId) {
+// E3-F PR-D-6-3b-3: get_json は entry レベルの平文 date / description /
+// fiscal_period を返さなくなった。encrypted_blob を MK で復号して取り出す
+// (decryptEntryMeta)。MK ロック中は復号不可なので MK_LOCKED を投げる。
+async function decryptModalEntry(apiEntry) {
+  var paramsEl = document.getElementById('ledger-server-params');
+  var params = paramsEl ? JSON.parse(paramsEl.textContent) : {};
+  var sharedClientMod = await import(
+    "{{ url_for('static', filename='js/crypto/shared-client.js') }}"
+  );
+  var jc = await import(
+    "{{ url_for('static', filename='js/crypto/journals_client.js') }}"
+  );
+  var workerUrl =
+    "{{ url_for('static', filename='js/crypto/shared-worker.js') }}";
+  var client = new sharedClientMod.SharedCryptoClient(workerUrl);
+  try {
+    var status = await client.status();
+    if (!status.hasKey) {
+      var err = new Error('暗号鍵 (MK) がロックされています。設定 → 暗号鍵管理 で解除してください。');
+      err.code = 'MK_LOCKED';
+      throw err;
+    }
+    return await jc.decryptEntryMeta(client, params.user_id, apiEntry);
+  } finally {
+    try { client.close(); } catch (_e) { /* ignore */ }
+  }
+}
+
+async function openEditModal(entryId) {
   currentEntryId = entryId;
   currentHasVoucher = false;
   isCopyMode = false;
   document.getElementById('modalError').classList.add('d-none');
   document.getElementById('modalLinesBody').innerHTML = '';
 
-  fetch('/journal/' + entryId + '/json')
-    .then(function(r) { return r.json(); })
-    .then(function(data) {
-      currentHasVoucher = data.has_voucher || false;
-      renderVoucherPreview(document.getElementById('modalVoucherPreview'), data.vouchers);
-      var ro = data.is_readonly;
+  try {
+    var data = await fetch('/journal/' + entryId + '/json')
+      .then(function(r) { return r.json(); });
+    // entry レベルの date / description / fiscal_period は blob 復号で取得
+    var meta = await decryptModalEntry(data);
 
-      // タイトル切替
-      document.getElementById('modalTitleIcon').innerHTML = ro ? '<i class="bi bi-eye"></i>' : '<i class="bi bi-pencil"></i>';
-      document.getElementById('modalTitleText').textContent = ro ? '仕訳閲覧' : '仕訳編集';
+    currentHasVoucher = data.has_voucher || false;
+    renderVoucherPreview(document.getElementById('modalVoucherPreview'), data.vouchers);
+    var ro = data.is_readonly;
 
-      document.getElementById('modalEntryNum').textContent = '#' + data.entry_number;
-      document.getElementById('modalDate').value = data.date;
-      document.getElementById('modalDate').disabled = ro;
-      document.getElementById('modalDesc').value = data.description;
-      document.getElementById('modalDesc').disabled = ro;
+    // タイトル切替
+    document.getElementById('modalTitleIcon').innerHTML = ro ? '<i class="bi bi-eye"></i>' : '<i class="bi bi-pencil"></i>';
+    document.getElementById('modalTitleText').textContent = ro ? '仕訳閲覧' : '仕訳編集';
 
-      // 計上期間
-      var fpSelect = document.getElementById('modalFiscalPeriod');
-      var fpStr = (data.fiscal_period !== null && data.fiscal_period !== undefined) ? String(data.fiscal_period) : '';
-      if (ro) {
-        fpSelect.style.display = 'none';
-        var fpText = document.getElementById('modalFiscalPeriodText');
-        if (!fpText) {
-          fpText = document.createElement('input');
-          fpText.type = 'text';
-          fpText.className = 'form-control';
-          fpText.id = 'modalFiscalPeriodText';
-          fpText.readOnly = true;
-          fpSelect.parentNode.appendChild(fpText);
-        }
-        fpText.style.display = '';
-        fpText.value = PERIOD_NAMES[fpStr] || '期中';
-      } else {
-        fpSelect.style.display = '';
-        fpSelect.value = fpStr;
-        var fpText = document.getElementById('modalFiscalPeriodText');
-        if (fpText) fpText.style.display = 'none';
+    document.getElementById('modalEntryNum').textContent = '#' + data.entry_number;
+    document.getElementById('modalDate').value = meta.date || '';
+    document.getElementById('modalDate').disabled = ro;
+    document.getElementById('modalDesc').value = meta.description || '';
+    document.getElementById('modalDesc').disabled = ro;
+
+    // 計上期間
+    var fpSelect = document.getElementById('modalFiscalPeriod');
+    var fpStr = (meta.fiscal_period !== null && meta.fiscal_period !== undefined) ? String(meta.fiscal_period) : '';
+    if (ro) {
+      fpSelect.style.display = 'none';
+      var fpText = document.getElementById('modalFiscalPeriodText');
+      if (!fpText) {
+        fpText = document.createElement('input');
+        fpText.type = 'text';
+        fpText.className = 'form-control';
+        fpText.id = 'modalFiscalPeriodText';
+        fpText.readOnly = true;
+        fpSelect.parentNode.appendChild(fpText);
       }
-      modalUpdateDateForPeriod();
+      fpText.style.display = '';
+      fpText.value = PERIOD_NAMES[fpStr] || '期中';
+    } else {
+      fpSelect.style.display = '';
+      fpSelect.value = fpStr;
+      var fpText = document.getElementById('modalFiscalPeriodText');
+      if (fpText) fpText.style.display = 'none';
+    }
+    modalUpdateDateForPeriod();
 
-      data.lines.forEach(function(l) { modalAddLine(l, ro); });
+    data.lines.forEach(function(l) { modalAddLine(l, ro); });
 
-      // 保存・削除・行追加・証憑追加ボタンの表示制御
-      document.getElementById('modalSaveBtn').style.display = ro ? 'none' : '';
-      document.getElementById('modalDeleteBtn').style.display = ro ? 'none' : '';
-      document.getElementById('modalAddLineBtn').style.display = ro ? 'none' : '';
-      document.getElementById('modalAttachBtn').style.display = ro ? 'none' : '';
-      document.getElementById('modalCopyBtn').style.display = '';
-      document.getElementById('voucherUploadArea').classList.add('d-none');
+    // 保存・削除・行追加・証憑追加ボタンの表示制御
+    document.getElementById('modalSaveBtn').style.display = ro ? 'none' : '';
+    document.getElementById('modalDeleteBtn').style.display = ro ? 'none' : '';
+    document.getElementById('modalAddLineBtn').style.display = ro ? 'none' : '';
+    document.getElementById('modalAttachBtn').style.display = ro ? 'none' : '';
+    document.getElementById('modalCopyBtn').style.display = '';
+    document.getElementById('voucherUploadArea').classList.add('d-none');
 
-      // 行削除ボタンの表示制御
-      document.querySelectorAll('#modalLinesBody .modal-remove-btn').forEach(function(btn) {
-        btn.style.display = ro ? 'none' : '';
-      });
-
-      if (!editModal) {
-        editModal = new bootstrap.Modal(document.getElementById('editModal'));
-      }
-      editModal.show();
-    })
-    .catch(function() {
-      alert('仕訳データの取得に失敗しました。');
+    // 行削除ボタンの表示制御
+    document.querySelectorAll('#modalLinesBody .modal-remove-btn').forEach(function(btn) {
+      btn.style.display = ro ? 'none' : '';
     });
+
+    if (!editModal) {
+      editModal = new bootstrap.Modal(document.getElementById('editModal'));
+    }
+    editModal.show();
+  } catch (e) {
+    if (e && e.code === 'MK_LOCKED') {
+      alert(e.message);
+    } else {
+      alert('仕訳データの取得に失敗しました。');
+    }
+  }
 }
 
 // 計上期間変更時に日付を自動調整・readonly制御

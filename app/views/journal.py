@@ -128,10 +128,11 @@ def edit(entry_id):
     closed_periods = get_closed_periods_map(user_id)
     restricted_before = get_restricted_before_year(user_id)
 
-    form.date.data = entry.date
-    form.description.data = entry.description
-    # E3-F PR-D-6-3: 平文 fiscal_period から保持列 fiscal_month へ移行
-    # (fiscal_period 列は D-6-5 で DROP)。両者は書込時に同期されており等価。
+    # E3-F PR-D-6-3b-3: 平文 date / description の prefill 読取を撤去
+    # (これらの列は D-6-5 で DROP)。クライアント (edit_form_prefill.js) が
+    # encrypted_blob を MK で復号して date / description フィールドを埋める。
+    # E3-F PR-D-6-3: fiscal_period prefill は保持列 fiscal_month から行う
+    # (両者は書込時に同期されており等価)。
     form.fiscal_period.data = str(entry.fiscal_month) if entry.fiscal_month is not None else ""
 
     # Lv2: 公開行 + 事業主集約行
@@ -181,10 +182,22 @@ def edit(entry_id):
     )
 
 
+def _b64_or_none(b):
+    """LargeBinary カラム → base64 文字列 (None なら None)。"""
+    from base64 import b64encode
+    return b64encode(b).decode("ascii") if b else None
+
+
 @bp.route("/<int:entry_id>/json")
 @login_required
 def get_json(entry_id):
-    """仕訳データをJSON形式で返す（モーダル編集用）"""
+    """仕訳データをJSON形式で返す（モーダル編集用）
+
+    E3-F PR-D-6-3b-3: entry レベルの平文 date / description / fiscal_period /
+    source は返さず encrypted_blob / blob_iv を返す。クライアント (元帳モーダル)
+    が MK で復号して取り出す。lines / is_readonly / vouchers はサーバ側ロジック
+    を要するため引き続きサーバが算出する。
+    """
     user_id = get_effective_user_id()
     entry = JournalEntry.query.filter_by(
         id=entry_id, user_id=user_id
@@ -231,14 +244,22 @@ def get_json(entry_id):
     if not is_readonly and not is_acting_as_auditor():
         is_readonly = is_entry_locked_for_owner(user_id, entry)
 
+    # E3-F PR-D-6-3b-3: 平文 date / description / fiscal_period / source の返却を
+    # 撤去 (これらの列は D-6-5 で DROP)。元帳モーダル (reports/ledger.html
+    # openEditModal) は encrypted_blob を自分の MK で復号して date / description
+    # / fiscal_period を取り出す (decryptEntryMeta)。closing 仕訳 (暗号化不能で
+    # encrypted_blob 空) は is_closing / fiscal_year から合成する。
+    # is_readonly / lines (Lv2 集約済) / vouchers はサーバ側ロジックを要するため
+    # 引き続きサーバが算出して返す。
     return jsonify({
         "id": entry.id,
-        "date": entry.date.isoformat(),
-        "description": entry.description,
         "entry_number": entry.entry_number,
-        "fiscal_period": entry.fiscal_period,
         "is_readonly": is_readonly,
-        "source": entry.source,
+        "is_closing": entry.is_closing,
+        "fiscal_year": entry.fiscal_year,
+        "fiscal_month": entry.fiscal_month,
+        "encrypted_blob": _b64_or_none(entry.encrypted_blob),
+        "blob_iv": _b64_or_none(entry.blob_iv),
         "has_voucher": len(entry.active_vouchers) > 0,
         "lines": lines,
         "vouchers": [

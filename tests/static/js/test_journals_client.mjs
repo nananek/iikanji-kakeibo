@@ -10,7 +10,8 @@ const CLIENT = new URL(
   "../../../app/static/js/crypto/journals_client.js",
   import.meta.url,
 );
-const { fetchJournalsForYear } = await import(CLIENT.href);
+const { fetchJournalsForYear, decryptEntryMeta, fetchEntryFields } =
+  await import(CLIENT.href);
 
 const REC = new URL(
   "../../../app/static/js/crypto/record.js",
@@ -416,4 +417,108 @@ test("ページネ: total=0 + journals 非空のサーババグでも全件取�
   // page 1 で 1 件取得、page 2 で空 → break。1 件取得できる。
   assert.equal(result.length, 1);
   assert.equal(result[0].id, 10);
+});
+
+
+// ============ decryptEntryMeta / fetchEntryFields (D-6-3b-3) ============
+
+test("decryptEntryMeta: blob を復号して entry フィールドを返す", async () => {
+  const client = makeMockClient();
+  const userId = 7;
+  const apiEntry = await makeEncryptedEntry(client, userId, 300, {
+    v: 1,
+    date: "2026-03-10",
+    description: "事務用品",
+    source: "journal",
+    batch_id: null,
+    fiscal_period: 3,
+    fiscal_year: 2026,
+  });
+  const meta = await decryptEntryMeta(client, userId, apiEntry);
+  assert.equal(meta.date, "2026-03-10");
+  assert.equal(meta.description, "事務用品");
+  assert.equal(meta.source, "journal");
+  assert.equal(meta.fiscal_period, 3);
+  assert.equal(meta.batch_id, null);
+});
+
+test("decryptEntryMeta: closing (blob 空) は保持列から合成する", async () => {
+  const client = makeMockClient();
+  const meta = await decryptEntryMeta(client, 1, {
+    id: 400, fiscal_year: 2025, is_closing: true,
+    encrypted_blob: null, blob_iv: null,
+  });
+  assert.equal(meta.date, "2025-12-31");
+  assert.equal(meta.description, "損益振替仕訳（自動生成）");
+  assert.equal(meta.source, "closing");
+  assert.equal(meta.fiscal_period, 16);
+});
+
+test("decryptEntryMeta: 復号失敗 (別 userId) かつ非 closing は null/空", async () => {
+  const client = makeMockClient();
+  const apiEntry = await makeEncryptedEntry(client, 1, 500, {
+    v: 1, date: "2026-04-01", description: "x", source: "journal",
+    fiscal_period: 4, fiscal_year: 2026,
+  });
+  // 別 userId で復号 → AAD 不一致 → body=null, 非 closing
+  const meta = await decryptEntryMeta(client, 999, apiEntry);
+  assert.equal(meta.date, null);
+  assert.equal(meta.description, "");
+  assert.equal(meta.source, "");
+  assert.equal(meta.fiscal_period, null);
+});
+
+test("fetchEntryFields: GET /api/v1/journals/<id> を復号して返す", async () => {
+  const client = makeMockClient();
+  const userId = 5;
+  const apiEntry = await makeEncryptedEntry(client, userId, 600, {
+    v: 1, date: "2026-06-15", description: "交通費", source: "cashbook",
+    fiscal_period: 6, fiscal_year: 2026,
+  });
+  let calledUrl = null;
+  const fetchImpl = async (url) => {
+    calledUrl = url;
+    return { ok: true, json: async () => ({ ok: true, journal: apiEntry }) };
+  };
+  const meta = await fetchEntryFields({
+    client, userId, entryId: 600, fetchImpl,
+  });
+  assert.equal(calledUrl, "/api/v1/journals/600");
+  assert.equal(meta.date, "2026-06-15");
+  assert.equal(meta.description, "交通費");
+});
+
+test("fetchEntryFields: client なしで throw", async () => {
+  await assert.rejects(
+    () => fetchEntryFields({ userId: 1, entryId: 1 }),
+    /client.*required/,
+  );
+});
+
+test("fetchEntryFields: entryId なしで throw", async () => {
+  const client = makeMockClient();
+  await assert.rejects(
+    () => fetchEntryFields({ client, userId: 1 }),
+    /entryId is required/,
+  );
+});
+
+test("fetchEntryFields: HTTP エラーで throw", async () => {
+  const client = makeMockClient();
+  const fetchImpl = async () => ({
+    ok: false, status: 404, json: async () => ({ error: "見つかりません" }),
+  });
+  await assert.rejects(
+    () => fetchEntryFields({ client, userId: 1, entryId: 9, fetchImpl }),
+    /HTTP 404/,
+  );
+});
+
+test("fetchEntryFields: journal 欠落レスポンスで throw", async () => {
+  const client = makeMockClient();
+  const fetchImpl = async () => ({ ok: true, json: async () => ({ ok: true }) });
+  await assert.rejects(
+    () => fetchEntryFields({ client, userId: 1, entryId: 9, fetchImpl }),
+    /missing journal/,
+  );
 });
