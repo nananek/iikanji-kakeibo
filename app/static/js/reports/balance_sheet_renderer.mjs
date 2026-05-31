@@ -1,5 +1,8 @@
 // 貸借対照表 (B/S) のクライアント描画。
-// MK 復号→ min_year..year を fetch して結合 → 集計 → DOM 構築まで完結。
+// MK 復号 → 前年 BCB period=15 (前年末累計) + 当年 entries を並列 fetch →
+// priorCumulative に前年末累計を流して集計 → DOM 構築まで完結。
+// 旧来の min_year..year 順次 fetch は BCB 統合で当年+前年 BCB の 2 リクエストに
+// 削減済み (#221 #230)。前年 BCB 欠落時は priorCumulative={} で degraded fallback。
 
 
 function getSharedWorkerUrl() {
