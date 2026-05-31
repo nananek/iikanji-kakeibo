@@ -178,6 +178,7 @@ let _client = null;
 let _userId = null;
 let _canDecrypt = false;
 let _decryptImage = null;  // voucher_download.fetchAndDecryptVoucherImage
+let _fullPreviewUrl = null;  // 直近の本体プレビュー blob URL (revoke 用)
 
 
 function _imgUrl(voucherId, thumb) {
@@ -230,12 +231,16 @@ function _lockPlaceholder(label) {
 
 
 function _openDecryptedFull(voucherId) {
-  // 本体を復号して blob URL でプレビュー表示。
+  // 本体を復号して blob URL でプレビュー表示。直近の URL は revoke して
+  // メモリリークを防ぐ (毎クリックで新規 blob URL を作るため)。
   _decryptImage({ client: _client, userId: _userId, voucherId, thumb: false })
     .then((bytes) => {
-      const url = URL.createObjectURL(new Blob([bytes]));
+      if (_fullPreviewUrl) {
+        try { URL.revokeObjectURL(_fullPreviewUrl); } catch (_e) { /* ignore */ }
+      }
+      _fullPreviewUrl = URL.createObjectURL(new Blob([bytes]));
       if (typeof globalThis.openImagePreview === "function") {
-        globalThis.openImagePreview(url);
+        globalThis.openImagePreview(_fullPreviewUrl);
       }
     })
     .catch(() => _setStatus("証憑の復号に失敗しました。", "danger"));
@@ -290,7 +295,10 @@ function _renderCardImage(wrap, c) {
   // サムネを非同期復号 → blob URL。失敗時はロック表示に差し替え。
   _decryptImage({ client: _client, userId: _userId, voucherId: c.voucher_id, thumb: true })
     .then((bytes) => {
-      img.src = URL.createObjectURL(new Blob([bytes]));
+      const url = URL.createObjectURL(new Blob([bytes]));
+      // 表示完了後に revoke してメモリリークを防ぐ。
+      img.onload = () => { try { URL.revokeObjectURL(url); } catch (_e) { /* ignore */ } };
+      img.src = url;
       img.alt = "証憑";
     })
     .catch(() => {
@@ -544,6 +552,12 @@ async function _run() {
     _client = client;
     _canDecrypt = true;
     _decryptImage = voucherDl.fetchAndDecryptVoucherImage;
+    // ページ離脱時にクライアント (SharedWorker port) を明示クローズ。
+    if (typeof window !== "undefined") {
+      window.addEventListener("beforeunload", () => {
+        try { if (_client) _client.close(); } catch (_e) { /* ignore */ }
+      }, { once: true });
+    }
 
     // 紐付け仕訳の fiscal_year 群を取得・復号して entry_id → {…} を構築。
     const years = new Set();
