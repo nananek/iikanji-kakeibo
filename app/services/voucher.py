@@ -9,7 +9,9 @@ from app.models.voucher import Voucher
 from app.models.voucher_audit_log import VoucherAuditLog
 from app.models.ai_draft import AIDraft
 from app.services.storage import (
+    ENCRYPTED_CONTENT_TYPE,
     get_storage_backend,
+    make_encrypted_thumbnail_key,
     make_storage_key,
     make_thumbnail_key,
     store_image_with_thumbnail,
@@ -138,5 +140,117 @@ def create_voucher_from_upload(
 
     db.session.commit()
     # 容量警告メール送信 (Phase 6 #71)。閾値超過時のみ送信、失敗は best-effort
+    maybe_send_quota_warning(user)
+    return voucher
+
+
+def init_voucher(user_id: int, journal_entry_id: int | None) -> Voucher:
+    """E4 (#111) 2 段階 upload の Step 1: 空の Voucher を作成して id を採番する。
+
+    画像本体は採番された voucher_id を AAD に束縛してクライアントが暗号化する
+    ため、実体 upload 前に id が必要。本関数は空 row (image_key="") を作るだけで
+    容量計上は行わない (実体 upload = `finalize_voucher_upload` で計上する)。
+
+    中断 (init したが PUT されない) すると image_key="" の空 row が残る。
+    一覧/配信は image_key が空なら表示しないため実害はなく、整合性監査バッチ
+    (storage-audit 系) で回収する想定。呼び出し元で db.session.commit() すること。
+    """
+    voucher = Voucher(
+        user_id=user_id,
+        journal_entry_id=journal_entry_id,
+        image_key="",
+        # 暗号化証憑の実 MIME は encrypted_meta_blob に入る。列は dual-write 期
+        # の間だけ NOT NULL 制約のためプレースホルダを入れる (057 で DROP)。
+        image_mime=ENCRYPTED_CONTENT_TYPE,
+    )
+    db.session.add(voucher)
+    db.session.flush()
+    return voucher
+
+
+def finalize_voucher_upload(
+    voucher: Voucher,
+    image_ct: bytes,
+    thumb_ct: bytes | None,
+    encrypted_meta_blob: bytes,
+    meta_iv: bytes,
+    file_hash_plain: str,
+) -> Voucher:
+    """E4 (#111) 2 段階 upload の Step 2: 暗号文の実体を保存して確定する。
+
+    `image_ct` / `thumb_ct` はクライアントが `iv(12B) || ciphertext || tag` を
+    連結した opaque バイト列 (画像/サムネ本体はストレージに保存するため IV は
+    DB 列ではなく blob 先頭に inline)。サーバは中身を一切復号できない。
+
+    - file_hash_cipher = SHA-256(image_ct) を `voucher.file_hash` に保存
+      (サーバが MK なしで「保存した暗号文が改ざんされていないか」を検証する
+      電帳法 Q11 ハイブリッドの cipher 側)。
+    - file_hash_plain (= SHA-256(平文画像)、クライアント計算) はそのまま保存。
+    - encrypted_meta_blob / meta_iv (original_filename + image_mime 等) を保存。
+
+    容量計上 (Phase 5 #70) は `create_voucher_from_upload` と同じ単一トランザク
+    ション + 楽観的再検証パターン。暗号文サイズ (image_ct + thumb_ct) を計上する。
+    `QuotaExceededError` 送出時はストレージ/DB の副作用を巻き戻してから raise。
+
+    呼び出し元で 上書き防止 (既に確定済みでないこと) を検証済みであること。
+    """
+    size = len(image_ct) + (len(thumb_ct) if thumb_ct else 0)
+    user = db.session.get(User, voucher.user_id)
+    if user is None:
+        raise ValueError(f"User {voucher.user_id} not found")
+
+    check_quota(user, size)
+
+    backend = get_storage_backend()
+    image_key = make_storage_key(
+        voucher.user_id, voucher.id, ENCRYPTED_CONTENT_TYPE
+    )
+    backend.put(image_key, image_ct, ENCRYPTED_CONTENT_TYPE)
+
+    thumbnail_key = None
+    if thumb_ct:
+        thumbnail_key = make_encrypted_thumbnail_key(image_key)
+        backend.put(thumbnail_key, thumb_ct, ENCRYPTED_CONTENT_TYPE)
+
+    voucher.image_key = image_key
+    voucher.thumbnail_key = thumbnail_key
+    voucher.encrypted_meta_blob = encrypted_meta_blob
+    voucher.meta_iv = meta_iv
+    voucher.file_hash = hashlib.sha256(image_ct).hexdigest()  # cipher hash
+    voucher.file_hash_plain = file_hash_plain
+    voucher.file_size = size
+
+    db.session.add(VoucherAuditLog(
+        voucher_id=voucher.id,
+        user_id=voucher.user_id,
+        action="attached",
+        # detail の暗号化は PR-D で実施。dual-write 期は平文の非機微情報 (FK) のみ。
+        detail=json.dumps(
+            {"journal_entry_id": voucher.journal_entry_id},
+            ensure_ascii=False,
+        ),
+    ))
+
+    record_upload(user, size, suppress_commit=True)
+    db.session.flush()
+
+    if get_used_bytes(user) > get_quota_bytes(user):
+        from flask import current_app
+        db.session.rollback()
+        keys = [image_key]
+        if thumbnail_key:
+            keys.append(thumbnail_key)
+        for k in keys:
+            try:
+                backend.delete(k)
+            except Exception as e:
+                current_app.logger.warning(
+                    "voucher finalize rollback: failed to delete %s: %s", k, e,
+                )
+        raise QuotaExceededError(
+            "並行アップロードにより容量上限を超えました。再試行してください。"
+        )
+
+    db.session.commit()
     maybe_send_quota_warning(user)
     return voucher
