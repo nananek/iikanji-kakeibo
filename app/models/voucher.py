@@ -21,7 +21,21 @@ class Voucher(db.Model):
     image_key = db.Column(db.String(255), nullable=False)
     image_mime = db.Column(db.String(50), nullable=False)
     original_filename = db.Column(db.String(255), nullable=True)
-    file_hash = db.Column(db.String(64), nullable=True)  # SHA-256
+    # SHA-256。E4 (#111) では暗号文画像のハッシュ (= file_hash_cipher 相当) を
+    # 保持する。サーバが MK なしで「あるはずの暗号文が改ざんされていないか」を
+    # 検証できる電帳法 Q11 ハイブリッドの cipher 側。平文側は file_hash_plain。
+    file_hash = db.Column(db.String(64), nullable=True)
+    # E4 (#111): 証憑の E2EE 化。いずれも dual-write 期 (056) は NULL 許容。
+    # クライアントが original_filename + image_mime 等を JSON 化し AES-GCM 暗号化
+    # (AAD = "vmeta" + user_id + voucher_id) した blob と 12B IV。
+    encrypted_meta_blob = db.Column(db.LargeBinary, nullable=True)
+    meta_iv = db.Column(db.LargeBinary, nullable=True)
+    # SHA-256(平文画像)。クライアントが計算して送信。復号後に再計算して改ざん
+    # 検出する (電帳法 Q11 ハイブリッドの平文側)。
+    file_hash_plain = db.Column(db.String(64), nullable=True)
+    # クライアント生成サムネイル (暗号文) のストレージキー。サーバ Pillow 生成
+    # (_thumb.jpg サフィックス) は E4 後半で廃止し、本列ベースに統一する。
+    thumbnail_key = db.Column(db.String(255), nullable=True)
     # 容量計上 (Phase 5 #70) のためのファイルサイズ (バイト)。新規作成時に
     # セット。既存 Voucher は NULL のままで、整合性監査バッチで埋める想定。
     file_size = db.Column(db.BigInteger, nullable=True)
