@@ -9,23 +9,25 @@
 // encrypted_blob / blob_iv を MK で暗号化して付与する。AAD は Option B
 // (buildAAD("je"|"jel", userId), entry_id 等を含めない)。
 //
-// 戻り値: POST /api/v1/journals/batch の entries[] にそのまま push できる形:
+// 戻り値: POST /api/v1/journals/batch の entries[] にそのまま push できる形
+// (E3-F PR-D-6-6: wire 平文除去後):
 //   {
-//     date, description, source, fiscal_period, fiscal_year,
-//     encrypted_blob, blob_iv,
+//     fiscal_year, fiscal_month,   // 平文メタ (サーバの年度/期間フィルタ用)
+//     encrypted_blob, blob_iv,     // entry 本体 (date/description/source/
+//                                  //   fiscal_period の暗号化版)
 //     lines: [
 //       {account_code, debit, credit, encrypted_blob, blob_iv},
 //       {account_code, debit, credit, encrypted_blob, blob_iv},
 //     ]
 //   }
 //
-// PR-C で encrypted_blob / blob_iv / fiscal_year を必須化するため、ここで
-// 必ず付与する。dual-storage 期間中は旧平文フィールドも併送 (サーバ側
-// _decode_record_crypto が両方受け付ける)。
+// 平文 date / description / source / fiscal_period は wire に乗せない (entry
+// 本体は encrypted_blob に格納済、列は 055 で DROP 済)。サーバが平文で必要と
+// するメタは fiscal_year / fiscal_month のみ = ここで date / fiscal_period から
+// 算出して必ず付与する。
 //
 // batch_id は entry レベルでは持たず、batch API のリクエスト top-level で
-// 1 つだけ指定する。fiscal_period が null の場合はサーバ側 service が
-// date.month から自動判定する (CLAUDE.md 参照)。
+// 1 つだけ指定する。
 //
 // debit/credit は必ず int (Math.abs で正規化)。batch API は float/bool を
 // 拒否する仕様なので Math.round で integer 化はしない (呼出側が int で渡す
@@ -87,6 +89,23 @@ function _fiscalYearFromDate(date) {
 }
 
 
+function _fiscalMonthFromEntry(entry) {
+  // E3-F PR-D-6-6: 平文 fiscal_month メタを算出する。fiscalPeriod が明示
+  // 指定 (0=期首 / 13-15=決算整理) ならそれを、それ以外 (通常仕訳) は date の
+  // 月 (1-12) を使う。サーバはこの値を JournalEntry.fiscal_month へ直接保存し、
+  // 期間ロック判定にも使う (旧サーバの fiscal_period ?? date.month と等価)。
+  const fp = entry.fiscal_period;
+  if (fp !== null && fp !== undefined) {
+    return fp;
+  }
+  const m = parseInt(entry.date.substring(5, 7), 10);
+  if (!Number.isInteger(m) || m < 1 || m > 12) {
+    throw new TypeError(`cannot derive fiscal_month from date: ${entry.date}`);
+  }
+  return m;
+}
+
+
 /**
  * entry 本体 + 各 line を MK で暗号化し、encrypted_blob / blob_iv を付与する。
  *
@@ -116,21 +135,28 @@ async function _encryptEntry(client, userId, entry) {
       account_code: line.account_code,
       debit_amount: line.debit,
       credit_amount: line.credit,
-      // 現状 JournalEntryLine に description カラムはないが、将来拡張用に
-      // 枠だけ予約。lines に description が来た場合は素直に通す。
+      // 行摘要は line 本体 (encrypted_blob) にのみ格納する。平文 description は
+      // wire に乗せない (列は 055 で DROP 済)。
       description: line.description ?? "",
     };
     const lineEnc = await encryptRecord(client, lineBody, lineAAD);
+    // E3-F PR-D-6-6: wire に乗せる line の平文は account_code / debit / credit
+    // (集計用の保持メタ) のみ。description は encrypted_blob へ。
     encryptedLines.push({
-      ...line,
+      account_code: line.account_code,
+      debit: line.debit,
+      credit: line.credit,
       encrypted_blob: b64encode(lineEnc.blob),
       blob_iv: b64encode(lineEnc.iv),
     });
   }
 
+  // E3-F PR-D-6-6: top-level の平文 date / description / source / fiscal_period
+  // は wire に乗せない。サーバが平文で要するメタは fiscal_year / fiscal_month
+  // のみ。
   return {
-    ...entry,
     fiscal_year: _fiscalYearFromDate(entry.date),
+    fiscal_month: _fiscalMonthFromEntry(entry),
     encrypted_blob: b64encode(entryEnc.blob),
     blob_iv: b64encode(entryEnc.iv),
     lines: encryptedLines,

@@ -371,8 +371,7 @@ class TestBearerAuthIntegration:
             "/api/v1/journals",
             headers={"Authorization": f"Bearer {raw}"},
             json={
-                "date": "2026-01-15",
-                "description": "OAuth経由テスト",
+                "fiscal_year": 2026, "fiscal_month": 1,
                 "lines": encrypt_lines([
                     {"account_code": "5010", "debit": 1000, "credit": 0},
                     {"account_code": "1010", "debit": 0, "credit": 1000},
@@ -460,16 +459,13 @@ class TestReadOnlyOAuthToken:
 
     def test_readonly_blocks_delete_journal(self, client, db, user, accounts):
         from app.services.accounting import create_journal_entry
-        from datetime import date as date_type
         entry = create_journal_entry(
             user_id=user.id,
-            date=date_type(2026, 1, 15),
-            description="del test",
             lines_data=[
-                {"account_code": "5010", "debit_amount": 100, "credit_amount": 0, "description": ""},
-                {"account_code": "1010", "debit_amount": 0, "credit_amount": 100, "description": ""},
+                {"account_code": "5010", "debit_amount": 100, "credit_amount": 0},
+                {"account_code": "1010", "debit_amount": 0, "credit_amount": 100},
             ],
-            source="api",
+            fiscal_year=2026, fiscal_month=1,
         )
         db.session.commit()
         raw = self._make_ro_token(db, user)

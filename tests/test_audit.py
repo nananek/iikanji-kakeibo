@@ -455,8 +455,7 @@ class TestAPISubmitLock:
         self._setup_submitted_grant(db, user, accounts, auditor,
                                      ["5020"])
         resp = client.post("/api/v1/journals", headers=auth_header, json={
-            "date": "2026-02-15",
-            "description": "ロック対象外",
+            "fiscal_year": 2026, "fiscal_month": 2,
             "lines": encrypt_lines([
                 {"account_code": accounts["5010"].code, "debit": 1000},
                 {"account_code": accounts["1010"].code, "credit": 1000},

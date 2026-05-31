@@ -258,7 +258,7 @@ test("description 省略時は空文字", () => {
 // --- E3-F PR-A: client + userId 指定時の暗号化対応 ---
 
 
-test("encrypted: client + userId 指定で encrypted_blob / blob_iv / fiscal_year が付く", async () => {
+test("encrypted: client + userId 指定で encrypted_blob / blob_iv / fiscal_year / fiscal_month が付く", async () => {
   const client = makeMockClient();
   const e = await buildCashbookEntry({
     client, userId: 1,
@@ -267,17 +267,41 @@ test("encrypted: client + userId 指定で encrypted_blob / blob_iv / fiscal_yea
     paymentAccountCode: "1010", categoryAccountCode: "5010", amount: 800,
   });
   assert.equal(e.fiscal_year, 2026);
+  // 通常仕訳 (fiscalPeriod=null) なので fiscal_month = date の月
+  assert.equal(e.fiscal_month, 5);
   assert.ok(typeof e.encrypted_blob === "string" && e.encrypted_blob.length > 0);
   assert.ok(typeof e.blob_iv === "string" && e.blob_iv.length > 0);
+  // E3-F PR-D-6-6: 平文 date / description / source / fiscal_period は wire に
+  // 乗らない。
+  assert.equal(e.date, undefined);
+  assert.equal(e.description, undefined);
+  assert.equal(e.source, undefined);
+  assert.equal(e.fiscal_period, undefined);
   assert.equal(e.lines.length, 2);
   for (const line of e.lines) {
     assert.ok(typeof line.encrypted_blob === "string" && line.encrypted_blob.length > 0);
     assert.ok(typeof line.blob_iv === "string" && line.blob_iv.length > 0);
-    // 旧平文フィールド (dual-storage) も併送
+    // 保持する平文メタは集計用の account_code / debit / credit のみ。
     assert.ok(typeof line.account_code === "string");
     assert.ok(Number.isInteger(line.debit));
     assert.ok(Number.isInteger(line.credit));
+    // 行摘要は wire に乗らない (encrypted_blob 内のみ)。
+    assert.equal(line.description, undefined);
   }
+});
+
+
+test("encrypted: fiscalPeriod 明示時は fiscal_month = fiscalPeriod (決算整理)", async () => {
+  const client = makeMockClient();
+  const e = await buildCashbookEntry({
+    client, userId: 1,
+    date: "2026-12-31", description: "決算整理",
+    transactionType: "expense",
+    paymentAccountCode: "1010", categoryAccountCode: "5010", amount: 800,
+    fiscalPeriod: 13,
+  });
+  assert.equal(e.fiscal_year, 2026);
+  assert.equal(e.fiscal_month, 13);
 });
 
 
@@ -363,8 +387,11 @@ test("encrypted: buildTransferEntry も同様に暗号化される", async () =>
     fromAccountCode: "1010", toAccountCode: "1020", amount: 50000,
   });
   assert.equal(e.fiscal_year, 2026);
+  assert.equal(e.fiscal_month, 4);
   assert.ok(e.encrypted_blob);
   assert.ok(e.blob_iv);
+  assert.equal(e.date, undefined);
+  assert.equal(e.source, undefined);
   // 復号
   const body = await decryptRecord(
     client,
@@ -532,13 +559,21 @@ test("journal: client + userId 指定で encrypted_blob / blob_iv / fiscal_year 
     ],
   });
   assert.equal(e.fiscal_year, 2026);
+  assert.equal(e.fiscal_month, 2);
   assert.ok(typeof e.encrypted_blob === "string" && e.encrypted_blob.length > 0);
   assert.ok(typeof e.blob_iv === "string" && e.blob_iv.length > 0);
+  // E3-F PR-D-6-6: 平文 date / description / source / fiscal_period は wire に
+  // 乗らない。
+  assert.equal(e.date, undefined);
+  assert.equal(e.description, undefined);
+  assert.equal(e.source, undefined);
+  assert.equal(e.fiscal_period, undefined);
   for (const line of e.lines) {
     assert.ok(typeof line.encrypted_blob === "string");
     assert.ok(typeof line.blob_iv === "string");
+    assert.equal(line.description, undefined);
   }
-  // round-trip decrypt
+  // round-trip decrypt (摘要・source は暗号文の中に残る)
   const body = await decryptRecord(
     client,
     b64decode(e.encrypted_blob),

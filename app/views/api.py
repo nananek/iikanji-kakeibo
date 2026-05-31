@@ -6,7 +6,7 @@ import json
 import uuid
 from base64 import b64decode, b64encode
 from binascii import Error as BinasciiError
-from datetime import date as date_type, datetime, timezone
+from datetime import datetime, timezone
 
 from flask import Blueprint, current_app, jsonify, request, g, session as flask_session
 
@@ -117,9 +117,6 @@ _MAX_BATCH_ENTRIES = 500
 # record blob より大きい。標準ユーザーで数十科目 × 10〜20 byte → 1〜2KB 想定、
 # 余裕を見て上限 32KB に設定 (DoS 防止)。
 _MAX_BCB_BLOB_BYTES = 32 * 1024
-_ALLOWED_BATCH_SOURCES = {
-    "journal", "cashbook", "ai_receipt", "csv", "ofx", "web", "api",
-}
 _AES_GCM_IV_BYTES = 12
 
 
@@ -248,29 +245,14 @@ def create_journal():
         return jsonify({"error": "JSON ボディが必要です。"}), 400
 
     # バリデーション
-    date_str = data.get("date")
-    description = (data.get("description") or "").strip()
+    # E3-F PR-D-6-6: wire 平文除去。date / description / source は request から
+    # 受け取らない (entry 本体は encrypted_blob に格納済)。平文メタは
+    # fiscal_year / fiscal_month のみクライアントが算出して必須送信する。
     lines = data.get("lines")
-    source = data.get("source", "api")
-
-    if not date_str:
-        return jsonify({"error": "date は必須です。"}), 400
-    if not description:
-        return jsonify({"error": "description は必須です。"}), 400
     if not lines or not isinstance(lines, list):
         return jsonify({"error": "lines は必須です（配列）。"}), 400
 
-    try:
-        entry_date = date_type.fromisoformat(date_str)
-    except ValueError:
-        return jsonify({"error": "date の形式が不正です（YYYY-MM-DD）。"}), 400
-
     user_id = g.api_user_id
-
-    # 確定済み期間チェック
-    err = check_period_open_for_new(user_id, entry_date.year, entry_date.month)
-    if err:
-        return jsonify({"error": err}), 400
 
     # E3-F PR-C: クライアント側で AES-GCM 暗号化された entry 本体は必須。
     # 平文-only POST は 400 (web ブラウザは entries_builder.js 経由、外部
@@ -297,7 +279,8 @@ def create_journal():
             "account_code": account_code,
             "debit_amount": int(line.get("debit", 0) or 0),
             "credit_amount": int(line.get("credit", 0) or 0),
-            "description": line.get("description", ""),
+            # E3-F PR-D-6-6: 平文 line.description は受け取らない (line 本体は
+            # encrypted_blob に格納済。description 列は 055 で DROP 済)。
             "encrypted_blob": line_blob,
             "blob_iv": line_iv,
         })
@@ -309,28 +292,22 @@ def create_journal():
         if used_codes & locked_codes:
             return jsonify({"error": "提出済みの税務科目を含むため登録できません。"}), 400
 
-    # Phase E3: fiscal_year は date 暗号化後の年度フィルタ用の平文カラム。
-    # クライアントが明示指定しなければ date.year を採用 (service 側のデフォルト)。
-    fiscal_year = data.get("fiscal_year")
-    if fiscal_year is not None:
-        # bool は int サブクラスなので isinstance では弾けない。type 直接比較。
-        if type(fiscal_year) is not int:
-            return jsonify({"error": "fiscal_year は整数で指定してください。"}), 400
-        if not (1900 <= fiscal_year <= 2200):
-            return jsonify({
-                "error": "fiscal_year の範囲が不正です (1900〜2200)。",
-            }), 400
+    # 平文メタ (fiscal_year / fiscal_month) の検証 + 確定済み期間チェック。
+    fiscal_year, fiscal_month, err = _parse_fiscal_meta(data)
+    if err:
+        return jsonify({"error": err}), 400
+    err = check_period_open_for_new(user_id, fiscal_year, fiscal_month)
+    if err:
+        return jsonify({"error": err}), 400
 
     try:
         entry = create_journal_entry(
             user_id=user_id,
-            date=entry_date,
-            description=description,
             lines_data=lines_data,
-            source=source,
+            fiscal_year=fiscal_year,
+            fiscal_month=fiscal_month,
             encrypted_blob=entry_blob,
             blob_iv=entry_iv,
-            fiscal_year=fiscal_year,
         )
     except ValueError as e:
         from flask import current_app
@@ -373,6 +350,49 @@ def _parse_int_amount(raw, label):
     return raw
 
 
+def _validate_fiscal_meta(data, label_prefix=""):
+    """E3-F PR-D-6-6: 仕訳の平文メタ (fiscal_year / fiscal_month) を検証する。
+
+    wire 平文除去後、entry の平文メタは fiscal_year / fiscal_month のみ
+    (クライアントが date から算出して必須送信する)。両者とも (値, None) を
+    返し、不正時は (None, None, message) ではなく ValueError を raise する。
+
+    fiscal_month: 0=期首 / 1-12=月 / 13-15=決算整理。16 (損益振替) は自動生成
+    専用 (CLAUDE.md) なので手動 API からは拒否する。
+
+    bool は int サブクラスなので type 直接比較で弾く。
+
+    Returns:
+        (fiscal_year, fiscal_month)
+    Raises:
+        ValueError: 検証失敗時
+    """
+    fiscal_year = data.get("fiscal_year")
+    if type(fiscal_year) is not int:
+        raise ValueError(f"{label_prefix}fiscal_year は整数で指定してください。")
+    if not (1900 <= fiscal_year <= 2200):
+        raise ValueError(
+            f"{label_prefix}fiscal_year の範囲が不正です (1900〜2200)。"
+        )
+
+    fiscal_month = data.get("fiscal_month")
+    if type(fiscal_month) is not int or not (0 <= fiscal_month <= 15):
+        raise ValueError(
+            f"{label_prefix}fiscal_month は 0〜15 の整数です "
+            "(16=損益振替は自動生成専用)。"
+        )
+    return fiscal_year, fiscal_month
+
+
+def _parse_fiscal_meta(data):
+    """単一エンドポイント用に _validate_fiscal_meta を (year, month, err) で包む。"""
+    try:
+        fiscal_year, fiscal_month = _validate_fiscal_meta(data)
+    except ValueError as e:
+        return None, None, str(e)
+    return fiscal_year, fiscal_month, None
+
+
 def _validate_and_parse_batch_entry(e, idx, user_account_codes, locked_codes):
     """batch API 用: 1 entry 分の入力を validate して create_journal_entry 引数に整形。
 
@@ -384,24 +404,9 @@ def _validate_and_parse_batch_entry(e, idx, user_account_codes, locked_codes):
     if not isinstance(e, dict):
         raise ValueError(f"entries[{idx}] は dict である必要があります")
 
-    date_str = e.get("date")
-    if not date_str:
-        raise ValueError(f"entries[{idx}].date は必須です")
-    try:
-        entry_date = date_type.fromisoformat(date_str)
-    except (TypeError, ValueError):
-        raise ValueError(f"entries[{idx}].date の形式が不正です (YYYY-MM-DD)")
-
-    description = (e.get("description") or "").strip()
-    if not description:
-        raise ValueError(f"entries[{idx}].description は必須です")
-    # JournalEntry.description は String(255)。超過すると DB エラー (500) になる
-    # ので API 層で 400 として返す。
-    if len(description) > 255:
-        raise ValueError(
-            f"entries[{idx}].description は 255 文字以内で指定してください"
-        )
-
+    # E3-F PR-D-6-6: wire 平文除去。date / description / source は受け取らない
+    # (entry 本体は encrypted_blob に格納済)。平文メタは fiscal_year /
+    # fiscal_month のみクライアントが算出して必須送信する。
     lines = e.get("lines")
     if not lines or not isinstance(lines, list):
         raise ValueError(f"entries[{idx}].lines は必須です (配列)")
@@ -425,11 +430,8 @@ def _validate_and_parse_batch_entry(e, idx, user_account_codes, locked_codes):
         )
         if err:
             raise ValueError(err)
-        line_desc = line.get("description", "") or ""
-        if len(line_desc) > 255:
-            raise ValueError(
-                f"entries[{idx}].lines[{li}].description は 255 文字以内で指定してください"
-            )
+        # E3-F PR-D-6-6: 平文 line.description は受け取らない (line 本体は
+        # encrypted_blob に格納済)。
         lines_data.append({
             "account_code": account_code,
             "debit_amount": _parse_int_amount(
@@ -438,7 +440,6 @@ def _validate_and_parse_batch_entry(e, idx, user_account_codes, locked_codes):
             "credit_amount": _parse_int_amount(
                 line.get("credit"), f"entries[{idx}].lines[{li}].credit",
             ),
-            "description": line_desc,
             "encrypted_blob": line_blob,
             "blob_iv": line_iv,
         })
@@ -460,32 +461,9 @@ def _validate_and_parse_batch_entry(e, idx, user_account_codes, locked_codes):
             f"entries[{idx}]: 科目コード {sorted(missing)} が存在しません。"
         )
 
-    fiscal_year = e.get("fiscal_year")
-    if fiscal_year is not None:
-        if type(fiscal_year) is not int:
-            raise ValueError(
-                f"entries[{idx}].fiscal_year は整数で指定してください。"
-            )
-        if not (1900 <= fiscal_year <= 2200):
-            raise ValueError(
-                f"entries[{idx}].fiscal_year の範囲が不正です (1900〜2200)。"
-            )
-
-    fiscal_period = e.get("fiscal_period")
-    if fiscal_period is not None:
-        # fiscal_period=16 (損益振替) は自動生成専用 (CLAUDE.md 参照)。
-        # 手動 API から指定できないように 0〜15 に制限する。
-        if type(fiscal_period) is not int or not (0 <= fiscal_period <= 15):
-            raise ValueError(
-                f"entries[{idx}].fiscal_period は 0〜15 の整数です "
-                "(16=損益振替は自動生成専用)。"
-            )
-
-    source = e.get("source", "api")
-    if source not in _ALLOWED_BATCH_SOURCES:
-        raise ValueError(
-            f"entries[{idx}].source の値が不正です: {source!r}"
-        )
+    fiscal_year, fiscal_month = _validate_fiscal_meta(
+        e, label_prefix=f"entries[{idx}].",
+    )
 
     draft_id = e.get("draft_id")
     if draft_id is not None:
@@ -495,14 +473,11 @@ def _validate_and_parse_batch_entry(e, idx, user_account_codes, locked_codes):
             )
 
     return {
-        "date": entry_date,
-        "description": description,
         "lines_data": lines_data,
-        "source": source,
         "encrypted_blob": entry_blob,
         "blob_iv": entry_iv,
         "fiscal_year": fiscal_year,
-        "fiscal_period": fiscal_period,
+        "fiscal_month": fiscal_month,
         "draft_id": draft_id,
     }
 
@@ -582,24 +557,21 @@ def create_journals_batch():
                 e, idx, user_account_codes, locked_codes,
             )
 
-            # 確定済み期間チェック (validate と分離: date が parsed 後でないと判定不可)
+            # 確定済み期間チェック (fiscal_year / fiscal_month ベース)
             err = check_period_open_for_new(
-                user_id, parsed["date"].year, parsed["date"].month,
+                user_id, parsed["fiscal_year"], parsed["fiscal_month"],
             )
             if err:
                 raise ValueError(f"entries[{idx}]: {err}")
 
             entry = create_journal_entry(
                 user_id=user_id,
-                date=parsed["date"],
-                description=parsed["description"],
                 lines_data=parsed["lines_data"],
-                source=parsed["source"],
                 batch_id=batch_id,
-                fiscal_period=parsed["fiscal_period"],
                 encrypted_blob=parsed["encrypted_blob"],
                 blob_iv=parsed["blob_iv"],
                 fiscal_year=parsed["fiscal_year"],
+                fiscal_month=parsed["fiscal_month"],
                 commit=False,
             )
 
@@ -1354,10 +1326,10 @@ def update_journal(entry_id):
     際の共通エンドポイント。1 entry 分の payload を受け取り、フィールドと
     lines を全置換する。
 
-    リクエスト:
+    リクエスト (E3-F PR-D-6-6: wire 平文除去後):
         {
-          date, description, source, fiscal_period, fiscal_year,
-          encrypted_blob, blob_iv,  // 任意 (dual-storage 期間中)
+          fiscal_year, fiscal_month,  // 平文メタ (必須)
+          encrypted_blob, blob_iv,    // entry 本体 (必須)
           lines: [{account_code, debit, credit, encrypted_blob, blob_iv}, ...]
         }
 
@@ -1417,25 +1389,19 @@ def update_journal(entry_id):
             ),
         }), 400
 
-    # 新規 date が確定済み期間に該当しないか確認
+    # 更新後の対象期間が確定済みでないか確認 (fiscal_year / fiscal_month ベース)
     err = check_period_open_for_new(
-        user_id, parsed["date"].year, parsed["date"].month,
+        user_id, parsed["fiscal_year"], parsed["fiscal_month"],
     )
     if err:
         return jsonify({"error": err}), 400
 
     # entry フィールド更新
-    # E3-F PR-D-6-4: 平文 date / description / source / fiscal_period 列は
-    # 更新しない (本体は encrypted_blob のみ)。fiscal_year / fiscal_month の
-    # 平文メタ列のみ parsed の date / fiscal_period から導出して更新する。
-    if parsed["fiscal_year"] is not None:
-        entry.fiscal_year = parsed["fiscal_year"]
-    else:
-        entry.fiscal_year = parsed["date"].year
-    entry.fiscal_month = (
-        parsed["fiscal_period"] if parsed["fiscal_period"] is not None
-        else parsed["date"].month
-    )
+    # E3-F PR-D-6-6: 平文 date / description / source / fiscal_period 列は
+    # DROP 済 (055)。entry の平文メタは fiscal_year / fiscal_month のみ更新する
+    # (クライアント算出値)。entry 本体は encrypted_blob。
+    entry.fiscal_year = parsed["fiscal_year"]
+    entry.fiscal_month = parsed["fiscal_month"]
     entry.encrypted_blob = parsed["encrypted_blob"]
     entry.blob_iv = parsed["blob_iv"]
 
@@ -1451,7 +1417,6 @@ def update_journal(entry_id):
             account_code=ld["account_code"],
             debit_amount=ld["debit_amount"],
             credit_amount=ld["credit_amount"],
-            # E3-F PR-D-6-4: 平文 description 列は書き込まない (encrypted_blob のみ)。
             encrypted_blob=ld.get("encrypted_blob"),
             blob_iv=ld.get("blob_iv"),
         )
