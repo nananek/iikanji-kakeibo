@@ -15,7 +15,7 @@ from app.models.ai_draft import AIDraft
 from app.models.user import User
 from app.services.audit import get_effective_user_id
 from app.services.fiscal import get_closed_periods_map, get_restricted_before_year
-from app.services.image import serve_image
+from app.services.image import serve_image, serve_voucher_image
 from app.services.storage import (
     get_storage_backend, make_thumbnail_key,
 )
@@ -181,7 +181,7 @@ def voucher_image(voucher_id):
     if voucher.user_id != get_effective_user_id():
         return "", 403
     try:
-        return serve_image(voucher.image_key, voucher.image_mime, voucher.file_hash)
+        return serve_voucher_image(voucher)
     except FileNotFoundError:
         return "", 404
 

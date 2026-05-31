@@ -22,7 +22,7 @@ from app.models.journal import JournalEntry, JournalEntryLine
 from app.services.accounting import create_journal_entry
 from app.services.audit import get_submitted_account_codes, is_entry_locked_for_owner
 from app.services.fiscal import check_period_open_for_new, check_entry_modifiable
-from app.services.image import serve_image
+from app.services.image import serve_voucher_image
 from app.services.storage import (
     get_storage_backend, make_storage_key, make_thumbnail_key,
     store_image_with_thumbnail,
@@ -31,7 +31,11 @@ from app.services.storage_quota import (
     QuotaExceededError, check_quota, get_quota_bytes, get_used_bytes,
     maybe_send_quota_warning, record_delete, record_upload,
 )
-from app.services.voucher import create_voucher_from_draft
+from app.services.voucher import (
+    create_voucher_from_draft,
+    finalize_voucher_upload,
+    init_voucher,
+)
 from app.models.user import User
 from app.models.voucher import Voucher
 from app.models.voucher_audit_log import VoucherAuditLog
@@ -118,6 +122,26 @@ _MAX_BATCH_ENTRIES = 500
 # 余裕を見て上限 32KB に設定 (DoS 防止)。
 _MAX_BCB_BLOB_BYTES = 32 * 1024
 _AES_GCM_IV_BYTES = 12
+
+# E4 (#111) 証憑暗号文の上限。image_ct / thumb_ct は iv(12B) || ciphertext ||
+# GCM tag(16B) の opaque blob。
+# - 画像: 平文上限 10MB (vouchers.MAX_IMAGE_SIZE) + iv + tag + 余裕。
+# - サムネ: クライアント canvas 200x200 JPEG。暗号文込みでも 512KB あれば十分。
+# - meta blob: original_filename(255) + image_mime 等の小さな JSON (record 上限)。
+_MAX_VOUCHER_IMAGE_CT_BYTES = 10 * 1024 * 1024 + 1024
+_MAX_VOUCHER_THUMB_CT_BYTES = 512 * 1024
+_GCM_MIN_BLOB_BYTES = _AES_GCM_IV_BYTES + 16  # iv + tag (平文 0B でも下回らない)
+
+
+def _is_sha256_hex(s) -> bool:
+    """SHA-256 の hex 文字列 (64 桁) か検証する。"""
+    if not isinstance(s, str) or len(s) != 64:
+        return False
+    try:
+        int(s, 16)
+    except ValueError:
+        return False
+    return True
 
 
 def _proxy_block_resp():
@@ -1978,6 +2002,127 @@ def ai_draft_save_suggestions(draft_id):
     })
 
 
+# --- E4 (#111): 証憑画像の 2 段階 E2EE upload ---
+
+
+@bp.route("/vouchers/init", methods=["POST"])
+@auth_required(write=True, scope="journals:create", allow_session=True)
+@limiter.limit("30 per minute", key_func=rate_limit_key)
+def init_voucher_endpoint():
+    """2 段階 upload Step 1: voucher_id を採番する (空 row 作成)。
+
+    クライアントは採番された voucher_id を AAD (`vimg`/`vthumb`/`vmeta` +
+    user_id + voucher_id) に束縛して画像/サムネ/メタを暗号化し、Step 2
+    (`PUT /vouchers/<id>`) で実体を upload する。
+
+    リクエスト: {"journal_entry_id": <int|null>}
+    レスポンス: 201 {"ok": true, "voucher_id": <int>}
+
+    代理閲覧 (acting_as) 中は一律 403。証憑は E2EE のみで平文 write 経路が無く、
+    監査人は owner の MK を持たないため owner が復号可能な暗号文を作れない。
+    """
+    blocked = _audit_proxy_blocks_all_writes()
+    if blocked:
+        return blocked
+
+    user_id = g.auth_user.id
+    data = request.get_json(silent=True) or {}
+
+    journal_entry_id = data.get("journal_entry_id")
+    if journal_entry_id is not None:
+        try:
+            journal_entry_id = int(journal_entry_id)
+        except (TypeError, ValueError):
+            return jsonify({"error": "journal_entry_id は整数で指定してください。"}), 400
+        entry = JournalEntry.query.filter_by(
+            id=journal_entry_id, user_id=user_id,
+        ).first()
+        if not entry:
+            return jsonify({"error": "仕訳が見つかりません。"}), 404
+
+    voucher = init_voucher(user_id, journal_entry_id)
+    db.session.commit()
+    return jsonify({"ok": True, "voucher_id": voucher.id}), 201
+
+
+@bp.route("/vouchers/<int:voucher_id>", methods=["PUT"])
+@auth_required(write=True, scope="journals:create", allow_session=True)
+@limiter.limit("30 per minute", key_func=rate_limit_key)
+def upload_voucher_endpoint(voucher_id):
+    """2 段階 upload Step 2: 暗号文の実体を upload する (multipart/form-data)。
+
+    フォーム:
+      - image_ct (file): iv(12B) || ciphertext || GCM tag の opaque blob。必須。
+      - thumb_ct (file): サムネイル暗号文 (同形式)。任意。
+      - meta_blob (str): encrypted_meta_blob の base64。必須。
+      - meta_iv (str): meta blob の 12B IV の base64。必須。
+      - file_hash_plain (str): SHA-256(平文画像) の hex 64 桁。必須。
+
+    サーバは file_hash_cipher = SHA-256(image_ct) を計算して保存する。
+    電帳法の改ざん防止のため、既に確定済みの証憑への上書きは 409 で拒否する。
+    """
+    blocked = _audit_proxy_blocks_all_writes()
+    if blocked:
+        return blocked
+
+    user_id = g.auth_user.id
+    voucher = Voucher.active().filter_by(
+        id=voucher_id, user_id=user_id,
+    ).first()
+    if not voucher:
+        return jsonify({"error": "証憑が見つかりません。"}), 404
+
+    # 上書き禁止 (電帳法): init 直後の空 row のみ受け付ける。
+    if voucher.image_key or voucher.encrypted_meta_blob is not None:
+        return jsonify({
+            "error": "この証憑は既にアップロード済みです。上書きはできません。",
+        }), 409
+
+    image_part = request.files.get("image_ct")
+    if image_part is None:
+        return jsonify({"error": "image_ct (暗号文画像) は必須です。"}), 400
+    image_ct = image_part.read()
+    if not (_GCM_MIN_BLOB_BYTES <= len(image_ct) <= _MAX_VOUCHER_IMAGE_CT_BYTES):
+        return jsonify({
+            "error": "image_ct のサイズが不正です (iv+tag 未満、または上限超過)。",
+        }), 400
+
+    thumb_ct = None
+    thumb_part = request.files.get("thumb_ct")
+    if thumb_part is not None:
+        thumb_ct = thumb_part.read()
+        if not (_GCM_MIN_BLOB_BYTES <= len(thumb_ct) <= _MAX_VOUCHER_THUMB_CT_BYTES):
+            return jsonify({
+                "error": "thumb_ct のサイズが不正です。",
+            }), 400
+
+    # meta blob + iv (DB 格納のため _decode_record_crypto で base64 decode + 検証)
+    meta_blob, meta_iv, err = _decode_record_crypto(
+        request.form, "meta", "meta_blob", "meta_iv", required=True,
+    )
+    if err:
+        return jsonify({"error": err}), 400
+
+    file_hash_plain = request.form.get("file_hash_plain")
+    if not _is_sha256_hex(file_hash_plain):
+        return jsonify({
+            "error": "file_hash_plain は SHA-256 の hex 64 桁である必要があります。",
+        }), 400
+
+    try:
+        finalize_voucher_upload(
+            voucher, image_ct, thumb_ct, meta_blob, meta_iv, file_hash_plain,
+        )
+    except QuotaExceededError as exc:
+        return jsonify({"error": exc.user_message}), 413
+
+    return jsonify({
+        "ok": True,
+        "voucher_id": voucher.id,
+        "file_hash_cipher": voucher.file_hash,
+    }), 200
+
+
 @bp.route("/vouchers", methods=["GET"])
 @api_key_required(scope="journals:read")
 def list_vouchers():
@@ -2072,7 +2217,7 @@ def api_voucher_image(voucher_id):
     if not voucher:
         return jsonify({"error": "証憑が見つかりません。"}), 404
     try:
-        return serve_image(voucher.image_key, voucher.image_mime, voucher.file_hash)
+        return serve_voucher_image(voucher)
     except FileNotFoundError:
         return jsonify({"error": "画像ファイルが見つかりません。"}), 404
 

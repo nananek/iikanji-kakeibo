@@ -35,10 +35,26 @@ def make_thumbnail_key(image_key: str) -> str:
     """画像キーからサムネイルキーを導出する。
 
     例: vouchers/1/42.jpg → vouchers/1/42_thumb.jpg
-    サムネイルは常に JPEG。
+    サムネイルは常に JPEG (v4.x サーバ生成サムネイル)。
     """
     stem, _ext = image_key.rsplit(".", 1)
     return f"{stem}_thumb.jpg"
+
+
+# E4 (#111): クライアント暗号化された証憑の MIME。暗号文はバイト列なので
+# 拡張子・content-type ともに application/octet-stream で扱う。
+ENCRYPTED_CONTENT_TYPE = "application/octet-stream"
+
+
+def make_encrypted_thumbnail_key(image_key: str) -> str:
+    """暗号化証憑の画像キーからサムネイルキーを導出する。
+
+    例: vouchers/1/42.bin → vouchers/1/42_thumb.bin
+    暗号文サムネイルも octet-stream (.bin)。サーバ生成 JPEG (_thumb.jpg) とは
+    別物なので suffix を分けて衝突を避ける。
+    """
+    stem, _ext = image_key.rsplit(".", 1)
+    return f"{stem}_thumb.bin"
 
 
 def generate_thumbnail(
