@@ -51,6 +51,75 @@ class TestVoucherModel:
         assert entry.vouchers[0].id == v.id
 
 
+class TestVoucherE4EncryptedColumns:
+    """E4 (#111): 証憑 E2EE 化のための追加カラム (056 マイグレーション)。"""
+
+    def test_new_columns_default_none(self, db, user):
+        """既存の作り方では E4 カラムは NULL のまま (dual-write 期)。"""
+        v = Voucher(
+            user_id=user.id,
+            image_key="vouchers/1/1.jpg",
+            image_mime="image/jpeg",
+        )
+        db.session.add(v)
+        db.session.commit()
+        assert v.encrypted_meta_blob is None
+        assert v.meta_iv is None
+        assert v.file_hash_plain is None
+        assert v.thumbnail_key is None
+
+    def test_encrypted_meta_round_trip(self, db, user):
+        """encrypted_meta_blob / meta_iv / file_hash_plain / thumbnail_key を
+        保存・再読込できる。"""
+        meta_blob = b"\x01\x02\x03ciphertext+tag"
+        meta_iv = bytes(range(12))
+        v = Voucher(
+            user_id=user.id,
+            image_key="vouchers/1/1.bin",
+            image_mime="application/octet-stream",
+            file_hash="c" * 64,
+            encrypted_meta_blob=meta_blob,
+            meta_iv=meta_iv,
+            file_hash_plain="p" * 64,
+            thumbnail_key="vouchers/1/1_thumb.bin",
+        )
+        db.session.add(v)
+        db.session.commit()
+        db.session.expire_all()
+
+        reloaded = db.session.get(Voucher, v.id)
+        assert reloaded.encrypted_meta_blob == meta_blob
+        assert reloaded.meta_iv == meta_iv
+        assert len(reloaded.meta_iv) == 12
+        assert reloaded.file_hash_plain == "p" * 64
+        assert reloaded.file_hash == "c" * 64
+        assert reloaded.thumbnail_key == "vouchers/1/1_thumb.bin"
+
+    def test_audit_log_encrypted_detail_round_trip(self, db, user):
+        """VoucherAuditLog の encrypted_detail_blob / detail_iv を保存できる。"""
+        from app.models.voucher_audit_log import VoucherAuditLog
+
+        v = make_voucher(db, user.id)
+        detail_blob = b"encrypted-detail-json"
+        detail_iv = bytes(range(12))
+        log = VoucherAuditLog(
+            voucher_id=v.id,
+            user_id=user.id,
+            action="attached",
+            encrypted_detail_blob=detail_blob,
+            detail_iv=detail_iv,
+        )
+        db.session.add(log)
+        db.session.commit()
+        db.session.expire_all()
+
+        reloaded = db.session.get(VoucherAuditLog, log.id)
+        assert reloaded.encrypted_detail_blob == detail_blob
+        assert reloaded.detail_iv == detail_iv
+        # 平文 detail は dual-write 期は引き続き NULL 許容
+        assert reloaded.detail is None
+
+
 class TestSetNullOnJournalDelete:
     """仕訳削除時に証憑が SET NULL で残ること"""
 
