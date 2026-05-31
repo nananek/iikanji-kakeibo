@@ -250,7 +250,6 @@ def generate_closing_entries(user_id, year):
         return "勘定科目（収益・費用・繰越利益）が見つかりません。"
 
     batch = f"closing-{year}-{uuid.uuid4().hex[:8]}"
-    closing_date = date(year, 12, 31)
 
     # 収益科目ごとの貸方合計（= 収益残高）
     revenue_balances = (
@@ -356,16 +355,15 @@ def generate_closing_entries(user_id, year):
     # E3-F: サーバは MK を持たないため closing 仕訳の encrypted_blob を生成できない。
     # 暫定的に空 blob (b"") + ゼロ IV のセンチネル値を入れ、クライアント側
     # (journals_client.js) が `is_closing && encrypted_blob.length === 0` を
-    # 「自動生成された損益振替仕訳」と認識してラベルをハードコード表示する。
+    # 「自動生成された損益振替仕訳」と認識して date / description / source を
+    # is_closing / fiscal_year から合成・ハードコード表示する。
     # closing 仕訳生成のクライアント完全移譲は follow-up (#221) で対応する。
+    # E3-F PR-D-6-4: 平文 date / description / source / fiscal_period 列は書き込まない
+    # (クライアントが is_closing / fiscal_month=16 / fiscal_year から合成する)。
     entry = JournalEntry(
         user_id=user_id,
-        date=closing_date,
         entry_number=get_next_entry_number(user_id),
-        description="損益振替仕訳（自動生成）",
-        source="closing",
         batch_id=batch,
-        fiscal_period=16,
         is_closing=True,
         fiscal_month=16,
         fiscal_year=year,

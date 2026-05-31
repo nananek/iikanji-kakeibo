@@ -81,7 +81,10 @@ class TestCreateJournalEntry:
             ],
             source="csv",
         )
-        assert entry.source == "csv"
+        # E3-F PR-D-6-4: source 平文列は書き込まれない (本体は encrypted_blob)。
+        # 引数はエラーなく受理され entry は作成されるが column には残らない。
+        assert entry.id is not None
+        assert entry.source != "csv"
 
     def test_batch_id(self, db, user, accounts):
         entry = create_journal_entry(
@@ -107,7 +110,9 @@ class TestCreateJournalEntry:
             ],
             fiscal_period=13,
         )
-        assert entry.fiscal_period == 13
+        # E3-F PR-D-6-4: fiscal_period 平文列は書かず fiscal_month メタ列へ反映する。
+        assert entry.fiscal_month == 13
+        assert entry.fiscal_period is None
 
     def test_line_description(self, db, user, accounts):
         entry = create_journal_entry(
@@ -120,8 +125,9 @@ class TestCreateJournalEntry:
                 {"account_code": accounts["1010"].code, "debit_amount": 0, "credit_amount": 500},
             ],
         )
+        # E3-F PR-D-6-4: line description 平文列は書き込まれない (本体は encrypted_blob)。
         descs = [line.description for line in entry.lines]
-        assert "洗剤" in descs
+        assert "洗剤" not in descs
 
     def test_sequential_entry_numbers(self, db, user, accounts):
         e1 = create_journal_entry(

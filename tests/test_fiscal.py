@@ -201,12 +201,13 @@ class TestGenerateClosingEntries:
         result = generate_closing_entries(user.id, 2026)
         assert result is None
 
-        # 損益振替仕訳が作成されたことを確認
+        # 損益振替仕訳が作成されたことを確認。E3-F PR-D-6-4 で平文 source/
+        # fiscal_period は書かなくなったため is_closing / fiscal_month で識別する。
         closing = JournalEntry.query.filter_by(
-            user_id=user.id, source="closing"
+            user_id=user.id, is_closing=True
         ).first()
         assert closing is not None
-        assert closing.fiscal_period == 16
+        assert closing.fiscal_month == 16
         assert closing.is_balanced
         # E3-F: 新カラムと encrypted_blob センチネルを確認。
         assert closing.is_closing is True
@@ -223,6 +224,6 @@ class TestGenerateClosingEntries:
         make_journal(db, user.id, "1020", "4010",
                      100000, entry_date=date(2026, 6, 25))
         generate_closing_entries(user.id, 2026)
-        assert JournalEntry.query.filter_by(user_id=user.id, source="closing").count() > 0
+        assert JournalEntry.query.filter_by(user_id=user.id, is_closing=True).count() > 0
         delete_closing_entries(user.id, 2026)
-        assert JournalEntry.query.filter_by(user_id=user.id, source="closing").count() == 0
+        assert JournalEntry.query.filter_by(user_id=user.id, is_closing=True).count() == 0

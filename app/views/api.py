@@ -883,17 +883,16 @@ def backup_export():
                 {"year": f.year, "closed_period": f.closed_period}
                 for f in fiscal_closes
             ],
+            # E3-F PR-D-6-4: 平文 date / description / source / fiscal_period 列は
+            # export しない (クライアントが encrypted_blob を復号して平文 JSON を
+            # 組み立てる。backup_export_client.js decryptBackup 参照)。fiscal_year /
+            # fiscal_month / is_closing は年度フィルタ・closing 合成用の平文メタ。
             "journal_entries": [
                 {
                     "id": e.id,
-                    "date": e.date.isoformat() if e.date else None,
                     "entry_number": e.entry_number,
-                    "description": e.description,
-                    "source": e.source,
                     "batch_id": e.batch_id,
-                    "fiscal_period": e.fiscal_period,
                     "fiscal_year": e.fiscal_year,
-                    # E3-F: source / fiscal_period DROP 後の平文代替。
                     "is_closing": e.is_closing,
                     "fiscal_month": e.fiscal_month,
                     "encrypted_blob": _b64_or_none(e.encrypted_blob),
@@ -901,6 +900,8 @@ def backup_export():
                 }
                 for e in entries
             ],
+            # debit_amount / credit_amount は集計用の平文メタ列 (DROP 対象外)。
+            # description 平文列は export しない (encrypted_blob に格納済)。
             "journal_entry_lines": [
                 {
                     "id": l.id,
@@ -908,23 +909,18 @@ def backup_export():
                     "account_code": l.account_code,
                     "debit_amount": int(l.debit_amount or 0),
                     "credit_amount": int(l.credit_amount or 0),
-                    "description": l.description,
                     "encrypted_blob": _b64_or_none(l.encrypted_blob),
                     "blob_iv": _b64_or_none(l.blob_iv),
                 }
                 for l in lines
             ],
+            # medical の平文列 (date / patient_name / hospital_name /
+            # treatment_description / provider_type / amount_paid /
+            # insurance_reimbursement) は export しない (encrypted_blob に格納済)。
             "medical_expenses": [
                 {
                     "id": m.id,
                     "journal_entry_id": m.journal_entry_id,
-                    "date": m.date.isoformat() if m.date else None,
-                    "patient_name": m.patient_name,
-                    "hospital_name": m.hospital_name,
-                    "treatment_description": m.treatment_description,
-                    "provider_type": m.provider_type,
-                    "amount_paid": int(m.amount_paid or 0),
-                    "insurance_reimbursement": int(m.insurance_reimbursement or 0),
                     "encrypted_blob": _b64_or_none(m.encrypted_blob),
                     "blob_iv": _b64_or_none(m.blob_iv),
                 }
@@ -1427,15 +1423,13 @@ def update_journal(entry_id):
         return jsonify({"error": err}), 400
 
     # entry フィールド更新
-    entry.date = parsed["date"]
-    entry.description = parsed["description"]
-    entry.source = parsed["source"]
-    entry.fiscal_period = parsed["fiscal_period"]
+    # E3-F PR-D-6-4: 平文 date / description / source / fiscal_period 列は
+    # 更新しない (本体は encrypted_blob のみ)。fiscal_year / fiscal_month の
+    # 平文メタ列のみ parsed の date / fiscal_period から導出して更新する。
     if parsed["fiscal_year"] is not None:
         entry.fiscal_year = parsed["fiscal_year"]
     else:
         entry.fiscal_year = parsed["date"].year
-    # E3-F: 平文 fiscal_period / date と並行して新カラムも更新。
     entry.fiscal_month = (
         parsed["fiscal_period"] if parsed["fiscal_period"] is not None
         else parsed["date"].month
@@ -1455,7 +1449,7 @@ def update_journal(entry_id):
             account_code=ld["account_code"],
             debit_amount=ld["debit_amount"],
             credit_amount=ld["credit_amount"],
-            description=ld.get("description", ""),
+            # E3-F PR-D-6-4: 平文 description 列は書き込まない (encrypted_blob のみ)。
             encrypted_blob=ld.get("encrypted_blob"),
             blob_iv=ld.get("blob_iv"),
         )
@@ -2262,29 +2256,6 @@ def list_medical_expenses():
     })
 
 
-# medical_expenses 平文カラムの長さ上限 (DB String 制約。超過すると 500 に
-# なるので API 層で切り詰める)。
-_MEDICAL_STR_CAPS = {
-    "patient_name": 100,
-    "hospital_name": 200,
-    "treatment_description": 255,
-    "provider_type": 20,
-}
-
-
-def _medical_str_field(data, key):
-    """medical-expenses POST の平文文字列フィールドを取り出して正規化。
-
-    戻り値: (value_or_None, error_message_or_None)
-    """
-    raw = data.get(key)
-    if raw is None:
-        return "", None
-    if not isinstance(raw, str):
-        return None, f"{key} は文字列で指定してください。"
-    return raw.strip()[: _MEDICAL_STR_CAPS[key]], None
-
-
 @bp.route("/medical-expenses", methods=["POST"])
 @auth_required(write=True, scope="journals:create", allow_session=True)
 @limiter.limit("60 per minute", key_func=rate_limit_key)
@@ -2299,9 +2270,10 @@ def upsert_medical_expense():
         {
           journal_entry_id,
           encrypted_blob, blob_iv,            // 必須 (PR-C 同様、平文-only 拒否)
-          date, patient_name, hospital_name,  // dual-write 平文 (後続 PR で停止)
-          treatment_description, provider_type,
-          amount_paid, insurance_reimbursement,
+          // E3-F PR-D-6-4: date / patient_name / hospital_name /
+          // treatment_description / provider_type / amount_paid /
+          // insurance_reimbursement は wire 互換で送られ得るが保存しない
+          // (本体は encrypted_blob のみ。request からの撤去は D-6-6)。
         }
     レスポンス: 200 {ok, id}
 
@@ -2349,33 +2321,11 @@ def upsert_medical_expense():
     if err:
         return jsonify({"error": err}), 400
 
-    # --- 平文フィールド (dual-write、後続 PR で停止予定) ---
-    parsed_date = None
-    date_str = data.get("date")
-    if date_str:
-        try:
-            parsed_date = date_type.fromisoformat(date_str)
-        except (TypeError, ValueError):
-            return jsonify({"error": "date の形式が不正です（YYYY-MM-DD）。"}), 400
-
-    fields = {}
-    for key in ("patient_name", "hospital_name", "treatment_description",
-                "provider_type"):
-        value, ferr = _medical_str_field(data, key)
-        if ferr:
-            return jsonify({"error": ferr}), 400
-        fields[key] = value
-    # provider_type は空文字を null に正規化 (DB nullable)。
-    provider_type = fields["provider_type"] or None
-
-    try:
-        amount_paid = int(data.get("amount_paid") or 0)
-        insurance_reimbursement = int(data.get("insurance_reimbursement") or 0)
-    except (TypeError, ValueError):
-        return jsonify({
-            "error": "amount_paid / insurance_reimbursement は整数で指定してください。",
-        }), 400
-
+    # E3-F PR-D-6-4: 平文列 (date / patient_name / hospital_name /
+    # treatment_description / provider_type / amount_paid /
+    # insurance_reimbursement) の WRITE を停止。本体は encrypted_blob のみに
+    # 格納する。request は wire 互換でこれらを送り続けるが (撤去は D-6-6)、
+    # サーバは保存も検証もしない。
     me = MedicalExpense.query.filter_by(
         journal_entry_id=journal_entry_id, user_id=user_id,
     ).first()
@@ -2383,13 +2333,6 @@ def upsert_medical_expense():
         me = MedicalExpense(user_id=user_id, journal_entry_id=journal_entry_id)
         db.session.add(me)
 
-    me.date = parsed_date
-    me.patient_name = fields["patient_name"]
-    me.hospital_name = fields["hospital_name"]
-    me.treatment_description = fields["treatment_description"]
-    me.provider_type = provider_type
-    me.amount_paid = amount_paid
-    me.insurance_reimbursement = insurance_reimbursement
     me.encrypted_blob = blob
     me.blob_iv = iv
     db.session.commit()
