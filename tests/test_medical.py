@@ -85,10 +85,6 @@ class TestDelete:
         )
         e = MedicalExpense(
             user_id=user_id, journal_entry_id=entry.id,
-            date=date(2026, 2, 15),
-            patient_name="X", hospital_name="Y",
-            treatment_description="Z",
-            amount_paid=2000, insurance_reimbursement=0,
         )
         db.session.add(e)
         db.session.commit()
@@ -113,8 +109,8 @@ class TestDelete:
                              second_user, second_user_accounts):
         from app.models.journal import JournalEntry, JournalEntryLine
         je = JournalEntry(
-            user_id=second_user.id, date=date(2026, 2, 15),
-            entry_number=1, description="x", source="cashbook",
+            user_id=second_user.id,
+            entry_number=1,
         )
         je.lines = [
             JournalEntryLine(account_user_id=second_user.id,
@@ -128,10 +124,6 @@ class TestDelete:
         db.session.commit()
         e = MedicalExpense(
             user_id=second_user.id, journal_entry_id=je.id,
-            date=date(2026, 2, 15),
-            patient_name="他人", hospital_name="他病院",
-            treatment_description="x",
-            amount_paid=100, insurance_reimbursement=0,
         )
         db.session.add(e)
         db.session.commit()

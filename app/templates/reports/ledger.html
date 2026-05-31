@@ -362,6 +362,9 @@ if (window.innerWidth > 576) {
 var csrfToken = "{{ csrf_token() }}";
 var currentEntryId = null;
 var currentHasVoucher = false;
+// E3-F PR-D-6-5: モーダルで復号した entry メタ (date/description)。voucher-attach
+// の AI プロンプトに渡す (サーバは平文 journal_date/description を返さなくなった)。
+var currentEntryMeta = null;
 var editModal = null;
 
 var _isMobile = window.innerWidth <= 576;
@@ -497,6 +500,7 @@ async function openEditModal(entryId) {
       .then(function(r) { return r.json(); });
     // entry レベルの date / description / fiscal_period は blob 復号で取得
     var meta = await decryptModalEntry(data);
+    currentEntryMeta = meta;
 
     currentHasVoucher = data.has_voucher || false;
     renderVoucherPreview(document.getElementById('modalVoucherPreview'), data.vouchers);
@@ -865,9 +869,11 @@ async function runVoucherAttachAiIfE2EE(file, attachData) {
     return await orchestratorMod.runVoucherAttachAnalysis({
       imageBytes: new Uint8Array(ab),
       mimeType: file.type || 'image/jpeg',
-      journalDate: attachData.journal_date,
+      // E3-F PR-D-6-5: 日付/摘要はサーバ平文ではなくモーダルで復号済みの
+      // entry メタから渡す (currentEntryMeta)。
+      journalDate: (currentEntryMeta && currentEntryMeta.date) || '',
       journalAmount: attachData.journal_amount,
-      journalDescription: attachData.journal_description,
+      journalDescription: (currentEntryMeta && currentEntryMeta.description) || '',
       client: client,
     });
   } finally {

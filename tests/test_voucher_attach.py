@@ -181,8 +181,10 @@ class TestAttachEndpoint:
     def test_attach_returns_entry_metadata(
         self, mock_store, logged_in_client, user, accounts, db,
     ):
-        """サーバ側 AI 解析は廃止。レスポンスは voucher_id +
-        journal_date/amount/description (クライアント側 AI が再構築に使用)。"""
+        """サーバ側 AI 解析は廃止。レスポンスは voucher_id + journal_amount。
+        E3-F PR-D-6-5: 平文 journal_date / journal_description は DROP 済のため
+        返さない (AI プロンプト用の日付/摘要はクライアントが復号済み entry メタ
+        から渡す)。journal_amount は line.debit_amount 合計なので継続。"""
         entry = make_journal(db, user.id, "5010", "1010", 1500)
         data = {"image": (io.BytesIO(TINY_JPEG), "receipt.jpg", "image/jpeg")}
         resp = logged_in_client.post(
@@ -194,9 +196,10 @@ class TestAttachEndpoint:
         result = resp.get_json()
         assert result["ok"] is True
         assert "voucher_id" in result
-        # E2EE モード用に journal メタデータが含まれる
-        assert result["journal_date"] == entry.date.isoformat()
         assert result["journal_amount"] == 1500
+        # 平文 journal_date / journal_description は返さない
+        assert "journal_date" not in result
+        assert "journal_description" not in result
         # compliance/consistency はサーバから返らない (クライアント側で実行)
         assert "compliance" not in result
         assert "consistency" not in result

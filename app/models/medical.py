@@ -15,20 +15,13 @@ class MedicalExpense(db.Model):
         db.ForeignKey("journal_entries.id", ondelete="CASCADE"),
         nullable=True,
     )
-    # E3-F: 055 で DROP 予定の平文列。PR-D-1 で書き込みを停止するため date /
-    # amount_paid は nullable に緩和済 (それ以外は ORM default を持つ)。
-    date = db.Column(db.Date, nullable=True)
-    patient_name = db.Column(db.String(100), nullable=False, default="")
-    hospital_name = db.Column(db.String(200), nullable=False, default="")
-    treatment_description = db.Column(db.String(255), nullable=False, default="")
-    provider_type = db.Column(db.String(20), nullable=True)  # hospital/pharmacy/nursing/other
-    amount_paid = db.Column(db.Integer, nullable=True)
-    insurance_reimbursement = db.Column(db.Integer, nullable=False, default=0)
-    # Phase E3: クライアント暗号化された全フィールド本体 (date / patient_name /
-    # hospital_name / treatment_description / provider_type / amount_paid /
-    # insurance_reimbursement)。AAD には user_id + id を含む (§12.2)。
-    encrypted_blob = db.Column(db.LargeBinary, nullable=True)
-    blob_iv = db.Column(db.LargeBinary, nullable=True)  # AES-GCM IV (12B)
+    # E3-F PR-D-6-5 (055): 平文列 (date / patient_name / hospital_name /
+    # treatment_description / provider_type / amount_paid /
+    # insurance_reimbursement) は DROP 済。本体は encrypted_blob のみ。
+    # Phase E3: クライアント暗号化された全フィールド本体。AAD には user_id を
+    # 含む (Option B)。default=b"" は未設定時のフォールバック (実 API は必須)。
+    encrypted_blob = db.Column(db.LargeBinary, nullable=False, default=b"")
+    blob_iv = db.Column(db.LargeBinary, nullable=False, default=b"")  # AES-GCM IV (12B)
     created_at = db.Column(
         db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc)
     )

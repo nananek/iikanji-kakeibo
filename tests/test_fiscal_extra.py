@@ -61,9 +61,9 @@ class TestGetEffectivePeriod:
         # E3-F PR-D-6-5-pre1: get_effective_period は fiscal_month を使用する
         # (旧 fiscal_period / date.month フォールバックは撤去済)。
         e = JournalEntry(
-            user_id=user.id, date=date(2026, 5, 15),
-            entry_number=1, description="x",
-            source="journal", fiscal_period=13,
+            user_id=user.id,
+            entry_number=1,
+
             fiscal_month=13, fiscal_year=2026,
         )
         e.lines = [
@@ -307,9 +307,8 @@ class TestDeleteClosingEntries:
         # で識別する (delete_closing_entries の新フィルタ)。
         from app.models.journal import JournalEntry as JE, JournalEntryLine as JEL
         e = JE(
-            user_id=user.id, date=date(2026, 12, 31),
-            entry_number=1, description="closing",
-            source="closing", fiscal_period=16,
+            user_id=user.id,
+            entry_number=1,
             is_closing=True, fiscal_month=16, fiscal_year=2026,
         )
         e.lines = [

@@ -61,7 +61,8 @@ class TestAdvancedModePostRejected:
         })
         assert resp.status_code == 405
         # 平文 WRITE は行われない
-        assert JournalEntry.query.filter_by(source="ai_receipt").first() is None
+        # E3-F PR-D-6-5: source 列 DROP 済。仕訳未作成を user_id で判定。
+        assert JournalEntry.query.filter_by(user_id=user.id).first() is None
 
     def test_simple_mode_post_405(self, db, logged_in_client, user, accounts):
         draft = _make_draft(db, user.id, accounts)
@@ -75,7 +76,8 @@ class TestAdvancedModePostRejected:
             "payment_account_code": accounts["1010"].code,
         })
         assert resp.status_code == 405
-        assert JournalEntry.query.filter_by(source="ai_receipt").first() is None
+        # E3-F PR-D-6-5: source 列 DROP 済。仕訳未作成を user_id で判定。
+        assert JournalEntry.query.filter_by(user_id=user.id).first() is None
 
 
 class TestReviewPageRender:

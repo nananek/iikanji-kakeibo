@@ -97,8 +97,9 @@ class TestCheckEntryModifiable:
         # E3-F: source ではなく is_closing フラグで closing 判定する。
         entry = make_journal(db, user.id, "5010", "1010",
                              1000, entry_date=date(2026, 2, 15))
+        # E3-F PR-D-6-5: source 列は DROP 済。is_closing=True のみで弾く
+        # (旧 source != "closing" でも is_closing で判定されることを確認)。
         entry.is_closing = True
-        entry.source = "journal"  # source は closing でなくても弾く
         db.session.commit()
         result = check_entry_modifiable(user.id, entry)
         assert result is not None

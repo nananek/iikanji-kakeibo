@@ -259,13 +259,10 @@ class TestApiUpdate:
         )
         assert resp.status_code == 400
         assert resp.get_json()["needs_transfer"] is True
-        # 振替仕訳は作られない
+        # 振替仕訳は作られない (E3-F PR-D-6-5: description 列 DROP 済のため
+        # 件数 before==after のみで判定する)。
         after = JournalEntry.query.filter_by(user_id=user.id).count()
         assert after == before
-        assert not any(
-            "無効化振替" in (e.description or "")
-            for e in JournalEntry.query.filter_by(user_id=user.id).all()
-        )
         assert Account.query.filter_by(code="5010").first().is_active is True
 
     def test_deactivate_zero_balance_ok(self, db, logged_in_client, user, accounts):

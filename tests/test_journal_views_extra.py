@@ -145,9 +145,9 @@ class TestDeleteBatch:
         bid = str(uuid4())
         for i in range(3):
             e = JournalEntry(
-                user_id=user.id, date=date(2026, 2, i + 1),
-                entry_number=i + 1, description=f"row{i}",
-                source="csv", batch_id=bid,
+                user_id=user.id,
+                entry_number=i + 1,
+                batch_id=bid,
                 # E3-F: 実エントリ同様に fiscal_year/fiscal_month を populate
                 # (check_entry_modifiable は fiscal_year/fiscal_month を読む)。
                 fiscal_year=2026, fiscal_month=2,
@@ -171,9 +171,9 @@ class TestDeleteBatch:
         db.session.add(FiscalClose(user_id=user.id, year=2026, closed_period=1))
         for i, m in enumerate([1, 2]):
             e = JournalEntry(
-                user_id=user.id, date=date(2026, m, 1),
-                entry_number=i + 1, description=f"row{i}",
-                source="csv", batch_id=bid,
+                user_id=user.id,
+                entry_number=i + 1,
+                batch_id=bid,
                 fiscal_year=2026, fiscal_month=m,
             )
             e.lines = [

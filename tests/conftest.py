@@ -323,10 +323,12 @@ def make_journal(db, user_id, acct_debit_code, acct_credit_code, amount,
                  fiscal_period=None, entry_number=None):
     """テスト用の仕訳を作成するヘルパー
 
-    E3-F: 平文 fiscal_period / source と並行して新カラム fiscal_month /
-    is_closing も populate する (サーバの create_journal_entry / closing 生成と
-    同じ規約)。fiscal_month は fiscal_period 明示時はそれ、未指定なら
-    entry_date.month。source == "closing" は is_closing=True / fiscal_month=16。
+    E3-F PR-D-6-5 (055): 平文列 date / description / source / fiscal_period は
+    DROP 済のため JournalEntry には書き込まない。entry_date / source /
+    fiscal_period 引数は fiscal_year / fiscal_month / is_closing の平文メタ列を
+    導出するためにのみ使用する (本番の create_journal_entry / closing 生成と同じ
+    規約)。fiscal_month は fiscal_period 明示時はそれ、未指定なら entry_date.month。
+    source == "closing" は is_closing=True / fiscal_month=16。
     """
     if entry_date is None:
         entry_date = date(2026, 1, 15)
@@ -342,11 +344,7 @@ def make_journal(db, user_id, acct_debit_code, acct_credit_code, amount,
         fiscal_month = entry_date.month
     entry = JournalEntry(
         user_id=user_id,
-        date=entry_date,
         entry_number=entry_number,
-        description=description,
-        source=source,
-        fiscal_period=fiscal_period,
         fiscal_year=entry_date.year,  # E3 後の年度フィルタ用
         is_closing=is_closing,
         fiscal_month=fiscal_month,

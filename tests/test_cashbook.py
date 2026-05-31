@@ -76,10 +76,9 @@ class TestNewPostRejected:
             "fiscal_period": "",
         })
         assert resp.status_code == 405
-        # 仕訳は作成されていない (server-side 経路が無効化されている)
-        assert JournalEntry.query.filter_by(
-            user_id=user.id, source="cashbook"
-        ).count() == 0
+        # 仕訳は作成されていない (server-side 経路が無効化されている)。
+        # E3-F PR-D-6-5: source 列は DROP 済のため user_id で件数判定する。
+        assert JournalEntry.query.filter_by(user_id=user.id).count() == 0
 
 
 class TestEdit:
@@ -133,8 +132,10 @@ class TestEdit:
             "fiscal_period": "",
         })
         assert resp.status_code == 405
+        # E3-F PR-D-6-5: description 列は DROP 済。POST が 405 で弾かれ仕訳が
+        # 残存していることのみ確認する (本文不変は E2EE PUT 経路のテストで担保)。
         db.session.refresh(entry)
-        assert entry.description == "編集対象"  # 元のまま
+        assert entry.id is not None
 
     def test_edit_blocked_by_closed_period(self, db, logged_in_client, user, accounts):
         entry = self._make_cashbook(db, user.id)

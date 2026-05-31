@@ -307,8 +307,8 @@ class TestBusinessIncome:
 
         # 仕訳: 売上 100,000
         entry1 = JournalEntry(
-            user_id=user.id, date=date(2026, 3, 1),
-            entry_number=1, description="売上", source="journal",
+            user_id=user.id,
+            entry_number=1,
             fiscal_year=2026, fiscal_month=3,
         )
         entry1.lines = [
@@ -321,8 +321,8 @@ class TestBusinessIncome:
 
         # 仕訳: 租税公課 30,000
         entry2 = JournalEntry(
-            user_id=user.id, date=date(2026, 3, 5),
-            entry_number=2, description="租税公課", source="journal",
+            user_id=user.id,
+            entry_number=2,
             fiscal_year=2026, fiscal_month=3,
         )
         entry2.lines = [
@@ -353,8 +353,8 @@ class TestBusinessIncome:
 
         for m in (1, 2, 3):
             entry = JournalEntry(
-                user_id=user.id, date=date(2026, m, 15),
-                entry_number=m, description=f"{m}月売上", source="journal",
+                user_id=user.id,
+                entry_number=m,
                 fiscal_year=2026, fiscal_month=m,
             )
             entry.lines = [
@@ -407,8 +407,8 @@ class TestPLBusinessCollapse:
         db.session.commit()
 
         entry = JournalEntry(
-            user_id=user.id, date=date(2026, 1, 15),
-            entry_number=1, description="売上", source="journal",
+            user_id=user.id,
+            entry_number=1,
             fiscal_year=2026, fiscal_month=1,
         )
         entry.lines = [
@@ -433,8 +433,8 @@ class TestPLBusinessCollapse:
         """マッピングなし時は biz_income.has_mappings=False で
         accounts_meta に is_business=True の科目は出ない"""
         entry = JournalEntry(
-            user_id=user.id, date=date(2026, 1, 15),
-            entry_number=1, description="給与", source="journal",
+            user_id=user.id,
+            entry_number=1,
             fiscal_year=2026, fiscal_month=1,
         )
         entry.lines = [
@@ -469,8 +469,8 @@ class TestPLBusinessCollapse:
         db.session.commit()
 
         e1 = JournalEntry(
-            user_id=user.id, date=date(2026, 1, 10),
-            entry_number=1, description="スーパー", source="journal",
+            user_id=user.id,
+            entry_number=1,
             fiscal_year=2026, fiscal_month=1,
         )
         e1.lines = [
@@ -480,8 +480,8 @@ class TestPLBusinessCollapse:
                              debit_amount=0, credit_amount=5000),
         ]
         e2 = JournalEntry(
-            user_id=user.id, date=date(2026, 1, 15),
-            entry_number=2, description="税金", source="journal",
+            user_id=user.id,
+            entry_number=2,
             fiscal_year=2026, fiscal_month=1,
         )
         e2.lines = [
@@ -518,8 +518,8 @@ class TestBusinessIncomeEdgeCases:
         db.session.commit()
 
         # 通常仕訳
-        e1 = JournalEntry(user_id=user.id, date=date(2026, 6, 1),
-                          entry_number=1, description="売上", source="journal",
+        e1 = JournalEntry(user_id=user.id,
+                          entry_number=1,
             fiscal_year=2026, fiscal_month=6,
         )
         e1.lines = [
@@ -529,8 +529,8 @@ class TestBusinessIncomeEdgeCases:
                              debit_amount=0, credit_amount=100000),
         ]
         # closing 仕訳（除外されるべき）— E3-F: is_closing で識別する
-        e2 = JournalEntry(user_id=user.id, date=date(2026, 12, 31),
-                          entry_number=2, description="損益振替", source="closing",
+        e2 = JournalEntry(user_id=user.id,
+                          entry_number=2,
                           is_closing=True, fiscal_month=16, fiscal_year=2026)
         e2.lines = [
             JournalEntryLine(account_user_id=user.id, account_code="9010",
@@ -556,8 +556,8 @@ class TestBusinessIncomeEdgeCases:
         set_mapping(user.id, "9210", tax_fields["8"].id)
         db.session.commit()
 
-        e1 = JournalEntry(user_id=user.id, date=date(2026, 3, 1),
-                          entry_number=1, description="税金", source="journal",
+        e1 = JournalEntry(user_id=user.id,
+                          entry_number=1,
             fiscal_year=2026, fiscal_month=3,
         )
         e1.lines = [

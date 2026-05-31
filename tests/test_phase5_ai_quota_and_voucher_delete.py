@@ -108,8 +108,8 @@ class TestCreateVoucherFromDraft:
         from app.models.journal import JournalEntry
 
         entry = JournalEntry(
-            user_id=user.id, date=date_type(2026, 5, 1),
-            entry_number=1, description="テスト",
+            user_id=user.id,
+            entry_number=1,
         )
         db.session.add(entry)
         db.session.flush()
@@ -128,8 +128,8 @@ class TestCreateVoucherFromDraft:
         from app.models.journal import JournalEntry
 
         entry = JournalEntry(
-            user_id=user.id, date=date_type(2026, 5, 1),
-            entry_number=1, description="テスト",
+            user_id=user.id,
+            entry_number=1,
         )
         db.session.add(entry)
         db.session.flush()
@@ -148,8 +148,8 @@ class TestCreateVoucherFromDraft:
         from app.models.journal import JournalEntry
 
         entry = JournalEntry(
-            user_id=user.id, date=date_type(2026, 5, 1),
-            entry_number=1, description="テスト",
+            user_id=user.id,
+            entry_number=1,
         )
         db.session.add(entry)
         db.session.flush()
@@ -322,8 +322,8 @@ class TestVoucherDelete:
     def _make_voucher(self, db, user, *, file_size=2 * MB):
         from app.models.journal import JournalEntry
         entry = JournalEntry(
-            user_id=user.id, date=date_type(2026, 5, 1),
-            entry_number=1, description="テスト",
+            user_id=user.id,
+            entry_number=1,
         )
         db.session.add(entry)
         db.session.flush()
@@ -441,8 +441,8 @@ class TestVoucherDelete:
         """file_size NULL のレガシー Voucher 削除は StorageUsage 減算をスキップ."""
         from app.models.journal import JournalEntry
         entry = JournalEntry(
-            user_id=user.id, date=date_type(2026, 5, 2),
-            entry_number=2, description="テスト",
+            user_id=user.id,
+            entry_number=2,
         )
         db.session.add(entry)
         db.session.flush()

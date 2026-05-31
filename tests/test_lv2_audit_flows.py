@@ -46,9 +46,9 @@ def lv2_setup(db, client, user, auditor, accounts):
 def mixed_journal(db, user, accounts):
     """公開科目 (5010, 1010) と非公開科目 (5020) を含む仕訳"""
     e = JournalEntry(
-        user_id=user.id, date=date(2026, 2, 15),
-        entry_number=1, description="複合仕訳",
-        source="journal",
+        user_id=user.id,
+        entry_number=1,
+
         # E3-F: 実エントリ同様に fiscal_year/fiscal_month を populate
         # (check_entry_modifiable は fiscal_year/fiscal_month を読む)。
         fiscal_year=2026, fiscal_month=2,
@@ -80,6 +80,16 @@ class TestJournalGetJsonLv2:
         # 5020 (非公開) は事業主に集約される
         assert "5020" not in codes
         assert "3030" in codes  # proprietor
+        # E3-F PR-D-6-5-pre2: 許可行は line id + encrypted_blob/blob_iv を持ち
+        # (行摘要の client 復号用)、集約行 (proprietor) は合成なので id/blob=None。
+        by_code = {l["account_code"]: l for l in data["lines"]}
+        assert by_code["5010"]["id"] is not None
+        assert "encrypted_blob" in by_code["5010"]
+        assert "blob_iv" in by_code["5010"]
+        prop = by_code["3030"]
+        assert prop["id"] is None
+        assert prop["encrypted_blob"] is None
+        assert prop["blob_iv"] is None
 
 
 class TestJournalEditGetLv2:

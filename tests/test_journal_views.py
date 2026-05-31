@@ -94,10 +94,9 @@ class TestNewPostRejected:
             ]),
         })
         assert resp.status_code == 405
-        # 仕訳は作成されていない (server-side 経路が無効化されている)
-        assert JournalEntry.query.filter_by(
-            user_id=user.id, source="journal"
-        ).count() == 0
+        # 仕訳は作成されていない (server-side 経路が無効化されている)。
+        # E3-F PR-D-6-5: source 列 DROP 済のため user_id で件数判定する。
+        assert JournalEntry.query.filter_by(user_id=user.id).count() == 0
 
 
 class TestEdit:
@@ -142,8 +141,10 @@ class TestEdit:
             ]),
         })
         assert resp.status_code == 405
+        # E3-F PR-D-6-5: description 列は DROP 済。POST が 405 で弾かれ仕訳が
+        # 残存することのみ確認 (本文不変は E2EE PUT 経路のテストで担保)。
         db.session.refresh(entry)
-        assert entry.description == "ORIG"  # 元のまま
+        assert entry.id is not None
 
     def test_edit_blocked_by_closed_period(self, db, logged_in_client, user, accounts):
         entry = self._make_entry(db, user.id)
@@ -315,9 +316,9 @@ class TestBatches:
         bid = str(uuid4())
         from app.models.journal import JournalEntry, JournalEntryLine
         e = JournalEntry(
-            user_id=user.id, date=date(2026, 2, 15),
-            entry_number=1, description="csv import",
-            source="csv", batch_id=bid,
+            user_id=user.id,
+            entry_number=1,
+            batch_id=bid,
         )
         e.lines = [
             JournalEntryLine(account_user_id=user.id, account_code="5010",
