@@ -30,29 +30,15 @@ PERIOD_LABELS = {
 def period_condition(year, p):
     """単一期間のSQLAlchemy条件を返す（共通）
 
-    E3-F (PR-D-1): fiscal_period / date 列はまだ DROP していないため従来通り
-    これらで判定する。fiscal_month ベースへの全面移行は date 列を撤去する
-    後続 PR で行う。
+    E3-F (PR-D-6-2): fiscal_month / fiscal_year ベースで判定する。マイグレ 054
+    で全行の fiscal_month が backfill 済 (旧 fiscal_period 明示分はその値、未指定
+    の通常仕訳は date.month) のため、旧来の「fiscal_period が NULL なら date の月で
+    救済」分岐は不要になった。平文 date 列は後続 PR (D-6-5) で DROP する。
     """
-    if p == 0:
-        return JournalEntry.fiscal_period == 0
-    elif 1 <= p <= 12:
-        m_start = date(year, p, 1)
-        m_end = date(year, p + 1, 1) if p < 12 else date(year + 1, 1, 1)
-        return or_(
-            JournalEntry.fiscal_period == p,
-            and_(
-                JournalEntry.fiscal_period.is_(None),
-                JournalEntry.date >= m_start,
-                JournalEntry.date < m_end,
-            ),
-        )
-    else:  # 13-16
-        return and_(
-            JournalEntry.fiscal_period == p,
-            JournalEntry.date >= date(year, 1, 1),
-            JournalEntry.date < date(year + 1, 1, 1),
-        )
+    return and_(
+        JournalEntry.fiscal_year == year,
+        JournalEntry.fiscal_month == p,
+    )
 
 
 def period_range_filter(year, pf, pt):
@@ -263,8 +249,6 @@ def generate_closing_entries(user_id, year):
     if not revenue_type or not expense_type or not retained:
         return "勘定科目（収益・費用・繰越利益）が見つかりません。"
 
-    start = date(year, 1, 1)
-    end = date(year + 1, 1, 1)
     batch = f"closing-{year}-{uuid.uuid4().hex[:8]}"
     closing_date = date(year, 12, 31)
 
@@ -284,8 +268,7 @@ def generate_closing_entries(user_id, year):
         .filter(
             Account.user_id == user_id,
             Account.account_type_id == revenue_type.id,
-            JournalEntry.date >= start,
-            JournalEntry.date < end,
+            JournalEntry.fiscal_year == year,
         )
         .group_by(Account.code, Account.name)
         .having(
@@ -311,8 +294,7 @@ def generate_closing_entries(user_id, year):
         .filter(
             Account.user_id == user_id,
             Account.account_type_id == expense_type.id,
-            JournalEntry.date >= start,
-            JournalEntry.date < end,
+            JournalEntry.fiscal_year == year,
         )
         .group_by(Account.code, Account.name)
         .having(
