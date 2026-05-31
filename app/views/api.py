@@ -1244,6 +1244,86 @@ def list_journals():
     })
 
 
+@bp.route("/journals/batches", methods=["GET"])
+@auth_required(scope="journals:read")
+@limiter.limit("120 per hour", key_func=rate_limit_key)
+def list_journal_batches():
+    """インポートバッチ一覧 API (E3-F PR-D-6-3b-2).
+
+    取込履歴ページ (journal/batches.html) のクライアント描画用。バッチ
+    (batch_id) ごとに保持列メタ (件数 / 取込日時 / 削除可否) を集計し、各
+    仕訳の encrypted_blob / blob_iv を返す。クライアントは blob を復号して
+    種別ラベル (source) と日付範囲 (date_from / date_to) を組み立てる
+    (batches_client.js)。平文 date / source は D-6-5 で DROP 予定のため
+    サーバ側では読まない。closing (損益振替) 仕訳は暗号化不能で
+    encrypted_blob が空のため、クライアントが is_closing / fiscal_year から
+    date / source を合成する (journals_client.js _normalizeEntry と一致)。
+
+    削除可否は delete_batch と同じ check_entry_modifiable で判定する
+    (保持列 fiscal_year / fiscal_month / is_closing のみ参照、平文 date 不要)。
+    ルーティング上 "/journals/<int:entry_id>" とは衝突しない ("batches" は
+    int に変換できないため)。
+    """
+    user_id = g.auth_user.id
+    entries = (
+        JournalEntry.query
+        .filter(
+            JournalEntry.user_id == user_id,
+            JournalEntry.batch_id.isnot(None),
+        )
+        .order_by(JournalEntry.created_at)
+        .all()
+    )
+
+    groups = {}  # batch_id -> list[JournalEntry] (created_at 昇順)
+    order = []   # batch_id の初出順
+    for e in entries:
+        if e.batch_id not in groups:
+            groups[e.batch_id] = []
+            order.append(e.batch_id)
+        groups[e.batch_id].append(e)
+
+    batches = []
+    for batch_id in order:
+        ents = groups[batch_id]
+        is_closing = any(e.is_closing for e in ents)
+        imported_at = min(
+            (e.created_at for e in ents if e.created_at is not None),
+            default=None,
+        )
+        if is_closing:
+            deletable, delete_reason = False, "損益振替（自動生成）は削除できません"
+        else:
+            deletable, delete_reason = True, ""
+            for e in ents:
+                if check_entry_modifiable(user_id, e):
+                    deletable, delete_reason = False, "確定済み期間の仕訳が含まれています"
+                    break
+        batches.append({
+            "batch_id": batch_id,
+            "count": len(ents),
+            "imported_at": imported_at.isoformat() if imported_at else None,
+            "is_closing": is_closing,
+            "deletable": deletable,
+            "delete_reason": delete_reason,
+            "entries": [
+                {
+                    "id": e.id,
+                    "fiscal_year": e.fiscal_year,
+                    "is_closing": e.is_closing,
+                    "encrypted_blob": _b64_or_none(e.encrypted_blob),
+                    "blob_iv": _b64_or_none(e.blob_iv),
+                }
+                for e in ents
+            ],
+        })
+
+    # 取込日時の降順 (新しい順) — 旧 get_batches の order_by(min(created_at).desc()) 相当。
+    batches.sort(key=lambda b: b["imported_at"] or "", reverse=True)
+
+    return jsonify({"ok": True, "batches": batches})
+
+
 @bp.route("/journals/<int:entry_id>", methods=["GET"])
 @auth_required(scope="journals:read")
 @limiter.limit("120 per hour", key_func=rate_limit_key)

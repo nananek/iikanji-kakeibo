@@ -2,6 +2,16 @@
 {% block title %}インポート履歴 - いいかんじ™家計簿{% endblock %}
 
 {% block content %}
+{# E3-F PR-D-6-3b-2: 平文 date / source は API から撤去済。バッチ一覧は
+   GET /api/v1/journals/batches を fetch し、復号 blob から種別ラベルと日付
+   範囲を組み立ててクライアント描画する (batches_renderer.mjs)。 #}
+<script id="batches-params" type="application/json">
+{{ {"user_id": effective_user_id, "is_audit_proxy": session.get('acting_as_user_id') is not none} | tojson }}
+</script>
+<script id="batches-source-labels" type="application/json">
+{{ source_labels | tojson }}
+</script>
+
 <div class="d-flex justify-content-between align-items-center mb-3">
   <h2><i class="bi bi-clock-history"></i> インポート履歴</h2>
   <a href="{{ url_for('journal.index') }}" class="btn btn-outline-secondary btn-sm">
@@ -9,8 +19,9 @@
   </a>
 </div>
 
-{% if batches %}
-<div class="card shadow-sm">
+<div id="batches-status" class="d-none" role="status" aria-live="polite"></div>
+
+<div id="batches-table" class="card shadow-sm d-none">
   <div class="table-responsive">
     <table class="table table-hover mb-0">
       <thead class="table-dark">
@@ -22,40 +33,16 @@
           <th class="text-center">操作</th>
         </tr>
       </thead>
-      <tbody>
-        {% for batch in batches %}
-        <tr>
-          <td>{{ batch.imported_at.strftime('%Y-%m-%d %H:%M') }}</td>
-          <td>{{ source_labels.get(batch.source, batch.source) }}</td>
-          <td class="text-end">{{ batch.count }}件</td>
-          <td>{{ batch.date_from.strftime('%Y-%m-%d') }} 〜 {{ batch.date_to.strftime('%Y-%m-%d') }}</td>
-          <td class="text-center">
-            {% if batch.source == 'closing' %}
-              <span class="text-muted small">—</span>
-            {% elif not batch.deletable %}
-              <button type="button" class="btn btn-outline-danger btn-sm" disabled
-                      title="{{ batch.delete_reason }}">
-                <i class="bi bi-trash"></i> 取消
-              </button>
-            {% else %}
-            <form method="POST" action="{{ url_for('journal.delete_batch', batch_id=batch.batch_id) }}"
-                  style="display:inline;"
-                  onsubmit="return confirm('このインポート（{{ batch.count }}件）をすべて削除しますか？この操作は取り消せません。');">
-              <button type="submit" class="btn btn-outline-danger btn-sm">
-                <i class="bi bi-trash"></i> 取消
-              </button>
-            </form>
-            {% endif %}
-          </td>
-        </tr>
-        {% endfor %}
-      </tbody>
+      <tbody id="batches-tbody"></tbody>
     </table>
   </div>
 </div>
-{% else %}
-<div class="alert alert-info">
+
+<div id="batches-empty" class="alert alert-info d-none">
   <i class="bi bi-info-circle"></i> インポート履歴はまだありません。
 </div>
-{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script type="module" src="{{ url_for('static', filename='js/journal/batches_renderer.mjs') }}"></script>
 {% endblock %}

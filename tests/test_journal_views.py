@@ -306,8 +306,11 @@ class TestBatches:
         resp = logged_in_client.get("/journal/batches")
         assert resp.status_code == 200
 
-    def test_with_batches(self, db, logged_in_client, user, accounts):
-        # batch_id 付きの仕訳を作る
+    def test_renders_client_shell(self, db, logged_in_client, user, accounts):
+        # E3-F PR-D-6-3b-2: 取込履歴はクライアント描画へ移行。サーバは平文
+        # date / source を集計せず、JS シェル (params + source_labels + 描画用
+        # コンテナ) のみを返す。バッチデータは GET /api/v1/journals/batches で
+        # 取得・復号する (本ビューの HTML には batch_id / source は含まれない)。
         from uuid import uuid4
         bid = str(uuid4())
         from app.models.journal import JournalEntry, JournalEntryLine
@@ -327,4 +330,9 @@ class TestBatches:
         resp = logged_in_client.get("/journal/batches")
         assert resp.status_code == 200
         body = resp.get_data(as_text=True)
-        assert bid in body or "csv" in body
+        # クライアント描画用シェルの存在を確認 (平文 batch データは含まない)。
+        assert 'id="batches-params"' in body
+        assert 'id="batches-tbody"' in body
+        assert "batches_renderer.mjs" in body
+        # 平文 batch_id / source はサーバレンダ HTML に出さない。
+        assert bid not in body
