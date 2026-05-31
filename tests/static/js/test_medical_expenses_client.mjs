@@ -102,22 +102,22 @@ test("HTTP エラー時 throw", async () => {
   );
 });
 
-test("dual-read: blob/iv null は平文フォールバック", async () => {
+test("blob/iv null は復号せず空フィールド (平文フォールバック撤去)", async () => {
+  // E3-F PR-D-6-5-pre1: サーバは平文を返さなくなったため、blob 無しの行は
+  // 復号 body も無く各フィールドは空 (id / journal_entry_id のみ残る)。
   const client = makeMockClient();
   const fetchImpl = makeFetch([{
     id: 1, journal_entry_id: 100,
-    date: "2026-05-01", patient_name: "本人", hospital_name: "A",
-    treatment_description: "風邪", provider_type: "hospital",
-    amount_paid: 3000, insurance_reimbursement: 1000,
     encrypted_blob: null, blob_iv: null,
   }]);
   const r = await fetchMedicalExpensesForYear({
     client, userId: 1, fiscalYear: 2026, fetchImpl,
   });
   assert.equal(r.length, 1);
-  assert.equal(r[0].patient_name, "本人");
-  assert.equal(r[0].amount_paid, 3000);
-  assert.equal(r[0].insurance_reimbursement, 1000);
+  assert.equal(r[0].journal_entry_id, 100);
+  assert.equal(r[0].patient_name, "");
+  assert.equal(r[0].amount_paid, 0);
+  assert.equal(r[0].date, null);
 });
 
 test("encrypted: AAD 込み round-trip 復号", async () => {
@@ -160,22 +160,22 @@ test("AAD すり替え (別 user_id) は平文フォールバック (全件 reje
   assert.equal(r[0].amount_paid, 0);
 });
 
-test("複数 expense", async () => {
+test("複数 expense (各 blob を復号)", async () => {
+  // E3-F PR-D-6-5-pre1: 平文は返らないので暗号化 body を復号して検証する。
   const client = makeMockClient();
-  const fetchImpl = makeFetch([
-    {id: 1, journal_entry_id: 10, patient_name: "本人", hospital_name: "A",
-     amount_paid: 1000, insurance_reimbursement: 0, encrypted_blob: null,
-     blob_iv: null, date: "2026-01-01", provider_type: "hospital",
-     treatment_description: ""},
-    {id: 2, journal_entry_id: 20, patient_name: "家族", hospital_name: "B",
-     amount_paid: 2000, insurance_reimbursement: 500, encrypted_blob: null,
-     blob_iv: null, date: "2026-02-01", provider_type: "pharmacy",
-     treatment_description: ""},
-  ]);
+  const userId = 1;
+  const e1 = await makeEncryptedExpense(client, userId, 1, {
+    v: 1, patient_name: "本人", amount_paid: 1000,
+  });
+  const e2 = await makeEncryptedExpense(client, userId, 2, {
+    v: 1, patient_name: "家族", amount_paid: 2000,
+  });
   const r = await fetchMedicalExpensesForYear({
-    client, userId: 1, fiscalYear: 2026, fetchImpl,
+    client, userId, fiscalYear: 2026, fetchImpl: makeFetch([e1, e2]),
   });
   assert.equal(r.length, 2);
   assert.equal(r[0].patient_name, "本人");
+  assert.equal(r[0].amount_paid, 1000);
   assert.equal(r[1].patient_name, "家族");
+  assert.equal(r[1].amount_paid, 2000);
 });

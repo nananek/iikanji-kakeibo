@@ -37,10 +37,12 @@ class MedicalExpense(db.Model):
         "JournalEntry", backref="medical_expense", passive_deletes=True
     )
 
-    @property
-    def net_amount(self):
-        """自己負担額"""
-        return self.amount_paid - self.insurance_reimbursement
+    # E3-F PR-D-6-5-pre1: net_amount プロパティ (amount_paid - insurance_reimbursement)
+    # は撤去。サーバ未使用で、平文列 amount_paid は D-6-5 で DROP 予定 (自己負担額の
+    # 算出はクライアントが復号 body から行う)。
 
     def __repr__(self):
-        return f"<MedicalExpense {self.date} {self.hospital_name} ¥{self.amount_paid}>"
+        return (
+            f"<MedicalExpense id={self.id} "
+            f"journal_entry_id={self.journal_entry_id}>"
+        )

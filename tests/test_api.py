@@ -1279,7 +1279,7 @@ class TestMedicalExpenses:
         assert body["expenses"] == []
         assert body["total"] == 0
 
-    def test_lists_expenses_with_plaintext_fields(
+    def test_lists_expenses_blob_only(
         self, client, db, user, accounts, auth_header,
     ):
         entry = make_journal(db, user.id, "5010", "1010", 5000,
@@ -1294,8 +1294,11 @@ class TestMedicalExpenses:
         item = body["expenses"][0]
         assert item["id"] == e.id
         assert item["journal_entry_id"] == entry.id
-        assert item["patient_name"] == "本人"
-        assert item["amount_paid"] == 5000
+        # E3-F PR-D-6-5-pre1: 平文列は返さない (client が encrypted_blob を復号)。
+        for k in ("date", "patient_name", "hospital_name",
+                  "treatment_description", "provider_type", "amount_paid",
+                  "insurance_reimbursement"):
+            assert k not in item
         # 暗号化未設定なら null
         assert item["encrypted_blob"] is None
         assert item["blob_iv"] is None
@@ -1326,12 +1329,13 @@ class TestMedicalExpenses:
                            date=date(2025, 6, 1), amount_paid=1000)
         self._make_expense(db, user.id, entry2026,
                            date=date(2026, 6, 1), amount_paid=2000)
-        # 2026 だけ取得
+        # 2026 だけ取得 (fiscal_year フィルタは JE.fiscal_year ベース)
         resp = client.get("/api/v1/medical-expenses?fiscal_year=2026",
                           headers=auth_header)
         body = resp.get_json()
         assert body["total"] == 1
-        assert body["expenses"][0]["amount_paid"] == 2000
+        # E3-F PR-D-6-5-pre1: 平文 amount_paid は返さないので journal_entry_id で識別
+        assert body["expenses"][0]["journal_entry_id"] == entry2026.id
 
     def test_fiscal_year_invalid_int(
         self, client, db, user, accounts, auth_header,

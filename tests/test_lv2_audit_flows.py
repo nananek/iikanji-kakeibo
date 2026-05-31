@@ -49,6 +49,9 @@ def mixed_journal(db, user, accounts):
         user_id=user.id, date=date(2026, 2, 15),
         entry_number=1, description="複合仕訳",
         source="journal",
+        # E3-F: 実エントリ同様に fiscal_year/fiscal_month を populate
+        # (check_entry_modifiable は fiscal_year/fiscal_month を読む)。
+        fiscal_year=2026, fiscal_month=2,
     )
     e.lines = [
         # 公開: 食費 800 (debit) + 住居費 200 (debit) = 1000
