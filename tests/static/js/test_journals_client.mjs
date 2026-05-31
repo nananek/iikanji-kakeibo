@@ -10,8 +10,10 @@ const CLIENT = new URL(
   "../../../app/static/js/crypto/journals_client.js",
   import.meta.url,
 );
-const { fetchJournalsForYear, decryptEntryMeta, fetchEntryFields } =
-  await import(CLIENT.href);
+const {
+  fetchJournalsForYear, decryptEntryMeta, fetchEntryFields,
+  decryptLineDescriptions,
+} = await import(CLIENT.href);
 
 const REC = new URL(
   "../../../app/static/js/crypto/record.js",
@@ -521,4 +523,62 @@ test("fetchEntryFields: journal 欠落レスポンスで throw", async () => {
     () => fetchEntryFields({ client, userId: 1, entryId: 9, fetchImpl }),
     /missing journal/,
   );
+});
+
+
+// ============ decryptLineDescriptions (D-6-5-pre2) ============
+
+test("decryptLineDescriptions: line blob を復号して id と description を返す", async () => {
+  const client = makeMockClient();
+  const userId = 7;
+  const l1 = await makeEncryptedLine(client, userId, 10, 100, {
+    v: 1, account_code: "5010", debit_amount: 500, credit_amount: 0,
+    description: "タクシー代",
+  });
+  const l2 = await makeEncryptedLine(client, userId, 10, 101, {
+    v: 1, account_code: "1010", debit_amount: 0, credit_amount: 500,
+    description: "",
+  });
+  const r = await decryptLineDescriptions(client, userId, [l1, l2]);
+  assert.equal(r.length, 2);
+  assert.deepEqual(r[0], { id: 100, description: "タクシー代" });
+  assert.deepEqual(r[1], { id: 101, description: "" });
+});
+
+test("decryptLineDescriptions: blob 無し行 (集約行等) は description 空", async () => {
+  const client = makeMockClient();
+  const r = await decryptLineDescriptions(client, 1, [
+    { id: 5, encrypted_blob: null, blob_iv: null },
+  ]);
+  assert.deepEqual(r, [{ id: 5, description: "" }]);
+});
+
+test("decryptLineDescriptions: 復号失敗 (別 userId) は description 空 (全体は reject せず)", async () => {
+  const client = makeMockClient();
+  const line = await makeEncryptedLine(client, 1, 10, 200, {
+    v: 1, description: "秘密",
+  });
+  const r = await decryptLineDescriptions(client, 2, [line]);  // userId mismatch
+  assert.deepEqual(r, [{ id: 200, description: "" }]);
+});
+
+test("fetchEntryFields: lines の行摘要も復号して返す", async () => {
+  const client = makeMockClient();
+  const userId = 5;
+  const apiEntry = await makeEncryptedEntry(client, userId, 700, {
+    v: 1, date: "2026-06-15", description: "出張", fiscal_year: 2026,
+  });
+  apiEntry.lines = [
+    await makeEncryptedLine(client, userId, 700, 800, {
+      v: 1, account_code: "5010", debit_amount: 100, credit_amount: 0,
+      description: "新幹線",
+    }),
+  ];
+  const fetchImpl = async () => ({
+    ok: true, json: async () => ({ ok: true, journal: apiEntry }),
+  });
+  const fields = await fetchEntryFields({ client, userId, entryId: 700, fetchImpl });
+  assert.equal(fields.description, "出張");
+  assert.equal(fields.lines.length, 1);
+  assert.deepEqual(fields.lines[0], { id: 800, description: "新幹線" });
 });

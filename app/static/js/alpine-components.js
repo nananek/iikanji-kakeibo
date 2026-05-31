@@ -458,6 +458,9 @@ document.addEventListener('alpine:init', function() {
         }
         this.lines.push({
           _key: ++_keyCounter,
+          // E3-F PR-D-6-5-pre2: DB の line id (編集時の行摘要 hydration の照合用)。
+          // 新規行は null。
+          id: data.id != null ? data.id : null,
           account_code: data.account_code || '',
           account_name: name,
           debit_amount: data.debit_amount || 0,

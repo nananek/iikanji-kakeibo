@@ -136,6 +136,10 @@ def edit(entry_id):
     form.fiscal_period.data = str(entry.fiscal_month) if entry.fiscal_month is not None else ""
 
     # Lv2: 公開行 + 事業主集約行
+    # E3-F PR-D-6-5-pre2: 行摘要 (description) は平文列を読まず空で返し、編集
+    # フォームのクライアント hydration (edit_form_prefill.js) が line の
+    # encrypted_blob を復号して line id で対応行へ埋める。id を付与してマッチング
+    # 可能にする (集約行は合成なので id=None)。
     if allowed_codes is not None and proprietor_code:
         proprietor_debit = 0
         proprietor_credit = 0
@@ -143,16 +147,18 @@ def edit(entry_id):
         for line in entry.lines:
             if line.account_code in allowed_codes:
                 existing_lines.append({
+                    "id": line.id,
                     "account_code": line.account_code,
                     "debit_amount": int(line.debit_amount),
                     "credit_amount": int(line.credit_amount),
-                    "description": line.description or "",
+                    "description": "",
                 })
             else:
                 proprietor_debit += int(line.debit_amount)
                 proprietor_credit += int(line.credit_amount)
         if proprietor_debit > 0 or proprietor_credit > 0:
             existing_lines.append({
+                "id": None,
                 "account_code": proprietor_code,
                 "debit_amount": proprietor_debit,
                 "credit_amount": proprietor_credit,
@@ -162,10 +168,11 @@ def edit(entry_id):
     else:
         existing_lines = [
             {
+                "id": line.id,
                 "account_code": line.account_code,
                 "debit_amount": int(line.debit_amount),
                 "credit_amount": int(line.credit_amount),
-                "description": line.description or "",
+                "description": "",
             }
             for line in entry.lines
         ]
@@ -206,6 +213,10 @@ def get_json(entry_id):
     allowed_codes = get_allowed_account_codes()
     proprietor_code = get_proprietor_account_code(user_id) if allowed_codes is not None else None
 
+    # E3-F PR-D-6-5-pre2: 行摘要 (description) は平文列を読まず空で返し、line の
+    # encrypted_blob / blob_iv / id を返す。元帳モーダル (reports/ledger.html
+    # openEditModal) が line blob を自分の MK で復号して line id で対応行へ埋める。
+    # 集約行は合成なので id / blob は None。
     lines = []
     if allowed_codes is not None and proprietor_code:
         # Lv2: 非公開行を事業主バランス行に集約
@@ -214,29 +225,38 @@ def get_json(entry_id):
         for line in entry.lines:
             if line.account_code in allowed_codes:
                 lines.append({
+                    "id": line.id,
                     "account_code": line.account_code,
                     "debit_amount": int(line.debit_amount),
                     "credit_amount": int(line.credit_amount),
-                    "description": line.description or "",
+                    "description": "",
+                    "encrypted_blob": _b64_or_none(line.encrypted_blob),
+                    "blob_iv": _b64_or_none(line.blob_iv),
                 })
             else:
                 proprietor_debit += int(line.debit_amount)
                 proprietor_credit += int(line.credit_amount)
         if proprietor_debit > 0 or proprietor_credit > 0:
             lines.append({
+                "id": None,
                 "account_code": proprietor_code,
                 "debit_amount": proprietor_debit,
                 "credit_amount": proprietor_credit,
                 "description": "",
                 "is_proprietor": True,
+                "encrypted_blob": None,
+                "blob_iv": None,
             })
     else:
         for line in entry.lines:
             lines.append({
+                "id": line.id,
                 "account_code": line.account_code,
                 "debit_amount": int(line.debit_amount),
                 "credit_amount": int(line.credit_amount),
-                "description": line.description or "",
+                "description": "",
+                "encrypted_blob": _b64_or_none(line.encrypted_blob),
+                "blob_iv": _b64_or_none(line.blob_iv),
             })
 
     # ロック判定（確定済み期間・損益振替・提出ロック）

@@ -119,3 +119,57 @@ test("hydrateEditForm: MK 解除済なら fetch+復号して反映", async () =>
   assert.equal(descInput.value, "JSON取得");
   assert.equal(ClientClass._wasClosed(), true);
 });
+
+
+// --- 行摘要 hydration (D-6-5-pre2) ---
+
+test("applyEntryPrefill: linesScope の行摘要を line id で更新", () => {
+  const linesScope = {
+    lines: [
+      { id: 1, description: "" },
+      { id: 2, description: "" },
+      { id: null, description: "新規行" },
+    ],
+  };
+  applyEntryPrefill({
+    fields: {
+      date: null, description: null,
+      lines: [{ id: 1, description: "明細A" }, { id: 2, description: "明細B" }],
+    },
+    linesScope,
+  });
+  assert.equal(linesScope.lines[0].description, "明細A");
+  assert.equal(linesScope.lines[1].description, "明細B");
+  // id=null (新規行) は照合対象外で不変
+  assert.equal(linesScope.lines[2].description, "新規行");
+});
+
+test("applyEntryPrefill: fields.lines 無しなら linesScope は不変", () => {
+  const linesScope = { lines: [{ id: 1, description: "keep" }] };
+  applyEntryPrefill({ fields: { date: null, description: null }, linesScope });
+  assert.equal(linesScope.lines[0].description, "keep");
+});
+
+test("applyEntryPrefill: linesScope 無しでも entry レベルは反映される", () => {
+  const descInput = { value: "" };
+  applyEntryPrefill({ fields: { date: null, description: "摘要", lines: [] }, descInput });
+  assert.equal(descInput.value, "摘要");
+});
+
+test("hydrateEditForm: formEl+alpine から linesScope を解決して行摘要を反映", async () => {
+  const linesScope = { lines: [{ id: 11, description: "" }] };
+  const formEl = { _tag: "form" };
+  const alpine = { $data: (el) => (el === formEl ? linesScope : null) };
+  const ClientClass = makeClientClass(true);
+  const fields = {
+    date: null, description: null,
+    lines: [{ id: 11, description: "復号済み摘要" }],
+  };
+  await hydrateEditForm({
+    isEdit: true, entryId: 1, userId: 9,
+    formEl, alpine,
+    ClientClass,
+    fetchFields: async () => fields,
+  });
+  assert.equal(linesScope.lines[0].description, "復号済み摘要");
+});
