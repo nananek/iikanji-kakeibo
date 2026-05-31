@@ -59,11 +59,36 @@ function renderVoucherPreview(container, vouchers, baseUrl) {
   vouchers.forEach(function(v) {
     var url = baseUrl + v.id + '/image';
     var thumbUrl = url + '?size=thumb';
+    // E4 PR-C2: 暗号化証憑はサーバが暗号文 (octet-stream) を返すため <img> で
+    // 直接表示できない。読み込み失敗 (onerror) 時はロック表示に差し替え、証憑
+    // 一覧 (クライアント復号表示) への導線を出す。完全な復号インライン表示は
+    // 後続 PR (C3) で対応する。
     html += '<a href="#" onclick="openImagePreview(\'' + url + '\');return false">' +
-      '<img src="' + thumbUrl + '" class="img-fluid rounded" style="max-height:300px;cursor:pointer;" alt="証憑" loading="lazy">' +
+      '<img src="' + thumbUrl + '" class="img-fluid rounded" style="max-height:300px;cursor:pointer;" alt="証憑" loading="lazy" ' +
+      'onerror="voucherThumbFallback(this)">' +
       '</a> ';
   });
   html += '</div></div>';
   container.innerHTML = html;
   container.classList.remove('d-none');
+}
+
+/**
+ * 証憑サムネイルの読み込み失敗時フォールバック (E4 PR-C2)。
+ * 暗号化証憑は <img> で表示できないため、ロックアイコン + 証憑一覧への導線に
+ * 差し替える。
+ */
+function voucherThumbFallback(img) {
+  var anchor = img.closest('a');
+  var ph = document.createElement('span');
+  ph.className = 'd-inline-flex flex-column align-items-center text-muted border rounded p-3';
+  ph.innerHTML =
+    '<i class="bi bi-lock-fill" style="font-size:1.8rem;"></i>' +
+    '<span class="small mt-1">暗号化証憑</span>' +
+    '<a href="/vouchers" class="small">証憑一覧で表示</a>';
+  if (anchor) {
+    anchor.replaceWith(ph);
+  } else {
+    img.replaceWith(ph);
+  }
 }

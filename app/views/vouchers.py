@@ -56,6 +56,9 @@ def index():
             "fiscal_year": v.journal_entry.fiscal_year if v.journal_entry else None,
             "uploaded_at": v.uploaded_at.isoformat() if v.uploaded_at else None,
             "has_hash": bool(v.file_hash),
+            # E4 PR-C2: 暗号化証憑 (encrypted_meta_blob あり) はクライアントが
+            # fetch + 復号して表示する。レガシー平文証憑は従来通りサーバ配信。
+            "encrypted": v.encrypted_meta_blob is not None,
         }
         for v in vouchers
     ]

@@ -96,6 +96,7 @@ export function buildVoucherCards(voucherMeta, entryMap) {
       voucher_id: voucherId,
       journal_entry_id: attached ? journalEntryId : null,
       attached,
+      encrypted: !!v.encrypted,
       entry_number: v.entry_number ?? (entry ? entry.entry_number : null),
       effective_date: effectiveDate,
       entry_date: entryDate,
@@ -171,6 +172,12 @@ function _clearStatus() {
 let _allCards = [];
 let _canDelete = false;
 let _csrfToken = "";
+// E4 PR-C2: 暗号化証憑の復号表示用。MK 解錠かつ本人モード時のみ _client を
+// 保持し (ページ生存中はクローズしない)、サムネ/本体を fetch + 復号する。
+let _client = null;
+let _userId = null;
+let _canDecrypt = false;
+let _decryptImage = null;  // voucher_download.fetchAndDecryptVoucherImage
 
 
 function _imgUrl(voucherId, thumb) {
@@ -206,6 +213,89 @@ function _postForm(action, confirmMsg) {
   csrf.value = _csrfToken;
   form.appendChild(csrf);
   return form;
+}
+
+
+function _lockPlaceholder(label) {
+  const ph = document.createElement("div");
+  ph.className = "text-muted border rounded d-flex flex-column align-items-center justify-content-center";
+  ph.style.height = "200px";
+  ph.innerHTML = '<i class="bi bi-lock-fill" style="font-size:2rem;"></i>';
+  const span = document.createElement("div");
+  span.className = "small mt-2";
+  span.textContent = label;
+  ph.appendChild(span);
+  return ph;
+}
+
+
+function _openDecryptedFull(voucherId) {
+  // 本体を復号して blob URL でプレビュー表示。
+  _decryptImage({ client: _client, userId: _userId, voucherId, thumb: false })
+    .then((bytes) => {
+      const url = URL.createObjectURL(new Blob([bytes]));
+      if (typeof globalThis.openImagePreview === "function") {
+        globalThis.openImagePreview(url);
+      }
+    })
+    .catch(() => _setStatus("証憑の復号に失敗しました。", "danger"));
+}
+
+
+function _renderCardImage(wrap, c) {
+  // レガシー平文証憑: サーバが画像を直接配信するので従来通り img.src。
+  if (!c.encrypted) {
+    const link = document.createElement("a");
+    link.href = "#";
+    link.addEventListener("click", (e) => {
+      e.preventDefault();
+      if (typeof globalThis.openImagePreview === "function") {
+        globalThis.openImagePreview(_imgUrl(c.voucher_id, false));
+      }
+    });
+    const img = document.createElement("img");
+    img.src = _imgUrl(c.voucher_id, true);
+    img.className = "img-fluid rounded";
+    img.style.maxHeight = "200px";
+    img.style.cursor = "pointer";
+    img.alt = "証憑";
+    img.loading = "lazy";
+    link.appendChild(img);
+    wrap.appendChild(link);
+    return;
+  }
+
+  // 暗号化証憑: MK 解錠かつ本人モードでのみ復号表示。
+  if (!_canDecrypt || !_decryptImage) {
+    wrap.appendChild(_lockPlaceholder("暗号鍵が必要です"));
+    return;
+  }
+
+  const link = document.createElement("a");
+  link.href = "#";
+  link.style.cursor = "pointer";
+  link.addEventListener("click", (e) => {
+    e.preventDefault();
+    _openDecryptedFull(c.voucher_id);
+  });
+  const img = document.createElement("img");
+  img.className = "img-fluid rounded";
+  img.style.maxHeight = "200px";
+  img.style.cursor = "pointer";
+  img.alt = "証憑 (復号中…)";
+  img.loading = "lazy";
+  link.appendChild(img);
+  wrap.appendChild(link);
+
+  // サムネを非同期復号 → blob URL。失敗時はロック表示に差し替え。
+  _decryptImage({ client: _client, userId: _userId, voucherId: c.voucher_id, thumb: true })
+    .then((bytes) => {
+      img.src = URL.createObjectURL(new Blob([bytes]));
+      img.alt = "証憑";
+    })
+    .catch(() => {
+      wrap.replaceChildren(_lockPlaceholder("復号に失敗しました"));
+    });
 }
 
 
@@ -245,24 +335,8 @@ function _renderCard(c) {
   body.className = "card-body";
   const imgWrap = document.createElement("div");
   imgWrap.className = "text-center mb-2";
-  const link = document.createElement("a");
-  link.href = "#";
-  link.addEventListener("click", (e) => {
-    e.preventDefault();
-    if (typeof globalThis.openImagePreview === "function") {
-      globalThis.openImagePreview(_imgUrl(c.voucher_id, false));
-    }
-  });
-  const img = document.createElement("img");
-  img.src = _imgUrl(c.voucher_id, true);
-  img.className = "img-fluid rounded";
-  img.style.maxHeight = "200px";
-  img.style.cursor = "pointer";
-  img.alt = "証憑";
-  img.loading = "lazy";
-  link.appendChild(img);
-  imgWrap.appendChild(link);
   body.appendChild(imgWrap);
+  _renderCardImage(imgWrap, c);
   if (c.attached) {
     if (c.description) {
       const p = document.createElement("p");
@@ -390,6 +464,7 @@ async function _run() {
     return;
   }
   _canDelete = !!params.can_delete;
+  _userId = params.user_id;
   const csrfMeta = document.querySelector('meta[name="csrf-token"]');
   _csrfToken = csrfMeta ? csrfMeta.getAttribute("content") : "";
 
@@ -433,19 +508,21 @@ async function _run() {
 
   let client;
   try {
-    const [{ SharedCryptoClient }, { fetchJournalsForYear }] = await Promise.all([
-      import(getStaticRoot() + "js/crypto/shared-client.js"),
-      import(getStaticRoot() + "js/crypto/journals_client.js"),
-    ]);
+    const [{ SharedCryptoClient }, { fetchJournalsForYear }, voucherDl] =
+      await Promise.all([
+        import(getStaticRoot() + "js/crypto/shared-client.js"),
+        import(getStaticRoot() + "js/crypto/journals_client.js"),
+        import(getStaticRoot() + "js/crypto/voucher_download.js"),
+      ]);
 
     client = new SharedCryptoClient(getSharedWorkerUrl());
     const status = await client.status();
 
-    // MK ロック / 代理閲覧では仕訳を復号できない。証憑メタのみでカードを描画
-    // (画像・保存日・伝票番号は表示でき、電帳法の保存性は満たす)。
+    // MK ロック / 代理閲覧では仕訳も暗号化証憑画像も復号できない。メタのみで
+    // カードを描画し、暗号化証憑はロック表示にする (レガシー平文証憑は表示可)。
     if (!status.hasKey) {
       _setStatus(
-        "暗号鍵 (MK) がロックされているため、仕訳の日付・摘要・金額は表示されません。証憑画像と保存日は表示されます (設定 → 暗号鍵管理 で解除)。",
+        "暗号鍵 (MK) がロックされているため、仕訳の日付・摘要・金額と暗号化証憑画像は表示されません。保存日・伝票番号は表示されます (設定 → 暗号鍵管理 で解除)。",
         "warning",
       );
       buildAndRender(new Map());
@@ -453,13 +530,20 @@ async function _run() {
     }
     if (params.is_audit_proxy) {
       _setStatus(
-        "監査代理閲覧中です。オーナーの暗号化された仕訳 (日付・摘要・金額) は復号できないため、証憑画像と保存日のみ表示されます (E2EE アーキテクチャ仕様)。",
+        "監査代理閲覧中です。オーナーの暗号化された仕訳・証憑画像は復号できないため、保存日・伝票番号のみ表示されます (E2EE アーキテクチャ仕様)。",
         "info",
       );
       buildAndRender(new Map());
       return;
     }
     _clearStatus();
+
+    // E4 PR-C2: 暗号化証憑の復号表示を有効化 (本人 + MK 解錠時のみ)。
+    // 画像復号にクライアントを使い続けるため、本パスでは finally でクローズ
+    // しない (ページ生存中保持)。
+    _client = client;
+    _canDecrypt = true;
+    _decryptImage = voucherDl.fetchAndDecryptVoucherImage;
 
     // 紐付け仕訳の fiscal_year 群を取得・復号して entry_id → {…} を構築。
     const years = new Set();
@@ -486,7 +570,9 @@ async function _run() {
   } catch (e) {
     _setStatus("証憑一覧の取得に失敗しました: " + (e.message || e), "danger");
   } finally {
-    if (client) {
+    // 暗号化証憑の復号にクライアントを使い続ける場合 (_canDecrypt) はクローズ
+    // しない。それ以外 (ロック/代理/エラー) はクローズして資源を解放する。
+    if (client && !_canDecrypt) {
       try { client.close(); } catch (_e) { /* ignore */ }
     }
   }
