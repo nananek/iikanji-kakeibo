@@ -1041,6 +1041,130 @@ class TestListJournals:
         assert resp.get_json()["total"] == 0
 
 
+# --- インポートバッチ一覧 (E3-F PR-D-6-3b-2) ---
+
+
+class TestListJournalBatches:
+    """GET /api/v1/journals/batches (取込履歴のクライアント描画用)。
+
+    batch_id でグルーピングし保持列メタ (件数 / 取込日時 / 削除可否) と各仕訳の
+    encrypted_blob を返す。種別ラベル / 日付範囲は復号 blob からクライアントが
+    導出するため、サーバ側テストはグルーピング・削除可否・blob 同梱を検証する。
+    """
+
+    def _make_batch(self, db, user, bid, dates, source="csv"):
+        for d in dates:
+            e = make_journal(db, user.id, "5010", "1010", 100,
+                             entry_date=d, source=source)
+            e.batch_id = bid
+        db.session.commit()
+
+    def test_unauthenticated(self, client, db, user, accounts):
+        resp = client.get("/api/v1/journals/batches")
+        assert resp.status_code == 401
+
+    def test_empty(self, client, db, user, accounts, auth_header):
+        resp = client.get("/api/v1/journals/batches", headers=auth_header)
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data["ok"] is True
+        assert data["batches"] == []
+
+    def test_groups_by_batch_id(self, client, db, user, accounts, auth_header):
+        self._make_batch(db, user, "bid-csv",
+                         [date(2026, 2, 3), date(2026, 2, 15)], source="csv")
+        self._make_batch(db, user, "bid-web",
+                         [date(2026, 3, 1)], source="web")
+        resp = client.get("/api/v1/journals/batches", headers=auth_header)
+        data = resp.get_json()
+        assert len(data["batches"]) == 2
+        by_id = {b["batch_id"]: b for b in data["batches"]}
+        assert by_id["bid-csv"]["count"] == 2
+        assert by_id["bid-web"]["count"] == 1
+        # source / date 範囲はサーバ側では平文返却しない (blob のみ)。
+        assert "source" not in by_id["bid-csv"]
+        assert "date_from" not in by_id["bid-csv"]
+
+    def test_entries_include_blob_fields(
+        self, client, db, user, accounts, auth_header,
+    ):
+        self._make_batch(db, user, "bid-csv", [date(2026, 2, 3)])
+        resp = client.get("/api/v1/journals/batches", headers=auth_header)
+        b = resp.get_json()["batches"][0]
+        assert b["entries"]
+        e = b["entries"][0]
+        assert "encrypted_blob" in e and "blob_iv" in e
+        assert "fiscal_year" in e and "is_closing" in e
+        # lines は取込一覧に不要なので含めない。
+        assert "lines" not in e
+
+    def test_excludes_entries_without_batch_id(
+        self, client, db, user, accounts, auth_header,
+    ):
+        # batch_id なしの単発仕訳は取込履歴に出ない。
+        make_journal(db, user.id, "5010", "1010", 100,
+                     entry_date=date(2026, 2, 1))
+        resp = client.get("/api/v1/journals/batches", headers=auth_header)
+        assert resp.get_json()["batches"] == []
+
+    def test_closing_batch_not_deletable(
+        self, client, db, user, accounts, auth_header,
+    ):
+        self._make_batch(db, user, "bid-closing",
+                         [date(2026, 12, 31)], source="closing")
+        resp = client.get("/api/v1/journals/batches", headers=auth_header)
+        b = resp.get_json()["batches"][0]
+        assert b["is_closing"] is True
+        assert b["deletable"] is False
+        assert "損益振替" in b["delete_reason"]
+
+    def test_locked_period_not_deletable(
+        self, client, db, user, accounts, auth_header,
+    ):
+        from app.models.fiscal import FiscalClose
+        # 2026-02 までロック (closed_period=2)。
+        db.session.add(FiscalClose(user_id=user.id, year=2026, closed_period=2))
+        db.session.commit()
+        self._make_batch(db, user, "bid-locked", [date(2026, 2, 10)])
+        resp = client.get("/api/v1/journals/batches", headers=auth_header)
+        b = resp.get_json()["batches"][0]
+        assert b["deletable"] is False
+        assert "確定済み" in b["delete_reason"]
+
+    def test_open_period_deletable(
+        self, client, db, user, accounts, auth_header,
+    ):
+        self._make_batch(db, user, "bid-open", [date(2026, 5, 1)])
+        resp = client.get("/api/v1/journals/batches", headers=auth_header)
+        b = resp.get_json()["batches"][0]
+        assert b["deletable"] is True
+        assert b["delete_reason"] == ""
+
+    def test_via_session_cookie(self, db, logged_in_client, user, accounts):
+        """ブラウザ Cookie 認証で取得できる (描画はブラウザ側)。"""
+        self._make_batch(db, user, "bid-csv", [date(2026, 2, 3)])
+        resp = logged_in_client.get("/api/v1/journals/batches")
+        assert resp.status_code == 200
+        assert resp.get_json()["batches"][0]["batch_id"] == "bid-csv"
+
+    def test_user_isolation(
+        self, client, db, user, accounts, auth_header, auditor,
+    ):
+        """他ユーザーのバッチは見えない。"""
+        self._make_batch(db, user, "bid-mine", [date(2026, 2, 3)])
+        raw_key2, key_hash2, key_prefix2 = APIKey.generate()
+        key2 = APIKey(
+            user_id=auditor.id, name="auditor-key",
+            key_hash=key_hash2, key_prefix=key_prefix2,
+            scopes="journals:read", is_active=True,
+        )
+        db.session.add(key2)
+        db.session.commit()
+        resp = client.get("/api/v1/journals/batches",
+                          headers=_auth_header(raw_key2))
+        assert resp.get_json()["batches"] == []
+
+
 # --- 仕訳詳細 ---
 
 

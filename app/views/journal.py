@@ -3,7 +3,6 @@ from datetime import date
 
 from flask import Blueprint, render_template, redirect, url_for, flash, request, jsonify, make_response
 from flask_login import login_required, current_user
-from sqlalchemy import func
 
 from app.extensions import db
 from app.models.account import Account
@@ -12,7 +11,7 @@ from app.models.voucher import Voucher
 from app.models.voucher_audit_log import VoucherAuditLog
 from app.forms.journal import JournalForm
 from app.services.accounting import create_journal_entry
-from app.services.fiscal import check_entry_modifiable, get_effective_period, get_closed_periods_map, get_restricted_before_year, is_period_locked
+from app.services.fiscal import check_entry_modifiable, get_effective_period, get_closed_periods_map, get_restricted_before_year
 from app.services.audit import (
     get_effective_user_id, get_allowed_account_codes, get_submitted_account_codes,
     is_entry_locked_for_owner, is_entry_locked_for_auditor,
@@ -377,59 +376,18 @@ SOURCE_LABELS = {
 @bp.route("/batches")
 @login_required
 def batches():
-    """インポート履歴"""
-    user_id = get_effective_user_id()
-    batch_list = (
-        db.session.query(
-            JournalEntry.batch_id,
-            JournalEntry.source,
-            func.count(JournalEntry.id).label("count"),
-            func.min(JournalEntry.date).label("date_from"),
-            func.max(JournalEntry.date).label("date_to"),
-            func.min(JournalEntry.created_at).label("imported_at"),
-        )
-        .filter(
-            JournalEntry.user_id == user_id,
-            JournalEntry.batch_id.isnot(None),
-        )
-        .group_by(JournalEntry.batch_id, JournalEntry.source)
-        .order_by(func.min(JournalEntry.created_at).desc())
-        .all()
-    )
+    """インポート履歴 (クライアント描画)。
 
-    enriched = []
-    for b in batch_list:
-        deletable = True
-        delete_reason = ""
-        if b.source == "closing":
-            deletable = False
-            delete_reason = "損益振替（自動生成）は削除できません"
-        else:
-            # バッチの日付範囲に含まれる全月をチェック
-            d = b.date_from
-            while d <= b.date_to:
-                if is_period_locked(user_id, d.year, d.month):
-                    deletable = False
-                    delete_reason = "確定済み期間の仕訳が含まれています"
-                    break
-                if d.month == 12:
-                    d = date(d.year + 1, 1, 1)
-                else:
-                    d = date(d.year, d.month + 1, 1)
-        enriched.append({
-            "batch_id": b.batch_id,
-            "source": b.source,
-            "count": b.count,
-            "date_from": b.date_from,
-            "date_to": b.date_to,
-            "imported_at": b.imported_at,
-            "deletable": deletable,
-            "delete_reason": delete_reason,
-        })
-
+    E3-F PR-D-6-3b-2: 旧実装はサーバが平文 JournalEntry.date / source を
+    集計してテーブルを描画していたが、E2EE 化 (date / source 列は D-6-5 で
+    DROP 予定) のためクライアント描画へ移行した。バッチ一覧は
+    GET /api/v1/journals/batches から取得し、復号 blob から種別ラベルと
+    日付範囲を組み立てる (batches_renderer.mjs)。件数 / 取込日時 / 削除可否は
+    保持列由来でサーバ (API) 側が算出する。
+    """
     return render_template(
         "journal/batches.html",
-        batches=enriched,
+        effective_user_id=get_effective_user_id(),
         source_labels=SOURCE_LABELS,
     )
 
