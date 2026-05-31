@@ -141,6 +141,42 @@ async function _normalizeLine(client, userId, entryId, apiLine) {
 
 
 /**
+ * API entry の各 line の encrypted_blob を復号し、line id と行摘要 (description)
+ * の対応を返す。編集フォーム / 元帳モーダルの行摘要 hydration 用。
+ *
+ * AAD は line と同じ Option B (`("jel", userId)`)。復号失敗 (MK 不一致 / blob
+ * 欠落 / 集約行 blob=null) は description="" にする (1 行の失敗で全体を reject
+ * しない)。
+ *
+ * @param {Object} client            SharedCryptoClient
+ * @param {number|bigint} userId
+ * @param {Array<Object>} apiLines    {id, encrypted_blob, blob_iv} を含む line 配列
+ * @returns {Promise<Array<{id, description}>>}
+ */
+export async function decryptLineDescriptions(client, userId, apiLines) {
+  return Promise.all(
+    (apiLines || []).map(async (apiLine) => {
+      let description = "";
+      if (apiLine.encrypted_blob && apiLine.blob_iv) {
+        try {
+          const blob = b64decode(apiLine.encrypted_blob);
+          const iv = b64decode(apiLine.blob_iv);
+          const body = await decryptRecord(client, blob, iv, buildAAD("jel", userId));
+          description = body?.description ?? "";
+        } catch (e) {
+          console.warn(
+            `journals_client: line ${apiLine.id} description decrypt failed: ` +
+            `${e?.message || e}`,
+          );
+        }
+      }
+      return { id: apiLine.id ?? null, description };
+    }),
+  );
+}
+
+
+/**
  * 指定年度の全仕訳を取得 + 復号。
  *
  * ページネーションを自動で回し全件取得する。100 件/ページで取得し、
@@ -219,7 +255,8 @@ export async function fetchJournalsForYear({
  * @param {number|bigint} args.userId   復号 AAD に使う
  * @param {number} args.entryId
  * @param {Function} [args.fetchImpl]   テスト DI
- * @returns {Promise<{date, description, source, batch_id, fiscal_period}>}
+ * @returns {Promise<{date, description, source, batch_id, fiscal_period,
+ *   lines: Array<{id, description}>}>}  lines は行摘要 hydration 用 (E3-F PR-D-6-5-pre2)
  */
 export async function fetchEntryFields({ client, userId, entryId, fetchImpl }) {
   if (!client || typeof client.decrypt !== "function") {
@@ -242,5 +279,7 @@ export async function fetchEntryFields({ client, userId, entryId, fetchImpl }) {
   if (!apiEntry) {
     throw new Error("fetchEntryFields: response missing journal");
   }
-  return decryptEntryMeta(client, userId, apiEntry);
+  const meta = await decryptEntryMeta(client, userId, apiEntry);
+  const lines = await decryptLineDescriptions(client, userId, apiEntry.lines);
+  return { ...meta, lines };
 }

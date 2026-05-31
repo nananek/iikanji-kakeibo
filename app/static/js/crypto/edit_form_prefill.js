@@ -21,12 +21,14 @@ import { fetchEntryFields } from "./journals_client.js";
  * 更新し checkDate() を呼ぶ。Alpine 未ロード (テスト) 時は input.value のみ更新。
  *
  * @param {Object} args
- * @param {{date: ?string, description: ?string}} args.fields
+ * @param {{date: ?string, description: ?string, lines: ?Array<{id, description}>}} args.fields
  * @param {HTMLInputElement} [args.dateInput]
  * @param {HTMLInputElement|HTMLTextAreaElement} [args.descInput]
  * @param {Object} [args.alpine]  window.Alpine 相当 ($data を持つ)
+ * @param {Object} [args.linesScope]  journalLines Alpine データ ({lines: [...]})。
+ *   行摘要 (line.description) を line id で対応行へ反映する (E3-F PR-D-6-5-pre2)。
  */
-export function applyEntryPrefill({ fields, dateInput, descInput, alpine }) {
+export function applyEntryPrefill({ fields, dateInput, descInput, alpine, linesScope }) {
   if (!fields) return;
   if (descInput && typeof fields.description === "string") {
     descInput.value = fields.description;
@@ -39,6 +41,21 @@ export function applyEntryPrefill({ fields, dateInput, descInput, alpine }) {
     if (scope) {
       scope.dateValue = fields.date;
       if (typeof scope.checkDate === "function") scope.checkDate();
+    }
+  }
+  // E3-F PR-D-6-5-pre2: 行摘要は平文列を読まずクライアント復号で埋める。
+  // journalLines Alpine の lines を line id で照合し description を更新する
+  // (x-model="line.description" に反映)。出納帳フォーム等 lines を持たない
+  // スコープでは何もしない。
+  if (linesScope && Array.isArray(linesScope.lines) && Array.isArray(fields.lines)) {
+    const byId = new Map();
+    for (const l of fields.lines) {
+      if (l && l.id != null) byId.set(l.id, l.description ?? "");
+    }
+    for (const line of linesScope.lines) {
+      if (line && line.id != null && byId.has(line.id)) {
+        line.description = byId.get(line.id);
+      }
     }
   }
 }
@@ -54,6 +71,8 @@ export function applyEntryPrefill({ fields, dateInput, descInput, alpine }) {
  * @param {boolean} [opts.isProxyMode]
  * @param {HTMLInputElement} [opts.dateInput]
  * @param {HTMLInputElement|HTMLTextAreaElement} [opts.descInput]
+ * @param {HTMLElement} [opts.formEl]  journalLines x-data を張った form 要素
+ *   (行摘要 hydration 用に Alpine scope を解決する。E3-F PR-D-6-5-pre2)
  * @param {string} [opts.workerUrl]
  * @param {Object} [opts.alpine]
  * @param {Function} [opts.ClientClass]  テスト DI (default SharedCryptoClient)
@@ -69,6 +88,7 @@ export async function hydrateEditForm(opts) {
     isProxyMode = false,
     dateInput,
     descInput,
+    formEl,
     workerUrl,
     alpine,
     ClientClass = SharedCryptoClient,
@@ -85,12 +105,15 @@ export async function hydrateEditForm(opts) {
   try {
     const status = await client.status();
     if (!status || !status.hasKey) {
-      // MK ロック中は復号不可。date / description は空欄のまま (submit も
-      // ロック中はブロックされる)。
+      // MK ロック中は復号不可。date / description / 行摘要は空欄のまま (submit
+      // もロック中はブロックされる)。
       return null;
     }
     const fields = await fetchFields({ client, userId, entryId, fetchImpl });
-    applyEntryPrefill({ fields, dateInput, descInput, alpine });
+    const linesScope = (alpine && formEl && typeof alpine.$data === "function")
+      ? alpine.$data(formEl)
+      : null;
+    applyEntryPrefill({ fields, dateInput, descInput, alpine, linesScope });
     return fields;
   } finally {
     try { client.close(); } catch (_e) { /* ignore */ }

@@ -45,6 +45,14 @@ class TestGetJson:
         assert data["fiscal_year"] == 2026
         assert data["fiscal_month"] == 2
         assert len(data["lines"]) == 2
+        # E3-F PR-D-6-5-pre2: line は id + encrypted_blob/blob_iv を返し、平文
+        # description は返さない (空文字。クライアントが line blob を MK 復号して
+        # 行摘要を埋める)。
+        for ln in data["lines"]:
+            assert ln["id"] is not None
+            assert ln["description"] == ""
+            assert "encrypted_blob" in ln
+            assert "blob_iv" in ln
         assert data["lines"][0]["debit_amount"] in (0, 1500)
 
     def test_idor_other_user(self, db, logged_in_client, accounts,
