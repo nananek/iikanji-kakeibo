@@ -1,7 +1,9 @@
 // 総勘定元帳 (Ledger) のクライアント描画。
 // MK 復号 → computeLedger → composeLedgerView → DOM 構築まで完結。
 //
-// carry_forward (前期繰越) は当面 0 とする (BCB 統合後 follow-up #221)。
+// carry_forward (前期繰越) は pf>=1 のとき BCB (balance_cache_blobs) の
+// period=pf-1 を MK 復号して openingBalance として復元する (#221, #237)。
+// pf=0 (期首から) のときは BCB 不要で openingBalance=0。
 
 
 function getSharedWorkerUrl() {
