@@ -26,6 +26,12 @@ from app.services.storage_quota import (
 )
 
 
+class VoucherUploadConflict(Exception):
+    """E4 (#111): 既に確定済みの Voucher への二重 upload (並行 PUT)。
+
+    呼び出し側 (PUT エンドポイント) は 409 に変換する。"""
+
+
 def create_voucher_from_draft(draft: AIDraft, journal_entry_id: int) -> Voucher:
     """AIDraft から Voucher を作成し、ドラフトを削除する。
 
@@ -201,10 +207,34 @@ def finalize_voucher_upload(
 
     check_quota(user, size)
 
-    backend = get_storage_backend()
     image_key = make_storage_key(
         voucher.user_id, voucher.id, ENCRYPTED_CONTENT_TYPE
     )
+
+    # 原子的クレーム (PR-B レビュー指摘 ①): 並行 PUT が両方とも endpoint の
+    # 楽観チェック (image_key=="") を通過した場合でも、ここで image_key を
+    # WHERE image_key='' 条件付き UPDATE で確定し、勝者のみが先へ進む。
+    # 敗者は rowcount=0 → VoucherUploadConflict (= 409) で、ストレージ書き込み
+    # の前に弾く (電帳法の上書き禁止を DB レベルで保証)。
+    claimed = (
+        db.session.query(Voucher)
+        .filter(
+            Voucher.id == voucher.id,
+            Voucher.image_key == "",
+            Voucher.encrypted_meta_blob.is_(None),
+        )
+        .update(
+            {Voucher.image_key: image_key},
+            synchronize_session=False,
+        )
+    )
+    if claimed != 1:
+        db.session.rollback()
+        raise VoucherUploadConflict(
+            "この証憑は既にアップロード済みです。"
+        )
+
+    backend = get_storage_backend()
     backend.put(image_key, image_ct, ENCRYPTED_CONTENT_TYPE)
 
     thumbnail_key = None

@@ -236,6 +236,32 @@ class TestProxyBlocked:
         assert resp.status_code == 403
 
 
+class TestAtomicClaim:
+    """PR-B レビュー ①: finalize_voucher_upload の原子的クレーム。"""
+
+    def test_finalize_conflict_when_already_claimed(self, app, db, user):
+        """DB 上で image_key が既に確定済みの行を finalize すると
+        VoucherUploadConflict を送出する (並行 PUT の敗者)。"""
+        from app.services.voucher import (
+            VoucherUploadConflict, finalize_voucher_upload,
+        )
+
+        v = Voucher(
+            user_id=user.id,
+            image_key="vouchers/x/already.bin",  # 既に確定済み (勝者が claim 済)
+            image_mime="application/octet-stream",
+        )
+        db.session.add(v)
+        db.session.commit()
+
+        with app.app_context():
+            with pytest.raises(VoucherUploadConflict):
+                finalize_voucher_upload(
+                    v, _IMAGE_CT, _THUMB_CT, _META_BLOB, _META_IV,
+                    _FILE_HASH_PLAIN,
+                )
+
+
 class TestServeEncryptedVoucher:
     def test_serves_ciphertext_octet_stream(self, logged_in_client, user):
         vid = _init_voucher(logged_in_client).get_json()["voucher_id"]

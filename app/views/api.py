@@ -32,6 +32,7 @@ from app.services.storage_quota import (
     maybe_send_quota_warning, record_delete, record_upload,
 )
 from app.services.voucher import (
+    VoucherUploadConflict,
     create_voucher_from_draft,
     finalize_voucher_upload,
     init_voucher,
@@ -2007,7 +2008,7 @@ def ai_draft_save_suggestions(draft_id):
 
 @bp.route("/vouchers/init", methods=["POST"])
 @auth_required(write=True, scope="journals:create", allow_session=True)
-@limiter.limit("30 per minute", key_func=rate_limit_key)
+@limiter.limit("10 per minute", key_func=rate_limit_key)
 def init_voucher_endpoint():
     """2 段階 upload Step 1: voucher_id を採番する (空 row 作成)。
 
@@ -2113,6 +2114,12 @@ def upload_voucher_endpoint(voucher_id):
         finalize_voucher_upload(
             voucher, image_ct, thumb_ct, meta_blob, meta_iv, file_hash_plain,
         )
+    except VoucherUploadConflict:
+        # 並行 PUT が原子的クレームで弾かれた (PR-B レビュー ①)。CodeQL の
+        # py/stack-trace-exposure 誤検知を避けるため固定文言を返す。
+        return jsonify({
+            "error": "この証憑は既にアップロード済みです。上書きはできません。",
+        }), 409
     except QuotaExceededError as exc:
         return jsonify({"error": exc.user_message}), 413
 
