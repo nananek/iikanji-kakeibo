@@ -174,6 +174,9 @@ def create_audit_package():
     # owner のみが作成可。他人の grant への IDOR は 403。
     if grant.owner_user_id != me:
         return jsonify(error="forbidden"), 403
+    # E5 ワークフローでは grant の有効/無効は revoked_at のみで判定する。
+    # AuditGrant.status (draft/submitted) は置換対象の旧リアルタイム代理閲覧
+    # フロー専用フィールドで、非同期パッケージ作成には関与しない (設計書 §14.10)。
     if grant.revoked_at is not None:
         return jsonify(error="audit grant has been revoked"), 403
     # snapshot は grant の権限レベルで作られているはず。不一致はクライアントバグ。
@@ -223,7 +226,11 @@ def create_audit_package():
 @auth_required(write=True)
 @limiter.limit("120 per hour", key_func=rate_limit_key)
 def accept_audit_package(package_id: int):
-    """owner が修正案を採用確定する (owner_accepted_at をセット, §14.2)。"""
+    """owner が修正案を採用確定する (owner_accepted_at をセット, §14.2)。
+
+    冪等: 既に採用済みでも再実行可能 (owner_accepted_at を現在時刻で上書き)。
+    採用は不可逆な状態遷移ではなく「確認した時刻」の記録なので 409 にはしない。
+    """
     proxy_err = reject_if_proxy()
     if proxy_err is not None:
         return proxy_err
@@ -309,10 +316,11 @@ def create_audit_response():
     # auditor のみが response を返せる。
     if pkg.auditor_user_id != me:
         return jsonify(error="forbidden"), 403
-    # 失効 grant / 期限切れ package には返答不可。
+    # 失効 grant / 期限切れ package には返答不可。grant が消えている (orphan /
+    # FK 無効環境) 場合も防御的に拒否する。
     grant = db.session.get(AuditGrant, pkg.audit_grant_id)
-    if grant is not None and grant.revoked_at is not None:
-        return jsonify(error="audit grant has been revoked"), 403
+    if grant is None or grant.revoked_at is not None:
+        return jsonify(error="audit grant is not active"), 403
     if _is_expired(pkg.expires_at):
         return jsonify(error="audit package has expired"), 403
 

@@ -380,6 +380,35 @@ def test_packages_rejected_during_proxy_view(client, db):
     assert client.get("/api/v1/audit-packages").status_code == 403
 
 
+def test_write_endpoints_rejected_during_proxy_view(client, db):
+    # 書き込み系もすべて代理閲覧 (acting-as) 中は 403 (reject_if_proxy)。
+    owner, auditor = _user(db), _user(db)
+    g = _grant(db, owner, auditor, level=3)
+    pkg = _make_package(db, g, owner, auditor, level=3)
+    resp = AuditResponse(
+        audit_package_id=pkg.id, response_type="revision",
+        ephemeral_pubkey=b"\x04" * 32, ciphertext=b"\x05" * 10,
+    )
+    db.session.add(resp)
+    db.session.commit()
+
+    _acting_as(client, auditor, owner, level=3)
+    assert client.post(
+        "/api/v1/audit-packages", json=_pkg_payload(g, level=3, round_id=2)
+    ).status_code == 403
+    assert client.post(
+        f"/api/v1/audit-packages/{pkg.id}/accept"
+    ).status_code == 403
+    assert client.delete(f"/api/v1/audit-packages/{pkg.id}").status_code == 403
+    assert client.post(
+        "/api/v1/audit-responses", json=_resp_payload(pkg)
+    ).status_code == 403
+    assert client.post(
+        f"/api/v1/audit-responses/{resp.id}/acknowledge"
+    ).status_code == 403
+    assert client.get("/api/v1/audit-responses").status_code == 403
+
+
 # === 認証必須 ============================================================
 
 
