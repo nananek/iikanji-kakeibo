@@ -1,9 +1,15 @@
 // E4 (#111): 証憑画像のクライアント完結 E2EE upload。
 //
 // 2 段階 upload (Option A):
-//   1. initVoucher()   → POST /api/v1/vouchers/init で voucher_id を採番
-//   2. encryptVoucher() → 採番 id を AAD に束縛して画像/サムネ/メタを暗号化
+//   1. initVoucher()   → POST /api/v1/vouchers/init で voucher_id 採番 + aad_id 受領
+//   2. encryptVoucher() → aad_id を AAD に束縛して画像/サムネ/メタを暗号化
 //   3. putVoucher()    → PUT /api/v1/vouchers/<id> で暗号文の実体を upload
+//
+// E4 (#111) Option C: AAD は voucher_id ではなくサーバ生成の安定識別子 aad_id
+// に束縛する。voucher_id は backup/restore で再採番されるため、AAD に使うと復元後
+// に復号不能になる。aad_id は再採番後も保持されるため復号互換を保てる。aad_id は
+// 63bit のためサーバは文字列で返し、クライアントは BigInt として AAD に渡す
+// (uint64BE は BigInt 対応)。
 //
 // 画像/サムネ本体はストレージ保存のため `iv(12B) || ciphertext || GCM tag` の
 // opaque blob として連結して送る (IV は DB 列ではなく blob 先頭に inline)。
@@ -74,7 +80,8 @@ async function _encryptBlob(client, bytes, aad) {
  * @param {number|null} [args.journalEntryId]  紐付け仕訳 id (孤立証憑なら null)
  * @param {Function} [args.fetchImpl]           テスト DI
  * @param {string} [args.csrf]                  CSRF トークン (省略時は meta tag)
- * @returns {Promise<number>} voucher_id
+ * @returns {Promise<{voucherId: number, aadId: bigint}>}
+ *   voucherId は URL/storage 用、aadId は AAD 束縛用 (BigInt)。
  */
 export async function initVoucher({ journalEntryId = null, fetchImpl, csrf } = {}) {
   const f = fetchImpl ?? globalThis.fetch;
@@ -92,7 +99,8 @@ export async function initVoucher({ journalEntryId = null, fetchImpl, csrf } = {
     throw new Error(`initVoucher: HTTP ${r.status} ${e.error || ""}`);
   }
   const data = await r.json();
-  return data.voucher_id;
+  // aad_id は文字列で返る (63bit, JS Number 精度対策) → BigInt にパース。
+  return { voucherId: data.voucher_id, aadId: BigInt(data.aad_id) };
 }
 
 
@@ -102,7 +110,7 @@ export async function initVoucher({ journalEntryId = null, fetchImpl, csrf } = {
  * @param {Object} args
  * @param {Object} args.client                SharedCryptoClient
  * @param {number|bigint} args.userId
- * @param {number|bigint} args.voucherId
+ * @param {number|bigint} args.aadId          AAD 束縛用安定識別子 (init で受領)
  * @param {Uint8Array|ArrayBuffer} args.imageBytes  平文画像バイト列
  * @param {Uint8Array|ArrayBuffer|null} [args.thumbBytes]  平文サムネ (任意)
  * @param {Object} [args.meta]                メタ情報 (original_filename 等)
@@ -110,7 +118,7 @@ export async function initVoucher({ journalEntryId = null, fetchImpl, csrf } = {
  *   metaBlob: Uint8Array, metaIv: Uint8Array, fileHashPlain: string}>}
  */
 export async function encryptVoucher({
-  client, userId, voucherId, imageBytes, thumbBytes = null, meta = {},
+  client, userId, aadId, imageBytes, thumbBytes = null, meta = {},
 }) {
   if (!client || typeof client.encrypt !== "function") {
     throw new Error("client (SharedCryptoClient) is required");
@@ -123,9 +131,9 @@ export async function encryptVoucher({
     throw new Error("imageBytes exceeds 10MB limit");
   }
 
-  const vimgAad = buildAAD("vimg", userId, voucherId);
-  const vthumbAad = buildAAD("vthumb", userId, voucherId);
-  const vmetaAad = buildAAD("vmeta", userId, voucherId);
+  const vimgAad = buildAAD("vimg", userId, aadId);
+  const vthumbAad = buildAAD("vthumb", userId, aadId);
+  const vmetaAad = buildAAD("vmeta", userId, aadId);
 
   const imageCt = await _encryptBlob(client, image, vimgAad);
 
@@ -212,7 +220,9 @@ export async function uploadEncryptedVoucher({
   client, userId, file, journalEntryId = null, makeThumbnail,
   fetchImpl, csrf,
 }) {
-  const voucherId = await initVoucher({ journalEntryId, fetchImpl, csrf });
+  const { voucherId, aadId } = await initVoucher({
+    journalEntryId, fetchImpl, csrf,
+  });
 
   const imageBytes = new Uint8Array(await file.arrayBuffer());
 
@@ -227,7 +237,7 @@ export async function uploadEncryptedVoucher({
   };
 
   const parts = await encryptVoucher({
-    client, userId, voucherId, imageBytes, thumbBytes, meta,
+    client, userId, aadId, imageBytes, thumbBytes, meta,
   });
 
   const res = await putVoucher({

@@ -53,6 +53,10 @@ def index():
             # E4 PR-C2: 暗号化証憑 (encrypted_meta_blob あり) はクライアントが
             # fetch + 復号して表示する。レガシー平文証憑は従来通りサーバ配信。
             "encrypted": v.encrypted_meta_blob is not None,
+            # E4 PR-G (Option C): クライアントが画像/サムネ復号の AAD に束縛する
+            # 安定識別子。63bit のため文字列で渡す (JS Number 精度対策)。
+            # レガシー平文証憑は aad_id なし → null。
+            "aad_id": str(v.aad_id) if v.aad_id is not None else None,
         }
         for v in vouchers
     ]

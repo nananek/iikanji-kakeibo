@@ -3,7 +3,9 @@
 // サーバの画像配信エンドポイント (/ai-journal/voucher/<id>/image) は暗号化証憑を
 // `iv(12B) || ciphertext || GCM tag` の opaque blob (application/octet-stream)
 // として返す。本モジュールはそれを fetch し、AAD (vimg / vthumb + user_id +
-// voucher_id) を組んで MK で復号し、平文画像バイト列を返す。
+// aad_id) を組んで MK で復号し、平文画像バイト列を返す。aad_id は voucher_id と
+// 独立した安定識別子 (E4 #111 Option C) で、URL/fetch には voucher_id、AAD 束縛
+// には aad_id を使う (backup/restore の PK 再採番後も復号できるようにするため)。
 //
 // DOM (URL.createObjectURL / <img>) は呼び出し側 (vouchers/*.mjs, app.js) が
 // 担当し、本モジュールは Node 単体テスト可能な純ロジックに保つ。
@@ -57,13 +59,14 @@ export function voucherImageUrl(voucherId, thumb) {
  * @param {Object} args
  * @param {Object} args.client            SharedCryptoClient
  * @param {number|bigint} args.userId
- * @param {number|bigint} args.voucherId
+ * @param {number|bigint} args.voucherId  URL/fetch 用 (storage key)
+ * @param {number|bigint} args.aadId      AAD 束縛用安定識別子 (vimg/vthumb)
  * @param {boolean} [args.thumb=false]    true ならサムネ (?size=thumb, vthumb AAD)
  * @param {Function} [args.fetchImpl]     テスト DI
  * @returns {Promise<Uint8Array>} 平文画像バイト列
  */
 export async function fetchAndDecryptVoucherImage({
-  client, userId, voucherId, thumb = false, fetchImpl,
+  client, userId, voucherId, aadId, thumb = false, fetchImpl,
 }) {
   if (!client || typeof client.decrypt !== "function") {
     throw new Error("client (SharedCryptoClient) is required");
@@ -81,7 +84,7 @@ export async function fetchAndDecryptVoucherImage({
   }
   const iv = buf.slice(0, 12);
   const ct = buf.slice(12);
-  const aad = buildAAD(thumb ? "vthumb" : "vimg", userId, voucherId);
+  const aad = buildAAD(thumb ? "vthumb" : "vimg", userId, aadId);
   const res = await client.decrypt(ct, iv, aad);
   return res.plaintext;
 }

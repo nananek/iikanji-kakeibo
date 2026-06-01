@@ -86,23 +86,24 @@ test("本体を fetch + 復号 (vimg AAD)", async () => {
     return abResp(blob);
   };
   const out = await fetchAndDecryptVoucherImage({
-    client, userId: 3, voucherId: 7, fetchImpl,
+    client, userId: 3, voucherId: 7, aadId: 777n, fetchImpl,
   });
   assert.deepEqual(out, plaintext);
-  assert.deepEqual(client.calls[0].aad, buildAAD("vimg", 3, 7));
+  // URL は voucher_id=7、AAD は aad_id=777 で束縛 (別値で区別)。
+  assert.deepEqual(client.calls[0].aad, buildAAD("vimg", 3, 777n));
   assert.equal(client.calls[0].ivLen, 12);
 });
 
-test("サムネは ?size=thumb + vthumb AAD", async () => {
+test("サムネは ?size=thumb + vthumb AAD (aad_id 束縛)", async () => {
   const client = makeMockClient();
   const blob = new Uint8Array(12 + 4 + 16);
   let calledUrl = null;
   const fetchImpl = async (url) => { calledUrl = url; return abResp(blob); };
   await fetchAndDecryptVoucherImage({
-    client, userId: 3, voucherId: 7, thumb: true, fetchImpl,
+    client, userId: 3, voucherId: 7, aadId: 777n, thumb: true, fetchImpl,
   });
   assert.equal(calledUrl, "/ai-journal/voucher/7/image?size=thumb");
-  assert.deepEqual(client.calls[0].aad, buildAAD("vthumb", 3, 7));
+  assert.deepEqual(client.calls[0].aad, buildAAD("vthumb", 3, 777n));
 });
 
 test("非 2xx は throw", async () => {

@@ -84,19 +84,34 @@ test("sha256Hex: 不正な型は TypeError", async () => {
 
 // ============ initVoucher ============
 
-test("initVoucher: POST /init → voucher_id", async () => {
+test("initVoucher: POST /init → {voucherId, aadId} (aad_id は文字列→BigInt)", async () => {
   let captured = null;
   const fetchImpl = mockFetch([
     ["/api/v1/vouchers/init", (url, opts) => {
       captured = opts;
-      return jsonResp(201, { ok: true, voucher_id: 42 });
+      return jsonResp(201, { ok: true, voucher_id: 42, aad_id: "777" });
     }],
   ]);
-  const vid = await initVoucher({ journalEntryId: 7, fetchImpl, csrf: "tok" });
-  assert.equal(vid, 42);
+  const { voucherId, aadId } = await initVoucher({
+    journalEntryId: 7, fetchImpl, csrf: "tok",
+  });
+  assert.equal(voucherId, 42);
+  assert.equal(aadId, 777n);
   assert.equal(captured.method, "POST");
   assert.equal(captured.headers["X-CSRFToken"], "tok");
   assert.deepEqual(JSON.parse(captured.body), { journal_entry_id: 7 });
+});
+
+test("initVoucher: 63bit の aad_id を精度欠落なく BigInt 化", async () => {
+  // 9223372036854775783 は 2^53 を遥かに超える素数 (Number では丸められる)。
+  const big = "9223372036854775783";
+  const fetchImpl = mockFetch([
+    ["/api/v1/vouchers/init", () =>
+      jsonResp(201, { ok: true, voucher_id: 1, aad_id: big })],
+  ]);
+  const { aadId } = await initVoucher({ fetchImpl, csrf: "x" });
+  assert.equal(aadId, BigInt(big));
+  assert.equal(aadId.toString(), big);
 });
 
 test("initVoucher: journalEntryId 省略時は null を送る", async () => {
@@ -104,7 +119,7 @@ test("initVoucher: journalEntryId 省略時は null を送る", async () => {
   const fetchImpl = mockFetch([
     ["/api/v1/vouchers/init", (url, opts) => {
       body = JSON.parse(opts.body);
-      return jsonResp(201, { ok: true, voucher_id: 1 });
+      return jsonResp(201, { ok: true, voucher_id: 1, aad_id: "5" });
     }],
   ]);
   await initVoucher({ fetchImpl, csrf: "x" });
@@ -124,15 +139,15 @@ test("initVoucher: 非 2xx は throw", async () => {
 
 // ============ encryptVoucher ============
 
-test("encryptVoucher: 画像/サムネ/メタを正しい AAD で暗号化", async () => {
+test("encryptVoucher: 画像/サムネ/メタを正しい AAD (aad_id 束縛) で暗号化", async () => {
   const client = makeMockClient();
   const userId = 5;
-  const voucherId = 99;
+  const aadId = 99n;
   const imageBytes = new Uint8Array([1, 2, 3, 4]);
   const thumbBytes = new Uint8Array([9, 9]);
 
   const out = await encryptVoucher({
-    client, userId, voucherId, imageBytes, thumbBytes,
+    client, userId, aadId, imageBytes, thumbBytes,
     meta: { original_filename: "r.jpg", image_mime: "image/jpeg" },
   });
 
@@ -144,17 +159,18 @@ test("encryptVoucher: 画像/サムネ/メタを正しい AAD で暗号化", asy
   // file_hash_plain = SHA-256(平文画像)
   assert.equal(out.fileHashPlain, await sha256Hex(imageBytes));
 
-  // 3 回 encrypt が呼ばれ、それぞれ vimg/vthumb/vmeta AAD
+  // 3 回 encrypt が呼ばれ、それぞれ vimg/vthumb/vmeta AAD (voucher_id ではなく
+  // aad_id 束縛)
   assert.equal(client.calls.length, 3);
-  assert.deepEqual(client.calls[0].aad, buildAAD("vimg", userId, voucherId));
-  assert.deepEqual(client.calls[1].aad, buildAAD("vthumb", userId, voucherId));
-  assert.deepEqual(client.calls[2].aad, buildAAD("vmeta", userId, voucherId));
+  assert.deepEqual(client.calls[0].aad, buildAAD("vimg", userId, aadId));
+  assert.deepEqual(client.calls[1].aad, buildAAD("vthumb", userId, aadId));
+  assert.deepEqual(client.calls[2].aad, buildAAD("vmeta", userId, aadId));
 });
 
 test("encryptVoucher: サムネ省略時 thumbCt=null・encrypt 2 回", async () => {
   const client = makeMockClient();
   const out = await encryptVoucher({
-    client, userId: 1, voucherId: 2,
+    client, userId: 1, aadId: 2n,
     imageBytes: new Uint8Array([7]),
   });
   assert.equal(out.thumbCt, null);
@@ -170,7 +186,7 @@ test("encryptVoucher: meta は {v:1, ...} を含む", async () => {
     },
   };
   await encryptVoucher({
-    client, userId: 1, voucherId: 2,
+    client, userId: 1, aadId: 2n,
     imageBytes: new Uint8Array([1]),
     meta: { original_filename: "a.png" },
   });
@@ -182,14 +198,14 @@ test("encryptVoucher: meta は {v:1, ...} を含む", async () => {
 
 test("encryptVoucher: client 不正で throw", async () => {
   await assert.rejects(
-    () => encryptVoucher({ client: {}, userId: 1, voucherId: 1, imageBytes: new Uint8Array([1]) }),
+    () => encryptVoucher({ client: {}, userId: 1, aadId: 1n, imageBytes: new Uint8Array([1]) }),
     /client/,
   );
 });
 
 test("encryptVoucher: 空画像で throw", async () => {
   await assert.rejects(
-    () => encryptVoucher({ client: makeMockClient(), userId: 1, voucherId: 1, imageBytes: new Uint8Array(0) }),
+    () => encryptVoucher({ client: makeMockClient(), userId: 1, aadId: 1n, imageBytes: new Uint8Array(0) }),
     /empty/,
   );
 });
@@ -197,7 +213,7 @@ test("encryptVoucher: 空画像で throw", async () => {
 test("encryptVoucher: 10MB 超で throw", async () => {
   await assert.rejects(
     () => encryptVoucher({
-      client: makeMockClient(), userId: 1, voucherId: 1,
+      client: makeMockClient(), userId: 1, aadId: 1n,
       imageBytes: new Uint8Array(10 * 1024 * 1024 + 1),
     }),
     /10MB/,
@@ -281,7 +297,8 @@ test("uploadEncryptedVoucher: init→encrypt→PUT 一連", async () => {
   const client = makeMockClient();
   const puts = [];
   const fetchImpl = mockFetch([
-    ["/api/v1/vouchers/init", () => jsonResp(201, { ok: true, voucher_id: 123 })],
+    ["/api/v1/vouchers/init", () =>
+      jsonResp(201, { ok: true, voucher_id: 123, aad_id: "777" })],
     [/\/api\/v1\/vouchers\/123$/, (url, opts) => {
       puts.push(opts);
       return jsonResp(200, { ok: true, voucher_id: 123, file_hash_cipher: "deadbeef" });
@@ -299,15 +316,17 @@ test("uploadEncryptedVoucher: init→encrypt→PUT 一連", async () => {
 
   assert.equal(res.voucherId, 123);
   assert.equal(res.file_hash_cipher, "deadbeef");
-  assert.equal(puts.length, 1);
-  // image_ct の AAD は voucher_id=123 で束縛されている
-  assert.deepEqual(client.calls[0].aad, buildAAD("vimg", 8, 123));
+  assert.equal(puts.length, 1);  // PUT は /vouchers/123 (route regex で検証済)
+  // image_ct の AAD は aad_id=777 で束縛される (voucher_id=123 ではないことを
+  // 別値で確認)。
+  assert.deepEqual(client.calls[0].aad, buildAAD("vimg", 8, 777n));
 });
 
 test("uploadEncryptedVoucher: makeThumbnail 省略でサムネなし", async () => {
   const client = makeMockClient();
   const fetchImpl = mockFetch([
-    ["/api/v1/vouchers/init", () => jsonResp(201, { ok: true, voucher_id: 1 })],
+    ["/api/v1/vouchers/init", () =>
+      jsonResp(201, { ok: true, voucher_id: 1, aad_id: "5" })],
     [/\/vouchers\/1$/, () => jsonResp(200, { ok: true })],
   ]);
   const file = fakeFile(new Uint8Array([1]), "x.png", "image/png");
@@ -331,7 +350,7 @@ test("_csrf: document があれば meta tag から取得", async () => {
   const fetchImpl = mockFetch([
     ["/api/v1/vouchers/init", (url, opts) => {
       header = opts.headers["X-CSRFToken"];
-      return jsonResp(201, { ok: true, voucher_id: 1 });
+      return jsonResp(201, { ok: true, voucher_id: 1, aad_id: "5" });
     }],
   ]);
   try {
