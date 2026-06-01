@@ -361,7 +361,9 @@ def acknowledge_audit_response(response_id: int):
     if resp is None:
         return jsonify(error="not found"), 404
     pkg = db.session.get(AuditPackage, resp.audit_package_id)
-    if pkg is None or pkg.owner_user_id != me:
+    if pkg is None:
+        return jsonify(error="not found"), 404
+    if pkg.owner_user_id != me:
         return jsonify(error="forbidden"), 403
     resp.owner_acknowledged_at = _now()
     db.session.commit()

@@ -141,6 +141,11 @@ def get_other_public_key(user_id: int):
     判定する (IDOR 防止)。秘密鍵関連 (encrypted_private_key 等) は絶対に返さない。
     TOFU fingerprint 検証はクライアント側で行い、ここは存在確認のみ。
     """
+    # 公開鍵取得も self-service。代理閲覧 (acting-as) 中は遮断する
+    # (Lv3 監査者が owner として任意の相手の公開鍵を取得するのを防ぐ)。
+    proxy_err = reject_if_proxy()
+    if proxy_err is not None:
+        return proxy_err
     me = g.auth_user.id
     # 自分が owner で相手が auditor、または自分が auditor で相手が owner の
     # 有効な grant が 1 件でもあれば取得可。

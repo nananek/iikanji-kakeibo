@@ -446,6 +446,16 @@ def test_get_other_public_key_revoked_grant_404(client, db):
     assert client.get(f"/api/v1/keypair/{auditor.id}/public").status_code == 404
 
 
+def test_get_other_public_key_rejected_during_proxy_view(client, db):
+    # 公開鍵取得も代理閲覧 (acting-as) 中は 403 (Lv3 監査者の鍵取得を遮断)。
+    owner, auditor = _user(db), _user(db)
+    auditor.public_key = b"\x07" * 32
+    db.session.commit()
+    _grant(db, owner, auditor, level=3)
+    _acting_as(client, auditor, owner, level=3)
+    assert client.get(f"/api/v1/keypair/{auditor.id}/public").status_code == 403
+
+
 def test_get_other_public_key_never_leaks_private(client, db):
     owner, auditor = _user(db), _user(db)
     auditor.public_key = b"\x07" * 32
