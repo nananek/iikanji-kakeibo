@@ -1061,6 +1061,16 @@ class TestBackupRestoreHelpers:
         with pytest.raises(BackupValidationError, match="meta_iv"):
             _validate_backup(1, self._e2ee_voucher_backup(meta_iv=bad_iv))
 
+    def test_validate_voucher_meta_iv_required(self):
+        """E2EE 証憑 (encrypted_meta_blob あり) で meta_iv 欠落は 400。"""
+        from app.services.backup_restore import (
+            _validate_backup, BackupValidationError,
+        )
+        b = self._e2ee_voucher_backup()
+        del b["data"]["vouchers"][0]["meta_iv"]
+        with pytest.raises(BackupValidationError, match="meta_iv は E2EE 証憑で必須"):
+            _validate_backup(1, b)
+
     def test_validate_voucher_file_size_negative(self):
         from app.services.backup_restore import (
             _validate_backup, BackupValidationError,

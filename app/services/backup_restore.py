@@ -167,16 +167,22 @@ def _validate_backup(user_id: int, backup: Any) -> None:
                 raise BackupValidationError(
                     f"vouchers[id={vid}].aad_id が BigInteger 範囲外です: {aad_int}"
                 )
-        # meta_iv: AES-GCM nonce は 12 bytes 固定。長さ不正だとクライアント復号が
-        # 確実に失敗するので、復元完了扱いになる前にここで弾く。
+        # meta_iv: AES-GCM nonce は 12 bytes 固定。encrypted_meta_blob と同じ
+        # 056 で対に導入された列なので、暗号化証憑では必須。欠落 / 不正長は
+        # クライアント復号が確実に失敗する (サイレント破損) ため、細工された
+        # backup からの注入を復元完了扱いになる前にここで弾く。
         meta_iv_b64 = row.get("meta_iv")
-        if meta_iv_b64 is not None:
-            iv = _b64_decode(meta_iv_b64)  # 不正 base64 は BackupValidationError
-            if iv is not None and len(iv) != 12:
-                raise BackupValidationError(
-                    f"vouchers[id={vid}].meta_iv は 12 bytes (AES-GCM nonce) "
-                    f"である必要があります (実際: {len(iv)})"
-                )
+        if meta_iv_b64 is None:
+            raise BackupValidationError(
+                f"vouchers[id={vid}].meta_iv は E2EE 証憑で必須です "
+                "(encrypted_meta_blob と対で AES-GCM nonce を保持する)"
+            )
+        iv = _b64_decode(meta_iv_b64)  # 不正 base64 は BackupValidationError
+        if iv is not None and len(iv) != 12:
+            raise BackupValidationError(
+                f"vouchers[id={vid}].meta_iv は 12 bytes (AES-GCM nonce) "
+                f"である必要があります (実際: {len(iv)})"
+            )
         # file_size: 容量計上に使う非負整数。bool は int のサブクラスなので除外。
         fs = row.get("file_size")
         if fs is not None and (
