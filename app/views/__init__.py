@@ -18,6 +18,7 @@ from app.views.oauth import bp as oauth_bp
 from app.views.legal import bp as legal_bp
 from app.views.wrapped_keys import bp as wrapped_keys_bp
 from app.views.keypair import bp as keypair_bp
+from app.views.audit_packages import bp as audit_packages_bp
 from app.views.ai_config_api import bp as ai_config_api_bp
 
 
@@ -42,4 +43,5 @@ def register_blueprints(app):
     app.register_blueprint(legal_bp)
     app.register_blueprint(wrapped_keys_bp)
     app.register_blueprint(keypair_bp)
+    app.register_blueprint(audit_packages_bp)
     app.register_blueprint(ai_config_api_bp)

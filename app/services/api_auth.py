@@ -147,6 +147,30 @@ def auth_required(
     return decorator
 
 
+def reject_if_proxy():
+    """監査代理閲覧 (acting-as) 中のリクエストを 403 で拒否する。
+
+    `auth_required` (resolve_bearer_or_session) は Lv3 代理閲覧時に
+    `g.auth_user = owner` を返す。鍵ペア管理・監査ワークフロー API は「常に
+    ログイン本人の self-service」が前提なので、本人 (current_user) と effective
+    user (g.auth_user) の不一致を検知して遮断する (Lv3 監査者による鍵注入・
+    なりすまし防止)。Bearer 認証時は current_user 非認証なので対象外
+    (代理閲覧の概念がない)。
+
+    戻り値: 拒否時は `(response, 403)`、許可時は `None`。
+    """
+    auth_user = getattr(g, "auth_user", None)
+    if (
+        current_user.is_authenticated
+        and auth_user is not None
+        and auth_user.id != current_user.id
+    ):
+        return jsonify(
+            error="this endpoint is not available during proxy view"
+        ), 403
+    return None
+
+
 def rate_limit_key() -> str:
     """レート制限の per-user キー。
 
