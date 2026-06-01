@@ -43,7 +43,9 @@ from app.models.voucher import Voucher
 from app.models.voucher_audit_log import VoucherAuditLog
 from app.models.webhook import WebhookConfig
 from app.services.storage import (
+    ENCRYPTED_CONTENT_TYPE,
     get_storage_backend,
+    make_encrypted_thumbnail_key,
     make_storage_key,
     make_thumbnail_key,
     store_image_with_thumbnail,
@@ -209,7 +211,14 @@ def _delete_user_data_for_restore(user_id: int, backend) -> None:
     # 2. Voucher: ストレージ + DB
     vouchers = Voucher.query.filter_by(user_id=user_id).all()
     for v in vouchers:
-        for k in (v.image_key, make_thumbnail_key(v.image_key)):
+        # 平文証憑は make_thumbnail_key (_thumb.jpg)、E4 (#111) E2EE 証憑は
+        # thumbnail_key (_thumb.bin) にサムネを持つ。両方を best-effort で消す
+        # (取り違えても delete は冪等)。これを怠ると E2EE サムネ暗号文が
+        # ストレージに孤立する。
+        keys = [v.image_key, make_thumbnail_key(v.image_key)]
+        if v.thumbnail_key:
+            keys.append(v.thumbnail_key)
+        for k in keys:
             try:
                 backend.delete(k)
             except Exception as e:
@@ -477,8 +486,55 @@ def _restore_vouchers(
         old_eid = r.get("journal_entry_id")
         new_eid = entry_id_map.get(old_eid) if old_eid is not None else None
         # 改ざん検知: 画像バイトから SHA-256 を再計算して file_hash に採用
-        # (backup の file_hash と画像バイトが不一致のまま保存しない)
+        # (backup の file_hash と画像バイトが不一致のまま保存しない)。E2EE 証憑では
+        # image_bytes は暗号文 (iv||ct||tag) なので、これは finalize_voucher_upload
+        # が保存する cipher hash と一致する (電帳法 Q11 ハイブリッドの cipher 側)。
         computed_hash = hashlib.sha256(image_bytes).hexdigest()
+
+        meta_blob_b64 = r.get("encrypted_meta_blob")
+        if meta_blob_b64 is not None:
+            # --- E4 (#111) E2EE 証憑: 暗号文をそのまま保存 (Pillow を回さない) ---
+            # サーバは復号できないので画像/サムネ暗号文を無加工で書き戻し、復号に
+            # 必要な暗号メタ列 (encrypted_meta_blob / meta_iv / file_hash_plain /
+            # aad_id) を復元する。aad_id を往復保持することで、PK 再採番後も AAD が
+            # 一致しクライアント復号が成立する (Option C / PR-G の基盤)。
+            thumb_b64 = r.get("thumbnail_data")
+            thumb_bytes = _b64_decode(thumb_b64) if thumb_b64 is not None else None
+            aad_raw = r.get("aad_id")
+            meta_iv_b64 = r.get("meta_iv")
+            backed_size = r.get("file_size")
+            voucher = Voucher(
+                user_id=user_id,
+                journal_entry_id=new_eid,
+                image_key="",  # 仮、後で setattr
+                image_mime=r.get("image_mime") or ENCRYPTED_CONTENT_TYPE,
+                file_hash=computed_hash,  # cipher hash
+                file_hash_plain=r.get("file_hash_plain"),
+                encrypted_meta_blob=_b64_decode(meta_blob_b64),
+                meta_iv=_b64_decode(meta_iv_b64) if meta_iv_b64 else None,
+                aad_id=int(aad_raw) if aad_raw is not None else None,
+                # E2EE の file_size は画像+サムネ暗号文の合計 (finalize と同じ)。
+                # backup 値を優先し、欠落時のみ再計算する。
+                file_size=backed_size if backed_size is not None
+                else len(image_bytes) + (len(thumb_bytes) if thumb_bytes else 0),
+                uploaded_at=_parse_datetime(r.get("uploaded_at")) or datetime.now(timezone.utc),
+            )
+            db.session.add(voucher)
+            db.session.flush()
+            new_key = make_storage_key(user_id, voucher.id, ENCRYPTED_CONTENT_TYPE)
+            voucher.image_key = new_key
+            backend.put(new_key, image_bytes, ENCRYPTED_CONTENT_TYPE)
+            written_keys.append(new_key)
+            if thumb_bytes is not None:
+                thumb_key = make_encrypted_thumbnail_key(new_key)
+                voucher.thumbnail_key = thumb_key
+                backend.put(thumb_key, thumb_bytes, ENCRYPTED_CONTENT_TYPE)
+                written_keys.append(thumb_key)
+            db_n += 1
+            storage_n += 1
+            continue
+
+        # --- レガシー平文証憑 (AI クイックアクセプト等): 従来通り Pillow サムネ生成 ---
         voucher = Voucher(
             user_id=user_id,
             journal_entry_id=new_eid,
