@@ -11,7 +11,7 @@
   鍵を登録しても既存の家計簿データへの影響はありません。
 </div>
 
-<div x-data="encryptionKeyWizard()" x-init="init()" class="card shadow-sm">
+<div x-data="encryptionKeyWizard({ userId: {{ current_user.id|tojson }} })" x-init="init()" class="card shadow-sm">
   <div class="card-body">
 
     <!-- エラー表示 -->

@@ -29,6 +29,7 @@ import {
 } from "./bip39.js";
 import { loadHashWasm } from "./hash_wasm_loader.js";
 import { beginPasskeyKeyDerivation } from "./passkey_flow.js";
+import { ensureKeyPair } from "./keypair.js";
 
 
 // SharedWorker URL は base.html 等で `window.IIKANJI_SHARED_WORKER_URL` に
@@ -56,7 +57,7 @@ function getSharedWorkerUrl() {
  *   mnemonicAcked : 「紙にメモした」チェックボックス
  *   doneMethod    : 完了直後の方式表示用
  */
-export function encryptionKeyWizard() {
+export function encryptionKeyWizard(config = {}) {
   return {
     step: "start",
     loading: false,
@@ -74,6 +75,8 @@ export function encryptionKeyWizard() {
     unlockMnemonic: "",        // リカバリシード方式の入力
     // 内部ハンドル (非リアクティブ)
     _client: null,
+    // X25519 鍵ペア backfill 用ユーザー ID (テンプレートから注入、§14 / E5 PR-A)
+    _userId: config.userId ?? null,
 
     async init() {
       try {
@@ -133,10 +136,28 @@ export function encryptionKeyWizard() {
       this.unlockingKey = null;
       // hasKey は mkChanged ハンドラ経由で更新済み
       this.step = "start";
+      // MK が手元にある今、X25519 鍵ペア未設定なら backfill (§14 / E5 PR-A)
+      await this._backfillKeyPair();
       // 一覧の last_used_at を最新化するため再取得
       try {
         this.existingKeys = await listWrappedKeys();
       } catch (_e) { /* ignore */ }
+    },
+
+    /**
+     * X25519 鍵ペアが未設定なら生成して保管する (best-effort)。MK が
+     * SharedWorker にある状態で呼ぶこと。失敗しても鍵設定/解錠フロー自体は
+     * 妨げない (設計書の「監査者鍵生成失敗は手動対応」と整合)。userId 未注入
+     * (テンプレートが古い等) の場合は no-op。
+     */
+    async _backfillKeyPair() {
+      if (this._userId === null || this._userId === undefined) return;
+      try {
+        await ensureKeyPair(this._client, this._userId);
+      } catch (e) {
+        // 監査連携 (E5) 未利用なら実害なし。次回 MK 解錠時に再試行される。
+        console.warn("X25519 鍵ペアの生成/保管に失敗しました:", e?.message || e);
+      }
     },
 
     /** パスフレーズ方式でロック解除。 */
@@ -325,6 +346,8 @@ export function encryptionKeyWizard() {
         this.doneMethod = "passkey_prf";
         this.step = "done";
         this.hasKey = true;
+        // 新規 MK 確立直後に X25519 鍵ペアを生成・保管 (§14 / E5 PR-A)
+        await this._backfillKeyPair();
       } catch (e) {
         this.error = e?.message || String(e);
         if (workerKeyGenerated) {
@@ -402,6 +425,8 @@ export function encryptionKeyWizard() {
         this.doneMethod = "passphrase";
         this.step = "done";
         this.hasKey = true;
+        // 新規 MK 確立直後に X25519 鍵ペアを生成・保管 (§14 / E5 PR-A)
+        await this._backfillKeyPair();
       } catch (e) {
         this.error = e?.message || String(e);
         // generateKey 成功後の失敗なら Worker の MK を clear して矛盾状態を解消
@@ -453,6 +478,8 @@ export function encryptionKeyWizard() {
         this.doneMethod = "recovery_seed";
         this.step = "done";
         this.hasKey = true;
+        // 新規 MK 確立直後に X25519 鍵ペアを生成・保管 (§14 / E5 PR-A)
+        await this._backfillKeyPair();
       } catch (e) {
         this.error = e?.message || String(e);
         if (workerKeyGenerated) {

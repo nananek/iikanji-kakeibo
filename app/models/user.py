@@ -52,8 +52,13 @@ class User(UserMixin, db.Model):
     # 暗号化済みバイト列のみ受け付けるバリデーションを追加する。設計書 §13.9
     # の HSM/KMS 緩和策と整合させること。
     migration_temp_mk = db.Column(db.LargeBinary, nullable=True)
-    # X25519 公開鍵 (E5 #112 監査連携で使用)。新規登録時に自動生成。
+    # X25519 公開鍵 (E5 #112 監査連携で使用)。MK 設定/解錠時にクライアントが
+    # 鍵ペアを生成し、公開鍵を平文でここに保管する。
     public_key = db.Column(db.LargeBinary, nullable=True)
+    # X25519 秘密鍵を MK で AES-GCM 暗号化した暗号文 (pkcs8) と IV (12B)。
+    # サーバは平文 MK を持たないので復号できない (E5 #112 PR-A, 設計書 §14)。
+    encrypted_private_key = db.Column(db.LargeBinary, nullable=True)
+    private_key_iv = db.Column(db.LargeBinary, nullable=True)
     # MK ローテーション進捗 (status / progress / new_wrapped_keys_id_set 等、§10.5)
     mk_rotation_state = db.Column(db.JSON, nullable=True)
 
