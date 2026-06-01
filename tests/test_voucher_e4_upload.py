@@ -110,7 +110,7 @@ class TestVoucherInit:
         from app.services import voucher as vsvc
 
         _db.session.add(Voucher(
-            user_id=user.id, image_key="occupied", image_mime="image/jpeg",
+            user_id=user.id, image_key="occupied",
             aad_id=424242,
         ))
         _db.session.commit()
@@ -245,7 +245,7 @@ class TestVoucherUpload:
     ):
         # second_user の init voucher を user が PUT しようとする
         v = Voucher(user_id=second_user.id, image_key="",
-                    image_mime="application/octet-stream")
+                    )
         db.session.add(v)
         db.session.commit()
         resp = _upload(logged_in_client, v.id)
@@ -289,7 +289,7 @@ class TestProxyBlocked:
     ):
         # 本人として init → その後 auditor が代理で PUT を試みる
         v = Voucher(user_id=user.id, image_key="",
-                    image_mime="application/octet-stream")
+                    )
         db.session.add(v)
         db.session.commit()
         self._grant_lv3(db, user, auditor)
@@ -314,7 +314,6 @@ class TestAtomicClaim:
         v = Voucher(
             user_id=user.id,
             image_key="vouchers/x/already.bin",  # 既に確定済み (勝者が claim 済)
-            image_mime="application/octet-stream",
         )
         db.session.add(v)
         db.session.commit()
@@ -445,7 +444,6 @@ class TestIndexEncryptedFlag:
         plain = make_voucher(db, user.id)  # encrypted_meta_blob なし
         enc = Voucher(
             user_id=user.id, image_key="vouchers/1/9.bin",
-            image_mime="application/octet-stream",
             encrypted_meta_blob=b"blob", meta_iv=bytes(12),
         )
         db.session.add(enc)

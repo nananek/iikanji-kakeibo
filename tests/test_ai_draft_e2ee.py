@@ -321,7 +321,9 @@ class TestCreateVoucherFromDraftE2EE:
         voucher = create_voucher_from_draft(draft, journal_entry_id=None)
         db.session.commit()
 
-        assert voucher.image_mime == "image/png"
+        # E5 PR-5 (#111): voucher.image_mime 列は DROP 済。平文下書きは E2EE 列が
+        # 全て None の平文証憑になる (image_key は引き継ぐ)。
+        assert voucher.image_key == "vouchers/1/9.png"
         assert voucher.encrypted_meta_blob is None
         assert voucher.aad_id is None
 
@@ -362,4 +364,32 @@ class TestAIDraftThumbnailOrphan:
         assert backend.exists(thumb_key)
 
         delete_user_account(user.id)
+        assert not backend.exists(thumb_key)
+
+    def test_restore_delete_removes_encrypted_thumbnail(self, db, logged_in_client, user):
+        # PR-4 レビュー指摘: restore 時の破壊的削除経路も _thumb.bin を消すこと。
+        from app.services.backup_restore import _delete_user_data_for_restore
+        draft_id = self._make_e2ee_draft(logged_in_client)
+        draft = db.session.get(AIDraft, draft_id)
+        thumb_key = draft.thumbnail_key
+        backend = get_storage_backend()
+        assert backend.exists(thumb_key)
+
+        _delete_user_data_for_restore(user.id, backend)
+        db.session.commit()
+        assert not backend.exists(thumb_key)
+
+    def test_upload_cleanup_removes_temp_encrypted_thumbnail(self, db, logged_in_client, user):
+        # PR-4 レビュー指摘: upload 画面の temp 下書きクリーンアップ経路。
+        draft_id = self._make_e2ee_draft(logged_in_client)
+        draft = db.session.get(AIDraft, draft_id)
+        draft.status = "temp"  # upload() が消す対象
+        db.session.commit()
+        thumb_key = draft.thumbnail_key
+        backend = get_storage_backend()
+        assert backend.exists(thumb_key)
+
+        # upload 画面 GET で temp 下書きをクリーンアップ。
+        resp = logged_in_client.get("/ai-journal/")
+        assert resp.status_code == 200
         assert not backend.exists(thumb_key)

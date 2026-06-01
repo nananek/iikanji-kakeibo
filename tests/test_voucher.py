@@ -20,7 +20,6 @@ class TestVoucherModel:
         v = Voucher(
             user_id=user.id,
             image_key="vouchers/1/99.jpg",
-            image_mime="image/jpeg",
             file_hash="a" * 64,
         )
         db.session.add(v)
@@ -35,7 +34,6 @@ class TestVoucherModel:
             user_id=user.id,
             journal_entry_id=None,
             image_key="vouchers/1/99.jpg",
-            image_mime="image/jpeg",
         )
         db.session.add(v)
         db.session.commit()
@@ -59,7 +57,6 @@ class TestVoucherE4EncryptedColumns:
         v = Voucher(
             user_id=user.id,
             image_key="vouchers/1/1.jpg",
-            image_mime="image/jpeg",
         )
         db.session.add(v)
         db.session.commit()
@@ -76,7 +73,6 @@ class TestVoucherE4EncryptedColumns:
         v = Voucher(
             user_id=user.id,
             image_key="vouchers/1/1.bin",
-            image_mime="application/octet-stream",
             file_hash="c" * 64,
             encrypted_meta_blob=meta_blob,
             meta_iv=meta_iv,
@@ -182,7 +178,6 @@ class TestCreateVoucherFromDraft:
         assert voucher.id is not None
         assert voucher.journal_entry_id == entry.id
         assert voucher.image_key == "vouchers/1/42.jpg"
-        assert voucher.image_mime == "image/jpeg"
         assert voucher.file_hash == "b" * 64
         assert voucher.uploaded_at is not None
 
@@ -217,7 +212,6 @@ class TestVoucherImageEndpoint:
             user_id=user.id,
             journal_entry_id=entry.id,
             image_key=image_key,
-            image_mime="image/jpeg",
         )
         db.session.add(v)
         db.session.commit()
@@ -228,7 +222,9 @@ class TestVoucherImageEndpoint:
         resp = logged_in_client.get(f"/ai-journal/voucher/{v.id}/image")
         assert resp.status_code == 200
         assert resp.data == b"fake-jpeg-data"
-        assert resp.content_type == "image/jpeg"
+        # E5 PR-5 (#111): image_mime 列廃止により平文証憑も octet-stream 配信
+        # (ブラウザが content-sniff)。
+        assert resp.content_type == "application/octet-stream"
 
     def test_voucher_image_wrong_user(self, app, db, user, accounts, second_user):
         v = self._setup_voucher_with_file(db, user, accounts)
@@ -286,7 +282,6 @@ class TestAPIVoucherImage:
             user_id=user.id,
             journal_entry_id=entry.id,
             image_key=image_key,
-            image_mime="image/jpeg",
         )
         db.session.add(v)
         db.session.commit()

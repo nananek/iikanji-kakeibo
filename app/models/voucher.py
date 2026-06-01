@@ -25,7 +25,9 @@ class Voucher(db.Model):
         index=True,
     )
     image_key = db.Column(db.String(255), nullable=False)
-    image_mime = db.Column(db.String(50), nullable=False)
+    # E5 PR-5 (#111): image_mime 列は 060 で DROP 済。E2EE 証憑の実 MIME は
+    # encrypted_meta_blob 内、レガシー平文証憑は octet-stream + content-sniff で
+    # 配信するため列は不要になった。
     # SHA-256。E4 (#111) では暗号文画像のハッシュ (= file_hash_cipher 相当) を
     # 保持する。サーバが MK なしで「あるはずの暗号文が改ざんされていないか」を
     # 検証できる電帳法 Q11 ハイブリッドの cipher 側。平文側は file_hash_plain。

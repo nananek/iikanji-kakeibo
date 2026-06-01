@@ -24,7 +24,6 @@ def _setup_voucher_with_file(db_sess, user, accounts):
         user_id=user.id,
         journal_entry_id=entry.id,
         image_key=image_key,
-        image_mime="image/jpeg",
     )
     db_sess.session.add(v)
     db_sess.session.commit()

@@ -46,7 +46,7 @@ class TestBackfillFileSizes:
         db.session.flush()
         voucher = Voucher(
             user_id=user.id, journal_entry_id=entry.id,
-            image_key="v1.jpg", image_mime="image/jpeg",
+            image_key="v1.jpg",
             file_size=None,
         )
         db.session.add(voucher)
@@ -114,7 +114,7 @@ class TestMeasureUserUsage:
         db.session.flush()
         db.session.add(Voucher(
             user_id=user.id, journal_entry_id=entry.id,
-            image_key="v.jpg", image_mime="image/jpeg", file_size=3 * MB,
+            image_key="v.jpg", file_size=3 * MB,
         ))
         db.session.add(AIDraft(
             user_id=user.id, image_key="d.jpg",
@@ -139,7 +139,7 @@ class TestAuditStorageUsage:
         db.session.flush()
         db.session.add(Voucher(
             user_id=user.id, journal_entry_id=entry.id,
-            image_key="v.jpg", image_mime="image/jpeg", file_size=100,
+            image_key="v.jpg", file_size=100,
         ))
         db.session.add(StorageUsage(user_id=user.id, used_bytes=100))
         db.session.commit()
@@ -158,7 +158,7 @@ class TestAuditStorageUsage:
         db.session.flush()
         db.session.add(Voucher(
             user_id=user.id, journal_entry_id=entry.id,
-            image_key="v.jpg", image_mime="image/jpeg", file_size=100,
+            image_key="v.jpg", file_size=100,
         ))
         # StorageUsage は 50 (drift -50)
         db.session.add(StorageUsage(user_id=user.id, used_bytes=50))
@@ -182,7 +182,7 @@ class TestAuditStorageUsage:
         db.session.flush()
         db.session.add(Voucher(
             user_id=user.id, journal_entry_id=entry.id,
-            image_key="v.jpg", image_mime="image/jpeg", file_size=100,
+            image_key="v.jpg", file_size=100,
         ))
         db.session.add(StorageUsage(user_id=user.id, used_bytes=50))
         db.session.commit()
@@ -201,7 +201,7 @@ class TestAuditStorageUsage:
         db.session.flush()
         db.session.add(Voucher(
             user_id=user.id, journal_entry_id=entry.id,
-            image_key="v.jpg", image_mime="image/jpeg", file_size=100,
+            image_key="v.jpg", file_size=100,
         ))
         # StorageUsage row なし
         db.session.commit()

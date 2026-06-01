@@ -677,7 +677,7 @@ class TestBackupRestoreImages:
         import hashlib
         v0 = Voucher(
             user_id=user.id, journal_entry_id=None,
-            image_key=img_key, image_mime=ENCRYPTED_CONTENT_TYPE,
+            image_key=img_key,
             file_hash=hashlib.sha256(image_ct).hexdigest(),
             file_hash_plain="c" * 64,
             encrypted_meta_blob=meta_blob, meta_iv=meta_iv,

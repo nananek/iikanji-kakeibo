@@ -330,7 +330,6 @@ class TestVoucherDelete:
         voucher = Voucher(
             user_id=user.id, journal_entry_id=entry.id,
             image_key=f"vouchers/{user.id}/v.jpg",
-            image_mime="image/jpeg",
             file_hash="c" * 64, file_size=file_size,
         )
         db.session.add(voucher)
@@ -451,7 +450,7 @@ class TestVoucherDelete:
         db.session.flush()
         voucher = Voucher(
             user_id=user.id, journal_entry_id=entry.id,
-            image_key="legacy.jpg", image_mime="image/jpeg",
+            image_key="legacy.jpg",
             file_size=None,
         )
         db.session.add(voucher)

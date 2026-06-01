@@ -18,7 +18,6 @@ def _make_voucher_with_hash(db, user_id, journal_entry_id=None,
         user_id=user_id,
         journal_entry_id=journal_entry_id,
         image_key=image_key,
-        image_mime="image/jpeg",
         file_hash=file_hash,
     )
     db.session.add(v)

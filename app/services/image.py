@@ -92,7 +92,8 @@ def _serve_attachment(obj) -> Response:
 
     - 暗号化済み (encrypted_meta_blob != None): 暗号文を octet-stream で配信し、
       `?size=thumb` は obj.thumbnail_key (クライアント生成暗号文サムネ) を使う。
-    - レガシー平文 (dual-write 期の既存行): 従来通り image_mime で配信。
+    - レガシー平文 (image_mime 列は E5 PR-5 で廃止): octet-stream で配信し
+      ブラウザの content-sniffing で表示。
 
     Voucher と AIDraft は image_key / image_mime / file_hash / encrypted_meta_blob
     / thumbnail_key を同名で持つため共通化できる。
@@ -107,7 +108,10 @@ def _serve_attachment(obj) -> Response:
             obj.file_hash,
             thumbnail_key=obj.thumbnail_key,
         )
-    return serve_image(obj.image_key, obj.image_mime, obj.file_hash)
+    # E5 PR-5 (#111): レガシー平文証憑/下書き (image_mime 列廃止)。octet-stream で
+    # 配信し、ブラウザの content-sniffing で画像表示させる。サーバ生成サムネ
+    # (_thumb.jpg) は serve_image 内で image/jpeg 配信される。
+    return serve_image(obj.image_key, ENCRYPTED_CONTENT_TYPE, obj.file_hash)
 
 
 def serve_voucher_image(voucher) -> Response:

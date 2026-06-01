@@ -1022,7 +1022,8 @@ def _voucher_to_backup_dict(voucher, storage):
         "id": voucher.id,
         "journal_entry_id": voucher.journal_entry_id,
         "image_key": voucher.image_key,
-        "image_mime": voucher.image_mime,
+        # E5 PR-5 (#111): vouchers.image_mime 列は DROP 済。E2EE 証憑の実 MIME は
+        # encrypted_meta_blob 内、平文証憑は octet-stream 配信。
         "file_hash": voucher.file_hash,
         "file_size": voucher.file_size,
         "uploaded_at": voucher.uploaded_at.isoformat() if voucher.uploaded_at else None,
@@ -2346,7 +2347,7 @@ def list_vouchers():
         d = {
             "id": v.id,
             "journal_entry_id": v.journal_entry_id,
-            "image_mime": v.image_mime,
+            # E5 PR-5 (#111): image_mime 列は DROP 済 (上記参照)。
             # E4 PR-G (Option C): 画像/サムネ復号の AAD 束縛用安定識別子。
             # 63bit のため文字列 (JS Number 精度対策)。平文証憑は null。
             "aad_id": str(v.aad_id) if v.aad_id is not None else None,
