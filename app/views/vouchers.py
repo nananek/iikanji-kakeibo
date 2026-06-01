@@ -138,6 +138,9 @@ def delete(voucher_id):
     ).first_or_404()
 
     image_key = voucher.image_key
+    # E4 (#111): E2EE 証憑のサムネは thumbnail_key (_thumb.bin)。平文証憑は
+    # make_thumbnail_key (_thumb.jpg)。commit 前に捕捉して両方を消す。
+    thumbnail_key = voucher.thumbnail_key
     size_to_release = voucher.file_size or 0
     file_hash = voucher.file_hash or ""
 
@@ -164,7 +167,10 @@ def delete(voucher_id):
 
     # ストレージ削除 (best-effort)。画像ファイル本体は容量解放のため即削除。
     storage = get_storage_backend()
-    for k in (image_key, make_thumbnail_key(image_key)):
+    keys = [image_key, make_thumbnail_key(image_key)]
+    if thumbnail_key:
+        keys.append(thumbnail_key)  # E2EE サムネ (_thumb.bin) の孤立を防ぐ
+    for k in keys:
         try:
             storage.delete(k)
         except Exception as e:

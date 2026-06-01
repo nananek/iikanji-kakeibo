@@ -153,20 +153,36 @@ def _validate_backup(user_id: int, backup: Any) -> None:
         if row.get("encrypted_meta_blob") is None:
             continue  # 平文証憑 (レガシー) は対象外
         vid = row.get("id")
-        # aad_id: PostgreSQL BigInteger 範囲 (-2^63 .. 2^63-1)。int() は任意精度
-        # なので範囲外や非数値を無検証で通すと DB エラー (500) になる。
+        # NG-2: export が画像/サムネ取得に失敗した E2EE 行 (_imageError /
+        # _thumbnailError マーカー付き) は、復元すると暗号文の一部が欠落した
+        # 復号不能な証憑になる。silent な部分復元 (200 OK) を避け 400 で弾き、
+        # 利用者に完全な backup の再取得を促す。
+        if "_imageError" in row or "_thumbnailError" in row:
+            raise BackupValidationError(
+                f"vouchers[id={vid}] は export 時に画像/サムネの取得に失敗して "
+                "います (_imageError/_thumbnailError)。完全な backup を再取得して "
+                "から復元してください"
+            )
+        # aad_id: E2EE 証憑では AAD 束縛の安定識別子として必須 (PR-G)。null だと
+        # クライアントが AAD を再構築できず復号が恒久的に失敗する。値は
+        # PostgreSQL BigInteger 範囲 (-2^63 .. 2^63-1) で、int() は任意精度なので
+        # 範囲外や非数値を無検証で通すと DB エラー (500) になる。
         aad_raw = row.get("aad_id")
-        if aad_raw is not None:
-            try:
-                aad_int = int(aad_raw)
-            except (TypeError, ValueError) as e:
-                raise BackupValidationError(
-                    f"vouchers[id={vid}].aad_id が整数ではありません: {aad_raw!r}"
-                ) from e
-            if not (-(2 ** 63) <= aad_int < 2 ** 63):
-                raise BackupValidationError(
-                    f"vouchers[id={vid}].aad_id が BigInteger 範囲外です: {aad_int}"
-                )
+        if aad_raw is None:
+            raise BackupValidationError(
+                f"vouchers[id={vid}].aad_id は E2EE 証憑で必須です "
+                "(AAD 束縛の安定識別子。null だとクライアント復号が不能になる)"
+            )
+        try:
+            aad_int = int(aad_raw)
+        except (TypeError, ValueError) as e:
+            raise BackupValidationError(
+                f"vouchers[id={vid}].aad_id が整数ではありません: {aad_raw!r}"
+            ) from e
+        if not (-(2 ** 63) <= aad_int < 2 ** 63):
+            raise BackupValidationError(
+                f"vouchers[id={vid}].aad_id が BigInteger 範囲外です: {aad_int}"
+            )
         # meta_iv: AES-GCM nonce は 12 bytes 固定。encrypted_meta_blob と同じ
         # 056 で対に導入された列なので、暗号化証憑では必須。欠落 / 不正長は
         # クライアント復号が確実に失敗する (サイレント破損) ため、細工された
@@ -177,8 +193,9 @@ def _validate_backup(user_id: int, backup: Any) -> None:
                 f"vouchers[id={vid}].meta_iv は E2EE 証憑で必須です "
                 "(encrypted_meta_blob と対で AES-GCM nonce を保持する)"
             )
+        # meta_iv_b64 は上で非 None 確定なので _b64_decode は非 None を返す。
         iv = _b64_decode(meta_iv_b64)  # 不正 base64 は BackupValidationError
-        if iv is not None and len(iv) != 12:
+        if len(iv) != 12:
             raise BackupValidationError(
                 f"vouchers[id={vid}].meta_iv は 12 bytes (AES-GCM nonce) "
                 f"である必要があります (実際: {len(iv)})"
@@ -573,13 +590,16 @@ def _restore_vouchers(
             db.session.flush()
             new_key = make_storage_key(user_id, voucher.id, ENCRYPTED_CONTENT_TYPE)
             voucher.image_key = new_key
-            backend.put(new_key, image_bytes, ENCRYPTED_CONTENT_TYPE)
+            # WARN-5: put が途中で失敗 (S3 partial write 等) しても
+            # _cleanup_storage が孤立オブジェクトを消せるよう、append を put より
+            # 先に行う。best-effort delete なので未書込キーでも無害。
             written_keys.append(new_key)
+            backend.put(new_key, image_bytes, ENCRYPTED_CONTENT_TYPE)
             if thumb_bytes is not None:
                 thumb_key = make_encrypted_thumbnail_key(new_key)
                 voucher.thumbnail_key = thumb_key
-                backend.put(thumb_key, thumb_bytes, ENCRYPTED_CONTENT_TYPE)
                 written_keys.append(thumb_key)
+                backend.put(thumb_key, thumb_bytes, ENCRYPTED_CONTENT_TYPE)
             db_n += 1
             storage_n += 1
             continue

@@ -70,7 +70,13 @@ def delete_user_account(user_id: int) -> None:
     # (ondelete=SET NULL で VoucherAuditLog.voucher_id は自動 NULL 化)
     vouchers = Voucher.query.filter_by(user_id=user_id).all()
     for v in vouchers:
-        for k in (v.image_key, make_thumbnail_key(v.image_key)):
+        # E4 (#111): E2EE 証憑のサムネは thumbnail_key (_thumb.bin)。平文証憑の
+        # make_thumbnail_key (_thumb.jpg) と両方消さないと暗号文サムネが残留する
+        # (GDPR / 退会データ消去の観点でも問題)。
+        keys = [v.image_key, make_thumbnail_key(v.image_key)]
+        if v.thumbnail_key:
+            keys.append(v.thumbnail_key)
+        for k in keys:
             try:
                 backend.delete(k)
             except Exception as e:

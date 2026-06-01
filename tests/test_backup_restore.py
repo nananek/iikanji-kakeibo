@@ -1061,6 +1061,34 @@ class TestBackupRestoreHelpers:
         with pytest.raises(BackupValidationError, match="meta_iv"):
             _validate_backup(1, self._e2ee_voucher_backup(meta_iv=bad_iv))
 
+    def test_validate_voucher_aad_id_required(self):
+        """E2EE 証憑 (encrypted_meta_blob あり) で aad_id=null は 400。"""
+        from app.services.backup_restore import (
+            _validate_backup, BackupValidationError,
+        )
+        with pytest.raises(BackupValidationError, match="aad_id は E2EE 証憑で必須"):
+            _validate_backup(1, self._e2ee_voucher_backup(aad_id=None))
+
+    def test_validate_voucher_image_error_rejected(self):
+        """export 時に画像取得失敗 (_imageError) した E2EE 行は 400。"""
+        from app.services.backup_restore import (
+            _validate_backup, BackupValidationError,
+        )
+        b = self._e2ee_voucher_backup()
+        b["data"]["vouchers"][0]["_imageError"] = "storage returned None"
+        with pytest.raises(BackupValidationError, match="_imageError"):
+            _validate_backup(1, b)
+
+    def test_validate_voucher_thumbnail_error_rejected(self):
+        """export 時にサムネ取得失敗 (_thumbnailError) した E2EE 行は 400。"""
+        from app.services.backup_restore import (
+            _validate_backup, BackupValidationError,
+        )
+        b = self._e2ee_voucher_backup()
+        b["data"]["vouchers"][0]["_thumbnailError"] = "IOError: disk gone"
+        with pytest.raises(BackupValidationError, match="_thumbnailError"):
+            _validate_backup(1, b)
+
     def test_validate_voucher_meta_iv_required(self):
         """E2EE 証憑 (encrypted_meta_blob あり) で meta_iv 欠落は 400。"""
         from app.services.backup_restore import (

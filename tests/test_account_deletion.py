@@ -176,6 +176,22 @@ class TestDeleteUserAccountService:
         # ストレージから画像削除が呼ばれている
         assert image_key in mock_storage["deleted"]
 
+    def test_e2ee_thumbnail_deleted(self, db, mock_storage):
+        """E4 (#111) NG-4: E2EE 証憑のサムネ (_thumb.bin = thumbnail_key) も
+        退会時に削除される (GDPR / データ消去。従来は _thumb.jpg のみ消していた)."""
+        from app.services.account_deletion import delete_user_account
+
+        user, voucher, _log, _entry = _make_user_with_data(
+            db, username="erin", email="erin@example.com",
+        )
+        thumb_key = f"{voucher.image_key.rsplit('.', 1)[0]}_thumb.bin"
+        voucher.thumbnail_key = thumb_key
+        db.session.commit()
+
+        delete_user_account(user.id)
+
+        assert thumb_key in mock_storage["deleted"]  # E2EE サムネを残留させない
+
     def test_other_user_data_not_affected(self, db, mock_storage):
         """別ユーザーのデータは影響を受けない."""
         from app.services.account_deletion import delete_user_account
