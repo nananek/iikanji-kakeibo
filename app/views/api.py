@@ -1002,7 +1002,6 @@ def _voucher_to_backup_dict(voucher, storage):
         "journal_entry_id": voucher.journal_entry_id,
         "image_key": voucher.image_key,
         "image_mime": voucher.image_mime,
-        "original_filename": voucher.original_filename,
         "file_hash": voucher.file_hash,
         "file_size": voucher.file_size,
         "uploaded_at": voucher.uploaded_at.isoformat() if voucher.uploaded_at else None,

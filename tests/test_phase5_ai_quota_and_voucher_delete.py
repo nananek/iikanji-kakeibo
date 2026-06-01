@@ -430,7 +430,7 @@ class TestVoucherDelete:
         assert logs[1].action == "deleted"
         # E4 PR-D: 平文 detail は書かない。削除された内容 (image_key /
         # file_hash / file_size) は論理削除で残る voucher 行の各列に保持される。
-        assert logs[1].detail is None
+        assert logs[1].encrypted_detail_blob is None
         from app.models.voucher import Voucher
         persisted = db.session.get(Voucher, voucher.id)
         assert persisted.deleted_at is not None

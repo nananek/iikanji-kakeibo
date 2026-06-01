@@ -115,7 +115,7 @@ class TestSoftDeletePersistsAuditLog:
         # E4 PR-D: 平文 detail は書かない。電帳法の「訂正削除の事実と内容を
         # 確認できる」要件は action="deleted" + 論理削除で残る voucher 行の
         # 各列 (image_key / file_hash(cipher) / file_size) で担保される。
-        assert logs[0].detail is None
+        assert logs[0].encrypted_detail_blob is None
         deleted = db.session.get(Voucher, vid)
         assert deleted is not None and deleted.deleted_at is not None
         assert deleted.image_key == image_key
@@ -256,7 +256,6 @@ class TestApiVoucherLogsAfterSoftDelete:
         # 電帳法証跡として action="deleted" の AuditLog も追加
         app_db.session.add(VoucherAuditLog(
             voucher_id=v.id, user_id=user.id, action="deleted",
-            detail='{"image_key": "test"}',
         ))
         app_db.session.commit()
 

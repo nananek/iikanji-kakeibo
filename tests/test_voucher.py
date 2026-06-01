@@ -116,8 +116,6 @@ class TestVoucherE4EncryptedColumns:
         reloaded = db.session.get(VoucherAuditLog, log.id)
         assert reloaded.encrypted_detail_blob == detail_blob
         assert reloaded.detail_iv == detail_iv
-        # 平文 detail は dual-write 期は引き続き NULL 許容
-        assert reloaded.detail is None
 
 
 class TestSetNullOnJournalDelete:

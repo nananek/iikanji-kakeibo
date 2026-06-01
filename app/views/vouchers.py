@@ -115,8 +115,10 @@ def delete(voucher_id):
     `action="deleted"` の削除証跡を **DB に永続化** できる (電帳法
     スキャナ保存「訂正削除の事実と内容を確認できること」要件に対応)。
 
-    ストレージ上の画像ファイルは即削除する (容量解放を優先、訂正削除
-    の事実は AuditLog の `detail` に file_hash を残すことで担保)。
+    ストレージ上の画像ファイルは即削除する (容量解放を優先)。訂正削除
+    の事実と内容は `action="deleted"` の AuditLog + 論理削除で残る voucher
+    行の各列 (image_key / file_hash(cipher) / file_size) で担保する
+    (E4 PR-D で平文 detail への file_hash 記録は廃止済)。
 
     代理閲覧中 (`acting_as_user_id` セッション設定) は破壊操作を禁止
     (auditor は閲覧者であり、本人の意思によらない削除は監査独立性を

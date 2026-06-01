@@ -71,8 +71,10 @@ def init_voucher(user_id: int, journal_entry_id: int | None) -> Voucher:
         user_id=user_id,
         journal_entry_id=journal_entry_id,
         image_key="",
-        # 暗号化証憑の実 MIME は encrypted_meta_blob に入る。列は dual-write 期
-        # の間だけ NOT NULL 制約のためプレースホルダを入れる (057 で DROP)。
+        # 暗号化証憑の実 MIME は encrypted_meta_blob に入る。image_mime 列は
+        # NOT NULL 制約のためプレースホルダを入れる。列の DROP は AI 下書き
+        # E2EE 化後の後続 PR に延期 (AI クイックアクセプトが依然平文 voucher を
+        # 生成し配信に image_mime を使うため)。
         image_mime=ENCRYPTED_CONTENT_TYPE,
     )
     db.session.add(voucher)

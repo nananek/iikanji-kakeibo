@@ -25,11 +25,10 @@ class VoucherAuditLog(db.Model):
         nullable=True,
     )
     action = db.Column(db.String(50), nullable=False)
-    detail = db.Column(db.Text, nullable=True)
     # E4 (#111): detail (JSON) のクライアント完結 AES-GCM 暗号化。dual-write 期
     # (056) は NULL 許容。AAD = "valog" + user_id + voucher_id。平文 detail 列は
-    # E4 後半 (057) で DROP する。`action` / `created_at` はフィルタ用途のため
-    # 平文継続 (電帳法「訂正削除の事実」をサーバ側でも参照可能にする)。
+    # 057 (PR-F) で DROP 済。`action` / `created_at` はフィルタ用途のため平文
+    # 継続 (電帳法「訂正削除の事実」をサーバ側でも参照可能にする)。
     encrypted_detail_blob = db.Column(db.LargeBinary, nullable=True)
     detail_iv = db.Column(db.LargeBinary, nullable=True)
     created_at = db.Column(
