@@ -100,6 +100,10 @@ export async function initVoucher({ journalEntryId = null, fetchImpl, csrf } = {
   }
   const data = await r.json();
   // aad_id は文字列で返る (63bit, JS Number 精度対策) → BigInt にパース。
+  // null/未指定は BigInt(null) が TypeError になる前に明示エラーにする。
+  if (data.aad_id == null) {
+    throw new Error("initVoucher: サーバが aad_id を返しませんでした。");
+  }
   return { voucherId: data.voucher_id, aadId: BigInt(data.aad_id) };
 }
 

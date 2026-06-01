@@ -35,14 +35,18 @@ class VoucherUploadConflict(Exception):
 # aad_id は 63bit ランダム正整数 (Postgres BIGINT = signed 64bit に収まる)。
 _AAD_ID_BITS = 63
 _AAD_ID_MAX_RETRIES = 5
+# UNIQUE(user_id, aad_id) 衝突の判定マーカー。Postgres は制約名
+# "uq_vouchers_user_aad_id"、SQLite は列名 "vouchers.aad_id" を IntegrityError
+# メッセージに含むため、両者に共通して現れる "aad_id" で判定する。これにより
+# aad_id 衝突のみリトライし、他制約 (FK / NOT NULL 等) は誤って隠蔽しない。
+_AAD_ID_CONFLICT_MARKER = "aad_id"
 
 
-def _generate_unique_aad_id(user_id: int) -> int:
-    """voucher の AAD 束縛用に (user_id, aad_id) で一意な 63bit ランダムを生成。
+def _random_aad_id() -> int:
+    """voucher の AAD 束縛用 63bit ランダム正整数を生成する。
 
-    UNIQUE(user_id, aad_id) 制約に対し SAVEPOINT + リトライで衝突を吸収する
-    (衝突確率は 2^-63 で実質発生しないが、制約違反でリクエストを落とさない
-    ための保険)。呼び出し元は新規 Voucher にこの値をセットして flush すること。
+    一意性は呼び出し元の UNIQUE(user_id, aad_id) 制約 + SAVEPOINT リトライが
+    担保する (本関数は値の生成のみ)。0 は避けて [1, 2^63-1] を返す。
     """
     return secrets.randbits(_AAD_ID_BITS) or 1
 
@@ -90,7 +94,6 @@ def init_voucher(user_id: int, journal_entry_id: int | None) -> Voucher:
     vmeta) に束縛して暗号化する。
     """
     for attempt in range(_AAD_ID_MAX_RETRIES):
-        aad_id = _generate_unique_aad_id(user_id)
         sp = db.session.begin_nested()
         voucher = Voucher(
             user_id=user_id,
@@ -101,16 +104,21 @@ def init_voucher(user_id: int, journal_entry_id: int | None) -> Voucher:
             # E2EE 化後の後続 PR に延期 (AI クイックアクセプトが依然平文 voucher
             # を生成し配信に image_mime を使うため)。
             image_mime=ENCRYPTED_CONTENT_TYPE,
-            aad_id=aad_id,
+            aad_id=_random_aad_id(),
         )
         db.session.add(voucher)
         try:
             db.session.flush()
             sp.commit()
             return voucher
-        except IntegrityError:
-            # (user_id, aad_id) 衝突 → SAVEPOINT を巻き戻して別値で再試行。
+        except IntegrityError as e:
             sp.rollback()
+            # aad_id 衝突以外の IntegrityError (FK / NOT NULL 等) は誤解を招く
+            # RuntimeError で隠蔽せず、そのまま再送出する。
+            marker = str(getattr(e, "orig", None) or e)
+            if _AAD_ID_CONFLICT_MARKER not in marker:
+                raise
+            # (user_id, aad_id) 衝突 → 次のループで別値を試す。
     raise RuntimeError(
         "init_voucher: aad_id の一意生成に失敗しました (リトライ上限)。"
     )

@@ -122,6 +122,21 @@ class TestVoucherInit:
         assert resp.status_code == 201
         assert resp.get_json()["aad_id"] == "999999"
 
+    def test_init_reraises_non_aad_id_integrity_error(self, user, monkeypatch):
+        # aad_id 衝突以外の IntegrityError (FK / NOT NULL 等) はリトライで隠蔽
+        # せず再送出する (誤解を招く RuntimeError にならない)。
+        from sqlalchemy.exc import IntegrityError
+        from app.services import voucher as vsvc
+
+        def boom(*a, **k):
+            raise IntegrityError(
+                "INSERT", {}, Exception("FOREIGN KEY constraint failed"),
+            )
+
+        monkeypatch.setattr(_db.session, "flush", boom)
+        with pytest.raises(IntegrityError):
+            vsvc.init_voucher(user.id, None)
+
     def test_init_links_journal_entry(self, logged_in_client, user, accounts, db):
         entry = make_journal(db, user.id, "5010", "1010", 1000)
         resp = _init_voucher(logged_in_client, journal_entry_id=entry.id)

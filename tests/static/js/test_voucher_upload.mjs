@@ -114,6 +114,16 @@ test("initVoucher: 63bit の aad_id を精度欠落なく BigInt 化", async () 
   assert.equal(aadId.toString(), big);
 });
 
+test("initVoucher: aad_id が無い応答は明示エラー (BigInt(null) を防ぐ)", async () => {
+  const fetchImpl = mockFetch([
+    ["/api/v1/vouchers/init", () => jsonResp(201, { ok: true, voucher_id: 1 })],
+  ]);
+  await assert.rejects(
+    () => initVoucher({ fetchImpl, csrf: "x" }),
+    /aad_id/,
+  );
+});
+
 test("initVoucher: journalEntryId 省略時は null を送る", async () => {
   let body = null;
   const fetchImpl = mockFetch([
