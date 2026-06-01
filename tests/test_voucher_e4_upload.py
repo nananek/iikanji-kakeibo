@@ -88,6 +88,54 @@ class TestVoucherInit:
         assert v.user_id == user.id
         assert v.image_key == ""
         assert v.encrypted_meta_blob is None
+        # E4 PR-G (Option C): aad_id が生成され、文字列で返り、DB 値と一致する。
+        # 63bit のため JS Number 精度対策で文字列返却 (int(str)==DB値)。
+        assert v.aad_id is not None
+        assert 0 < v.aad_id < 2**63
+        assert body["aad_id"] == str(v.aad_id)
+
+    def test_init_generates_distinct_aad_ids(self, logged_in_client, user):
+        # 連続 init で別々の aad_id が振られる (voucher 単位の一意性)。
+        ids = {
+            _init_voucher(logged_in_client).get_json()["aad_id"]
+            for _ in range(5)
+        }
+        assert len(ids) == 5
+
+    def test_init_retries_on_aad_id_collision(
+        self, logged_in_client, user, monkeypatch,
+    ):
+        # 既存 voucher が aad_id=424242 を占有 → init が同値を引くと UNIQUE 違反 →
+        # SAVEPOINT 巻き戻し + 別値で再試行して成功すること。
+        from app.services import voucher as vsvc
+
+        _db.session.add(Voucher(
+            user_id=user.id, image_key="occupied", image_mime="image/jpeg",
+            aad_id=424242,
+        ))
+        _db.session.commit()
+
+        seq = iter([424242, 999999])  # 1 回目は衝突、2 回目で成功
+        monkeypatch.setattr(vsvc.secrets, "randbits", lambda n: next(seq))
+
+        resp = _init_voucher(logged_in_client)
+        assert resp.status_code == 201
+        assert resp.get_json()["aad_id"] == "999999"
+
+    def test_init_reraises_non_aad_id_integrity_error(self, user, monkeypatch):
+        # aad_id 衝突以外の IntegrityError (FK / NOT NULL 等) はリトライで隠蔽
+        # せず再送出する (誤解を招く RuntimeError にならない)。
+        from sqlalchemy.exc import IntegrityError
+        from app.services import voucher as vsvc
+
+        def boom(*a, **k):
+            raise IntegrityError(
+                "INSERT", {}, Exception("FOREIGN KEY constraint failed"),
+            )
+
+        monkeypatch.setattr(_db.session, "flush", boom)
+        with pytest.raises(IntegrityError):
+            vsvc.init_voucher(user.id, None)
 
     def test_init_links_journal_entry(self, logged_in_client, user, accounts, db):
         entry = make_journal(db, user.id, "5010", "1010", 1000)

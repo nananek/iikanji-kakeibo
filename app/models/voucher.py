@@ -7,6 +7,12 @@ class Voucher(db.Model):
     """証憑（電帳法対応の永続保存）"""
 
     __tablename__ = "vouchers"
+    # E4 (#111) Option C: aad_id は voucher 単位で一意 (voucher 間の ciphertext
+    # swap を AAD で検知する swap 防止)。レガシー平文証憑は NULL (Postgres は
+    # NULL を distinct 扱いするため併存可)。
+    __table_args__ = (
+        db.UniqueConstraint("user_id", "aad_id", name="uq_vouchers_user_aad_id"),
+    )
 
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(
@@ -36,6 +42,12 @@ class Voucher(db.Model):
     # クライアント生成サムネイル (暗号文) のストレージキー。サーバ Pillow 生成
     # (_thumb.jpg サフィックス) は E4 後半で廃止し、本列ベースに統一する。
     thumbnail_key = db.Column(db.String(255), nullable=True)
+    # E4 (#111) Option C: クライアント復号の AAD に束縛する安定識別子。サーバが
+    # init で生成する 63bit ランダム (voucher_id とは独立)。backup/restore で PK
+    # が再採番されても本値は保持されるため、AAD を voucher_id ではなく本値に
+    # 束縛することで復元後もクライアント復号が可能。E2EE 証憑のみセット
+    # (レガシー平文証憑は NULL)。
+    aad_id = db.Column(db.BigInteger, nullable=True)
     # 容量計上 (Phase 5 #70) のためのファイルサイズ (バイト)。新規作成時に
     # セット。既存 Voucher は NULL のままで、整合性監査バッチで埋める想定。
     file_size = db.Column(db.BigInteger, nullable=True)

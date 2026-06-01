@@ -94,6 +94,9 @@ export function buildVoucherCards(voucherMeta, entryMap) {
     }
     cards.push({
       voucher_id: voucherId,
+      // E4 PR-G (Option C): 画像/サムネ復号の AAD 束縛用安定識別子。サーバは
+      // 63bit を文字列で渡す → 復号呼び出し時に BigInt 化する。平文証憑は null。
+      aad_id: v.aad_id ?? null,
       journal_entry_id: attached ? journalEntryId : null,
       attached,
       encrypted: !!v.encrypted,
@@ -231,10 +234,16 @@ function _lockPlaceholder(label) {
 }
 
 
-function _openDecryptedFull(voucherId) {
+// aad_id (文字列|null) を AAD 用 BigInt に変換。null/未指定なら undefined。
+function _aadBig(s) {
+  return s != null ? BigInt(s) : undefined;
+}
+
+
+function _openDecryptedFull(voucherId, aadId) {
   // 本体を復号して blob URL でプレビュー表示。直近の URL は revoke して
   // メモリリークを防ぐ (毎クリックで新規 blob URL を作るため)。
-  _decryptImage({ client: _client, userId: _userId, voucherId, thumb: false })
+  _decryptImage({ client: _client, userId: _userId, voucherId, aadId, thumb: false })
     .then((bytes) => {
       if (_fullPreviewUrl) {
         try { URL.revokeObjectURL(_fullPreviewUrl); } catch (_e) { /* ignore */ }
@@ -284,7 +293,7 @@ function _renderCardImage(wrap, c) {
   link.style.cursor = "pointer";
   link.addEventListener("click", (e) => {
     e.preventDefault();
-    _openDecryptedFull(c.voucher_id);
+    _openDecryptedFull(c.voucher_id, _aadBig(c.aad_id));
   });
   const img = document.createElement("img");
   img.className = "img-fluid rounded";
@@ -296,7 +305,7 @@ function _renderCardImage(wrap, c) {
   wrap.appendChild(link);
 
   // サムネを非同期復号 → blob URL。失敗時はロック表示に差し替え。
-  _decryptImage({ client: _client, userId: _userId, voucherId: c.voucher_id, thumb: true })
+  _decryptImage({ client: _client, userId: _userId, voucherId: c.voucher_id, aadId: _aadBig(c.aad_id), thumb: true })
     .then((bytes) => {
       const url = URL.createObjectURL(
         new Blob([bytes], { type: _sniffMime(bytes) }),

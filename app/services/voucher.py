@@ -1,6 +1,9 @@
 """証憑ヘルパー — Voucher 作成・管理"""
 
 import hashlib
+import secrets
+
+from sqlalchemy.exc import IntegrityError
 
 from app.extensions import db
 from app.models.user import User
@@ -27,6 +30,25 @@ class VoucherUploadConflict(Exception):
     """E4 (#111): 既に確定済みの Voucher への二重 upload (並行 PUT)。
 
     呼び出し側 (PUT エンドポイント) は 409 に変換する。"""
+
+
+# aad_id は 63bit ランダム正整数 (Postgres BIGINT = signed 64bit に収まる)。
+_AAD_ID_BITS = 63
+_AAD_ID_MAX_RETRIES = 5
+# UNIQUE(user_id, aad_id) 衝突の判定マーカー。Postgres は制約名
+# "uq_vouchers_user_aad_id"、SQLite は列名 "vouchers.aad_id" を IntegrityError
+# メッセージに含むため、両者に共通して現れる "aad_id" で判定する。これにより
+# aad_id 衝突のみリトライし、他制約 (FK / NOT NULL 等) は誤って隠蔽しない。
+_AAD_ID_CONFLICT_MARKER = "aad_id"
+
+
+def _random_aad_id() -> int:
+    """voucher の AAD 束縛用 63bit ランダム正整数を生成する。
+
+    一意性は呼び出し元の UNIQUE(user_id, aad_id) 制約 + SAVEPOINT リトライが
+    担保する (本関数は値の生成のみ)。0 は避けて [1, 2^63-1] を返す。
+    """
+    return secrets.randbits(_AAD_ID_BITS) or 1
 
 
 def create_voucher_from_draft(draft: AIDraft, journal_entry_id: int) -> Voucher:
@@ -66,20 +88,40 @@ def init_voucher(user_id: int, journal_entry_id: int | None) -> Voucher:
     中断 (init したが PUT されない) すると image_key="" の空 row が残る。
     一覧/配信は image_key が空なら表示しないため実害はなく、整合性監査バッチ
     (storage-audit 系) で回収する想定。呼び出し元で db.session.commit() すること。
+
+    E4 (#111) Option C: AAD 束縛用の安定識別子 `aad_id` を生成して row に
+    セットする。クライアントは init レスポンスの aad_id を AAD (vimg/vthumb/
+    vmeta) に束縛して暗号化する。
     """
-    voucher = Voucher(
-        user_id=user_id,
-        journal_entry_id=journal_entry_id,
-        image_key="",
-        # 暗号化証憑の実 MIME は encrypted_meta_blob に入る。image_mime 列は
-        # NOT NULL 制約のためプレースホルダを入れる。列の DROP は AI 下書き
-        # E2EE 化後の後続 PR に延期 (AI クイックアクセプトが依然平文 voucher を
-        # 生成し配信に image_mime を使うため)。
-        image_mime=ENCRYPTED_CONTENT_TYPE,
+    for attempt in range(_AAD_ID_MAX_RETRIES):
+        sp = db.session.begin_nested()
+        voucher = Voucher(
+            user_id=user_id,
+            journal_entry_id=journal_entry_id,
+            image_key="",
+            # 暗号化証憑の実 MIME は encrypted_meta_blob に入る。image_mime 列は
+            # NOT NULL 制約のためプレースホルダを入れる。列の DROP は AI 下書き
+            # E2EE 化後の後続 PR に延期 (AI クイックアクセプトが依然平文 voucher
+            # を生成し配信に image_mime を使うため)。
+            image_mime=ENCRYPTED_CONTENT_TYPE,
+            aad_id=_random_aad_id(),
+        )
+        db.session.add(voucher)
+        try:
+            db.session.flush()
+            sp.commit()
+            return voucher
+        except IntegrityError as e:
+            sp.rollback()
+            # aad_id 衝突以外の IntegrityError (FK / NOT NULL 等) は誤解を招く
+            # RuntimeError で隠蔽せず、そのまま再送出する。
+            marker = str(getattr(e, "orig", None) or e)
+            if _AAD_ID_CONFLICT_MARKER not in marker:
+                raise
+            # (user_id, aad_id) 衝突 → 次のループで別値を試す。
+    raise RuntimeError(
+        "init_voucher: aad_id の一意生成に失敗しました (リトライ上限)。"
     )
-    db.session.add(voucher)
-    db.session.flush()
-    return voucher
 
 
 def finalize_voucher_upload(

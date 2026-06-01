@@ -2011,12 +2011,17 @@ def ai_draft_save_suggestions(draft_id):
 def init_voucher_endpoint():
     """2 段階 upload Step 1: voucher_id を採番する (空 row 作成)。
 
-    クライアントは採番された voucher_id を AAD (`vimg`/`vthumb`/`vmeta` +
-    user_id + voucher_id) に束縛して画像/サムネ/メタを暗号化し、Step 2
-    (`PUT /vouchers/<id>`) で実体を upload する。
+    クライアントは init レスポンスの aad_id を AAD (`vimg`/`vthumb`/`vmeta` +
+    user_id + aad_id) に束縛して画像/サムネ/メタを暗号化し、Step 2
+    (`PUT /vouchers/<id>`) で実体を upload する。aad_id は voucher_id と独立した
+    安定識別子で、backup/restore の PK 再採番後もクライアント復号を可能にする
+    (E4 #111 Option C)。
 
     リクエスト: {"journal_entry_id": <int|null>}
-    レスポンス: 201 {"ok": true, "voucher_id": <int>}
+    レスポンス: 201 {"ok": true, "voucher_id": <int>, "aad_id": "<str>"}
+
+    aad_id は 63bit のため、JS Number の 2^53 精度を超えて欠落しないよう
+    **文字列**で返す (クライアントは BigInt でパースして AAD に束縛する)。
 
     代理閲覧 (acting_as) 中は一律 403。証憑は E2EE のみで平文 write 経路が無く、
     監査人は owner の MK を持たないため owner が復号可能な暗号文を作れない。
@@ -2042,7 +2047,11 @@ def init_voucher_endpoint():
 
     voucher = init_voucher(user_id, journal_entry_id)
     db.session.commit()
-    return jsonify({"ok": True, "voucher_id": voucher.id}), 201
+    return jsonify({
+        "ok": True,
+        "voucher_id": voucher.id,
+        "aad_id": str(voucher.aad_id),
+    }), 201
 
 
 @bp.route("/vouchers/<int:voucher_id>", methods=["PUT"])
@@ -2190,6 +2199,9 @@ def list_vouchers():
             "id": v.id,
             "journal_entry_id": v.journal_entry_id,
             "image_mime": v.image_mime,
+            # E4 PR-G (Option C): 画像/サムネ復号の AAD 束縛用安定識別子。
+            # 63bit のため文字列 (JS Number 精度対策)。平文証憑は null。
+            "aad_id": str(v.aad_id) if v.aad_id is not None else None,
             "uploaded_at": v.uploaded_at.isoformat() if v.uploaded_at else None,
         }
         if entry:
