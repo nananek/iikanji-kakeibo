@@ -1,7 +1,6 @@
 """証憑改ざん防止（Phase 3: 電帳法）テスト"""
 
 import hashlib
-import json
 from unittest.mock import patch
 
 import pytest
@@ -44,19 +43,24 @@ class TestVoucherAuditLogModel:
         assert log.action == "hash_verified"
         assert log.voucher_id == v.id
 
-    def test_log_with_detail(self, db, user):
+    def test_log_with_encrypted_detail(self, db, user):
+        # E4 PR-F: 平文 detail 列は DROP 済。クライアント供給の暗号化ノートは
+        # encrypted_detail_blob / detail_iv (AAD="valog") に保存する。
         v = make_voucher(db, user.id)
-        detail = json.dumps({"journal_entry_id": 42})
+        blob = b"encrypted-note"
+        iv = bytes(range(12))
         log = VoucherAuditLog(
             voucher_id=v.id,
             user_id=user.id,
             action="orphaned",
-            detail=detail,
+            encrypted_detail_blob=blob,
+            detail_iv=iv,
         )
         db.session.add(log)
         db.session.commit()
 
-        assert json.loads(log.detail)["journal_entry_id"] == 42
+        assert log.encrypted_detail_blob == blob
+        assert log.detail_iv == iv
 
 
 class TestOrphanLogging:
@@ -77,7 +81,7 @@ class TestOrphanLogging:
         assert logs[0].action == "orphaned"
         # E4 PR-D: 平文 detail は書かない。"orphaned" action 自体が「紐付け
         # 仕訳が削除された事実」(電帳法 訂正削除の事実) を担保する。
-        assert logs[0].detail is None
+        assert logs[0].encrypted_detail_blob is None
 
     def test_bulk_delete_logs_orphan(self, db, logged_in_client, user, accounts):
         entry = make_journal(
@@ -224,7 +228,6 @@ class TestAuditLogAPI:
         ))
         db.session.add(VoucherAuditLog(
             voucher_id=v.id, user_id=user.id, action="orphaned",
-            detail=json.dumps({"journal_entry_id": 1}),
         ))
         db.session.commit()
 

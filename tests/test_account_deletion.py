@@ -78,7 +78,7 @@ def _make_user_with_data(db, *, username, email):
     db.session.flush()
     log = VoucherAuditLog(
         voucher_id=voucher.id, user_id=user.id,
-        action="attached", detail="{}",
+        action="attached",
     )
     db.session.add(log)
 

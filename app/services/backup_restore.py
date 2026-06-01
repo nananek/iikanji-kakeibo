@@ -484,7 +484,6 @@ def _restore_vouchers(
             journal_entry_id=new_eid,
             image_key="",  # 仮、後で setattr
             image_mime=r.get("image_mime", "application/octet-stream"),
-            original_filename=r.get("original_filename"),
             file_hash=computed_hash,
             file_size=len(image_bytes),
             uploaded_at=_parse_datetime(r.get("uploaded_at")) or datetime.now(timezone.utc),

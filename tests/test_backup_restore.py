@@ -423,7 +423,7 @@ class TestBackupRestoreAuditLog:
         """VoucherAuditLog 行は残り、user_id が NULL 化される。"""
         log = VoucherAuditLog(
             voucher_id=None, user_id=user.id,
-            action="orphaned", detail="{}",
+            action="orphaned",
         )
         db.session.add(log)
         db.session.commit()
