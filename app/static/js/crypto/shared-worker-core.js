@@ -167,6 +167,34 @@ export class MasterKeyState {
         this.lastActivity = now;
         return { result: { ok: true, keyBits: 256 }, broadcast: "mkChanged" };
       }
+      case "hpkeOpen": {
+        // E5 #112: 監査パッケージ/レスポンスの HPKE 受信復号。MK で自分の
+        // X25519 秘密鍵 (pkcs8) をアンラップ → raw scalar → HPKE open まで worker
+        // 内で完結し、平文秘密鍵をメインスレッドに出さない (MK と同じ姿勢)。
+        if (this.cryptoKey === null) throw new Error("master key not set");
+        const pkcs8 = await aesGcmDecrypt(
+          this.cryptoKey, msg.encryptedPrivateKey, msg.privIv, msg.privAad,
+        );
+        let plaintext;
+        try {
+          // HPKE は audit 利用時のみ必要なので lazy import (通常の暗号操作では未ロード)。
+          const { hpkeOpenWithRawPriv, pkcs8ToRawScalar } = await import(
+            "./hpke_suite.js"
+          );
+          const rawPriv = pkcs8ToRawScalar(pkcs8);
+          try {
+            plaintext = await hpkeOpenWithRawPriv(
+              rawPriv, msg.enc, msg.ciphertext, msg.aad,
+            );
+          } finally {
+            rawPriv.fill(0);
+          }
+        } finally {
+          pkcs8.fill(0);
+        }
+        this.lastActivity = now;
+        return { result: { ok: true, plaintext }, broadcast: null };
+      }
       case "touch": {
         this.lastActivity = now;
         return {
