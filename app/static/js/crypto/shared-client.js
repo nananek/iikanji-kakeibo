@@ -180,6 +180,25 @@ export class SharedCryptoClient {
     );
   }
 
+  /**
+   * E5 #112: HPKE 受信復号。自分の MK ラップ秘密鍵で audit パッケージ/レスポンスを
+   * worker 内で復号する。平文秘密鍵はメインスレッドに出ない。
+   * @param {Object} a
+   * @param {Uint8Array} a.encryptedPrivateKey  MK でラップした X25519 秘密鍵 (pkcs8)
+   * @param {Uint8Array} a.privIv                その AES-GCM IV
+   * @param {Uint8Array} a.privAad               秘密鍵ラップ時の AAD (keypair.privateKeyAAD)
+   * @param {Uint8Array} a.enc                   HPKE encapsulated key (ephemeral 公開鍵)
+   * @param {Uint8Array} a.ciphertext            HPKE 暗号文
+   * @param {Uint8Array} a.aad                   audit_hpke.packageAAD / responseAAD
+   * @returns {Promise<{plaintext: Uint8Array}>}
+   */
+  hpkeOpen({ encryptedPrivateKey, privIv, privAad, enc, ciphertext, aad }) {
+    return this.#send({
+      type: "hpkeOpen",
+      encryptedPrivateKey, privIv, privAad, enc, ciphertext, aad,
+    });
+  }
+
   /** アクティビティ通知 (idle タイマーリセット)。IdleMonitor から呼ばれる。 */
   touch() {
     return this.#send({ type: "touch" });

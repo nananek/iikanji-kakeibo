@@ -19,7 +19,9 @@ const NUL = TEXT_ENC.encode("\0");
 
 // 秘密鍵ラップ用 AAD: "x25519-priv" \0 uint64BE(userId)。record.js の AAD と
 // 同思想で、暗号文を当該ユーザーに束縛する (他ユーザーの blob すり替えを検知)。
-function _privateKeyAAD(userId) {
+// HPKE open (shared-client.hpkeOpen) 側で秘密鍵を復号する際に同じ AAD が要るため
+// export する。
+export function privateKeyAAD(userId) {
   const prefix = TEXT_ENC.encode("x25519-priv");
   const uid = uint64BE(userId);
   const out = new Uint8Array(prefix.length + NUL.length + uid.length);
@@ -123,7 +125,7 @@ export async function ensureKeyPair(client, userId, fetchImpl = fetch) {
 
   const { publicRaw, privatePkcs8 } = await generateX25519KeyPair();
   try {
-    const aad = _privateKeyAAD(userId);
+    const aad = privateKeyAAD(userId);
     // SharedWorker 内の MK で AES-GCM 暗号化。MK はメインスレッドに出ない。
     const { ciphertext, iv } = await client.encrypt(privatePkcs8, aad);
     await putKeyPair({ publicRaw, encBlob: ciphertext, iv }, fetchImpl);

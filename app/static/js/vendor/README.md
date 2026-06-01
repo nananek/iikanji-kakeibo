@@ -19,6 +19,27 @@ SRI 検証なしの動的 import (`<script integrity>` 非対応) によるサ�
   5. 古いバージョンファイルは削除
   6. 動作確認 (鍵設定ウィザードでパスフレーズ登録)
 
+## hpke (HPKE / RFC 9180)
+
+- **ファイル**: `hpke-1.8.0.esm.min.js`
+- **ライセンス**: MIT (`LICENSE-hpke`)
+- **構成**: `@hpke/core@1.9.0` + `@hpke/dhkem-x25519@1.8.0` (hpke-js 1.8.0 リリースライン)
+  を esbuild で 1 ファイルにバンドル。base mode のみ (DHKEM-X25519-HKDF-SHA256 /
+  HKDF-SHA256 / AES-256-GCM)。chacha20poly1305 / x448 / P-256 等は含めない。
+- **元リポジトリ**: https://github.com/dajiaji/hpke-js
+- **SHA-384**: `y9qe7i9M/bidhW34EtvLTtDIqyIIuwQKHcWN5c2T0Wk/Tkjv4evdKww2OInMn1LI`
+- **用途**: E5 #112 監査連携の HPKE seal/open (`crypto/hpke_suite.js`)。owner→auditor の
+  スナップショット暗号化 / auditor→owner の修正案暗号化。将来 client-py の `hpke-py` と
+  RFC 9180 base mode で相互接続する。
+- **更新手順** (バンドル再生成):
+  1. 一時ディレクトリで `npm install hpke-js@<VER>`
+  2. entry: `export { CipherSuite, HkdfSha256, Aes256Gcm } from "@hpke/core";`
+     `export { DhkemX25519HkdfSha256 } from "@hpke/dhkem-x25519";`
+  3. `npx esbuild entry.mjs --bundle --format=esm --minify --target=es2022 --banner:js='/*! HPKE ... */' --outfile=hpke-<VER>.esm.min.js`
+  4. `openssl dgst -sha384 -binary <ファイル> | openssl base64 -A` で SHA-384 を取得し本 README に記録
+  5. `crypto/hpke_suite.js` の import パス (バージョン) を更新、古いファイルは削除
+  6. 動作確認: `node --test tests/static/js/test_audit_hpke.mjs` (seal→open ラウンドトリップ)
+
 ## 監査
 
 vendor ファイル変更は `gh pr review` 経由で都度確認可能 (git diff)。
