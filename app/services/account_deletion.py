@@ -90,7 +90,15 @@ def delete_user_account(user_id: int) -> None:
     # 3. AIDraft + ストレージファイル
     drafts = AIDraft.query.filter_by(user_id=user_id).all()
     for d in drafts:
-        for k in (d.image_key, make_thumbnail_key(d.image_key)):
+        # E5 (#111): E2EE 下書きの暗号文サムネ (thumbnail_key, _thumb.bin) も
+        # 消さないと孤立する (PR-H の voucher 修正と同型)。
+        keys = []
+        if d.image_key:
+            keys.append(d.image_key)
+            keys.append(make_thumbnail_key(d.image_key))
+        if d.thumbnail_key:
+            keys.append(d.thumbnail_key)
+        for k in keys:
             try:
                 backend.delete(k)
             except Exception as e:

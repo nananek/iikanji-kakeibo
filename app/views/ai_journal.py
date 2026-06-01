@@ -37,7 +37,17 @@ def upload():
     ).count()
     # 前回の一時ドラフトをクリーンアップ
     temp_drafts = AIDraft.query.filter_by(user_id=user_id, status="temp").all()
-    keys_to_delete = [d.image_key for d in temp_drafts]
+    # E5 (#111): E2EE 下書きはクライアント生成暗号文サムネ (thumbnail_key,
+    # _thumb.bin)、レガシー平文下書きはサーバ生成サムネ (_thumb.jpg)。両方を
+    # 集めて消さないと暗号文サムネが孤立する (PR-H の voucher 修正と同型)。
+    keys_to_delete = []
+    for d in temp_drafts:
+        if not d.image_key:
+            continue
+        keys_to_delete.append(d.image_key)
+        if d.thumbnail_key:
+            keys_to_delete.append(d.thumbnail_key)
+        keys_to_delete.append(make_thumbnail_key(d.image_key))
     # Phase 5 #70: temp ドラフトは Voucher 化されていない = 計上分が宙ぶらりん
     # のため、削除と同時に record_delete で StorageUsage を減算する。
     # file_size NULL のレガシードラフトは減算対象外。
@@ -50,7 +60,6 @@ def upload():
     storage = get_storage_backend()
     for key in keys_to_delete:
         storage.delete(key)
-        storage.delete(make_thumbnail_key(key))
     if sizes_to_release > 0:
         owner = db.session.get(User, user_id)
         if owner is not None:
@@ -204,6 +213,9 @@ def drafts_delete(draft_id):
         return redirect(url_for("ai_journal.drafts"))
 
     image_key = draft.image_key
+    # E5 (#111): E2EE 下書きの暗号文サムネ (thumbnail_key, _thumb.bin) も消す。
+    # レガシー平文下書きの _thumb.jpg は make_thumbnail_key で導出。
+    thumbnail_key = draft.thumbnail_key
     # Phase 5 #70: AIDraft 削除は Voucher 化されないことが確定するため、
     # StorageUsage から減算する (file_size NULL のレガシーは対象外)。
     owner_id = draft.user_id
@@ -211,8 +223,11 @@ def drafts_delete(draft_id):
     db.session.delete(draft)
     db.session.commit()
     storage = get_storage_backend()
-    storage.delete(image_key)
-    storage.delete(make_thumbnail_key(image_key))
+    if image_key:
+        storage.delete(image_key)
+        storage.delete(make_thumbnail_key(image_key))
+    if thumbnail_key:
+        storage.delete(thumbnail_key)
     if size_to_release > 0:
         owner = db.session.get(User, owner_id)
         if owner is not None:
