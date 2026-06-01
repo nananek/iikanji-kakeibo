@@ -87,24 +87,41 @@ def serve_image(
         return _serve_generic(backend, serving_key, serving_mime, file_hash)
 
 
-def serve_voucher_image(voucher) -> Response:
-    """Voucher を E4 (#111) 暗号化対応で配信する。
+def _serve_attachment(obj) -> Response:
+    """Voucher / AIDraft を E2EE 対応で配信する共通ロジック。
 
-    - 暗号化証憑 (encrypted_meta_blob != None): 暗号文を octet-stream で配信し、
-      `?size=thumb` は voucher.thumbnail_key (クライアント生成暗号文サムネ) を使う。
-    - レガシー平文証憑 (dual-write 期の既存行): 従来通り image_mime で配信。
+    - 暗号化済み (encrypted_meta_blob != None): 暗号文を octet-stream で配信し、
+      `?size=thumb` は obj.thumbnail_key (クライアント生成暗号文サムネ) を使う。
+    - レガシー平文 (dual-write 期の既存行): 従来通り image_mime で配信。
+
+    Voucher と AIDraft は image_key / image_mime / file_hash / encrypted_meta_blob
+    / thumbnail_key を同名で持つため共通化できる。
 
     Raises:
         FileNotFoundError: 画像が存在しない場合
     """
-    if voucher.encrypted_meta_blob is not None:
+    if obj.encrypted_meta_blob is not None:
         return serve_image(
-            voucher.image_key,
+            obj.image_key,
             ENCRYPTED_CONTENT_TYPE,
-            voucher.file_hash,
-            thumbnail_key=voucher.thumbnail_key,
+            obj.file_hash,
+            thumbnail_key=obj.thumbnail_key,
         )
-    return serve_image(voucher.image_key, voucher.image_mime, voucher.file_hash)
+    return serve_image(obj.image_key, obj.image_mime, obj.file_hash)
+
+
+def serve_voucher_image(voucher) -> Response:
+    """Voucher を E4 (#111) 暗号化対応で配信する。詳細は `_serve_attachment`。"""
+    return _serve_attachment(voucher)
+
+
+def serve_draft_image(draft) -> Response:
+    """AIDraft を E5 (#111) 暗号化対応で配信する。詳細は `_serve_attachment`。
+
+    E2EE 下書き (encrypted_meta_blob != None) は暗号文を octet-stream で配信、
+    レガシー平文下書きは image_mime で配信する (両対応)。
+    """
+    return _serve_attachment(draft)
 
 
 def _serve_local(backend, key, mime, file_hash):
