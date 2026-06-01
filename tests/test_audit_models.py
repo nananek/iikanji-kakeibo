@@ -89,6 +89,32 @@ def test_package_roundtrip_and_expires_default(client, db):
     assert abs(delta - AUDIT_PACKAGE_TTL).total_seconds() < 5
 
 
+def test_package_permission_level_check(client, db):
+    owner, auditor = _user(db), _user(db)
+    g = _grant(db, owner, auditor)
+    bad = AuditPackage(
+        audit_grant_id=g.id, round_id=1,
+        owner_user_id=owner.id, auditor_user_id=auditor.id,
+        permission_level=4,  # 1/2/3 以外は CHECK 違反
+        ephemeral_pubkey=b"\x01" * 32,
+        ciphertext=b"\x02" * 10, snapshot_hash=b"\x03" * 32,
+    )
+    db.session.add(bad)
+    with pytest.raises(IntegrityError):
+        db.session.commit()
+    db.session.rollback()
+
+
+def test_package_owner_accepted_at_roundtrip(client, db):
+    owner, auditor = _user(db), _user(db)
+    g = _grant(db, owner, auditor)
+    pkg = _package(db, g, owner, auditor)
+    now = datetime.now(timezone.utc)
+    pkg.owner_accepted_at = now
+    db.session.commit()
+    assert db.session.get(AuditPackage, pkg.id).owner_accepted_at is not None
+
+
 def test_package_unique_grant_round(client, db):
     owner, auditor = _user(db), _user(db)
     g = _grant(db, owner, auditor)
@@ -148,6 +174,10 @@ def test_response_roundtrip(client, db):
     assert fetched.response_type == "rejection"
     assert fetched.owner_acknowledged_at is None
     assert pkg.responses[0].id == r.id
+    # owner_acknowledged_at をセットして永続化・再読込
+    fetched.owner_acknowledged_at = datetime.now(timezone.utc)
+    db.session.commit()
+    assert db.session.get(AuditResponse, r.id).owner_acknowledged_at is not None
 
 
 def test_response_type_validation_rejects_bad_value(client, db):

@@ -53,6 +53,10 @@ def upgrade():
         sa.UniqueConstraint(
             "audit_grant_id", "round_id", name="uq_audit_package_grant_round"
         ),
+        sa.CheckConstraint(
+            "permission_level IN (1, 2, 3)",
+            name="ck_audit_package_permission_level",
+        ),
     )
     op.create_index(
         "ix_audit_packages_owner_user_id", "audit_packages", ["owner_user_id"]

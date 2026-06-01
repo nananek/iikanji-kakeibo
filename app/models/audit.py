@@ -8,7 +8,10 @@ from app.extensions import db
 
 # bigserial PK は SQLite では autoincrement しないため、テスト (SQLite) では
 # INTEGER PRIMARY KEY にフォールバックさせる。PostgreSQL では BIGINT のまま。
+# _BigIntPK = bigserial PK 用、_BigInt = それを参照する FK 用 (型は同一だが
+# 意図を区別するため別名にする)。
 _BigIntPK = BigInteger().with_variant(Integer, "sqlite")
+_BigInt = BigInteger().with_variant(Integer, "sqlite")
 
 
 # 監査パッケージ / 修正案の 90 日 TTL (設計書 §14.8)。expires_at の既定計算に使う。
@@ -151,6 +154,10 @@ class AuditPackage(db.Model):
         db.UniqueConstraint(
             "audit_grant_id", "round_id", name="uq_audit_package_grant_round"
         ),
+        db.CheckConstraint(
+            "permission_level IN (1, 2, 3)",
+            name="ck_audit_package_permission_level",
+        ),
         db.Index("ix_audit_packages_owner_user_id", "owner_user_id"),
         db.Index("ix_audit_packages_auditor_user_id", "auditor_user_id"),
         db.Index("ix_audit_packages_expires_at", "expires_at"),
@@ -175,7 +182,7 @@ class AuditResponse(db.Model):
 
     id = db.Column(_BigIntPK, primary_key=True)
     audit_package_id = db.Column(
-        _BigIntPK,
+        _BigInt,
         db.ForeignKey("audit_packages.id", ondelete="CASCADE"),
         nullable=False,
     )
