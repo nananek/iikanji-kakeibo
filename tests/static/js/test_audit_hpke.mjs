@@ -18,6 +18,9 @@ const { MasterKeyState } = await import(CORE.href);
 const REC = new URL("../../../app/static/js/crypto/record.js", import.meta.url);
 const { uint64BE } = await import(REC.href);
 
+const KP = new URL("../../../app/static/js/crypto/keypair.js", import.meta.url);
+const { privateKeyAAD } = await import(KP.href);
+
 
 async function genKeyPair() {
   const kp = await crypto.subtle.generateKey({ name: "X25519" }, true, ["deriveBits"]);
@@ -65,6 +68,13 @@ test("pkcs8ToRawScalar returns last 32B and validates length", async () => {
   assert.equal(raw.length, 32);
   assert.deepEqual(raw, privPkcs8.slice(16));
   assert.throws(() => pkcs8ToRawScalar(new Uint8Array(32)), /48 bytes/);
+  // 別構造の 48B (DER ヘッダ不正) は弾く
+  const bogus = new Uint8Array(48);
+  assert.throws(() => pkcs8ToRawScalar(bogus), /DER structure/);
+});
+
+test("snapshotHash rejects non-Uint8Array", async () => {
+  await assert.rejects(() => snapshotHash("not-bytes"), /Uint8Array/);
 });
 
 
@@ -141,8 +151,9 @@ test("MasterKeyState.hpkeOpen decrypts a sealed package end-to-end", async () =>
   const plaintext = u8("worker-open snapshot");
   const sealed = await sealAuditPackage(pubRaw, plaintext, 5, 1);
 
-  // 秘密鍵 (pkcs8) を MK で暗号化して保管している想定を再現: privAad で encrypt
-  const privAad = u8("x25519-priv-aad");
+  // 秘密鍵 (pkcs8) を MK で暗号化して保管している想定を再現。privAad は本番と
+  // 同じ keypair.privateKeyAAD(userId) 形式を使う (一貫性)。
+  const privAad = privateKeyAAD(123);
   const encRes = await state.handle({
     type: "encrypt", id: 2, plaintext: privPkcs8.slice(), aad: privAad,
   });

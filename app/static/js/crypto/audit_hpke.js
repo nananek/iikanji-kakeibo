@@ -48,6 +48,9 @@ export function responseAAD(packageId) {
 
 /** SHA-256(plaintext) を 32B で返す (§14.3 の snapshot_hash)。 */
 export async function snapshotHash(plaintext) {
+  if (!(plaintext instanceof Uint8Array)) {
+    throw new TypeError("snapshotHash: plaintext must be a Uint8Array");
+  }
   const buf = plaintext.buffer.slice(
     plaintext.byteOffset,
     plaintext.byteOffset + plaintext.byteLength,

@@ -76,5 +76,11 @@ export function pkcs8ToRawScalar(pkcs8) {
   if (!(pkcs8 instanceof Uint8Array) || pkcs8.byteLength !== 48) {
     throw new Error("X25519 pkcs8 must be Uint8Array of 48 bytes");
   }
+  // RFC 8410 の X25519 PrivateKeyInfo は固定 DER 構造。簡易 sanity check で
+  // 想定外の入力 (別アルゴリズムの pkcs8 等) を弾く: SEQUENCE(0x30) で始まり、
+  // 末尾 34B が OCTET STRING(0x04) 長 32(0x20) + 32B scalar。
+  if (pkcs8[0] !== 0x30 || pkcs8[14] !== 0x04 || pkcs8[15] !== 0x20) {
+    throw new Error("unexpected X25519 pkcs8 DER structure");
+  }
   return pkcs8.slice(16);
 }
