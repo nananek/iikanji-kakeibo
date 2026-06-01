@@ -5,8 +5,9 @@
 // Round 1 → 元帳取得 → Round 2 の 2 段階フローをクライアント完結で実行する。
 //
 // 全体フロー:
-//   1. POST /api/v1/ai/uploads (画像 + comment 送信)
-//      → draft_id 取得 (サーバは LLM 呼ばない、AIDraft.status="pending")
+//   1. E5 (#111): AI 下書き画像をクライアント暗号化して 2 段階 upload
+//      (POST /api/v1/ai/uploads/init → 暗号化 → PUT /api/v1/ai/uploads/<id>)
+//      → draft_id + aad_id 取得 (サーバは平文画像も LLM も扱わない)
 //   2. GET /api/v1/ai-config (provider/model/blob/iv 取得)
 //      → SharedCryptoClient.decrypt で api_key 復号
 //   3. GET /api/v1/ai/prompt-context (Round 1+2 プロンプト材料一括取得)
@@ -17,13 +18,15 @@
 //
 // セキュリティ:
 //   - api_key 平文はメモリ上 string、復号 raw bytes は直後にゼロ埋め
-//   - サーバには画像のみ送信 (LLM プロンプトと API キーはサーバを通らない)
+//   - E5 (#111): 画像はクライアント暗号化してから送信 (サーバは暗号文のみ保持、
+//     復号不能)。LLM 呼出はメモリ上の平文画像を使う (サーバ復号往復なし)。
 //   - usage は Round 1 + Round 2 の合算を AIUsageLog に記録
 
 import { runRound1 } from "./llm/round1.js";
 import { runRound2 } from "./llm/round2.js";
 import { b64decode } from "./b64.js";
 import { fetchJournalsForYear } from "./journals_client.js";
+import { uploadEncryptedDraft } from "./ai_upload.js";
 
 
 function _csrf() {
@@ -32,21 +35,6 @@ function _csrf() {
   return meta ? meta.getAttribute("content") : "";
 }
 
-
-/** POST /api/v1/ai/uploads (multipart) */
-async function _uploadImage(fetchImpl, file, comment) {
-  const form = new FormData();
-  form.append("image", file);
-  if (comment) form.append("comment", comment);
-  const r = await fetchImpl("/api/v1/ai/uploads", {
-    method: "POST", credentials: "include", body: form,
-  });
-  if (!r.ok) {
-    const e = await r.json().catch(() => ({}));
-    throw new Error(`upload failed: ${e.error || `HTTP ${r.status}`}`);
-  }
-  return r.json();
-}
 
 /** GET /api/v1/ai-config */
 async function _fetchAiConfig(fetchImpl) {
@@ -95,30 +83,43 @@ async function _saveSuggestions(fetchImpl, draftId, body) {
  * @param {Object} args
  * @param {File|Blob} args.file
  * @param {string} [args.comment]
- * @param {Object} args.client                   SharedCryptoClient (decrypt 必須)
- * @param {number} [args.userId]                 元帳取得 (復号 AAD) 用。未指定なら
- *                                               Round 2 の元帳は空になる
+ * @param {Object} args.client                   SharedCryptoClient (encrypt/decrypt 必須)
+ * @param {number} args.userId                   E5 (#111): 画像暗号化の AAD 束縛 +
+ *                                               元帳取得 (復号 AAD) 用。**必須**。
+ * @param {Function} [args.makeThumbnail]        (file)=>Promise<Uint8Array|null>。
+ *                                               DOM canvas 依存のサムネ生成 (DI)。
+ *                                               省略時はサムネなし。
  * @param {number} [args.currentYear]            元帳取得の基準年 (テスト DI)。
  *                                               既定は実行時の西暦年
  * @param {Function} [args.runRound1Impl=runRound1]   テスト DI
  * @param {Function} [args.runRound2Impl=runRound2]
  * @param {Function} [args.fetchJournalsForYearImpl=fetchJournalsForYear]
+ * @param {Function} [args.uploadEncryptedDraftImpl=uploadEncryptedDraft]
  * @param {Function} [args.fetchImpl=globalThis.fetch]
- * @returns {Promise<{draft_id, suggestions, analysis, complianceResult, provider, usage}>}
+ * @returns {Promise<{draft_id, aad_id, suggestions, analysis, complianceResult, provider, usage}>}
  */
 export async function analyzeReceiptFull({
-  file, comment = "", client, userId, currentYear,
+  file, comment = "", client, userId, makeThumbnail, currentYear,
   runRound1Impl = runRound1, runRound2Impl = runRound2,
-  fetchJournalsForYearImpl = fetchJournalsForYear, fetchImpl,
+  fetchJournalsForYearImpl = fetchJournalsForYear,
+  uploadEncryptedDraftImpl = uploadEncryptedDraft, fetchImpl,
 }) {
   if (!file) throw new Error("file is required");
   if (!client || typeof client.decrypt !== "function") {
     throw new Error("client (SharedCryptoClient) is required");
   }
+  // E5 (#111): 画像暗号化の AAD (vimg/vthumb/vmeta + userId + aadId) に userId が
+  // 必須。upload 画面は effective_user_id を渡す。
+  if (userId === undefined || userId === null) {
+    throw new Error("userId is required (画像暗号化の AAD 束縛に必要)");
+  }
   const f = fetchImpl ?? globalThis.fetch;
 
-  // 1. 画像アップロード
-  const { draft_id } = await _uploadImage(f, file, comment);
+  // 1. 画像をクライアント暗号化して 2 段階 upload (init → encrypt → PUT)。
+  const { draftId, aadId } = await uploadEncryptedDraftImpl({
+    client, userId, file, comment, makeThumbnail, fetchImpl: f,
+  });
+  const draft_id = draftId;
 
   // 2. AI 設定取得 + MK 復号
   const cfg = await _fetchAiConfig(f);
@@ -198,6 +199,7 @@ export async function analyzeReceiptFull({
 
   return {
     draft_id,
+    aad_id: aadId,
     suggestions: r2.suggestions,
     analysis: r1.analysis,
     complianceResult: r1.complianceResult,

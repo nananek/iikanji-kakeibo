@@ -275,6 +275,11 @@
     var sharedClientMod = await import(
       "{{ url_for('static', filename='js/crypto/shared-client.js') }}"
     );
+    // E5 (#111): canvas サムネ生成 (証憑と共通)。crypto/ を DOM 非依存に保つため
+    // orchestrator へ makeThumbnail として注入する。
+    var thumbnailMod = await import(
+      "{{ url_for('static', filename='js/vouchers/thumbnail.js') }}"
+    );
     var workerUrl =
       "{{ url_for('static', filename='js/crypto/shared-worker.js') }}";
     var client = new sharedClientMod.SharedCryptoClient(workerUrl);
@@ -288,6 +293,7 @@
       return await orchestratorMod.analyzeReceiptFull({
         file: file, comment: comment, client: client,
         userId: {{ effective_user_id|tojson }},
+        makeThumbnail: thumbnailMod.makeThumbnail,
       });
     } finally {
       try { client.close(); } catch (_e) { /* ignore */ }

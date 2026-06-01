@@ -42,6 +42,17 @@ function makeClient(decryptFn) {
   return { decrypt: decryptFn };
 }
 
+// E5 (#111): 画像暗号化アップロードは DI で差し替え (実 encrypt/PUT は
+// test_ai_upload.mjs で検証)。draftId/aadId を返すだけのフェイク。
+function fakeUpload(draftId = 77, aadId = 123n) {
+  const fn = async (args) => {
+    fn.lastArgs = args;
+    return { draftId, aadId, ok: true, status: "pending",
+             file_hash_cipher: "ab" };
+  };
+  return fn;
+}
+
 const CTX = {
   round1_prompt: "R1",
   compliance_prompt: "",
@@ -62,7 +73,6 @@ const CTX = {
 test("正常フロー: upload → ai-config → decrypt → prompt-context → R1 → R2 → save", async () => {
   let savePayload = null;
   const fetchImpl = makeFetch([
-    ["/api/v1/ai/uploads", () => jsonResp({ ok: true, draft_id: 77 })],
     ["/api/v1/ai-config", () => jsonResp({
       provider: "openai", model_name: "gpt-4o-mini",
       api_key_blob: "AA==", api_key_iv: "AA==", is_e2ee: true,
@@ -73,6 +83,7 @@ test("正常フロー: upload → ai-config → decrypt → prompt-context → R
       return jsonResp({ ok: true, draft: { id: 77 } });
     }],
   ]);
+  const uploadEncryptedDraftImpl = fakeUpload(77, 123n);
   const client = makeClient(async () => ({
     plaintext: new TextEncoder().encode("sk-test"),
   }));
@@ -107,12 +118,19 @@ test("正常フロー: upload → ai-config → decrypt → prompt-context → R
   const ret = await analyzeReceiptFull({
     file: fakeFile(new Uint8Array([1, 2, 3])),
     comment: "テスト",
-    client, runRound1Impl, runRound2Impl, fetchImpl,
+    client, userId: 9, uploadEncryptedDraftImpl,
+    makeThumbnail: async () => new Uint8Array([1]),
+    runRound1Impl, runRound2Impl, fetchImpl,
   });
 
   // 戻り値検証
   assert.equal(ret.draft_id, 77);
+  assert.equal(ret.aad_id, 123n);
   assert.equal(ret.provider, "openai");
+  // upload は client/userId/file/comment/makeThumbnail を受け取る。
+  assert.equal(uploadEncryptedDraftImpl.lastArgs.userId, 9);
+  assert.equal(uploadEncryptedDraftImpl.lastArgs.comment, "テスト");
+  assert.equal(typeof uploadEncryptedDraftImpl.lastArgs.makeThumbnail, "function");
   assert.equal(ret.model, "gpt-4o-mini");
   assert.equal(ret.suggestions.length, 1);
   assert.equal(ret.analysis.amount, 500);
@@ -137,18 +155,16 @@ test("正常フロー: upload → ai-config → decrypt → prompt-context → R
   assert.equal(savePayload.usage.input_tokens, 500);
   assert.equal(savePayload.suggestions.length, 1);
 
-  // fetch 順序
+  // fetch 順序 (画像 upload は DI 化され fetch ではなくなった)
   const urls = fetchImpl.calls.map((c) => c.url);
-  assert.equal(urls[0], "/api/v1/ai/uploads");
-  assert.equal(urls[1], "/api/v1/ai-config");
-  assert.equal(urls[2], "/api/v1/ai/prompt-context");
-  assert.match(urls[3], /\/suggestions$/);
+  assert.equal(urls[0], "/api/v1/ai-config");
+  assert.equal(urls[1], "/api/v1/ai/prompt-context");
+  assert.match(urls[2], /\/suggestions$/);
 });
 
 
 test("AI config が E2EE 形式でなければ throw", async () => {
   const fetchImpl = makeFetch([
-    ["/api/v1/ai/uploads", () => jsonResp({ draft_id: 1 })],
     ["/api/v1/ai-config", () => jsonResp({
       provider: "openai", is_e2ee: false,
       api_key_blob: null, api_key_iv: null,
@@ -157,7 +173,8 @@ test("AI config が E2EE 形式でなければ throw", async () => {
   const client = makeClient(async () => ({ plaintext: new Uint8Array() }));
   await assert.rejects(
     () => analyzeReceiptFull({
-      file: fakeFile(new Uint8Array(1)), client, fetchImpl,
+      file: fakeFile(new Uint8Array(1)), client, userId: 1,
+      uploadEncryptedDraftImpl: fakeUpload(), fetchImpl,
       runRound1Impl: async () => ({}), runRound2Impl: async () => ({}),
     }),
     /E2EE 形式ではありません/,
@@ -168,7 +185,6 @@ test("AI config が E2EE 形式でなければ throw", async () => {
 test("model_name 空ならデフォルトモデル使用", async () => {
   let r1Args;
   const fetchImpl = makeFetch([
-    ["/api/v1/ai/uploads", () => jsonResp({ draft_id: 2 })],
     ["/api/v1/ai-config", () => jsonResp({
       provider: "anthropic", model_name: "",
       api_key_blob: "AA==", api_key_iv: "AA==", is_e2ee: true,
@@ -189,7 +205,8 @@ test("model_name 空ならデフォルトモデル使用", async () => {
   });
   await analyzeReceiptFull({
     file: fakeFile(new Uint8Array(1)),
-    client, runRound1Impl, runRound2Impl, fetchImpl,
+    client, userId: 1, uploadEncryptedDraftImpl: fakeUpload(2),
+    runRound1Impl, runRound2Impl, fetchImpl,
   });
   assert.equal(r1Args.model, "claude-sonnet-4-20250514");
 });
@@ -197,7 +214,6 @@ test("model_name 空ならデフォルトモデル使用", async () => {
 
 test("default_model_by_provider に provider 未定義なら throw", async () => {
   const fetchImpl = makeFetch([
-    ["/api/v1/ai/uploads", () => jsonResp({ draft_id: 3 })],
     ["/api/v1/ai-config", () => jsonResp({
       provider: "evil-provider", model_name: "",
       api_key_blob: "AA==", api_key_iv: "AA==", is_e2ee: true,
@@ -210,7 +226,7 @@ test("default_model_by_provider に provider 未定義なら throw", async () =>
   await assert.rejects(
     () => analyzeReceiptFull({
       file: fakeFile(new Uint8Array(1)),
-      client, fetchImpl,
+      client, userId: 1, uploadEncryptedDraftImpl: fakeUpload(3), fetchImpl,
       runRound1Impl: async () => ({}), runRound2Impl: async () => ({}),
     }),
     /unsupported provider/,
@@ -218,25 +234,28 @@ test("default_model_by_provider に provider 未定義なら throw", async () =>
 });
 
 
-test("upload エラーで早期 reject (ai-config 取得しない)", async () => {
+test("画像 upload エラーで早期 reject (ai-config 取得しない)", async () => {
+  let aiConfigCalled = false;
   const fetchImpl = makeFetch([
-    ["/api/v1/ai/uploads", () => jsonResp({ error: "too large" }, false, 413)],
+    ["/api/v1/ai-config", () => { aiConfigCalled = true; return jsonResp({}); }],
   ]);
   const client = makeClient(async () => ({ plaintext: new Uint8Array() }));
+  const failingUpload = async () => { throw new Error("upload failed: 413"); };
   await assert.rejects(
     () => analyzeReceiptFull({
-      file: fakeFile(new Uint8Array(1)), client, fetchImpl,
+      file: fakeFile(new Uint8Array(1)), client, userId: 1,
+      uploadEncryptedDraftImpl: failingUpload, fetchImpl,
       runRound1Impl: async () => ({}), runRound2Impl: async () => ({}),
     }),
     /upload failed/,
   );
+  assert.equal(aiConfigCalled, false);
 });
 
 
 test("Round 1 失敗で reject (Round 2 / save スキップ)", async () => {
   let round2Called = false;
   const fetchImpl = makeFetch([
-    ["/api/v1/ai/uploads", () => jsonResp({ draft_id: 5 })],
     ["/api/v1/ai-config", () => jsonResp({
       provider: "openai", model_name: "gpt-4o",
       api_key_blob: "AA==", api_key_iv: "AA==", is_e2ee: true,
@@ -248,7 +267,8 @@ test("Round 1 失敗で reject (Round 2 / save スキップ)", async () => {
   }));
   await assert.rejects(
     () => analyzeReceiptFull({
-      file: fakeFile(new Uint8Array(1)), client, fetchImpl,
+      file: fakeFile(new Uint8Array(1)), client, userId: 1,
+      uploadEncryptedDraftImpl: fakeUpload(5), fetchImpl,
       runRound1Impl: async () => { throw new Error("LLM crash"); },
       runRound2Impl: async () => { round2Called = true; return {}; },
     }),
@@ -266,5 +286,12 @@ test("required 引数欠如で throw", async () => {
   await assert.rejects(
     () => analyzeReceiptFull({ file: fakeFile(new Uint8Array(1)) }),
     /client.*is required/,
+  );
+  // E5 (#111): userId は画像暗号化の AAD 束縛に必須。
+  await assert.rejects(
+    () => analyzeReceiptFull({
+      file: fakeFile(new Uint8Array(1)), client: { decrypt: () => {} },
+    }),
+    /userId is required/,
   );
 });

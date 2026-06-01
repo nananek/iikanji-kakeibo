@@ -6,7 +6,12 @@
   // E3-F PR-B3: 案 1 ワンタップ登録のクライアント側暗号化に使う。
   var _userId = {{ current_user.id|tojson }};
   var _isProxyMode = {{ is_acting_as|tojson }};
+  // E5 (#111): 暗号化下書きサムネのクライアント復号 (AAD 束縛) 用のオーナー
+  // user_id。下書きは全て effective_user_id の所有 (代理閲覧時も owner)。
+  window.IIKANJI_AI_DRAFTS_USERID = {{ effective_user_id|tojson }};
 </script>
+<script type="module"
+        src="{{ url_for('static', filename='js/ai_journal/drafts_decrypt.mjs') }}"></script>
 
 <h2><i class="bi bi-archive"></i> AI証憑 一時保存</h2>
 
@@ -48,9 +53,17 @@
       </div>
       <div class="card-body">
         <div class="text-center mb-2">
+          {% if d.encrypted_meta_blob is not none %}
+          {# E5 (#111): 暗号化下書きは octet-stream のため <img src> 直貼り不可。
+             data 属性を読んでクライアント復号 → blob URL 差替 (drafts_decrypt.mjs)。 #}
+          <img class="img-fluid rounded ai-draft-thumb" style="max-height: 150px;"
+               data-draft-id="{{ d.id }}" data-aad-id="{{ d.aad_id }}"
+               alt="証憑画像 (復号中…)" loading="lazy">
+          {% else %}
           <img src="{{ url_for('ai_journal.draft_image', draft_id=d.id, size='thumb') }}"
                class="img-fluid rounded" style="max-height: 150px;" alt="証憑画像"
                loading="lazy">
+          {% endif %}
         </div>
         {% if d.comment %}
         <p class="text-muted mb-2" style="font-size: 0.85rem;">
