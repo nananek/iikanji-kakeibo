@@ -986,6 +986,14 @@ def _voucher_to_backup_dict(voucher, storage):
 
     画像取得失敗は image_data=None + _imageError 文字列で局所化。1 枚の I/O
     失敗で export 全体を 500 にしない。
+
+    E4 (#111) PR-H: E2EE 証憑 (encrypted_meta_blob あり) は image_data が暗号文
+    (iv||ct||tag) で、復元には暗号メタ列とクライアント生成サムネ暗号文も要る。
+    - encrypted_meta_blob / meta_iv / file_hash_plain: 復号と平文側ハッシュ検証用。
+    - aad_id: AAD 束縛の安定識別子。PK 再採番後も復号できるよう往復保持する。
+      63bit のため JS Number 精度を超える → 文字列で受け渡す (PR-G の API と統一)。
+    - thumbnail_data: クライアント暗号化サムネ (_thumb.bin) の暗号文。サーバ生成
+      JPEG サムネ (平文証憑) は restore 時に Pillow で再生成するため含めない。
     """
     image_data_b64 = None
     image_error = None
@@ -997,6 +1005,17 @@ def _voucher_to_backup_dict(voucher, storage):
             image_data_b64 = b64encode(raw).decode("ascii")
     except Exception as e:
         image_error = f"{type(e).__name__}: {e}"
+    thumbnail_data_b64 = None
+    thumbnail_error = None
+    if voucher.thumbnail_key:
+        try:
+            traw = storage.get(voucher.thumbnail_key)
+            if traw is None:
+                thumbnail_error = "storage returned None"
+            else:
+                thumbnail_data_b64 = b64encode(traw).decode("ascii")
+        except Exception as e:
+            thumbnail_error = f"{type(e).__name__}: {e}"
     out = {
         "id": voucher.id,
         "journal_entry_id": voucher.journal_entry_id,
@@ -1006,9 +1025,16 @@ def _voucher_to_backup_dict(voucher, storage):
         "file_size": voucher.file_size,
         "uploaded_at": voucher.uploaded_at.isoformat() if voucher.uploaded_at else None,
         "image_data": image_data_b64,
+        "encrypted_meta_blob": _b64_or_none(voucher.encrypted_meta_blob),
+        "meta_iv": _b64_or_none(voucher.meta_iv),
+        "file_hash_plain": voucher.file_hash_plain,
+        "aad_id": str(voucher.aad_id) if voucher.aad_id is not None else None,
+        "thumbnail_data": thumbnail_data_b64,
     }
     if image_error is not None:
         out["_imageError"] = image_error
+    if thumbnail_error is not None:
+        out["_thumbnailError"] = thumbnail_error
     return out
 
 

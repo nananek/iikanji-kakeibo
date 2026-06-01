@@ -154,6 +154,23 @@ class TestSoftDeletePersistsAuditLog:
         # ストレージ delete が呼ばれている
         assert image_key in mock_storage["deleted"]
 
+    def test_e2ee_thumbnail_deleted_on_soft_delete(
+        self, logged_in_client, db, user, mock_storage, reset_limiter,
+    ):
+        """E4 (#111) NG-3: E2EE 証憑のサムネ (_thumb.bin = thumbnail_key) も
+        削除される (従来は _thumb.jpg のみ消して暗号文サムネが孤立していた)."""
+        v = _make_voucher(db, user, file_size=100)
+        thumb_key = f"{v.image_key.rsplit('.', 1)[0]}_thumb.bin"
+        v.thumbnail_key = thumb_key
+        db.session.commit()
+
+        logged_in_client.post(
+            f"/vouchers/{v.id}/delete", follow_redirects=False,
+        )
+
+        assert v.image_key in mock_storage["deleted"]
+        assert thumb_key in mock_storage["deleted"]  # E2EE サムネを孤立させない
+
 
 class TestSoftDeletedHiddenFromQueries:
     """論理削除済 Voucher が各 view / API から非表示."""

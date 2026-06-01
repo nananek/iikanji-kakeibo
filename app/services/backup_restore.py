@@ -43,7 +43,9 @@ from app.models.voucher import Voucher
 from app.models.voucher_audit_log import VoucherAuditLog
 from app.models.webhook import WebhookConfig
 from app.services.storage import (
+    ENCRYPTED_CONTENT_TYPE,
     get_storage_backend,
+    make_encrypted_thumbnail_key,
     make_storage_key,
     make_thumbnail_key,
     store_image_with_thumbnail,
@@ -140,6 +142,73 @@ def _validate_backup(user_id: int, backup: Any) -> None:
         if not isinstance(period, int) or period < 0 or period > 16:
             raise BackupValidationError(f"invalid period: {period!r}")
 
+    # E4 (#111) PR-H: 暗号化証憑 (encrypted_meta_blob あり) の user 供給フィールド
+    # 検証。破壊的な _delete_user_data_for_restore より前に弾く (400)。base64 本体
+    # (image_data / encrypted_meta_blob / thumbnail_data) の妥当性は _b64_decode
+    # (validate=True → BackupValidationError) が restore 時に保証するため、ここでは
+    # int 化や DB 制約に直結する小さなフィールドを先取りで検査する。
+    for row in data.get("vouchers") or []:
+        if not isinstance(row, dict):
+            continue  # 上の FK ループで検査済
+        if row.get("encrypted_meta_blob") is None:
+            continue  # 平文証憑 (レガシー) は対象外
+        vid = row.get("id")
+        # NG-2: export が画像/サムネ取得に失敗した E2EE 行 (_imageError /
+        # _thumbnailError マーカー付き) は、復元すると暗号文の一部が欠落した
+        # 復号不能な証憑になる。silent な部分復元 (200 OK) を避け 400 で弾き、
+        # 利用者に完全な backup の再取得を促す。
+        if "_imageError" in row or "_thumbnailError" in row:
+            raise BackupValidationError(
+                f"vouchers[id={vid}] は export 時に画像/サムネの取得に失敗して "
+                "います (_imageError/_thumbnailError)。完全な backup を再取得して "
+                "から復元してください"
+            )
+        # aad_id: E2EE 証憑では AAD 束縛の安定識別子として必須 (PR-G)。null だと
+        # クライアントが AAD を再構築できず復号が恒久的に失敗する。値は
+        # PostgreSQL BigInteger 範囲 (-2^63 .. 2^63-1) で、int() は任意精度なので
+        # 範囲外や非数値を無検証で通すと DB エラー (500) になる。
+        aad_raw = row.get("aad_id")
+        if aad_raw is None:
+            raise BackupValidationError(
+                f"vouchers[id={vid}].aad_id は E2EE 証憑で必須です "
+                "(AAD 束縛の安定識別子。null だとクライアント復号が不能になる)"
+            )
+        try:
+            aad_int = int(aad_raw)
+        except (TypeError, ValueError) as e:
+            raise BackupValidationError(
+                f"vouchers[id={vid}].aad_id が整数ではありません: {aad_raw!r}"
+            ) from e
+        if not (-(2 ** 63) <= aad_int < 2 ** 63):
+            raise BackupValidationError(
+                f"vouchers[id={vid}].aad_id が BigInteger 範囲外です: {aad_int}"
+            )
+        # meta_iv: AES-GCM nonce は 12 bytes 固定。encrypted_meta_blob と同じ
+        # 056 で対に導入された列なので、暗号化証憑では必須。欠落 / 不正長は
+        # クライアント復号が確実に失敗する (サイレント破損) ため、細工された
+        # backup からの注入を復元完了扱いになる前にここで弾く。
+        meta_iv_b64 = row.get("meta_iv")
+        if meta_iv_b64 is None:
+            raise BackupValidationError(
+                f"vouchers[id={vid}].meta_iv は E2EE 証憑で必須です "
+                "(encrypted_meta_blob と対で AES-GCM nonce を保持する)"
+            )
+        # meta_iv_b64 は上で非 None 確定なので _b64_decode は非 None を返す。
+        iv = _b64_decode(meta_iv_b64)  # 不正 base64 は BackupValidationError
+        if len(iv) != 12:
+            raise BackupValidationError(
+                f"vouchers[id={vid}].meta_iv は 12 bytes (AES-GCM nonce) "
+                f"である必要があります (実際: {len(iv)})"
+            )
+        # file_size: 容量計上に使う非負整数。bool は int のサブクラスなので除外。
+        fs = row.get("file_size")
+        if fs is not None and (
+            isinstance(fs, bool) or not isinstance(fs, int) or fs < 0
+        ):
+            raise BackupValidationError(
+                f"vouchers[id={vid}].file_size は非負整数である必要があります: {fs!r}"
+            )
+
     # journal_entries の損益振替仕訳 (fiscal_period=16 / fiscal_month=16 /
     # is_closing) は自動生成専用なので restore 経由でも注入を禁止する
     # (CLAUDE.md の複式簿記設計に従う)。E3-F で新カラムにも対応。
@@ -209,7 +278,14 @@ def _delete_user_data_for_restore(user_id: int, backend) -> None:
     # 2. Voucher: ストレージ + DB
     vouchers = Voucher.query.filter_by(user_id=user_id).all()
     for v in vouchers:
-        for k in (v.image_key, make_thumbnail_key(v.image_key)):
+        # 平文証憑は make_thumbnail_key (_thumb.jpg)、E4 (#111) E2EE 証憑は
+        # thumbnail_key (_thumb.bin) にサムネを持つ。両方を best-effort で消す
+        # (取り違えても delete は冪等)。これを怠ると E2EE サムネ暗号文が
+        # ストレージに孤立する。
+        keys = [v.image_key, make_thumbnail_key(v.image_key)]
+        if v.thumbnail_key:
+            keys.append(v.thumbnail_key)
+        for k in keys:
             try:
                 backend.delete(k)
             except Exception as e:
@@ -477,8 +553,58 @@ def _restore_vouchers(
         old_eid = r.get("journal_entry_id")
         new_eid = entry_id_map.get(old_eid) if old_eid is not None else None
         # 改ざん検知: 画像バイトから SHA-256 を再計算して file_hash に採用
-        # (backup の file_hash と画像バイトが不一致のまま保存しない)
+        # (backup の file_hash と画像バイトが不一致のまま保存しない)。E2EE 証憑では
+        # image_bytes は暗号文 (iv||ct||tag) なので、これは finalize_voucher_upload
+        # が保存する cipher hash と一致する (電帳法 Q11 ハイブリッドの cipher 側)。
         computed_hash = hashlib.sha256(image_bytes).hexdigest()
+
+        meta_blob_b64 = r.get("encrypted_meta_blob")
+        if meta_blob_b64 is not None:
+            # --- E4 (#111) E2EE 証憑: 暗号文をそのまま保存 (Pillow を回さない) ---
+            # サーバは復号できないので画像/サムネ暗号文を無加工で書き戻し、復号に
+            # 必要な暗号メタ列 (encrypted_meta_blob / meta_iv / file_hash_plain /
+            # aad_id) を復元する。aad_id を往復保持することで、PK 再採番後も AAD が
+            # 一致しクライアント復号が成立する (Option C / PR-G の基盤)。
+            thumb_b64 = r.get("thumbnail_data")
+            thumb_bytes = _b64_decode(thumb_b64) if thumb_b64 is not None else None
+            aad_raw = r.get("aad_id")
+            meta_iv_b64 = r.get("meta_iv")
+            backed_size = r.get("file_size")
+            voucher = Voucher(
+                user_id=user_id,
+                journal_entry_id=new_eid,
+                image_key="",  # 仮、後で setattr
+                image_mime=r.get("image_mime") or ENCRYPTED_CONTENT_TYPE,
+                file_hash=computed_hash,  # cipher hash
+                file_hash_plain=r.get("file_hash_plain"),
+                encrypted_meta_blob=_b64_decode(meta_blob_b64),
+                meta_iv=_b64_decode(meta_iv_b64) if meta_iv_b64 else None,
+                aad_id=int(aad_raw) if aad_raw is not None else None,
+                # E2EE の file_size は画像+サムネ暗号文の合計 (finalize と同じ)。
+                # backup 値を優先し、欠落時のみ再計算する。
+                file_size=backed_size if backed_size is not None
+                else len(image_bytes) + (len(thumb_bytes) if thumb_bytes else 0),
+                uploaded_at=_parse_datetime(r.get("uploaded_at")) or datetime.now(timezone.utc),
+            )
+            db.session.add(voucher)
+            db.session.flush()
+            new_key = make_storage_key(user_id, voucher.id, ENCRYPTED_CONTENT_TYPE)
+            voucher.image_key = new_key
+            # WARN-5: put が途中で失敗 (S3 partial write 等) しても
+            # _cleanup_storage が孤立オブジェクトを消せるよう、append を put より
+            # 先に行う。best-effort delete なので未書込キーでも無害。
+            written_keys.append(new_key)
+            backend.put(new_key, image_bytes, ENCRYPTED_CONTENT_TYPE)
+            if thumb_bytes is not None:
+                thumb_key = make_encrypted_thumbnail_key(new_key)
+                voucher.thumbnail_key = thumb_key
+                written_keys.append(thumb_key)
+                backend.put(thumb_key, thumb_bytes, ENCRYPTED_CONTENT_TYPE)
+            db_n += 1
+            storage_n += 1
+            continue
+
+        # --- レガシー平文証憑 (AI クイックアクセプト等): 従来通り Pillow サムネ生成 ---
         voucher = Voucher(
             user_id=user_id,
             journal_entry_id=new_eid,

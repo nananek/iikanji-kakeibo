@@ -530,6 +530,192 @@ class TestBackupRestoreImages:
         from app.services.storage import make_thumbnail_key
         assert make_thumbnail_key(vs[0].image_key) in stored
 
+    def test_e2ee_voucher_restored_verbatim(
+        self, app, client, db, user, accounts, auth_header,
+        reset_limiter, monkeypatch,
+    ):
+        """E4 (#111) PR-H: E2EE 証憑は暗号文を無加工で保存し、暗号メタ列と
+        aad_id を復元する (Pillow を回さない)。サムネは _thumb.bin に暗号文で書く。
+        """
+        import hashlib
+        from app.services import storage as storage_module
+        from app.services import backup_restore as br_module
+        from app.services.storage import (
+            make_encrypted_thumbnail_key, make_thumbnail_key,
+        )
+
+        stored: dict = {}
+
+        class FakeBackend:
+            def put(self, key, payload, mime):
+                stored[key] = (payload, mime)
+
+            def delete(self, key):
+                stored.pop(key, None)
+
+            def get(self, key):
+                v = stored.get(key)
+                return v[0] if v else None
+
+        backend = FakeBackend()
+        monkeypatch.setattr(
+            storage_module, "get_storage_backend", lambda: backend,
+        )
+        monkeypatch.setattr(
+            br_module, "get_storage_backend", lambda: backend,
+        )
+
+        # 暗号文 (iv||ct||tag) はサーバから見て opaque なバイト列
+        image_ct = b"\x11" * 12 + b"ENCRYPTED-IMAGE-CT" + b"\x22" * 16
+        thumb_ct = b"\x33" * 12 + b"ENCRYPTED-THUMB-CT" + b"\x44" * 16
+        meta_blob = b"\xaa" * 40
+        meta_iv = b"\xbb" * 12
+        aad_id = 7_233_445_566_778_899_001  # 63bit 域の安定識別子
+        cipher_hash = hashlib.sha256(image_ct).hexdigest()
+
+        backup = {
+            "version": "1.0", "user_id": user.id,
+            "data": {
+                "accounts": [], "fiscal_closes": [],
+                "journal_entries": [], "journal_entry_lines": [],
+                "medical_expenses": [], "balance_cache_blobs": [],
+                "vouchers": [
+                    {
+                        "id": 9, "journal_entry_id": None,
+                        "image_key": "old/9.bin",
+                        "image_mime": "application/octet-stream",
+                        "image_data": base64.b64encode(image_ct).decode(),
+                        "file_hash": cipher_hash,
+                        "file_hash_plain": "b" * 64,
+                        "file_size": len(image_ct) + len(thumb_ct),
+                        "encrypted_meta_blob": base64.b64encode(meta_blob).decode(),
+                        "meta_iv": base64.b64encode(meta_iv).decode(),
+                        "aad_id": str(aad_id),
+                        "thumbnail_data": base64.b64encode(thumb_ct).decode(),
+                    },
+                ],
+                "ai_drafts": [],
+                "user_ai_config": None, "webhook_configs": [],
+                "tax_form_mappings": [], "csv_column_profiles": [],
+            },
+        }
+        resp = client.post(
+            "/api/v1/backup/restore", headers=auth_header, json=backup,
+        )
+        assert resp.status_code == 200, resp.get_json()
+
+        v = Voucher.active().filter_by(user_id=user.id).one()
+        # 暗号メタ列が往復復元されている
+        assert v.encrypted_meta_blob == meta_blob
+        assert v.meta_iv == meta_iv
+        assert v.file_hash_plain == "b" * 64
+        assert v.aad_id == aad_id  # AAD 束縛の安定識別子を保持
+        assert v.file_size == len(image_ct) + len(thumb_ct)
+        # 暗号文は無加工で保存 (Pillow を通っていない)
+        assert v.image_key.startswith(f"vouchers/{user.id}/")
+        assert v.image_key.endswith(".bin")
+        assert stored[v.image_key][0] == image_ct
+        # file_hash は cipher hash
+        assert v.file_hash == cipher_hash
+        # サムネは _thumb.bin に暗号文で保存される
+        assert v.thumbnail_key == make_encrypted_thumbnail_key(v.image_key)
+        assert stored[v.thumbnail_key][0] == thumb_ct
+        # サーバ生成 JPEG サムネ (_thumb.jpg) は作られない
+        assert make_thumbnail_key(v.image_key) not in stored
+
+    def test_e2ee_voucher_export_restore_roundtrip(
+        self, app, client, db, user, accounts, auth_header,
+        reset_limiter, monkeypatch,
+    ):
+        """E4 (#111) PR-H: export → restore で E2EE 証憑が忠実に往復し、PK が
+        再採番されても aad_id と暗号文が保持される。"""
+        from app.services import storage as storage_module
+        from app.services import backup_restore as br_module
+        from app.services.storage import (
+            make_storage_key, make_encrypted_thumbnail_key,
+            ENCRYPTED_CONTENT_TYPE,
+        )
+
+        stored: dict = {}
+
+        class FakeBackend:
+            def put(self, key, payload, mime):
+                stored[key] = (payload, mime)
+
+            def delete(self, key):
+                stored.pop(key, None)
+
+            def get(self, key):
+                v = stored.get(key)
+                return v[0] if v else None
+
+        from app.views import api as api_module
+
+        backend = FakeBackend()
+        monkeypatch.setattr(
+            storage_module, "get_storage_backend", lambda: backend,
+        )
+        monkeypatch.setattr(
+            br_module, "get_storage_backend", lambda: backend,
+        )
+        # export エンドポイント (api.py) は自モジュールに束縛した参照を使う
+        monkeypatch.setattr(
+            api_module, "get_storage_backend", lambda: backend,
+        )
+
+        image_ct = b"\x55" * 12 + b"ROUNDTRIP-IMAGE" + b"\x66" * 16
+        thumb_ct = b"\x77" * 12 + b"ROUNDTRIP-THUMB" + b"\x88" * 16
+        meta_blob = b"\xcc" * 32
+        meta_iv = b"\xdd" * 12
+        aad_id = 4_611_686_018_427_387_903  # 2^62-1 近傍
+
+        # DB + storage に E2EE 証憑を仕込む
+        img_key = make_storage_key(user.id, 1, ENCRYPTED_CONTENT_TYPE)
+        thumb_key = make_encrypted_thumbnail_key(img_key)
+        stored[img_key] = (image_ct, ENCRYPTED_CONTENT_TYPE)
+        stored[thumb_key] = (thumb_ct, ENCRYPTED_CONTENT_TYPE)
+        import hashlib
+        v0 = Voucher(
+            user_id=user.id, journal_entry_id=None,
+            image_key=img_key, image_mime=ENCRYPTED_CONTENT_TYPE,
+            file_hash=hashlib.sha256(image_ct).hexdigest(),
+            file_hash_plain="c" * 64,
+            encrypted_meta_blob=meta_blob, meta_iv=meta_iv,
+            aad_id=aad_id, thumbnail_key=thumb_key,
+            file_size=len(image_ct) + len(thumb_ct),
+        )
+        db.session.add(v0)
+        db.session.commit()
+
+        # export
+        exp = client.get("/api/v1/backup/export", headers=auth_header)
+        assert exp.status_code == 200
+        data = exp.get_json()["data"]
+        assert len(data["vouchers"]) == 1
+        vd = data["vouchers"][0]
+        assert vd["aad_id"] == str(aad_id)
+        assert vd["encrypted_meta_blob"] == base64.b64encode(meta_blob).decode()
+        assert vd["meta_iv"] == base64.b64encode(meta_iv).decode()
+        assert vd["file_hash_plain"] == "c" * 64
+        assert vd["thumbnail_data"] == base64.b64encode(thumb_ct).decode()
+        assert vd["image_data"] == base64.b64encode(image_ct).decode()
+
+        # restore (export 結果をそのまま投入)
+        backup = {"version": "1.0", "user_id": user.id, "data": data}
+        resp = client.post(
+            "/api/v1/backup/restore", headers=auth_header, json=backup,
+        )
+        assert resp.status_code == 200, resp.get_json()
+
+        v1 = Voucher.active().filter_by(user_id=user.id).one()
+        # PK は再採番され得るが aad_id と暗号文は不変 (= 復号可能性が保たれる)
+        assert v1.aad_id == aad_id
+        assert v1.encrypted_meta_blob == meta_blob
+        assert v1.meta_iv == meta_iv
+        assert v1.file_hash_plain == "c" * 64
+        assert stored[v1.image_key][0] == image_ct
+        assert stored[v1.thumbnail_key][0] == thumb_ct
+
 
 # --- 障害系 ---
 
@@ -830,6 +1016,108 @@ class TestBackupRestoreHelpers:
         }
         with pytest.raises(BackupValidationError, match="invalid amount"):
             _validate_backup(1, b)
+
+    def _e2ee_voucher_backup(self, **overrides):
+        """encrypted_meta_blob を持つ最小の E2EE 証憑入り backup を組む。"""
+        meta = base64.b64encode(b"\xaa" * 32).decode()
+        row = {
+            "id": 1, "journal_entry_id": None,
+            "image_data": base64.b64encode(b"\x00" * 40).decode(),
+            "encrypted_meta_blob": meta,
+            "meta_iv": base64.b64encode(b"\xbb" * 12).decode(),
+            "aad_id": "12345",
+            "file_size": 40,
+        }
+        row.update(overrides)
+        return {
+            "version": "1.0", "user_id": 1,
+            "data": {"vouchers": [row]},
+        }
+
+    def test_validate_e2ee_voucher_ok(self):
+        """正常な E2EE 証憑メタは検証を通過する。"""
+        from app.services.backup_restore import _validate_backup
+        _validate_backup(1, self._e2ee_voucher_backup())  # 例外が出ないこと
+
+    def test_validate_voucher_aad_id_non_numeric(self):
+        from app.services.backup_restore import (
+            _validate_backup, BackupValidationError,
+        )
+        with pytest.raises(BackupValidationError, match="aad_id"):
+            _validate_backup(1, self._e2ee_voucher_backup(aad_id="not-a-number"))
+
+    def test_validate_voucher_aad_id_out_of_range(self):
+        from app.services.backup_restore import (
+            _validate_backup, BackupValidationError,
+        )
+        with pytest.raises(BackupValidationError, match="BigInteger 範囲外"):
+            _validate_backup(1, self._e2ee_voucher_backup(aad_id=str(2 ** 63)))
+
+    def test_validate_voucher_meta_iv_wrong_length(self):
+        from app.services.backup_restore import (
+            _validate_backup, BackupValidationError,
+        )
+        bad_iv = base64.b64encode(b"\xbb" * 16).decode()  # 16 != 12
+        with pytest.raises(BackupValidationError, match="meta_iv"):
+            _validate_backup(1, self._e2ee_voucher_backup(meta_iv=bad_iv))
+
+    def test_validate_voucher_aad_id_required(self):
+        """E2EE 証憑 (encrypted_meta_blob あり) で aad_id=null は 400。"""
+        from app.services.backup_restore import (
+            _validate_backup, BackupValidationError,
+        )
+        with pytest.raises(BackupValidationError, match="aad_id は E2EE 証憑で必須"):
+            _validate_backup(1, self._e2ee_voucher_backup(aad_id=None))
+
+    def test_validate_voucher_image_error_rejected(self):
+        """export 時に画像取得失敗 (_imageError) した E2EE 行は 400。"""
+        from app.services.backup_restore import (
+            _validate_backup, BackupValidationError,
+        )
+        b = self._e2ee_voucher_backup()
+        b["data"]["vouchers"][0]["_imageError"] = "storage returned None"
+        with pytest.raises(BackupValidationError, match="_imageError"):
+            _validate_backup(1, b)
+
+    def test_validate_voucher_thumbnail_error_rejected(self):
+        """export 時にサムネ取得失敗 (_thumbnailError) した E2EE 行は 400。"""
+        from app.services.backup_restore import (
+            _validate_backup, BackupValidationError,
+        )
+        b = self._e2ee_voucher_backup()
+        b["data"]["vouchers"][0]["_thumbnailError"] = "IOError: disk gone"
+        with pytest.raises(BackupValidationError, match="_thumbnailError"):
+            _validate_backup(1, b)
+
+    def test_validate_voucher_meta_iv_required(self):
+        """E2EE 証憑 (encrypted_meta_blob あり) で meta_iv 欠落は 400。"""
+        from app.services.backup_restore import (
+            _validate_backup, BackupValidationError,
+        )
+        b = self._e2ee_voucher_backup()
+        del b["data"]["vouchers"][0]["meta_iv"]
+        with pytest.raises(BackupValidationError, match="meta_iv は E2EE 証憑で必須"):
+            _validate_backup(1, b)
+
+    def test_validate_voucher_file_size_negative(self):
+        from app.services.backup_restore import (
+            _validate_backup, BackupValidationError,
+        )
+        with pytest.raises(BackupValidationError, match="file_size"):
+            _validate_backup(1, self._e2ee_voucher_backup(file_size=-1))
+
+    def test_validate_plaintext_voucher_skips_e2ee_checks(self):
+        """encrypted_meta_blob なし (平文証憑) は E2EE フィールド検証の対象外。"""
+        from app.services.backup_restore import _validate_backup
+        b = {
+            "version": "1.0", "user_id": 1,
+            "data": {"vouchers": [{
+                "id": 1, "image_data": base64.b64encode(b"x").decode(),
+                "image_mime": "image/jpeg",
+                # aad_id 等が無くても平文証憑なら通る
+            }]},
+        }
+        _validate_backup(1, b)  # 例外が出ないこと
 
     def test_b64_decode_helpers(self):
         from app.services.backup_restore import (
