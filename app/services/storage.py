@@ -57,6 +57,23 @@ def make_encrypted_thumbnail_key(image_key: str) -> str:
     return f"{stem}_thumb.bin"
 
 
+def make_ai_draft_encrypted_key(user_id: int, draft_id: int) -> str:
+    """E5 (#111): 暗号化された AI 下書き画像のストレージキーを生成する。
+
+    フォーマット: vouchers/{user_id}/d{draft_id}.bin
+
+    `vouchers/` プレフィックスは voucher と共用するが、ファイル名に `d` を
+    付けることで `make_storage_key` が生成する voucher の数値キー
+    (`vouchers/{uid}/{voucher_id}.bin`) との衝突を避ける (ai_drafts.id と
+    vouchers.id は別系列のため、`d` 接頭辞なしだと同一 id で衝突しうる)。
+    下書き → 証憑移行時 (create_voucher_from_draft) は image_key をそのまま
+    引き継ぐため、Voucher の image_key がこの形式になることもある (キーは
+    単なる格納位置で、サムネ導出 make_encrypted_thumbnail_key は suffix ベース
+    のため問題ない)。
+    """
+    return f"vouchers/{user_id}/d{draft_id}.bin"
+
+
 def generate_thumbnail(
     image_bytes: bytes,
     max_size: int = 400,

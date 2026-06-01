@@ -34,7 +34,9 @@ from app.services.storage_quota import (
 from app.services.voucher import (
     VoucherUploadConflict,
     create_voucher_from_draft,
+    finalize_ai_draft_upload,
     finalize_voucher_upload,
+    init_ai_draft,
     init_voucher,
 )
 from app.models.user import User
@@ -2026,6 +2028,126 @@ def ai_draft_save_suggestions(draft_id):
         "ok": True,
         "draft": _draft_to_dict(draft, include_suggestions=True),
     })
+
+
+# --- E5 (#111): AI 下書き画像の 2 段階 E2EE upload ---
+
+
+@bp.route("/ai/uploads/init", methods=["POST"])
+@auth_required(write=True)
+@limiter.limit("10 per minute", key_func=rate_limit_key)
+def init_ai_draft_endpoint():
+    """E5 (#111) 2 段階 upload Step 1: AIDraft を採番する (空 row 作成)。
+
+    クライアントは init レスポンスの aad_id を AAD (`vimg`/`vthumb`/`vmeta` +
+    user_id + aad_id、voucher と同ドメイン) に束縛して画像/サムネ/メタを暗号化し、
+    Step 2 (`PUT /ai/uploads/<id>`) で実体を upload する。draft_id は LLM 解析
+    結果の保存先 (`PATCH /ai/drafts/<id>/suggestions`) としても使う。
+
+    リクエスト: {"comment": "<str|null>"}
+    レスポンス: 201 {"ok": true, "draft_id": <int>, "aad_id": "<str>"}
+
+    aad_id は 63bit のため、JS Number の 2^53 精度を超えて欠落しないよう
+    **文字列**で返す (クライアントは BigInt でパースして AAD に束縛する)。
+
+    代理閲覧 (acting_as) 中は一律 403。下書きは E2EE のみで、監査人は owner の
+    MK を持たないため owner が復号可能な暗号文を作れない (voucher init と同じ)。
+    """
+    blocked = _audit_proxy_blocks_all_writes()
+    if blocked:
+        return blocked
+
+    user_id = g.auth_user.id
+    data = request.get_json(silent=True) or {}
+    comment = (data.get("comment") or "").strip()[:500]
+
+    draft = init_ai_draft(user_id, comment or None)
+    db.session.commit()
+    return jsonify({
+        "ok": True,
+        "draft_id": draft.id,
+        "aad_id": str(draft.aad_id),
+    }), 201
+
+
+@bp.route("/ai/uploads/<int:draft_id>", methods=["PUT"])
+@auth_required(write=True)
+@limiter.limit("30 per minute", key_func=rate_limit_key)
+def upload_ai_draft_endpoint(draft_id):
+    """E5 (#111) 2 段階 upload Step 2: 暗号文の実体を upload する (multipart)。
+
+    フォーム (voucher PUT と同形式):
+      - image_ct (file): iv(12B) || ciphertext || GCM tag の opaque blob。必須。
+      - thumb_ct (file): サムネイル暗号文 (同形式)。任意。
+      - meta_blob (str): encrypted_meta_blob の base64。必須。
+      - meta_iv (str): meta blob の 12B IV の base64。必須。
+      - file_hash_plain (str): SHA-256(平文画像) の hex 64 桁。必須。
+
+    サーバは file_hash_cipher = SHA-256(image_ct) を計算して保存する。
+    init 直後の空 row のみ受け付け、既にアップロード済みなら 409。
+    """
+    blocked = _audit_proxy_blocks_all_writes()
+    if blocked:
+        return blocked
+
+    user_id = g.auth_user.id
+    draft = AIDraft.query.filter_by(id=draft_id, user_id=user_id).first()
+    if not draft:
+        return jsonify({"error": "下書きが見つかりません。"}), 404
+
+    # 上書き禁止: init 直後の空 row のみ受け付ける。
+    if draft.image_key or draft.encrypted_meta_blob is not None:
+        return jsonify({
+            "error": "この下書きは既にアップロード済みです。上書きはできません。",
+        }), 409
+
+    image_part = request.files.get("image_ct")
+    if image_part is None:
+        return jsonify({"error": "image_ct (暗号文画像) は必須です。"}), 400
+    image_ct = image_part.read()
+    if not (_GCM_MIN_BLOB_BYTES <= len(image_ct) <= _MAX_VOUCHER_IMAGE_CT_BYTES):
+        return jsonify({
+            "error": "image_ct のサイズが不正です (iv+tag 未満、または上限超過)。",
+        }), 400
+
+    thumb_ct = None
+    thumb_part = request.files.get("thumb_ct")
+    if thumb_part is not None:
+        thumb_ct = thumb_part.read()
+        if not (_GCM_MIN_BLOB_BYTES <= len(thumb_ct) <= _MAX_VOUCHER_THUMB_CT_BYTES):
+            return jsonify({
+                "error": "thumb_ct のサイズが不正です。",
+            }), 400
+
+    meta_blob, meta_iv, err = _decode_record_crypto(
+        request.form, "meta", "meta_blob", "meta_iv", required=True,
+    )
+    if err:
+        return jsonify({"error": err}), 400
+
+    file_hash_plain = request.form.get("file_hash_plain")
+    if not _is_sha256_hex(file_hash_plain):
+        return jsonify({
+            "error": "file_hash_plain は SHA-256 の hex 64 桁である必要があります。",
+        }), 400
+
+    try:
+        finalize_ai_draft_upload(
+            draft, image_ct, thumb_ct, meta_blob, meta_iv, file_hash_plain,
+        )
+    except VoucherUploadConflict:
+        return jsonify({
+            "error": "この下書きは既にアップロード済みです。上書きはできません。",
+        }), 409
+    except QuotaExceededError as exc:
+        return jsonify({"error": exc.user_message}), 413
+
+    return jsonify({
+        "ok": True,
+        "draft_id": draft.id,
+        "status": draft.status,
+        "file_hash_cipher": draft.file_hash,
+    }), 200
 
 
 # --- E4 (#111): 証憑画像の 2 段階 E2EE upload ---

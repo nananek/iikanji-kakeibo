@@ -15,7 +15,7 @@ from app.models.ai_draft import AIDraft
 from app.models.user import User
 from app.services.audit import get_effective_user_id
 from app.services.fiscal import get_closed_periods_map, get_restricted_before_year
-from app.services.image import serve_image, serve_voucher_image
+from app.services.image import serve_draft_image, serve_voucher_image
 from app.services.storage import (
     get_storage_backend, make_thumbnail_key,
 )
@@ -168,7 +168,9 @@ def draft_image(draft_id):
     if draft.user_id != get_effective_user_id():
         return "", 403
     try:
-        return serve_image(draft.image_key, draft.image_mime, draft.file_hash)
+        # E5 (#111): E2EE 下書き (encrypted_meta_blob) は octet-stream 配信、
+        # レガシー平文下書きは image_mime 配信 (serve_draft_image が両対応)。
+        return serve_draft_image(draft)
     except FileNotFoundError:
         return "", 404
 

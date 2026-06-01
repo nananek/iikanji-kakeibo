@@ -110,7 +110,7 @@ class TestDraftImage:
 
     def test_serve_error_404(self, db, logged_in_client, user, accounts):
         d = _draft(db, user.id)
-        with patch("app.views.ai_journal.serve_image") as mock_serve:
+        with patch("app.views.ai_journal.serve_draft_image") as mock_serve:
             mock_serve.side_effect = FileNotFoundError("missing")
             resp = logged_in_client.get(f"/ai-journal/drafts/{d.id}/image")
             assert resp.status_code == 404
