@@ -324,3 +324,42 @@ class TestCreateVoucherFromDraftE2EE:
         assert voucher.image_mime == "image/png"
         assert voucher.encrypted_meta_blob is None
         assert voucher.aad_id is None
+
+
+class TestAIDraftThumbnailOrphan:
+    """E5 (#111): E2EE 下書き削除で暗号文サムネ (_thumb.bin) を孤立させない。
+
+    PR-3 で E2EE 下書きはクライアント生成サムネ (thumbnail_key, _thumb.bin) を
+    持つようになったが、削除経路は従来 _thumb.jpg (make_thumbnail_key) のみ消して
+    いた。全経路で thumbnail_key も消すことを検証 (PR-H の voucher 修正と同型)。
+    """
+
+    def _make_e2ee_draft(self, client):
+        draft_id = _init(client).get_json()["draft_id"]
+        _put(client, draft_id)  # 画像 + _thumb.bin を保存
+        return draft_id
+
+    def test_drafts_delete_removes_encrypted_thumbnail(self, logged_in_client, user):
+        draft_id = self._make_e2ee_draft(logged_in_client)
+        draft = db.session.get(AIDraft, draft_id)
+        image_key, thumb_key = draft.image_key, draft.thumbnail_key
+        backend = get_storage_backend()
+        assert backend.exists(thumb_key)
+        assert thumb_key.endswith("_thumb.bin")
+
+        resp = logged_in_client.post(f"/ai-journal/drafts/{draft_id}/delete")
+        assert resp.status_code in (200, 302)
+        # 暗号文サムネ・本体とも孤立せず削除される。
+        assert not backend.exists(thumb_key)
+        assert not backend.exists(image_key)
+
+    def test_account_deletion_removes_encrypted_thumbnail(self, db, logged_in_client, user):
+        from app.services.account_deletion import delete_user_account
+        draft_id = self._make_e2ee_draft(logged_in_client)
+        draft = db.session.get(AIDraft, draft_id)
+        thumb_key = draft.thumbnail_key
+        backend = get_storage_backend()
+        assert backend.exists(thumb_key)
+
+        delete_user_account(user.id)
+        assert not backend.exists(thumb_key)

@@ -77,9 +77,15 @@ async function _run() {
         const url = URL.createObjectURL(
           new Blob([bytes], { type: draftDl.sniffImageMime(bytes) }),
         );
-        // 表示完了後に revoke してメモリリークを防ぐ。
+        // 表示完了後に revoke してメモリリークを防ぐ。描画失敗時 (改ざん /
+        // MIME 不一致 / 破損) も onerror で revoke + ロック表示に差し替える
+        // (PR-3 レビュー指摘: onload だけだと失敗時に blob URL がリーク)。
         img.onload = () => {
           try { URL.revokeObjectURL(url); } catch (_e) { /* ignore */ }
+        };
+        img.onerror = () => {
+          try { URL.revokeObjectURL(url); } catch (_e) { /* ignore */ }
+          _lockPlaceholder(img, "復号に失敗しました");
         };
         img.src = url;
         img.alt = "証憑画像";
