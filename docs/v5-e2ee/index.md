@@ -354,9 +354,14 @@ Discord 等に **平文で送信** している。E3 で仕訳が暗号化され
 
 #### 前提
 
-- 全ユーザー (owner / auditor 問わず) が登録時に X25519 公開鍵 / 秘密鍵ペアを
-  生成 (公開鍵は `users.public_key` に平文保管、秘密鍵は MK でラップして
-  `wrapped_keys` に保管)
+- 全ユーザー (owner / auditor 問わず) が X25519 公開鍵 / 秘密鍵ペアを生成
+  (公開鍵は `users.public_key` に平文保管、秘密鍵は MK で AES-GCM 暗号化して
+  `users.encrypted_private_key` + `users.private_key_iv` に保管)。生成タイミング
+  は MK 初回設定時、既存 MK ユーザーは MK 解錠時に lazy backfill (E5 PR-A 実装)
+  - 注: 当初設計では秘密鍵を `wrapped_keys` に置く案だったが、`wrapped_keys` は
+    認証要素で MK 本体をラップするテーブル (CHECK/UNIQUE/credential 依存) で
+    スキーマが合わないため、`public_key` と並ぶ `users` 列に置く方式に変更した
+    (他の E2EE レコードと同じ「MK で AES-GCM 暗号化」パターンに一致)
 - AuditGrant は「監査依頼」のトリガーであり、鍵共有を意味しない
 
 #### フロー (Lv2 監査の例)
