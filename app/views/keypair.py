@@ -14,10 +14,11 @@ audit_packages API 側に置く (AuditGrant ベースのアクセス制御を伴
 from base64 import b64decode, b64encode
 
 from flask import Blueprint, g, jsonify, request
-from flask_login import current_user
 
 from app.extensions import db, limiter
-from app.services.api_auth import auth_required, rate_limit_key
+from app.models.audit import AuditGrant
+from app.models.user import User
+from app.services.api_auth import auth_required, rate_limit_key, reject_if_proxy
 
 
 bp = Blueprint("keypair", __name__, url_prefix="/api/v1/keypair")
@@ -29,26 +30,6 @@ PUBLIC_KEY_LEN = 32
 IV_LEN = 12
 MIN_ENCRYPTED_PRIVATE_KEY_SIZE = 64  # pkcs8(48B) + GCM tag(16B)
 MAX_ENCRYPTED_PRIVATE_KEY_SIZE = 256
-
-
-def _reject_if_proxy():
-    """監査代理閲覧 (acting-as) 中のアクセスを拒否する。
-
-    鍵ペア管理は常にログイン中の本人に対する self-service。`auth_required`
-    (resolve_bearer_or_session) は Lv3 代理閲覧時に `g.auth_user = owner` を
-    返すため、そのまま PUT すると Lv3 監査者がオーナーの公開鍵を書き込めて
-    しまう (鍵注入攻撃)。ここで本人 (current_user) と effective user の不一致を
-    検知して 403 で遮断する。Bearer 認証時は current_user 非認証なので対象外
-    (代理閲覧の概念がない)。
-    """
-    if (
-        current_user.is_authenticated
-        and g.auth_user.id != current_user.id
-    ):
-        return jsonify(
-            error="keypair management is not available during proxy view"
-        ), 403
-    return None
 
 
 def _b64(b: bytes | None) -> str | None:
@@ -77,7 +58,7 @@ def _b64_or_400(payload: dict, key: str) -> tuple[bytes | None, str | None]:
 @limiter.limit("120 per hour", key_func=rate_limit_key)
 def get_keypair():
     """自身の鍵ペア (公開鍵 + MK ラップ秘密鍵) を返す。未設定なら各 null。"""
-    proxy_err = _reject_if_proxy()
+    proxy_err = reject_if_proxy()
     if proxy_err is not None:
         return proxy_err
     user = g.auth_user
@@ -97,7 +78,7 @@ def put_keypair():
     public_key が既に設定済みの場合は 409 (鍵ペアの不可逆性を守る。鍵回転は
     監査パッケージの再暗号化を伴うため E5 後続スコープ)。
     """
-    proxy_err = _reject_if_proxy()
+    proxy_err = reject_if_proxy()
     if proxy_err is not None:
         return proxy_err
     user = g.auth_user
@@ -146,3 +127,41 @@ def put_keypair():
         encrypted_private_key=_b64(user.encrypted_private_key),
         private_key_iv=_b64(user.private_key_iv),
     ), 200
+
+
+@bp.get("/<int:user_id>/public")
+@auth_required(write=False)
+@limiter.limit("120 per hour", key_func=rate_limit_key)
+def get_other_public_key(user_id: int):
+    """監査相手 (owner ⇄ auditor) の **公開鍵のみ** を返す (§14)。
+
+    auditor が owner 宛 (AuditPackage)、owner が auditor 宛 (snapshot 暗号化や
+    AuditResponse) に HPKE 暗号化するために相手の X25519 公開鍵を取得する。
+    アクセス可否は「自分と相手が失効していない AuditGrant で結ばれているか」で
+    判定する (IDOR 防止)。秘密鍵関連 (encrypted_private_key 等) は絶対に返さない。
+    TOFU fingerprint 検証はクライアント側で行い、ここは存在確認のみ。
+    """
+    me = g.auth_user.id
+    # 自分が owner で相手が auditor、または自分が auditor で相手が owner の
+    # 有効な grant が 1 件でもあれば取得可。
+    related = AuditGrant.query.filter(
+        AuditGrant.revoked_at.is_(None),
+        db.or_(
+            db.and_(
+                AuditGrant.owner_user_id == me,
+                AuditGrant.auditor_user_id == user_id,
+            ),
+            db.and_(
+                AuditGrant.owner_user_id == user_id,
+                AuditGrant.auditor_user_id == me,
+            ),
+        ),
+    ).first()
+    if related is None:
+        # 関係がない相手の存在有無を秘匿するため 404
+        return jsonify(error="not found"), 404
+
+    other = db.session.get(User, user_id)
+    if other is None:
+        return jsonify(error="not found"), 404
+    return jsonify(user_id=user_id, public_key=_b64(other.public_key))

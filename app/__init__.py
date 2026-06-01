@@ -39,6 +39,9 @@ def create_app(config_class=Config):
     # X25519 鍵ペア API も JSON 専用 (Bearer / セッション統合認証) なので CSRF 免除
     from app.views.keypair import bp as keypair_bp
     csrf.exempt(keypair_bp)
+    # 監査連携 API (audit-packages / audit-responses) も JSON 専用なので CSRF 免除
+    from app.views.audit_packages import bp as audit_packages_bp
+    csrf.exempt(audit_packages_bp)
     # ai-config E2EE API も Bearer 認証 / JSON 専用なので CSRF 免除
     # (既存 api_bp / wrapped_keys_bp と同じ方針)
     from app.views.ai_config_api import bp as ai_config_api_bp
@@ -89,7 +92,11 @@ def create_app(config_class=Config):
             return
         # E2EE 鍵管理 API は JSON。pending_recovery 中でも自分の wrapped_keys
         # を確認/更新できる必要がある (リカバリ後の鍵再設定フロー)。
-        if endpoint.startswith("wrapped_keys.") or endpoint.startswith("keypair."):
+        if (
+            endpoint.startswith("wrapped_keys.")
+            or endpoint.startswith("keypair.")
+            or endpoint.startswith("audit_packages.")
+        ):
             return
         return redirect(url_for("settings.passkeys"))
 
@@ -137,6 +144,7 @@ def create_app(config_class=Config):
             # ではなくクライアント側で規約同意状態を別途確認させる。
             or endpoint.startswith("wrapped_keys.")
             or endpoint.startswith("keypair.")
+            or endpoint.startswith("audit_packages.")
         ):
             return
         # 元々アクセスしようとしていたパスに戻れるよう ?next= を引き継ぐ
@@ -169,6 +177,9 @@ def create_app(config_class=Config):
             or endpoint.startswith("wrapped_keys.")
             # X25519 鍵ペアも各ユーザー本人の鍵管理 (g.auth_user で self 限定)。
             or endpoint.startswith("keypair.")
+            # 監査連携 API は self-service。代理閲覧中はエンドポイント側で
+            # reject_if_proxy() が 403 を返す (gate でブロックせず素通し)。
+            or endpoint.startswith("audit_packages.")
         ):
             return
         # Auditor exit: always allow
