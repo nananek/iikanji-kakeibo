@@ -1017,6 +1017,70 @@ class TestBackupRestoreHelpers:
         with pytest.raises(BackupValidationError, match="invalid amount"):
             _validate_backup(1, b)
 
+    def _e2ee_voucher_backup(self, **overrides):
+        """encrypted_meta_blob を持つ最小の E2EE 証憑入り backup を組む。"""
+        meta = base64.b64encode(b"\xaa" * 32).decode()
+        row = {
+            "id": 1, "journal_entry_id": None,
+            "image_data": base64.b64encode(b"\x00" * 40).decode(),
+            "encrypted_meta_blob": meta,
+            "meta_iv": base64.b64encode(b"\xbb" * 12).decode(),
+            "aad_id": "12345",
+            "file_size": 40,
+        }
+        row.update(overrides)
+        return {
+            "version": "1.0", "user_id": 1,
+            "data": {"vouchers": [row]},
+        }
+
+    def test_validate_e2ee_voucher_ok(self):
+        """正常な E2EE 証憑メタは検証を通過する。"""
+        from app.services.backup_restore import _validate_backup
+        _validate_backup(1, self._e2ee_voucher_backup())  # 例外が出ないこと
+
+    def test_validate_voucher_aad_id_non_numeric(self):
+        from app.services.backup_restore import (
+            _validate_backup, BackupValidationError,
+        )
+        with pytest.raises(BackupValidationError, match="aad_id"):
+            _validate_backup(1, self._e2ee_voucher_backup(aad_id="not-a-number"))
+
+    def test_validate_voucher_aad_id_out_of_range(self):
+        from app.services.backup_restore import (
+            _validate_backup, BackupValidationError,
+        )
+        with pytest.raises(BackupValidationError, match="BigInteger 範囲外"):
+            _validate_backup(1, self._e2ee_voucher_backup(aad_id=str(2 ** 63)))
+
+    def test_validate_voucher_meta_iv_wrong_length(self):
+        from app.services.backup_restore import (
+            _validate_backup, BackupValidationError,
+        )
+        bad_iv = base64.b64encode(b"\xbb" * 16).decode()  # 16 != 12
+        with pytest.raises(BackupValidationError, match="meta_iv"):
+            _validate_backup(1, self._e2ee_voucher_backup(meta_iv=bad_iv))
+
+    def test_validate_voucher_file_size_negative(self):
+        from app.services.backup_restore import (
+            _validate_backup, BackupValidationError,
+        )
+        with pytest.raises(BackupValidationError, match="file_size"):
+            _validate_backup(1, self._e2ee_voucher_backup(file_size=-1))
+
+    def test_validate_plaintext_voucher_skips_e2ee_checks(self):
+        """encrypted_meta_blob なし (平文証憑) は E2EE フィールド検証の対象外。"""
+        from app.services.backup_restore import _validate_backup
+        b = {
+            "version": "1.0", "user_id": 1,
+            "data": {"vouchers": [{
+                "id": 1, "image_data": base64.b64encode(b"x").decode(),
+                "image_mime": "image/jpeg",
+                # aad_id 等が無くても平文証憑なら通る
+            }]},
+        }
+        _validate_backup(1, b)  # 例外が出ないこと
+
     def test_b64_decode_helpers(self):
         from app.services.backup_restore import (
             _b64_decode, BackupValidationError,

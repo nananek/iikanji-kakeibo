@@ -142,6 +142,50 @@ def _validate_backup(user_id: int, backup: Any) -> None:
         if not isinstance(period, int) or period < 0 or period > 16:
             raise BackupValidationError(f"invalid period: {period!r}")
 
+    # E4 (#111) PR-H: 暗号化証憑 (encrypted_meta_blob あり) の user 供給フィールド
+    # 検証。破壊的な _delete_user_data_for_restore より前に弾く (400)。base64 本体
+    # (image_data / encrypted_meta_blob / thumbnail_data) の妥当性は _b64_decode
+    # (validate=True → BackupValidationError) が restore 時に保証するため、ここでは
+    # int 化や DB 制約に直結する小さなフィールドを先取りで検査する。
+    for row in data.get("vouchers") or []:
+        if not isinstance(row, dict):
+            continue  # 上の FK ループで検査済
+        if row.get("encrypted_meta_blob") is None:
+            continue  # 平文証憑 (レガシー) は対象外
+        vid = row.get("id")
+        # aad_id: PostgreSQL BigInteger 範囲 (-2^63 .. 2^63-1)。int() は任意精度
+        # なので範囲外や非数値を無検証で通すと DB エラー (500) になる。
+        aad_raw = row.get("aad_id")
+        if aad_raw is not None:
+            try:
+                aad_int = int(aad_raw)
+            except (TypeError, ValueError) as e:
+                raise BackupValidationError(
+                    f"vouchers[id={vid}].aad_id が整数ではありません: {aad_raw!r}"
+                ) from e
+            if not (-(2 ** 63) <= aad_int < 2 ** 63):
+                raise BackupValidationError(
+                    f"vouchers[id={vid}].aad_id が BigInteger 範囲外です: {aad_int}"
+                )
+        # meta_iv: AES-GCM nonce は 12 bytes 固定。長さ不正だとクライアント復号が
+        # 確実に失敗するので、復元完了扱いになる前にここで弾く。
+        meta_iv_b64 = row.get("meta_iv")
+        if meta_iv_b64 is not None:
+            iv = _b64_decode(meta_iv_b64)  # 不正 base64 は BackupValidationError
+            if iv is not None and len(iv) != 12:
+                raise BackupValidationError(
+                    f"vouchers[id={vid}].meta_iv は 12 bytes (AES-GCM nonce) "
+                    f"である必要があります (実際: {len(iv)})"
+                )
+        # file_size: 容量計上に使う非負整数。bool は int のサブクラスなので除外。
+        fs = row.get("file_size")
+        if fs is not None and (
+            isinstance(fs, bool) or not isinstance(fs, int) or fs < 0
+        ):
+            raise BackupValidationError(
+                f"vouchers[id={vid}].file_size は非負整数である必要があります: {fs!r}"
+            )
+
     # journal_entries の損益振替仕訳 (fiscal_period=16 / fiscal_month=16 /
     # is_closing) は自動生成専用なので restore 経由でも注入を禁止する
     # (CLAUDE.md の複式簿記設計に従う)。E3-F で新カラムにも対応。
