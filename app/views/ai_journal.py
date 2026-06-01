@@ -157,7 +157,13 @@ def drafts():
             "suggestion": suggestion,
         })
 
-    return render_template("ai_journal/drafts.html", draft_list=draft_list)
+    return render_template(
+        "ai_journal/drafts.html",
+        draft_list=draft_list,
+        # E5 (#111): 暗号化下書きサムネのクライアント復号 (AAD 束縛) 用。
+        # 下書きは全て effective_user_id (= 表示中ユーザー) の所有。
+        effective_user_id=user_id,
+    )
 
 
 @bp.route("/drafts/<int:draft_id>/image")
