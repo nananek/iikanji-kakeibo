@@ -147,6 +147,15 @@ def test_put_oversized_private_key_is_400(client, db):
     assert r.status_code == 400
 
 
+def test_put_undersized_private_key_is_400(client, db):
+    # pkcs8(48) + GCM tag(16) = 64B 未満の極小ブロブは拒否
+    user = _make_user(db)
+    _login(client, user)
+    r = client.put("/api/v1/keypair", json=_payload(enc=b"\xbb" * 32))
+    assert r.status_code == 400
+    assert db.session.get(User, user.id).public_key is None
+
+
 def test_put_requires_auth(client, db):
     r = client.put("/api/v1/keypair", json=_payload())
     assert r.status_code == 401
@@ -169,3 +178,53 @@ def test_get_returns_only_own_keypair(client, db):
     # bob は自分の (未設定) 鍵ペアしか見えない (alice のは漏れない)
     assert data["public_key"] is None
     assert data["encrypted_private_key"] is None
+
+
+# --- 監査代理閲覧 (acting-as) 中の遮断 ------------------------------------
+
+
+def _acting_as(client, auditor, owner, level=3):
+    with client.session_transaction() as sess:
+        sess.clear()
+        sess["_user_id"] = str(auditor.id)
+        sess["_fresh"] = True
+        sess["acting_as_user_id"] = owner.id
+        sess["acting_as_permission_level"] = level
+
+
+def test_put_rejected_during_proxy_view(client, db):
+    """Lv3 監査者が代理閲覧中にオーナーの鍵ペアを書き込めない (鍵注入防止)。"""
+    from app.models.audit import AuditGrant
+
+    owner = _make_user(db, "owner")
+    auditor = _make_user(db, "auditor")
+    db.session.add(AuditGrant(
+        owner_user_id=owner.id, auditor_user_id=auditor.id,
+        permission_level=3, status="draft",
+    ))
+    db.session.commit()
+
+    _acting_as(client, auditor, owner, level=3)
+    r = client.put("/api/v1/keypair", json=_payload(public=b"\x09" * 32))
+    assert r.status_code == 403
+    # オーナーの鍵ペアは書き込まれていない
+    assert db.session.get(User, owner.id).public_key is None
+
+
+def test_get_rejected_during_proxy_view(client, db):
+    from app.models.audit import AuditGrant
+
+    owner = _make_user(db, "owner2")
+    owner.public_key = b"\x01" * 32
+    owner.encrypted_private_key = b"\xbb" * 64
+    owner.private_key_iv = b"\xcc" * 12
+    auditor = _make_user(db, "auditor2")
+    db.session.add(AuditGrant(
+        owner_user_id=owner.id, auditor_user_id=auditor.id,
+        permission_level=3, status="draft",
+    ))
+    db.session.commit()
+
+    _acting_as(client, auditor, owner, level=3)
+    r = client.get("/api/v1/keypair")
+    assert r.status_code == 403
