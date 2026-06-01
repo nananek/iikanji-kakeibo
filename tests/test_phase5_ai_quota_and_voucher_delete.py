@@ -21,7 +21,7 @@ MB = 1024 * 1024
 
 @pytest.fixture
 def reset_limiter(app):
-    """Rate limiter 状態をリセット (vouchers.attach/delete は 10/minute)."""
+    """Rate limiter 状態をリセット (vouchers.delete は 10/minute)."""
     try:
         from app.extensions import limiter
         limiter.reset()

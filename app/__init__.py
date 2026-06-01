@@ -211,11 +211,13 @@ def create_app(config_class=Config):
                 from flask import flash
                 flash("この権限レベルでは勘定科目を変更できません。", "warning")
                 return redirect(url_for("accounts.index"))
-            # vouchers: 書き込み系操作 (添付・削除) は Lv2 では禁止。
+            # vouchers: 書き込み系操作 (削除) は Lv2 では禁止。
             # 閲覧 (index, verify GET) は許可。Phase 5 で quota 統合に
             # より StorageUsage を消費・解放する書き込みが入ったため、
             # 監査者が容量計上を勝手に操作できないよう明示的にブロックする。
-            if endpoint in ("vouchers.attach", "vouchers.delete"):
+            # (E4 PR-E: 平文添付 vouchers.attach は撤去済。暗号化 upload は
+            # api blueprint の init/PUT 側で proxy ブロックを行う。)
+            if endpoint == "vouchers.delete":
                 from flask import flash
                 flash("この権限レベルでは証憑を変更できません。", "warning")
                 return redirect(url_for("dashboard.index"))

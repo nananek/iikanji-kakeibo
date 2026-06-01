@@ -279,6 +279,70 @@ class TestAtomicClaim:
                 )
 
 
+class TestFinalizeQuotaRollback:
+    """finalize_voucher_upload の TOCTOU 楽観的再検証で巻き戻しが動作する。
+
+    撤去した平文版 create_voucher_from_upload の TestTOCTOURollback
+    (E4 PR-E で削除) を暗号化経路に移植したもの。record_upload 後に別
+    リクエストが容量を埋めた状況を再現し、全 DB 変更の rollback +
+    ストレージの best-effort 削除 + QuotaExceededError を検証する。
+    """
+
+    def test_toctou_rollback_deletes_storage_and_raises(
+        self, app, db, user, monkeypatch
+    ):
+        from app.services import voucher as voucher_mod
+        from app.services.voucher import finalize_voucher_upload, init_voucher
+        from app.services.storage import (
+            get_storage_backend,
+            make_encrypted_thumbnail_key,
+            make_storage_key,
+        )
+        from app.services.storage_quota import (
+            QuotaExceededError,
+            record_upload as real_record_upload,
+        )
+
+        monkeypatch.setitem(app.config, "STORAGE_QUOTA_BYTES_DEFAULT", 10000)
+
+        with app.app_context():
+            v = init_voucher(user.id, None)
+            db.session.commit()
+            vid = v.id
+
+            # record_upload で加算 → 直後に別リクエストが上限直上まで埋めた
+            # TOCTOU 競合をシミュレートする (suppress_commit=True で同一 tx)。
+            def fake_record_upload(u, sz, **kwargs):
+                real_record_upload(u, sz, **kwargs)
+                row = db.session.get(StorageUsage, u.id)
+                if row is not None:
+                    row.used_bytes = 10000 + 1
+                    db.session.flush()
+            monkeypatch.setattr(voucher_mod, "record_upload", fake_record_upload)
+
+            with pytest.raises(QuotaExceededError, match="並行アップロード"):
+                finalize_voucher_upload(
+                    v, _IMAGE_CT, _THUMB_CT, _META_BLOB, _META_IV,
+                    _FILE_HASH_PLAIN,
+                )
+
+            # claim UPDATE / メタ設定 / record_upload 加算が全て rollback され、
+            # voucher 行は init 直後 (image_key="" / 暗号化メタ未設定) に戻る。
+            reloaded = db.session.get(Voucher, vid)
+            assert reloaded is not None
+            assert reloaded.image_key == ""
+            assert reloaded.encrypted_meta_blob is None
+            # 単一 tx 内 rollback により StorageUsage も加算前 (row なし) に戻る。
+            assert db.session.get(StorageUsage, user.id) is None
+            # ストレージへ書いた暗号文 (本体 + サムネ) は best-effort 削除済。
+            backend = get_storage_backend()
+            image_key = make_storage_key(
+                user.id, vid, "application/octet-stream"
+            )
+            assert not backend.exists(image_key)
+            assert not backend.exists(make_encrypted_thumbnail_key(image_key))
+
+
 class TestAuditLogEncryptedDetail:
     """E4 PR-D: api_voucher_logs が平文 detail を返さず encrypted_detail_blob /
     detail_iv (b64) を返す。サーバ生成ログは detail=NULL。"""

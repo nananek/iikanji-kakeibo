@@ -174,7 +174,7 @@ def record_upload(user, size: int, *, suppress_commit: bool = False) -> None:
     Args:
         suppress_commit: True のとき内部で `db.session.commit()` を呼ばない。
             呼出側が Voucher INSERT などを同一トランザクションでまとめる
-            ときに使う (`create_voucher_from_upload` 等)。デフォルト False
+            ときに使う (`finalize_voucher_upload` 等)。デフォルト False
             は既存呼出側との後方互換。
     """
     if size <= 0:
