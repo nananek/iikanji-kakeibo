@@ -12,8 +12,6 @@ from app.services.storage import (
     get_storage_backend,
     make_encrypted_thumbnail_key,
     make_storage_key,
-    make_thumbnail_key,
-    store_image_with_thumbnail,
 )
 from app.services.storage_quota import (
     QuotaExceededError,
@@ -55,97 +53,6 @@ def create_voucher_from_draft(draft: AIDraft, journal_entry_id: int) -> Voucher:
     )
     db.session.add(voucher)
     db.session.delete(draft)
-    return voucher
-
-
-def create_voucher_from_upload(
-    user_id: int,
-    journal_entry_id: int,
-    image_bytes: bytes,
-    mime_type: str,
-    original_filename: str | None = None,
-) -> Voucher:
-    """画像バイト列から直接 Voucher を作成して仕訳に紐付ける。
-
-    `QuotaExceededError` 送出時は本関数内でストレージ/DB の副作用を
-    全て巻き戻してから raise するため、呼び出し側は HTTP エラー (413)
-    を返すだけでよい。
-
-    フロー (Phase 5 #70 / 単一トランザクション + ON CONFLICT upsert):
-
-    1. `check_quota(user, len(image_bytes))` で事前判定
-    2. Voucher + VoucherAuditLog を session.add (commit せず)
-    3. ストレージへ画像書き込み (DB と独立、巻き戻しは best-effort delete)
-    4. `record_upload(suppress_commit=True)` で StorageUsage を加算
-    5. flush して `get_used_bytes` で TOCTOU 再検証
-    6. 上限超過なら `db.session.rollback()` で DB 変更を全部巻き戻し +
-       ストレージファイルを best-effort で削除 + `QuotaExceededError`
-    7. OK なら `db.session.commit()` で単一トランザクションを確定
-
-    旧パターン (2 段 commit + 巻き戻し失敗時のゾンビ修復) は退役。
-    `record_upload` の ON CONFLICT 化により、初回並行 INSERT の競合
-    も発生しない。
-    """
-    size = len(image_bytes)
-    user = db.session.get(User, user_id)
-    if user is None:
-        raise ValueError(f"User {user_id} not found")
-
-    check_quota(user, size)
-
-    file_hash = hashlib.sha256(image_bytes).hexdigest()
-
-    voucher = Voucher(
-        user_id=user_id,
-        journal_entry_id=journal_entry_id,
-        image_key="",
-        image_mime=mime_type,
-        file_hash=file_hash,
-        file_size=size,
-        original_filename=original_filename,
-    )
-    db.session.add(voucher)
-    db.session.flush()
-
-    key = make_storage_key(user_id, voucher.id, mime_type)
-    store_image_with_thumbnail(key, image_bytes, mime_type)
-    voucher.image_key = key
-
-    # E4 PR-D: 平文 detail は書かない。紐付け先 (journal_entry_id) は
-    # voucher.journal_entry_id 列に保持されており冗長。action + voucher_id +
-    # created_at で証跡は足りる (encrypted_detail_blob はクライアント供給の
-    # 暗号化ノート用に予約、valog AAD)。
-    db.session.add(VoucherAuditLog(
-        voucher_id=voucher.id,
-        user_id=user_id,
-        action="attached",
-    ))
-
-    # ON CONFLICT upsert で StorageUsage を加算 (commit せず単一 tx 内に保持)
-    record_upload(user, size, suppress_commit=True)
-    db.session.flush()
-
-    # 楽観的再検証: 並行アップロードで合算が上限超過なら全 DB 変更を rollback
-    if get_used_bytes(user) > get_quota_bytes(user):
-        from flask import current_app
-        db.session.rollback()  # Voucher / AuditLog / StorageUsage 加算を全部巻き戻し
-        # ストレージは別系統なので明示的に削除 (best-effort)
-        backend = get_storage_backend()
-        for k in (key, make_thumbnail_key(key)):
-            try:
-                backend.delete(k)
-            except Exception as e:
-                current_app.logger.warning(
-                    "voucher rollback: failed to delete storage key %s: %s",
-                    k, e,
-                )
-        raise QuotaExceededError(
-            "並行アップロードにより容量上限を超えました。再試行してください。"
-        )
-
-    db.session.commit()
-    # 容量警告メール送信 (Phase 6 #71)。閾値超過時のみ送信、失敗は best-effort
-    maybe_send_quota_warning(user)
     return voucher
 
 
@@ -193,8 +100,10 @@ def finalize_voucher_upload(
     - file_hash_plain (= SHA-256(平文画像)、クライアント計算) はそのまま保存。
     - encrypted_meta_blob / meta_iv (original_filename + image_mime 等) を保存。
 
-    容量計上 (Phase 5 #70) は `create_voucher_from_upload` と同じ単一トランザク
-    ション + 楽観的再検証パターン。暗号文サイズ (image_ct + thumb_ct) を計上する。
+    容量計上 (Phase 5 #70) は単一トランザクション + 楽観的再検証パターン
+    (check_quota 事前判定 → record_upload(suppress_commit=True) で加算 →
+    flush 後に get_used_bytes で TOCTOU 再検証 → 超過なら rollback +
+    ストレージ best-effort delete)。暗号文サイズ (image_ct + thumb_ct) を計上する。
     `QuotaExceededError` 送出時はストレージ/DB の副作用を巻き戻してから raise。
 
     呼び出し元で 上書き防止 (既に確定済みでないこと) を検証済みであること。
