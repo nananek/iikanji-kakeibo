@@ -89,10 +89,12 @@ test.describe("E4 証憑 E2EE", () => {
         });
 
         step = "download+decrypt";
+        // E4 PR-G (Option C): AAD は voucher_id ではなく aad_id 束縛。
         const back = await dl.fetchAndDecryptVoucherImage({
           client,
           userId,
           voucherId: res.voucherId,
+          aadId: res.aadId,
         });
         const matches =
           back.length === pngBytes.length &&
@@ -101,6 +103,7 @@ test.describe("E4 証憑 E2EE", () => {
           client,
           userId,
           voucherId: res.voucherId,
+          aadId: res.aadId,
           thumb: true,
         });
 

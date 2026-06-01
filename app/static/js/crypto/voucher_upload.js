@@ -214,7 +214,8 @@ export async function putVoucher({
  *   DOM canvas 依存のサムネ生成。省略時はサムネなし。
  * @param {Function} [args.fetchImpl]
  * @param {string} [args.csrf]
- * @returns {Promise<{voucherId: number, ok: boolean, file_hash_cipher: string}>}
+ * @returns {Promise<{voucherId: number, aadId: bigint, ok: boolean,
+ *   file_hash_cipher: string}>} aadId は再復号 (AAD 再構築) 用に返す。
  */
 export async function uploadEncryptedVoucher({
   client, userId, file, journalEntryId = null, makeThumbnail,
@@ -244,5 +245,5 @@ export async function uploadEncryptedVoucher({
     voucherId, ...parts, fetchImpl, csrf,
   });
 
-  return { voucherId, ...res };
+  return { voucherId, aadId, ...res };
 }

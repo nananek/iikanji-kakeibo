@@ -315,6 +315,7 @@ test("uploadEncryptedVoucher: init→encrypt→PUT 一連", async () => {
   });
 
   assert.equal(res.voucherId, 123);
+  assert.equal(res.aadId, 777n);  // 再復号用に aad_id を返す
   assert.equal(res.file_hash_cipher, "deadbeef");
   assert.equal(puts.length, 1);  // PUT は /vouchers/123 (route regex で検証済)
   // image_ct の AAD は aad_id=777 で束縛される (voucher_id=123 ではないことを
