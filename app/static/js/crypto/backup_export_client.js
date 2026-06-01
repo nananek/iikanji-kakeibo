@@ -13,7 +13,7 @@
 //       journal_entry_lines: [{id, journal_entry_id, encrypted_blob, ...}],
 //       medical_expenses: [{id, encrypted_blob, ...}],
 //       balance_cache_blobs: [{year, period, encrypted_blob, blob_iv, ...}],
-//       vouchers: [{id, image_key, image_mime, image_data (base64), ...}],
+//       vouchers: [{id, image_key, image_data (base64), encrypted_meta_blob, ...}],
 //     }
 //   }
 //

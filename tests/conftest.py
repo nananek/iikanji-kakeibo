@@ -393,12 +393,15 @@ def encrypt_lines(line_dicts, n_blob_bytes=48, fill=0x42):
 
 def make_voucher(db, user_id, journal_entry_id=None,
                  image_key="vouchers/1/1.jpg", image_mime="image/jpeg"):
-    """テスト用の証憑を作成するヘルパー"""
+    """テスト用の証憑を作成するヘルパー。
+
+    E5 PR-5 (#111): vouchers.image_mime 列は DROP 済。後方互換のため
+    image_mime 引数は受け取るが無視する (既存呼び出し側の変更を不要にする)。
+    """
     v = Voucher(
         user_id=user_id,
         journal_entry_id=journal_entry_id,
         image_key=image_key,
-        image_mime=image_mime,
     )
     db.session.add(v)
     db.session.commit()

@@ -60,7 +60,6 @@ def _make_voucher(db, user, *, file_size=1 * MB):
     v = Voucher(
         user_id=user.id, journal_entry_id=entry.id,
         image_key=f"vouchers/{user.id}/v.jpg",
-        image_mime="image/jpeg",
         file_hash="a" * 64, file_size=file_size,
     )
     db.session.add(v)

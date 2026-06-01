@@ -51,7 +51,6 @@ class TestVoucherListPage:
             user_id=user.id,
             journal_entry_id=None,
             image_key="vouchers/1/orphan.jpg",
-            image_mime="image/jpeg",
         )
         db.session.add(v)
         db.session.commit()
@@ -128,7 +127,6 @@ class TestAPIVoucherList:
             user_id=user.id,
             journal_entry_id=None,
             image_key="vouchers/1/orphan.jpg",
-            image_mime="image/jpeg",
         )
         db.session.add(v)
         db.session.commit()

@@ -66,7 +66,6 @@ class TestVoucherListDeadline:
             user_id=user.id,
             journal_entry_id=entry.id,
             image_key="vouchers/1/1.jpg",
-            image_mime="image/jpeg",
             uploaded_at=datetime(2026, 1, 15, tzinfo=timezone.utc),  # 106 days
         )
         db.session.add(v)

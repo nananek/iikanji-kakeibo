@@ -583,7 +583,7 @@ def _restore_vouchers(
                 user_id=user_id,
                 journal_entry_id=new_eid,
                 image_key="",  # 仮、後で setattr
-                image_mime=r.get("image_mime") or ENCRYPTED_CONTENT_TYPE,
+                # E5 PR-5 (#111): image_mime 列は DROP 済 (実 MIME は blob 内)。
                 file_hash=computed_hash,  # cipher hash
                 file_hash_plain=r.get("file_hash_plain"),
                 encrypted_meta_blob=_b64_decode(meta_blob_b64),
@@ -614,11 +614,14 @@ def _restore_vouchers(
             continue
 
         # --- レガシー平文証憑 (AI クイックアクセプト等): 従来通り Pillow サムネ生成 ---
+        # E5 PR-5 (#111): image_mime 列は DROP 済。storage key の拡張子と Pillow
+        # サムネ生成には backup JSON の mime を使う (列ではなくローカル変数)。
+        # Pillow は実バイトから形式を判定するため値が不正確でも実害は小さい。
+        plain_mime = r.get("image_mime") or "application/octet-stream"
         voucher = Voucher(
             user_id=user_id,
             journal_entry_id=new_eid,
             image_key="",  # 仮、後で setattr
-            image_mime=r.get("image_mime", "application/octet-stream"),
             file_hash=computed_hash,
             file_size=len(image_bytes),
             uploaded_at=_parse_datetime(r.get("uploaded_at")) or datetime.now(timezone.utc),
@@ -626,9 +629,9 @@ def _restore_vouchers(
         db.session.add(voucher)
         db.session.flush()
         # 新 PK で storage key を採番し直す
-        new_key = make_storage_key(user_id, voucher.id, voucher.image_mime)
+        new_key = make_storage_key(user_id, voucher.id, plain_mime)
         voucher.image_key = new_key
-        store_image_with_thumbnail(new_key, image_bytes, voucher.image_mime)
+        store_image_with_thumbnail(new_key, image_bytes, plain_mime)
         written_keys.append(new_key)
         written_keys.append(make_thumbnail_key(new_key))
         db_n += 1

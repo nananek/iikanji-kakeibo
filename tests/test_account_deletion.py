@@ -71,7 +71,6 @@ def _make_user_with_data(db, *, username, email):
     voucher = Voucher(
         user_id=user.id, journal_entry_id=entry.id,
         image_key=f"vouchers/{user.id}/v.jpg",
-        image_mime="image/jpeg",
         file_hash="a" * 64, file_size=100,
     )
     db.session.add(voucher)

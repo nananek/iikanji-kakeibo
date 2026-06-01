@@ -1781,7 +1781,7 @@ class TestBackupExportVouchers:
         v = Voucher(
             user_id=user_id,
             journal_entry_id=journal_id,
-            image_key=key, image_mime="image/jpeg",
+            image_key=key,
             file_hash="a" * 64, file_size=100,
         )
         db.session.add(v)
@@ -1812,7 +1812,6 @@ class TestBackupExportVouchers:
         assert len(vouchers) == 1
         v = vouchers[0]
         assert v["image_key"] == "vouchers/x.jpg"
-        assert v["image_mime"] == "image/jpeg"
         assert v["image_data"] == base64.b64encode(b"\xff\xd8\xff\xe0FAKE-JPEG").decode()
         assert "_imageError" not in v
 
