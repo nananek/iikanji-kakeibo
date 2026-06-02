@@ -6,7 +6,7 @@ INSERT で再構築する。1 トランザクション内でアトミック。
 含めるテーブル (`/api/v1/backup/export` と同じ shape):
   accounts / fiscal_closes / journal_entries / journal_entry_lines /
   medical_expenses / balance_cache_blobs / vouchers (画像 base64) /
-  ai_drafts (画像 base64) / user_ai_config / webhook_configs /
+  ai_drafts (画像 base64) / user_ai_config /
   tax_form_mappings / csv_column_profiles
 
 触らないもの (鍵類 / 監査ログ):
@@ -41,7 +41,6 @@ from app.models.medical import MedicalExpense
 from app.models.tax_form import TaxFormMapping
 from app.models.voucher import Voucher
 from app.models.voucher_audit_log import VoucherAuditLog
-from app.models.webhook import WebhookConfig
 from app.services.storage import (
     ENCRYPTED_CONTENT_TYPE,
     get_storage_backend,
@@ -58,7 +57,7 @@ SUPPORTED_VERSION = "1.0"
 _LIST_TABLES = (
     "accounts", "fiscal_closes", "journal_entries", "journal_entry_lines",
     "medical_expenses", "balance_cache_blobs", "vouchers", "ai_drafts",
-    "webhook_configs", "tax_form_mappings", "csv_column_profiles",
+    "tax_form_mappings", "csv_column_profiles",
 )
 
 
@@ -339,7 +338,6 @@ def _delete_user_data_for_restore(user_id: int, backend) -> None:
         CsvColumnProfile,
         FiscalClose,
         MedicalExpense,
-        WebhookConfig,
     ):
         model.query.filter_by(user_id=user_id).delete()
 
@@ -693,19 +691,6 @@ def _restore_user_ai_config(user_id: int, cfg: dict | None) -> int:
     return 1
 
 
-def _restore_webhook_configs(user_id: int, rows: list[dict]) -> int:
-    for r in rows:
-        db.session.add(WebhookConfig(
-            user_id=user_id,
-            name=r.get("name", "") or "",
-            provider=r.get("provider", "discord") or "discord",
-            webhook_url=r.get("webhook_url", "") or "",
-            is_active=bool(r.get("is_active", True)),
-            events_json=r.get("events_json") or '["import_success"]',
-        ))
-    return len(rows)
-
-
 def _restore_tax_form_mappings(user_id: int, rows: list[dict]) -> int:
     for r in rows:
         db.session.add(TaxFormMapping(
@@ -781,9 +766,6 @@ def restore_user_backup(user_id: int, backup: Any) -> dict:
         counts["ai_drafts"] = d_db
         counts["user_ai_config"] = _restore_user_ai_config(
             user_id, data.get("user_ai_config"),
-        )
-        counts["webhook_configs"] = _restore_webhook_configs(
-            user_id, data.get("webhook_configs") or [],
         )
         counts["tax_form_mappings"] = _restore_tax_form_mappings(
             user_id, data.get("tax_form_mappings") or [],

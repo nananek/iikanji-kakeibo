@@ -715,7 +715,7 @@ def backup_export():
       accounts, fiscal_closes, journal_entries, journal_entry_lines,
       medical_expenses, balance_cache_blobs (BU-1),
       vouchers (BU-2a, active のみ。画像本体を base64 で含む),
-      ai_drafts, user_ai_config (1 行), webhook_configs, tax_form_mappings,
+      ai_drafts, user_ai_config (1 行), tax_form_mappings,
       csv_column_profiles (BU-2b)
 
     含めないもの:
@@ -732,7 +732,6 @@ def backup_export():
     from app.models.journal import JournalEntryLine
     from app.models.medical import MedicalExpense
     from app.models.tax_form import TaxFormMapping
-    from app.models.webhook import WebhookConfig
 
     user_id = g.auth_user.id
 
@@ -756,7 +755,6 @@ def backup_export():
     drafts = AIDraft.query.filter_by(user_id=user_id).all()
     storage = get_storage_backend() if (vouchers or drafts) else None
     ai_config = UserAIConfig.query.filter_by(user_id=user_id).first()
-    webhooks = WebhookConfig.query.filter_by(user_id=user_id).all()
     tax_mappings = (
         db.session.query(TaxFormMapping)
         .filter(TaxFormMapping.user_id == user_id)
@@ -851,19 +849,6 @@ def backup_export():
                 for d in drafts
             ],
             "user_ai_config": _ai_config_to_backup_dict(ai_config),
-            "webhook_configs": [
-                {
-                    "id": w.id,
-                    "name": w.name,
-                    "provider": w.provider,
-                    "webhook_url": w.webhook_url,
-                    "is_active": w.is_active,
-                    "events_json": w.events_json,
-                    "created_at": w.created_at.isoformat() if w.created_at else None,
-                    "updated_at": w.updated_at.isoformat() if w.updated_at else None,
-                }
-                for w in webhooks
-            ],
             "tax_form_mappings": [
                 {
                     "id": t.id,

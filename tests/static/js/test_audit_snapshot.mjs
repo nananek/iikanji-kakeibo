@@ -123,7 +123,6 @@ function backupFetch() {
         { id: 6, image_data: "ZmFrZQ==", encrypted_meta_blob: "x" },
       ],
       user_ai_config: { api_key_blob: "secret" },
-      webhook_configs: [{ url: "https://x" }],
     },
   };
   return async (url) => {
@@ -155,7 +154,6 @@ test("buildSnapshotLv3 decrypts ledger, excludes settings, inlines vouchers", as
   assert.deepEqual(snap.accounts, [{ code: "1010", name: "現金" }]);
   // 設定系は含めない
   assert.equal(snap.user_ai_config, undefined);
-  assert.equal(snap.webhook_configs, undefined);
   // 証憑は inline base64 で同梱 (§14.6)
   assert.equal(snap.vouchers.length, 2);
   const v5 = snap.vouchers.find((v) => v.voucher_id === 5);
