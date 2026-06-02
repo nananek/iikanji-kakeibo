@@ -142,8 +142,7 @@ def confirm():
     """Step 2: 確認画面 (取込は batch API 経由)。
 
     Phase E3-F-5 で旧サーバ POST 経路を撤去。確定は `submitImportBatch`
-    経由のみ。E3-F-1 で acting_as_user_id 解決済のため、監査代理閲覧時も
-    batch API でオーナーの仕訳として処理される。
+    経由のみ。
     """
     data_key = session.get("web_data_key")
     payment_account_code = session.get("web_payment_account_code")

@@ -134,7 +134,6 @@ document.addEventListener('alpine:init', function() {
       revenueTypeId: config.revenueTypeId,
       accountsByType: config.accountsByType,
       userId: config.userId,
-      isProxyMode: !!config.isProxyMode,
       fiscalYears: config.fiscalYears || [],
       editingCode: null,
       editingTypeId: null,
@@ -351,11 +350,6 @@ document.addEventListener('alpine:init', function() {
         var needsTransfer = !this.isActive && this.editingCode &&
           this.wasActive && this.hasBalance;
         if (needsTransfer) {
-          if (this.isProxyMode) {
-            this.errorMessage = '代理閲覧モードでは科目を無効化できません。' +
-              '本人アカウントで実行してください。';
-            return;
-          }
           if (!this.transferToCode) {
             this.errorMessage = '残高がある科目を無効化するには振替先を指定してください。';
             return;
@@ -413,7 +407,7 @@ document.addEventListener('alpine:init', function() {
    *
    * 使い方 (E3-F PR-B2: journal/form.html, JS submit + 暗号化経路):
    *   <form x-data="journalLines({ lines: [...], submitConfig: {
-   *           isEdit, entryId, userId, isProxyMode } })"
+   *           isEdit, entryId, userId } })"
    *         @submit.prevent="submitJournalForm($event)">
    *   submitConfig が指定された場合のみ submitJournalForm が動作する。
    */
@@ -507,10 +501,6 @@ document.addEventListener('alpine:init', function() {
         var sc = config && config.submitConfig;
         if (!sc) return;
         if (this.submitting) return;
-        if (sc.isProxyMode) {
-          alert('代理閲覧モードでは保存できません。本人アカウントで実行してください。');
-          return;
-        }
         var formEl = event && event.target;
         if (!formEl) return;
         var dateEl = formEl.querySelector('input[name=date]');
@@ -1082,11 +1072,8 @@ document.addEventListener('alpine:init', function() {
     // 未開設年度の行を当年 1/1 / 元入金科目に差替えてから batch API に送る。
     var capitalCode = config.capitalCode || '';
     // E3-F PR-A: クライアント側暗号化の AAD に使う user_id。テンプレート側で
-    // `current_user.id` を渡す。代理閲覧 (auditor proxy) では監査者本人の ID
-    // が渡るが、書込み先 DB は owner なので AAD 不一致で復号不能になる。
-    // isProxyMode が true の時は submitImportBatch 冒頭で fail-loud に拒否する。
+    // `current_user.id` を渡す。
     var userId = config.userId;
-    var isProxyMode = !!config.isProxyMode;
 
     function getStatus(row) {
       if (!row.date) return { cls: 'bg-warning text-dark', text: '日付なし', icon: '', problem: false };
@@ -1297,9 +1284,8 @@ document.addEventListener('alpine:init', function() {
       _suggestCategories: function() {
         // E3-F PR-D-4: 非AI 科目推定を client 完結フローに切替。サーバには
         // 平文 description を送らず、復号済み過去仕訳から相手科目を推定する。
-        // 自動補完 (best-effort) なので MK ロック中・代理閲覧・エラーは静かに
+        // 自動補完 (best-effort) なので MK ロック中・エラーは静かに
         // スキップする (旧サーバ POST も .catch で握り潰していた)。
-        if (isProxyMode) return; // 代理閲覧では owner データを復号できない
         var descriptions = [];
         for (var i = 0; i < this.rows.length; i++) {
           if (this.rows[i].description) descriptions.push(this.rows[i].description);
@@ -1390,12 +1376,6 @@ document.addEventListener('alpine:init', function() {
        */
       submitImportBatch: async function(event) {
         event.preventDefault();
-        // E3-F PR-A: 代理閲覧 (auditor proxy) 中は AAD に監査者の userId が
-        // 入って owner DB に保存されると復号不能になる。早期に拒否する。
-        if (isProxyMode) {
-          alert('代理閲覧モードでは取込できません。本人アカウントで実行してください。');
-          return;
-        }
         // 未開設年度の扱い: ラジオボタン (skip / capital) の値を読む
         var oldYearActionEl = this.$el.querySelector(
           'input[name="old_year_action"]:checked',
@@ -1545,7 +1525,7 @@ document.addEventListener('alpine:init', function() {
    * に投げる。成功時は親 .col-md-6 を fade out + DOM 除去。
    *
    * config:
-   *   draftId, userId, isProxyMode, suggestion
+   *   draftId, userId, suggestion
    *   suggestion: { date, entry_description, lines: [{ account_code,
    *                  debit_amount, credit_amount, description }, ...] }
    */
@@ -1555,10 +1535,6 @@ document.addEventListener('alpine:init', function() {
 
       async submit() {
         if (this.submitting) return;
-        if (config.isProxyMode) {
-          alert('代理閲覧モードでは登録できません。本人アカウントで実行してください。');
-          return;
-        }
         var s = config.suggestion;
         if (!s) {
           if (typeof showToast === 'function') {

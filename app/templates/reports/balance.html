@@ -3,7 +3,7 @@
 
 {% block content %}
 <script id="trial-balance-server-params" type="application/json">
-{{ {"fiscal_year": year, "fiscal_period_from": pf, "fiscal_period_to": pt, "user_id": effective_user_id, "is_audit_proxy": session.get('acting_as_user_id') is not none} | tojson }}
+{{ {"fiscal_year": year, "fiscal_period_from": pf, "fiscal_period_to": pt, "user_id": effective_user_id} | tojson }}
 </script>
 {% set range_label %}
   {% if pf == pt %}{{ period_labels.get(pf, '') }}{% else %}{{ period_labels.get(pf, '') }}〜{{ period_labels.get(pt, '') }}{% endif %}

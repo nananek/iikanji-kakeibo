@@ -4,7 +4,7 @@ import hashlib
 from datetime import datetime, timezone
 
 from flask import (
-    Blueprint, render_template, flash, redirect, url_for, session,
+    Blueprint, render_template, flash, redirect, url_for,
 )
 from flask_login import login_required, current_user
 from sqlalchemy.orm import joinedload
@@ -60,14 +60,10 @@ def index():
         for v in vouchers
     ]
 
-    # 削除ボタンは本人モード時のみ表示 (代理閲覧中の auditor は破壊操作禁止)
-    can_delete = session.get("acting_as_user_id") is None
-
     return render_template(
         "vouchers/index.html",
         voucher_meta=voucher_meta,
         effective_user_id=user_id,
-        can_delete=can_delete,
     )
 
 
@@ -122,15 +118,7 @@ def delete(voucher_id):
     の事実と内容は `action="deleted"` の AuditLog + 論理削除で残る voucher
     行の各列 (image_key / file_hash(cipher) / file_size) で担保する
     (E4 PR-D で平文 detail への file_hash 記録は廃止済)。
-
-    代理閲覧中 (`acting_as_user_id` セッション設定) は破壊操作を禁止
-    (auditor は閲覧者であり、本人の意思によらない削除は監査独立性を
-    損なう)。本人ログイン時のみ操作可能。
     """
-    if session.get("acting_as_user_id") is not None:
-        flash("代理閲覧中は証憑を削除できません。", "danger")
-        return redirect(url_for("vouchers.index"))
-
     user_id = current_user.id
     voucher = Voucher.active().filter_by(
         id=voucher_id, user_id=user_id,

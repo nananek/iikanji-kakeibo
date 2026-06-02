@@ -6,7 +6,6 @@
 
 <script>
   var _userId = {{ effective_user_id|tojson }};
-  var _isProxyMode = {{ (session.get('acting_as_user_id') is not none)|tojson }};
   var _medicalAccountCode = {{ medical_account_code|tojson }};
 </script>
 
@@ -27,10 +26,6 @@
 
         async submitForm(event) {
           if (this.submitting) return;
-          if (_isProxyMode) {
-            alert('代理閲覧モードでは保存できません。本人アカウントで実行してください。');
-            return;
-          }
           if (!_medicalAccountCode) {
             alert('医療費の勘定科目 (6010) が見つかりません。');
             return;

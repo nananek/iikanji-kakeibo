@@ -5,7 +5,6 @@
 <script>
   // E3-F PR-B3: 案 1 ワンタップ登録のクライアント側暗号化に使う。
   var _userId = {{ current_user.id|tojson }};
-  var _isProxyMode = false;
   // E5 (#111): 暗号化下書きサムネのクライアント復号 (AAD 束縛) 用のオーナー
   // user_id。下書きは全て effective_user_id の所有 (代理閲覧時も owner)。
   window.IIKANJI_AI_DRAFTS_USERID = {{ effective_user_id|tojson }};
@@ -95,7 +94,6 @@
                 x-data="aiDraftQuickAccept({
                   draftId: {{ d.id|tojson }},
                   userId: _userId,
-                  isProxyMode: _isProxyMode,
                   suggestion: {{ item.suggestion|tojson }}
                 })"
                 @click="submit()"

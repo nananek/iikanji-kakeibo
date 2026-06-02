@@ -13,7 +13,6 @@
       var _closedPeriods = {{ (closed_periods or {})|tojson }};
       var _restrictedBefore = {{ restricted_before_year|tojson }};
       var _userId = {{ current_user.id|tojson }};
-      var _isProxyMode = false;
       var _isEdit = {{ is_edit|tojson }};
       var _entryId = {{ (entry.id if is_edit else None)|tojson }};
     </script>
@@ -23,8 +22,7 @@
             submitConfig: {
               isEdit: _isEdit,
               entryId: _entryId,
-              userId: _userId,
-              isProxyMode: _isProxyMode
+              userId: _userId
             }
           })"
           @submit.prevent="submitJournalForm($event)">
@@ -171,7 +169,6 @@ renderVoucherPreview(
       isEdit: window._isEdit,
       entryId: window._entryId,
       userId: window._userId,
-      isProxyMode: window._isProxyMode,
       dateInput: document.querySelector('#journalForm input[name=date]'),
       descInput: document.querySelector('#journalForm input[name=description], #journalForm textarea[name=description]'),
       formEl: document.getElementById('journalForm'),

@@ -8,7 +8,6 @@
   var _closedPeriods = {{ (closed_periods or {})|tojson }};
   var _restrictedBefore = {{ restricted_before_year|tojson }};
   var _userId = {{ current_user.id|tojson }};
-  var _isProxyMode = false;
   var _isEdit = {{ is_edit|tojson }};
   var _entryId = {{ (entry.id if is_edit else None)|tojson }};
 </script>
@@ -52,10 +51,6 @@
 
         async submitForm(event) {
           if (this.submitting) return;
-          if (_isProxyMode) {
-            alert('代理閲覧モードでは保存できません。本人アカウントで実行してください。');
-            return;
-          }
           var dateEl = event.target.querySelector('input[name=date]');
           var fpEl = event.target.querySelector('select[name=fiscal_period]');
           var amountEl = event.target.querySelector('input[name=amount]');
@@ -203,7 +198,6 @@
       isEdit: window._isEdit,
       entryId: window._entryId,
       userId: window._userId,
-      isProxyMode: window._isProxyMode,
       dateInput: document.querySelector('input[name=date]'),
       descInput: document.querySelector('input[name=description], textarea[name=description]'),
       workerUrl: workerUrl,

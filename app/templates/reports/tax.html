@@ -3,13 +3,13 @@
 
 {% block content %}
 <script id="medical-summary-server-params" type="application/json">
-{{ {"year": year, "user_id": effective_user_id, "is_audit_proxy": session.get('acting_as_user_id') is not none} | tojson }}
+{{ {"year": year, "user_id": effective_user_id} | tojson }}
 </script>
 <script id="medical-summary-accounts-meta" type="application/json">
 {{ medical_accounts_meta | tojson }}
 </script>
 <script id="tax-summary-server-params" type="application/json">
-{{ {"year": year, "user_id": effective_user_id, "is_audit_proxy": session.get('acting_as_user_id') is not none} | tojson }}
+{{ {"year": year, "user_id": effective_user_id} | tojson }}
 </script>
 <script id="tax-summary-accounts-meta" type="application/json">
 {{ tax_accounts_meta | tojson }}

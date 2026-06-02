@@ -5,7 +5,6 @@
 <script>
   // クライアント側暗号化での仕訳登録 (batch API draft_id 連携) に使う。
   var _userId = {{ current_user.id|tojson }};
-  var _isProxyMode = false;
   var _reviewDraftId = {{ draft_db_id|tojson }};
   var _reviewRedirect = {{ (url_for('ai_journal.drafts') if is_saved_draft else url_for('journal.index'))|tojson }};
 </script>
@@ -389,10 +388,6 @@
 // review 画面の仕訳登録: クライアント暗号化 → batch API (draft_id 連携)。
 // voucher 永続化・Discord 通知・draft 完了処理は batch 側 commit 内で完結する。
 function submitReviewSimple(formEl, categoryCode, paymentCode) {
-  if (_isProxyMode) {
-    showToast('代理閲覧モードでは登録できません。本人アカウントで実行してください。', 'danger');
-    return;
-  }
   var date = formEl.querySelector('[name=date]').value;
   var description = formEl.querySelector('[name=description]').value.trim();
   var amount = parseInt(formEl.querySelector('[name=amount]').value, 10) || 0;
@@ -411,10 +406,6 @@ function submitReviewSimple(formEl, categoryCode, paymentCode) {
 }
 
 function submitReviewAdvanced(formEl, lines) {
-  if (_isProxyMode) {
-    showToast('代理閲覧モードでは登録できません。本人アカウントで実行してください。', 'danger');
-    return;
-  }
   var date = formEl.querySelector('[name=date]').value;
   var description = formEl.querySelector('[name=description]').value.trim();
   if (!date || !description) {

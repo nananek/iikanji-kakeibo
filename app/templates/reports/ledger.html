@@ -10,7 +10,6 @@
   "normal_balance": selected_account.account_type.normal_balance,
   "sort": sort,
   "user_id": effective_user_id,
-  "is_audit_proxy": session.get('acting_as_user_id') is not none,
 } | tojson }}
 </script>
 <script id="ledger-accounts-meta" type="application/json">
@@ -724,15 +723,12 @@ function saveEntry() {
 }
 
 // MK 復号 → buildJournalEntry で暗号化 → 暗号化済み API へ送信。
-// MK ロック中・監査代理中は暗号化 write 不可なのでエラーメッセージで弾く
+// MK ロック中は暗号化 write 不可なのでエラーメッセージで弾く
 // (仕訳帳一覧の暗号化 submit と同じ扱い)。
 async function submitLedgerEntry(opts) {
   var paramsEl = document.getElementById('ledger-server-params');
   if (!paramsEl) throw new Error('ページ情報の取得に失敗しました。');
   var params = JSON.parse(paramsEl.textContent);
-  if (params.is_audit_proxy) {
-    throw new Error('監査代理閲覧中は仕訳を編集できません。');
-  }
   if (typeof params.user_id !== 'number') {
     throw new Error('ユーザー情報の取得に失敗しました。');
   }

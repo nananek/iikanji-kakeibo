@@ -252,20 +252,6 @@ class TestDeleteAccountView:
         assert resp.status_code == 200
         assert db.session.get(User, user.id) is not None
 
-    def test_post_blocked_during_proxy_view(
-        self, logged_in_client, db, user, mock_storage, reset_limiter,
-    ):
-        """代理閲覧中は削除禁止."""
-        with logged_in_client.session_transaction() as sess:
-            sess["acting_as_user_id"] = 999
-
-        resp = logged_in_client.post("/settings/delete-account", data={
-            "password": "password123", "confirm": "y",
-        })
-        # リダイレクトされて User 残存
-        assert resp.status_code == 302
-        assert db.session.get(User, user.id) is not None
-
     def test_post_success_deletes_and_sends_email(
         self, logged_in_client, db, user, mock_storage, reset_limiter,
     ):

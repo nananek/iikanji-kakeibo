@@ -1,7 +1,8 @@
 """Lv2 監査者向けフロー (journal の編集) のテスト
 
-acting_as_user_id + permission_level=2 + AuditGrantAccount で
-公開科目のみ編集可能、非公開行は保持の挙動を網羅。
+旧リアルタイム代理閲覧 (acting_as_user_id) の撤去 (#112) 後は、Lv2 の
+平文編集エンドポイント自体が撤去・GET 専用化されている。ここでは旧経路が
+到達不能 (404/405) であることのみを担保する。
 """
 
 import json
@@ -15,7 +16,11 @@ from app.models.journal import JournalEntry, JournalEntryLine
 
 @pytest.fixture
 def lv2_setup(db, client, user, auditor, accounts):
-    """Lv2 監査者として user の代理閲覧を行う状態を作る"""
+    """Lv2 監査 grant を作り、auditor としてログインした状態にする。
+
+    旧代理閲覧 (acting_as_user_id) は撤去済みのため、auditor は本人として
+    ログインするだけ。旧 Lv2 編集経路が到達不能であることの検証に使う。
+    """
     grant = AuditGrant(
         owner_user_id=user.id,
         auditor_user_id=auditor.id,
@@ -36,8 +41,6 @@ def lv2_setup(db, client, user, auditor, accounts):
 
     with client.session_transaction() as sess:
         sess["_user_id"] = str(auditor.id)
-        sess["acting_as_user_id"] = user.id
-        sess["acting_as_permission_level"] = 2
     return grant
 
 
@@ -76,9 +79,8 @@ class TestJournalEditApiLv2Removed:
     """旧 Lv2 モーダル編集 (/journal/<id>/edit-api) は撤去済み。
 
     E2EE では編集が暗号化済み PUT /api/v1/journals/<id> に一本化される。
-    代理閲覧中の監査者は owner の MK を持たず暗号値を復号・再暗号化できないため、
-    PUT/batch 側の代理ガードでブロックされる (Lv2 監査者による仕訳編集は
-    アーキテクチャ上サポートされない)。ここでは旧平文エンドポイントが到達不能
+    旧リアルタイム代理閲覧も撤去済み (#112) で、Lv2 監査者による仕訳編集は
+    アーキテクチャ上サポートされない。ここでは旧平文エンドポイントが到達不能
     (404/405) であることのみ担保する。
     """
 

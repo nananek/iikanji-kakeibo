@@ -180,14 +180,6 @@ async function _run() {
       );
       return;
     }
-    if (params.is_audit_proxy) {
-      _setStatus(
-        "監査代理閲覧中です。オーナーの暗号化された取込履歴はあなたの暗号鍵では復号できないため、一覧は空表示になります (E2EE アーキテクチャ仕様)。",
-        "info",
-      );
-      _renderRows([]);
-      return;
-    }
     _clearStatus();
 
     const rows = await fetchBatches({ client, userId: params.user_id });

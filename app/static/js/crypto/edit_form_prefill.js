@@ -68,7 +68,6 @@ export function applyEntryPrefill({ fields, dateInput, descInput, alpine, linesS
  * @param {boolean} opts.isEdit
  * @param {number} [opts.entryId]
  * @param {number|bigint} opts.userId
- * @param {boolean} [opts.isProxyMode]
  * @param {HTMLInputElement} [opts.dateInput]
  * @param {HTMLInputElement|HTMLTextAreaElement} [opts.descInput]
  * @param {HTMLElement} [opts.formEl]  journalLines x-data を張った form 要素
@@ -85,7 +84,6 @@ export async function hydrateEditForm(opts) {
     isEdit,
     entryId,
     userId,
-    isProxyMode = false,
     dateInput,
     descInput,
     formEl,
@@ -96,8 +94,8 @@ export async function hydrateEditForm(opts) {
     fetchImpl,
   } = opts || {};
 
-  // 新規入力 / 監査代理中は prefill 対象外。
-  if (!isEdit || entryId === undefined || entryId === null || isProxyMode) {
+  // 新規入力は prefill 対象外。
+  if (!isEdit || entryId === undefined || entryId === null) {
     return null;
   }
 

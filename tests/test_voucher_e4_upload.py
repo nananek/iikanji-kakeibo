@@ -1,7 +1,7 @@
 """E4 (#111) PR-B: 証憑画像 2 段階 E2EE upload のテスト。
 
 POST /api/v1/vouchers/init → PUT /api/v1/vouchers/<id> のフロー、暗号文 ingest、
-file_hash_cipher サーバ計算、上書き禁止、代理閲覧ブロック、暗号文配信を検証する。
+file_hash_cipher サーバ計算、上書き禁止、暗号文配信を検証する。
 """
 
 import hashlib
@@ -258,47 +258,6 @@ class TestVoucherUpload:
         vid = _init_voucher(logged_in_client).get_json()["voucher_id"]
         resp = _upload(logged_in_client, vid)
         assert resp.status_code == 413
-
-
-class TestProxyBlocked:
-    """代理閲覧 (acting_as) 中は init / PUT とも 403。"""
-
-    def _grant_lv3(self, db, owner, auditor):
-        from app.models.audit import AuditGrant
-        grant = AuditGrant(
-            owner_user_id=owner.id, auditor_user_id=auditor.id,
-            permission_level=3,
-        )
-        db.session.add(grant)
-        db.session.commit()
-
-    def test_init_blocked_during_proxy(
-        self, client, db, user, auditor
-    ):
-        self._grant_lv3(db, user, auditor)
-        with client.session_transaction() as sess:
-            sess["_user_id"] = str(auditor.id)
-            sess["acting_as_user_id"] = user.id
-            sess["acting_as_permission_level"] = 3
-        resp = client.post("/api/v1/vouchers/init", json={})
-        assert resp.status_code == 403
-        assert Voucher.query.count() == 0
-
-    def test_upload_blocked_during_proxy(
-        self, client, db, user, auditor
-    ):
-        # 本人として init → その後 auditor が代理で PUT を試みる
-        v = Voucher(user_id=user.id, image_key="",
-                    )
-        db.session.add(v)
-        db.session.commit()
-        self._grant_lv3(db, user, auditor)
-        with client.session_transaction() as sess:
-            sess["_user_id"] = str(auditor.id)
-            sess["acting_as_user_id"] = user.id
-            sess["acting_as_permission_level"] = 3
-        resp = _upload(client, v.id)
-        assert resp.status_code == 403
 
 
 class TestAtomicClaim:
