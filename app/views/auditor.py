@@ -43,6 +43,10 @@ def packages(grant_id):
     grant = AuditGrant.query.filter_by(
         id=grant_id, auditor_user_id=current_user.id
     ).first_or_404()
+    # 失効した監査アクセスは新規閲覧を拒否する (§14.10、owner 側送信ビューと対称)。
+    if grant.revoked_at is not None:
+        flash("この監査アクセスは失効しています。", "warning")
+        return redirect(url_for("auditor.dashboard"))
 
     return render_template(
         "auditor/packages.html",

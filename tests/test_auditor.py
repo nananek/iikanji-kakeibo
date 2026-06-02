@@ -77,6 +77,23 @@ class TestPackages:
         resp = client.get(f"/auditor/packages/{grant.id}")
         assert resp.status_code in (302, 303)
 
+    def test_revoked_grant_redirected(self, db, client, auditor, user):
+        """失効した監査アクセスは packages 閲覧でリダイレクト (§14.10)"""
+        from datetime import datetime, timezone
+        grant = AuditGrant(
+            owner_user_id=user.id,
+            auditor_user_id=auditor.id,
+            permission_level=2,
+            status="active",
+            revoked_at=datetime.now(timezone.utc),
+        )
+        db.session.add(grant)
+        db.session.commit()
+        with client.session_transaction() as sess:
+            sess["_user_id"] = str(auditor.id)
+        resp = client.get(f"/auditor/packages/{grant.id}")
+        assert resp.status_code in (302, 303)
+
     def test_idor_other_auditor_grant(self, db, client, auditor, user):
         from app.models.user import User
         other_auditor = User(username="other_aud2", email="o2@x.com",
