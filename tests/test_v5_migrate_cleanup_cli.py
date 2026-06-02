@@ -29,11 +29,11 @@ def _ai_config(db, user, provider):
 
 
 def _setup(db):
-    """llama_cpp 1 件 + openai 1 件 + discord draft 1 件。
+    """llama_cpp 1 件 + openai 1 件 + draft 1 件。
 
-    webhook_configs テーブルは E6 PR-2 (migration 064) で DROP 済みのため、
-    CLI の監査表示では「該当なし」になる。ai_drafts.discord_* カラムは PR-3
-    まで現存するので件数が出る。
+    webhook_configs テーブル (migration 064) と ai_drafts.discord_* カラム
+    (migration 065) はいずれも E6 で DROP 済みのため、CLI の監査表示では
+    どちらも「該当なし」になる。
     """
     u_llama, u_openai = _user(db), _user(db)
     llama_cfg = _ai_config(db, u_llama, "llama_cpp")
@@ -41,7 +41,6 @@ def _setup(db):
 
     draft = AIDraft(
         user_id=u_openai.id, image_key="k", image_mime="image/png",
-        discord_webhook_url="https://discord.com/api/webhooks/x/y",
     )
     db.session.add(draft)
     db.session.commit()
@@ -57,10 +56,10 @@ def test_dry_run_reports_and_deletes_nothing(db, app):
     assert "[dry-run]" in result.output
     # llama_cpp 1 件が削除対象として表示される
     assert "provider='llama_cpp': 1 件" in result.output
-    # webhook_configs テーブルは DROP 済 (064) → 該当なし
+    # webhook_configs テーブル (064) / ai_drafts.discord_* カラム (065) は
+    # いずれも DROP 済 → 該当なし
     assert "webhook_configs: 該当なし" in result.output
-    # ai_drafts.discord_* は PR-3 まで現存するので件数が出る
-    assert "ai_drafts.discord_*: 1 件" in result.output
+    assert "ai_drafts.discord_*: 該当なし" in result.output
 
     db.session.expire_all()
     # 何も削除されていない
@@ -92,7 +91,7 @@ def test_execute_deletes_only_llama_cpp(db, app):
     # llama_cpp は削除、openai は残る
     assert db.session.get(UserAIConfig, llama_id) is None
     assert db.session.get(UserAIConfig, openai_id) is not None
-    # discord draft は CLI では削除しない (マイグレーション 065 の責務)
+    # ai_drafts は CLI の対象外 (削除しない)
     assert AIDraft.query.count() == 1
 
 

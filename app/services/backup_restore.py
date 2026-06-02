@@ -661,8 +661,6 @@ def _restore_ai_drafts(
             comment=r.get("comment", "") or "",
             suggestions_json=r.get("suggestions_json"),
             status=r.get("status", "pending") or "pending",
-            discord_webhook_url=r.get("discord_webhook_url"),
-            discord_message_id=r.get("discord_message_id"),
         )
         db.session.add(draft)
         db.session.flush()
