@@ -8,7 +8,8 @@ const M = new URL(
   "../../../app/static/js/audit/responses_review_renderer.mjs",
   import.meta.url,
 );
-const { responsesForGrant, parseResponse, computeEntryDiff } = await import(M.href);
+const { responsesForGrant, parseResponse, computeEntryDiff, buildAdoptArgs } =
+  await import(M.href);
 
 test("responsesForGrant: この grant のパッケージの response のみ", () => {
   const responses = [
@@ -154,4 +155,48 @@ test("computeEntryDiff: oldEntry が null でも全行 added 扱い", () => {
   });
   assert.equal(d.lines.every((l) => l.status === "added"), true);
   assert.equal(d.date.changed, true);
+});
+
+// ---- buildAdoptArgs (§14.9 1クリック採用の buildJournalEntry 引数組立) ----
+
+test("buildAdoptArgs: proposal から date/description/lines を組み立て、source/fiscalPeriod を旧仕訳から継承", () => {
+  const proposal = {
+    date: "2026-05-22",
+    description: "携帯料金",
+    lines: [
+      { account_code: "5010", debit: 5000, credit: 0 },
+      { account_code: "1020", debit: 0, credit: 5000, description: "振替" },
+    ],
+  };
+  const oldEntry = { source: "cashbook", fiscal_period: 5 };
+  const args = buildAdoptArgs(proposal, oldEntry, 7);
+  assert.equal(args.userId, 7);
+  assert.equal(args.date, "2026-05-22");
+  assert.equal(args.description, "携帯料金");
+  assert.equal(args.source, "cashbook");
+  assert.equal(args.fiscalPeriod, 5);
+  assert.deepEqual(args.lines[0], { account_code: "5010", debit: 5000, credit: 0, description: "" });
+  assert.deepEqual(args.lines[1], { account_code: "1020", debit: 0, credit: 5000, description: "振替" });
+});
+
+test("buildAdoptArgs: 文字列金額を整数化、description 既定空", () => {
+  const args = buildAdoptArgs(
+    { date: "2026-05-22", lines: [{ account_code: "5010", debit: "5000", credit: "" }] },
+    {},
+    1,
+  );
+  assert.equal(args.description, "");
+  assert.equal(args.lines[0].debit, 5000);
+  assert.equal(args.lines[0].credit, 0);
+});
+
+test("buildAdoptArgs: source 欠落は journal、fiscal_period 欠落は null", () => {
+  const args = buildAdoptArgs({ date: "2026-05-22", lines: [] }, {}, 1);
+  assert.equal(args.source, "journal");
+  assert.equal(args.fiscalPeriod, null);
+});
+
+test("buildAdoptArgs: fiscal_period=0 (期首) を保持する", () => {
+  const args = buildAdoptArgs({ date: "2026-01-01", lines: [] }, { fiscal_period: 0 }, 1);
+  assert.equal(args.fiscalPeriod, 0);
 });
