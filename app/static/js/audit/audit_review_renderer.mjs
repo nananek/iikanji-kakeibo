@@ -354,6 +354,12 @@ export function validateProposal(proposal, accountsMeta) {
   if (proposal == null) return null;
   const date = (proposal.date || "").trim();
   if (!date) throw new Error("修正案の日付を入力してください。");
+  // owner 採用時の buildJournalEntry は date を非空文字としか見ない。不正な値が
+  // サーバの仕訳作成まで到達しないよう YYYY-MM-DD 形式をここで弾く (入力 UI は
+  // <input type="date"> だが純粋関数として防御する)。
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    throw new Error("修正案の日付は YYYY-MM-DD 形式で入力してください。");
+  }
   const lines = Array.isArray(proposal.lines) ? proposal.lines : [];
   if (lines.length < 2) throw new Error("修正案の明細は 2 行以上必要です。");
   const meta = accountsMeta || {};

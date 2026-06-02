@@ -181,6 +181,17 @@ test("validateProposal: date 必須", () => {
   assert.throws(() => validateProposal({ ...VALID_PROPOSAL, date: "  " }, META), /日付/);
 });
 
+test("validateProposal: date は YYYY-MM-DD 形式必須", () => {
+  assert.throws(
+    () => validateProposal({ ...VALID_PROPOSAL, date: "2026/05/22" }, META),
+    /YYYY-MM-DD/,
+  );
+  assert.throws(
+    () => validateProposal({ ...VALID_PROPOSAL, date: "2026-5-2" }, META),
+    /YYYY-MM-DD/,
+  );
+});
+
 test("validateProposal: 行 2 未満は throw", () => {
   assert.throws(
     () => validateProposal({ date: "2026-05-22", lines: [{ account_code: "5010", debit: 5000, credit: 0 }] }, META),
