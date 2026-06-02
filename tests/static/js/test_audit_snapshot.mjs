@@ -1,0 +1,156 @@
+// E5 #112 PR-E: 監査スナップショット生成 (audit_snapshot.js) の単体テスト。
+// 既存の集計・取得関数の組み立てを、モック fetch + モック client で検証する。
+
+import { test } from "node:test";
+import assert from "node:assert/strict";
+
+const M = new URL("../../../app/static/js/crypto/audit_snapshot.js", import.meta.url);
+const { buildSnapshotLv1, buildSnapshotLv2, buildSnapshotLv3 } = await import(M.href);
+
+const B64 = new URL("../../../app/static/js/crypto/b64.js", import.meta.url);
+const { b64encode } = await import(B64.href);
+
+const TE = new TextEncoder();
+const b64json = (obj) => b64encode(TE.encode(JSON.stringify(obj)));
+
+// 平文行をそのまま使う (encrypted_blob なし) ので client.decrypt は呼ばれない。
+const plainClient = { decrypt: async () => ({ plaintext: new Uint8Array() }) };
+// Lv3 backup 用: client.decrypt は identity (plaintext = blob) → decryptRecord が JSON.parse。
+const identityClient = { decrypt: async (blob) => ({ plaintext: blob }) };
+
+const ACCOUNTS_META = {
+  "1010": { type: "asset", normal_balance: "debit", name: "現金", tax_category: null },
+  "4010": { type: "revenue", normal_balance: "credit", name: "売上", tax_category: null },
+  "5200": { type: "expense", normal_balance: "debit", name: "社保", tax_category: "social_insurance" },
+};
+
+// 仕訳: entry1 = 税務科目なし, entry2 = 社保 (税務科目) を含む。
+const ENTRIES = [
+  {
+    id: 1, fiscal_year: 2026, fiscal_month: 3, is_closing: false,
+    lines: [
+      { account_code: "1010", debit: 1000, credit: 0 },
+      { account_code: "4010", debit: 0, credit: 1000 },
+    ],
+  },
+  {
+    id: 2, fiscal_year: 2026, fiscal_month: 5, is_closing: false,
+    lines: [
+      { account_code: "5200", debit: 500, credit: 0 },
+      { account_code: "1010", debit: 0, credit: 500 },
+    ],
+  },
+];
+
+function reportFetch() {
+  // /api/v1/journals?... → page 1 に全件、page>=2 は空 (ページングを確実に打ち切る)。
+  // /api/v1/balance-cache-blobs?... → 空 (priorCumulative={})。
+  return async (url) => {
+    if (url.startsWith("/api/v1/journals")) {
+      const page = Number(new URL(url, "http://x").searchParams.get("page"));
+      return {
+        ok: true, status: 200,
+        async json() { return { journals: page === 1 ? ENTRIES : [] }; },
+      };
+    }
+    if (url.startsWith("/api/v1/balance-cache-blobs")) {
+      return { ok: true, status: 200, async json() { return { blobs: [] }; } };
+    }
+    throw new Error("unexpected url " + url);
+  };
+}
+
+
+// ===== Lv1 =====
+
+test("buildSnapshotLv1 returns aggregates only, no raw entries", async () => {
+  const snap = await buildSnapshotLv1({
+    client: plainClient, userId: 7, fiscalYear: 2026,
+    accountsMeta: ACCOUNTS_META, fetchImpl: reportFetch(),
+  });
+  assert.equal(snap.v, 1);
+  assert.equal(snap.level, 1);
+  assert.equal(snap.fiscal_year, 2026);
+  assert.deepEqual(snap.accounts_meta, ACCOUNTS_META);
+  assert.ok(Array.isArray(snap.trial_balance));
+  assert.ok(snap.profit_loss && snap.balance_sheet && snap.monthly);
+  // 仕訳本体は含めない
+  assert.equal(snap.entries, undefined);
+  // 試算表に現金(1010)が集計されている
+  assert.ok(snap.trial_balance.some((r) => r.account_code === "1010" && r.debit === 1000));
+});
+
+
+// ===== Lv2 =====
+
+test("buildSnapshotLv2 includes only tax-category entries + tax_summary", async () => {
+  const snap = await buildSnapshotLv2({
+    client: plainClient, userId: 7, fiscalYear: 2026,
+    accountsMeta: ACCOUNTS_META, fetchImpl: reportFetch(),
+  });
+  assert.equal(snap.level, 2);
+  assert.ok(snap.tax_summary, "has tax_summary");
+  // entry2 (社保 5200 を含む) のみ。entry1 は税務科目なしなので除外。
+  assert.equal(snap.entries.length, 1);
+  assert.equal(snap.entries[0].id, 2);
+  // Lv1 と同じ集計も持つ
+  assert.ok(Array.isArray(snap.trial_balance));
+});
+
+
+// ===== Lv3 =====
+
+function backupFetch() {
+  const backup = {
+    version: "1.0", exported_at: "2026-06-02T00:00:00Z", user_id: 7,
+    data: {
+      accounts: [{ code: "1010", name: "現金" }],
+      fiscal_closes: [{ year: 2026, closed_period: 3 }],
+      journal_entries: [
+        { id: 1, blob_iv: b64encode(new Uint8Array(12)),
+          encrypted_blob: b64json({ date: "2026-01-01", description: "テスト" }) },
+      ],
+      journal_entry_lines: [
+        { id: 10, journal_entry_id: 1, blob_iv: b64encode(new Uint8Array(12)),
+          encrypted_blob: b64json({ account_code: "1010", debit_amount: 100, credit_amount: 0 }) },
+      ],
+      medical_expenses: [],
+      balance_cache_blobs: [],
+      vouchers: [{ id: 5, image_data: "ZmFrZQ==", encrypted_meta_blob: "x" }],
+      user_ai_config: { api_key_blob: "secret" },
+      webhook_configs: [{ url: "https://x" }],
+    },
+  };
+  return async (url) => {
+    if (url === "/api/v1/backup/export") {
+      return { ok: true, status: 200, async json() { return backup; } };
+    }
+    throw new Error("unexpected url " + url);
+  };
+}
+
+test("buildSnapshotLv3 decrypts ledger and excludes settings + vouchers", async () => {
+  const snap = await buildSnapshotLv3({
+    client: identityClient, accountsMeta: ACCOUNTS_META, fetchImpl: backupFetch(),
+  });
+  assert.equal(snap.level, 3);
+  // 台帳は復号されている
+  assert.equal(snap.journal_entries.length, 1);
+  assert.equal(snap.journal_entries[0].date, "2026-01-01");
+  assert.equal(snap.journal_entry_lines[0].account_code, "1010");
+  assert.equal(snap.journal_entry_lines[0].debit, undefined); // body は debit_amount キー
+  assert.equal(snap.journal_entry_lines[0].debit_amount, 100);
+  assert.deepEqual(snap.accounts, [{ code: "1010", name: "現金" }]);
+  // 設定系・証憑は含めない
+  assert.equal(snap.vouchers, undefined);
+  assert.equal(snap.user_ai_config, undefined);
+  assert.equal(snap.webhook_configs, undefined);
+});
+
+test("buildSnapshotLv3 throws on backup export HTTP error", async () => {
+  const fetchImpl = async () => ({ ok: false, status: 500, async json() { return {}; } });
+  await assert.rejects(
+    () => buildSnapshotLv3({ client: identityClient, accountsMeta: {}, fetchImpl }),
+    /backup export HTTP 500/,
+  );
+});
