@@ -23,7 +23,7 @@ def _user(db, name=None):
 def _grant(db, owner, auditor, level=2):
     g = AuditGrant(
         owner_user_id=owner.id, auditor_user_id=auditor.id,
-        permission_level=level, status="draft",
+        permission_level=level,
     )
     db.session.add(g)
     db.session.commit()

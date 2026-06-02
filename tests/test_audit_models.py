@@ -33,7 +33,6 @@ def _grant(db, owner, auditor, level=2):
         owner_user_id=owner.id,
         auditor_user_id=auditor.id,
         permission_level=level,
-        status="draft",
     )
     db.session.add(g)
     db.session.commit()

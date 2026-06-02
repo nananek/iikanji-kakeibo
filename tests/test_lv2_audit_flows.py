@@ -20,7 +20,6 @@ def lv2_setup(db, client, user, auditor, accounts):
         owner_user_id=user.id,
         auditor_user_id=auditor.id,
         permission_level=2,
-        status="active",
     )
     db.session.add(grant)
     db.session.flush()

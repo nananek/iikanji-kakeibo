@@ -148,10 +148,7 @@ def get_other_public_key(user_id: int):
     me = g.auth_user.id
     # 自分が owner で相手が auditor、または自分が auditor で相手が owner の
     # 有効な grant が 1 件でもあれば取得可。
-    # 失効判定は revoked_at が唯一のマーカー (§14.10)。AuditGrant.status
-    # ("draft"/"submitted") は Lv2 の提出状態を表すだけで、非同期ワークフローの
-    # アクセス制御には関与しない (公開鍵は提出状態に関わらず必要) ため status は
-    # フィルタしない。
+    # 失効判定は revoked_at が唯一のマーカー (§14.10)。
     related = AuditGrant.query.filter(
         AuditGrant.revoked_at.is_(None),
         db.or_(

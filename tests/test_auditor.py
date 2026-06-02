@@ -38,7 +38,6 @@ class TestDashboard:
             owner_user_id=user.id,
             auditor_user_id=auditor.id,
             permission_level=3,
-            status="active",
         )
         db.session.add(grant)
         db.session.commit()
@@ -60,7 +59,6 @@ class TestPackages:
             owner_user_id=user.id,
             auditor_user_id=auditor.id,
             permission_level=2,
-            status="active",
         )
         db.session.add(grant)
         db.session.commit()
@@ -84,7 +82,6 @@ class TestPackages:
             owner_user_id=user.id,
             auditor_user_id=auditor.id,
             permission_level=2,
-            status="active",
         )
         db.session.add(grant)
         db.session.commit()
@@ -100,7 +97,6 @@ class TestPackages:
             owner_user_id=user.id,
             auditor_user_id=auditor.id,
             permission_level=2,
-            status="active",
             revoked_at=datetime.now(timezone.utc),
         )
         db.session.add(grant)
@@ -121,7 +117,6 @@ class TestPackages:
             owner_user_id=user.id,
             auditor_user_id=other_auditor.id,
             permission_level=3,
-            status="active",
         )
         db.session.add(grant)
         db.session.commit()

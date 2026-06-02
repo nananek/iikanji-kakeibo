@@ -2099,7 +2099,6 @@ class TestAuditProxyWriteBlock:
             owner_user_id=owner.id,
             auditor_user_id=auditor.id,
             permission_level=level,
-            status="active",
         )
         db.session.add(grant)
         db.session.commit()
@@ -2279,7 +2278,7 @@ class TestUpdateJournal:
     def _setup_proxy(self, db, client, owner, auditor):
         from app.models.audit import AuditGrant
         g = AuditGrant(owner_user_id=owner.id, auditor_user_id=auditor.id,
-                       permission_level=3, status="active")
+                       permission_level=3)
         db.session.add(g)
         db.session.commit()
         with client.session_transaction() as sess:

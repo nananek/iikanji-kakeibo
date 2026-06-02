@@ -43,7 +43,7 @@ def _login(client, user):
 def _grant(db, owner, auditor, level=2, revoked=False):
     g = AuditGrant(
         owner_user_id=owner.id, auditor_user_id=auditor.id,
-        permission_level=level, status="draft",
+        permission_level=level,
     )
     if revoked:
         g.revoked_at = datetime.now(timezone.utc)

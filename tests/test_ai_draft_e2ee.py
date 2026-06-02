@@ -166,7 +166,7 @@ class TestAIDraftInit:
         from app.models.audit import AuditGrant
         db.session.add(AuditGrant(
             owner_user_id=user.id, auditor_user_id=auditor.id,
-            permission_level=3, status="active",
+            permission_level=3,
         ))
         db.session.commit()
         with client.session_transaction() as sess:
