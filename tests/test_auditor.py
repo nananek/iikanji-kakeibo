@@ -38,6 +38,83 @@ class TestDashboard:
         assert user.username in body
 
 
+class TestPackages:
+    def test_unauthenticated(self, client):
+        resp = client.get("/auditor/packages/1")
+        assert resp.status_code in (302, 401)
+
+    def test_auditor_sees_packages_page(self, db, client, auditor, user):
+        grant = AuditGrant(
+            owner_user_id=user.id,
+            auditor_user_id=auditor.id,
+            permission_level=2,
+            status="active",
+        )
+        db.session.add(grant)
+        db.session.commit()
+        with client.session_transaction() as sess:
+            sess["_user_id"] = str(auditor.id)
+        resp = client.get(f"/auditor/packages/{grant.id}")
+        assert resp.status_code == 200
+        body = resp.get_data(as_text=True)
+        assert user.username in body
+        # クライアント側で復号する設定 island が描画される
+        assert "audit-review-config" in body
+        assert "audit_review_renderer.mjs" in body
+
+    def test_personal_user_redirected(self, db, client, auditor, user):
+        """個人ユーザーは /auditor/packages にアクセスすると dashboard へリダイレクト"""
+        grant = AuditGrant(
+            owner_user_id=user.id,
+            auditor_user_id=auditor.id,
+            permission_level=2,
+            status="active",
+        )
+        db.session.add(grant)
+        db.session.commit()
+        with client.session_transaction() as sess:
+            sess["_user_id"] = str(user.id)  # personal ユーザー
+        resp = client.get(f"/auditor/packages/{grant.id}")
+        assert resp.status_code in (302, 303)
+
+    def test_revoked_grant_redirected(self, db, client, auditor, user):
+        """失効した監査アクセスは packages 閲覧でリダイレクト (§14.10)"""
+        from datetime import datetime, timezone
+        grant = AuditGrant(
+            owner_user_id=user.id,
+            auditor_user_id=auditor.id,
+            permission_level=2,
+            status="active",
+            revoked_at=datetime.now(timezone.utc),
+        )
+        db.session.add(grant)
+        db.session.commit()
+        with client.session_transaction() as sess:
+            sess["_user_id"] = str(auditor.id)
+        resp = client.get(f"/auditor/packages/{grant.id}")
+        assert resp.status_code in (302, 303)
+
+    def test_idor_other_auditor_grant(self, db, client, auditor, user):
+        from app.models.user import User
+        other_auditor = User(username="other_aud2", email="o2@x.com",
+                             user_type="auditor")
+        other_auditor.set_password("pw")
+        db.session.add(other_auditor)
+        db.session.commit()
+        grant = AuditGrant(
+            owner_user_id=user.id,
+            auditor_user_id=other_auditor.id,
+            permission_level=3,
+            status="active",
+        )
+        db.session.add(grant)
+        db.session.commit()
+        with client.session_transaction() as sess:
+            sess["_user_id"] = str(auditor.id)
+        resp = client.get(f"/auditor/packages/{grant.id}")
+        assert resp.status_code == 404
+
+
 class TestSwitch:
     def test_unauthenticated(self, client):
         resp = client.post("/auditor/switch/1")
