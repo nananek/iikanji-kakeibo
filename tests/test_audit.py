@@ -1,92 +1,15 @@
-"""audit.py のテスト — 監査権限・科目隠蔽・ユーザー隔離
+"""監査連携の API 認証・ユーザー隔離・AuditGrant モデルのテスト
 
-owner 編集ロック (get_submitted_account_codes / is_entry_locked_for_owner) と
-その API 提出ロックは旧リアルタイム代理閲覧の撤去 (#112) に伴い廃止したため、
-関連テストは削除した。
+旧リアルタイム代理閲覧 (#112) に依存していた科目隠蔽 (mask_account_name /
+get_allowed_account_codes / is_entry_locked_for_auditor / get_proprietor_account_code)
+と owner 編集ロックは撤去済みのため、関連テストは削除した
+(サービス関数自体も app/services/audit.py ごと削除)。
 """
-
-from datetime import date
 
 import pytest
 
-from app.models.account import Account
 from app.models.audit import AuditGrant, AuditGrantAccount
-from app.models.journal import JournalEntry
-from app.services.audit import (
-    get_allowed_account_codes,
-    get_proprietor_account_code,
-    is_entry_locked_for_auditor,
-    mask_account_name,
-)
 from tests.conftest import make_journal
-
-
-# =================================================================
-# mask_account_name — 科目名マスキング
-# =================================================================
-
-
-class TestMaskAccountName:
-    def test_no_restriction(self):
-        """allowed_account_codes が None なら科目名そのまま"""
-        assert mask_account_name("食費", "5010", None) == "食費"
-
-    def test_allowed_account(self):
-        """公開科目は科目名そのまま"""
-        assert mask_account_name("食費", "5010", {"5010", "1010", "1020"}) == "食費"
-
-    def test_hidden_account(self):
-        """非公開科目は「事業主」に差し替え"""
-        assert mask_account_name("食費", "5010", {"1010", "1020", "2010"}) == "事業主"
-
-    def test_empty_allowed_set(self):
-        """公開科目が空の場合は全て「事業主」"""
-        assert mask_account_name("現金", "1010", set()) == "事業主"
-
-
-# =================================================================
-# get_proprietor_account_code — 事業主科目コード取得
-# =================================================================
-
-
-class TestGetProprietorAccountCode:
-    def test_found(self, db, user, accounts):
-        """事業主科目がある場合"""
-        result = get_proprietor_account_code(user.id)
-        assert result == accounts["3030"].code
-
-    def test_not_found(self, db, user, account_types):
-        """事業主科目がない場合"""
-        assert get_proprietor_account_code(user.id) is None
-
-
-# =================================================================
-# is_entry_locked_for_auditor — 監査者の編集制限
-# =================================================================
-
-
-class TestIsEntryLockedForAuditor:
-    def test_no_restriction(self, db, user, accounts):
-        """allowed_account_codes=None（Lv3等） → ロックなし"""
-        entry = make_journal(db, user.id, "5010", "1010", 1000)
-        assert is_entry_locked_for_auditor(entry, None) is False
-
-    def test_all_accounts_allowed(self, db, user, accounts):
-        """全科目が公開 → ロックなし"""
-        entry = make_journal(db, user.id, "5010", "1010", 1000)
-        allowed = {"5010", "1010"}
-        assert is_entry_locked_for_auditor(entry, allowed) is False
-
-    def test_partial_hidden(self, db, user, accounts):
-        """一部が非公開 → ロック"""
-        entry = make_journal(db, user.id, "5010", "1010", 1000)
-        allowed = {"5010"}  # 1010 は非公開
-        assert is_entry_locked_for_auditor(entry, allowed) is True
-
-    def test_all_hidden(self, db, user, accounts):
-        """全科目が非公開 → ロック"""
-        entry = make_journal(db, user.id, "5010", "1010", 1000)
-        assert is_entry_locked_for_auditor(entry, set()) is True
 
 
 # =================================================================
