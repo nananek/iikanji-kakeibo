@@ -640,6 +640,29 @@ def register_cli(app):
             f"still_in_window={skipped}, errors={errors}"
         )
 
+    @app.cli.command("audit-cleanup")
+    @click.option("--dry-run", is_flag=True, help="削除せず対象件数のみ表示")
+    def audit_cleanup_command(dry_run):
+        """期限切れ (expires_at 経過) の AuditPackage を削除する (E5 #112, §14.8)。
+
+        監査パッケージは 90 日 TTL で自動消滅させる。フォワードセクレシー
+        (送信側 ephemeral 秘密鍵は破棄済) と併せ、サーバ侵害時の過去データ
+        露出を時間で限定する。紐づく AuditResponse は FK の ON DELETE CASCADE
+        で連動削除される。cron / systemd timer で 1 時間ごとに起動する想定。
+        """
+        from datetime import datetime, timezone
+
+        from app.models.audit import AuditPackage
+
+        now = datetime.now(timezone.utc)
+        expired = AuditPackage.query.filter(AuditPackage.expires_at < now)
+        if dry_run:
+            print(f"[DRY RUN] audit-cleanup: 期限切れ AuditPackage={expired.count()} 件 (削除せず)")
+            return
+        deleted = expired.delete(synchronize_session=False)
+        db.session.commit()
+        print(f"audit-cleanup: deleted AuditPackage={deleted} 件 (AuditResponse は CASCADE 削除)")
+
     # ai-config-migration-status / ai-config-reset-migrate-key CLI は
     # Phase E2-b で Fernet 完全廃止に伴い削除。旧 Fernet データが残存して
     # いるユーザーは設定画面で API キーを再入力する必要がある。
