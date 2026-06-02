@@ -48,8 +48,6 @@ class AIDraft(db.Model):
         db.String(20), nullable=False, default="pending"
     )  # pending (画像のみ、未解析) / temp (UI 解析直後、未保存) /
        # analyzed (suggestions 保存済) / done (仕訳登録済)
-    discord_webhook_url = db.Column(db.String(500), nullable=True)
-    discord_message_id = db.Column(db.String(30), nullable=True)
     created_at = db.Column(
         db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc)
     )

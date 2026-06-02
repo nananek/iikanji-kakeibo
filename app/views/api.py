@@ -288,7 +288,6 @@ def create_journal():
             return jsonify({
                 "error": f"下書き(id={draft_id})が見つからないか、既に削除済みです。"
             }), 400
-        _mark_draft_done(draft, entry.entry_number)
         create_voucher_from_draft(draft, entry.id)
         db.session.commit()
 
@@ -532,7 +531,6 @@ def create_journals_batch():
                         f"entries[{idx}].draft_id: 下書きが見つからないか"
                         "既に処理済みです。"
                     )
-                _mark_draft_done(draft, entry.entry_number)
                 create_voucher_from_draft(draft, entry.id)
 
             created.append(entry)
@@ -958,8 +956,6 @@ def _ai_draft_to_backup_dict(draft, storage):
         "comment": draft.comment,
         "suggestions_json": draft.suggestions_json,
         "status": draft.status,
-        "discord_webhook_url": draft.discord_webhook_url,
-        "discord_message_id": draft.discord_message_id,
         "created_at": draft.created_at.isoformat() if draft.created_at else None,
         "updated_at": draft.updated_at.isoformat() if draft.updated_at else None,
         "image_data": image_data_b64,
@@ -2462,37 +2458,3 @@ def upsert_medical_expense():
     db.session.commit()
 
     return jsonify({"ok": True, "id": me.id})
-
-
-def _mark_draft_done(draft: AIDraft, entry_number: int):
-    """仕訳登録後に Discord 通知を完了マークに更新する"""
-    if not draft.discord_message_id or not draft.discord_webhook_url:
-        return
-    from app.services.notify import update_discord_message
-
-    original_desc = ""
-    if draft.suggestions_json:
-        try:
-            suggestions = json.loads(draft.suggestions_json)
-            if suggestions:
-                s = suggestions[0]
-                parts = []
-                if s.get("date"):
-                    parts.append(s["date"])
-                if s.get("entry_description"):
-                    parts.append(s["entry_description"])
-                original_desc = " ".join(parts)
-        except (json.JSONDecodeError, IndexError):
-            pass
-
-    message = ""
-    if original_desc:
-        message += f"~~{original_desc}~~\n"
-    message += f"仕訳を登録しました（伝票 #{entry_number}）"
-
-    update_discord_message(
-        webhook_url=draft.discord_webhook_url,
-        message_id=draft.discord_message_id,
-        title="✅ いいかんじ™家計簿 AI仕訳",
-        message=message,
-    )
