@@ -493,42 +493,51 @@ async function _evaluateComposeGate(cfg, ctx) {
   // 古い ctx.ownerPubRaw のまま送信されないようにする (Finding 1)。
   sendBtn.disabled = true;
 
-  const ownerPubB64 = await _fetchPeerPublicKey(cfg.owner_id);
-  if (!ownerPubB64) {
-    _composeStatus("相手 (owner) がまだ暗号鍵を設定していないため送信できません。", "secondary");
-    return;
-  }
-
-  const keyPinning = await import(getStaticRoot() + "js/crypto/key_pinning.js");
-  let store;
+  // ネットワーク障害等で fetch/evaluatePin が throw してもボタンが無応答で固まらない
+  // ようエラーを表面化する。鍵を検証できていないので有効化はしない (安全側)。
   try {
-    store = await keyPinning.openPinStore(cfg.auditor_id);
+    const ownerPubB64 = await _fetchPeerPublicKey(cfg.owner_id);
+    if (!ownerPubB64) {
+      _composeStatus("相手 (owner) がまだ暗号鍵を設定していないため送信できません。", "secondary");
+      return;
+    }
+
+    const keyPinning = await import(getStaticRoot() + "js/crypto/key_pinning.js");
+    let store;
+    try {
+      store = await keyPinning.openPinStore(cfg.auditor_id);
+    } catch (e) {
+      _composeStatus("この環境では fingerprint の固定 (IndexedDB) が使えないため送信できません。", "warning");
+      return;
+    }
+    const { b64decode } = await import(getStaticRoot() + "js/crypto/b64.js");
+    const pubRaw = b64decode(ownerPubB64);
+    const ev = await keyPinning.evaluatePin(store, cfg.owner_id, pubRaw, "OWNER");
+    if (ev.status !== "match") {
+      _composeStatus("送信する前に、上の相手の公開鍵 fingerprint を本人に確認して固定してください。", "info");
+      return;
+    }
+
+    const st = await ctx.client.status();
+    if (!st.hasKey) {
+      _composeStatus("暗号鍵 (MK) がロックされています。設定 → 暗号鍵管理 で解除してください。", "warning");
+      return;
+    }
+
+    // await をまたいだ間に送信が始まっていたら有効化しない (Finding 3)。
+    if (ctx.sending) return;
+    ctx.ownerPubRaw = pubRaw;
+    _composeStatus("送信できます。", "success");
+    sendBtn.disabled = false;
+    if (!ctx.composeWired) {
+      ctx.composeWired = true;
+      sendBtn.addEventListener("click", () => _sendResponse(cfg, ctx));
+    }
   } catch (e) {
-    _composeStatus("この環境では fingerprint の固定 (IndexedDB) が使えないため送信できません。", "warning");
-    return;
-  }
-  const { b64decode } = await import(getStaticRoot() + "js/crypto/b64.js");
-  const pubRaw = b64decode(ownerPubB64);
-  const ev = await keyPinning.evaluatePin(store, cfg.owner_id, pubRaw, "OWNER");
-  if (ev.status !== "match") {
-    _composeStatus("送信する前に、上の相手の公開鍵 fingerprint を本人に確認して固定してください。", "info");
-    return;
-  }
-
-  const st = await ctx.client.status();
-  if (!st.hasKey) {
-    _composeStatus("暗号鍵 (MK) がロックされています。設定 → 暗号鍵管理 で解除してください。", "warning");
-    return;
-  }
-
-  // await をまたいだ間に送信が始まっていたら有効化しない (Finding 3)。
-  if (ctx.sending) return;
-  ctx.ownerPubRaw = pubRaw;
-  _composeStatus("送信できます。", "success");
-  sendBtn.disabled = false;
-  if (!ctx.composeWired) {
-    ctx.composeWired = true;
-    sendBtn.addEventListener("click", () => _sendResponse(cfg, ctx));
+    _composeStatus(
+      `送信の準備中にエラーが発生しました: ${e.message || e}。ページを再読み込みして再試行してください。`,
+      "danger",
+    );
   }
 }
 
