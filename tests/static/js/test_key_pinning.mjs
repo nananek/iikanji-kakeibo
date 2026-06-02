@@ -14,6 +14,7 @@ import {
   pinKey,
   unpinKey,
   createMemoryPinStore,
+  pinStoreDbName,
 } from "../../../app/static/js/crypto/key_pinning.js";
 
 test("base32Encode は RFC 4648 のテストベクタと一致する", () => {
@@ -103,6 +104,15 @@ test("unpinKey で pinning が消え、再び unpinned になる", async () => {
 
   await unpinKey(store, 100);
   assert.equal((await evaluatePin(store, 100, pub)).status, "unpinned");
+});
+
+test("pinStoreDbName は owner ごとに異なる DB 名を返す (共有ブラウザ対策)", () => {
+  assert.equal(pinStoreDbName(1), "iikanji-tofu-1");
+  assert.equal(pinStoreDbName(42), "iikanji-tofu-42");
+  assert.notEqual(pinStoreDbName(1), pinStoreDbName(2));
+  for (const bad of [undefined, null, ""]) {
+    assert.throws(() => pinStoreDbName(bad), /ownerUserId is required/);
+  }
 });
 
 test("ストアは peer_user_id ごとに独立", async () => {

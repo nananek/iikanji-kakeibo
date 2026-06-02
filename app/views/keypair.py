@@ -6,9 +6,8 @@
 
 - GET /api/v1/keypair  — 自身の {public_key, encrypted_private_key, private_key_iv}
 - PUT /api/v1/keypair  — 鍵ペアを保存 (public_key 設定済みなら 409。回転は E5 後続)
-
-他ユーザーの公開鍵取得 (auditor → owner 宛に暗号化する用途) は PR-C の
-audit_packages API 側に置く (AuditGrant ベースのアクセス制御を伴うため)。
+- GET /api/v1/keypair/<user_id>/public  — 監査相手 (owner ⇄ auditor) の公開鍵のみ。
+  AuditGrant ベースのアクセス制御で IDOR を防ぐ (get_other_public_key 参照)。
 """
 
 from base64 import b64decode, b64encode

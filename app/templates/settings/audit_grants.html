@@ -108,7 +108,7 @@
 </div>
 
 <script id="audit-fingerprint-static-root" type="application/json">
-  {{ {"static_root": url_for('static', filename='')} | tojson }}
+  {{ {"static_root": url_for('static', filename=''), "owner_id": current_user.id} | tojson }}
 </script>
 <script type="module">
   const sr = JSON.parse(
@@ -118,7 +118,7 @@
   const { initFingerprints } = await import(
     sr.static_root + "js/audit/fingerprint_renderer.mjs"
   );
-  await initFingerprints();
+  await initFingerprints(sr.owner_id);
 </script>
 {% else %}
 <div class="text-center text-muted py-5">

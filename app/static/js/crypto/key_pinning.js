@@ -90,13 +90,29 @@ export function classifyPin(pinnedHashHex, currentHashHex) {
 
 // ---- IndexedDB pinning ストア --------------------------------------------
 
-const DB_NAME = "iikanji-tofu";
 const DB_VERSION = 1;
 const STORE = "pinned_keys";
 
-function _openDb() {
+/**
+ * pinning ストアの IndexedDB 名を owner ユーザー ID でスコープする。
+ *
+ * 同一ブラウザを複数の owner アカウントが共有しても、各 owner の TOFU 固定が
+ * 混ざらないようにする (owner A が auditor X を固定した結果を owner B が「確認済」
+ * と誤認する/「不一致」と誤警告するのを防ぐ)。
+ *
+ * @param {number|string} ownerUserId
+ * @returns {string}
+ */
+export function pinStoreDbName(ownerUserId) {
+  if (ownerUserId === undefined || ownerUserId === null || ownerUserId === "") {
+    throw new Error("ownerUserId is required for pin store scoping");
+  }
+  return `iikanji-tofu-${ownerUserId}`;
+}
+
+function _openDb(dbName) {
   return new Promise((resolve, reject) => {
-    const req = indexedDB.open(DB_NAME, DB_VERSION);
+    const req = indexedDB.open(dbName, DB_VERSION);
     req.onupgradeneeded = () => {
       const db = req.result;
       if (!db.objectStoreNames.contains(STORE)) {
@@ -117,11 +133,13 @@ function _txDone(tx) {
 
 /**
  * IndexedDB を backend とする pinning ストアを開く (ブラウザ専用)。
+ * ストアは owner ユーザー ID でスコープされる (pinStoreDbName 参照)。
  * 返り値は {get, put, delete} を持つ非同期ストア。
+ * @param {number|string} ownerUserId  現在ログイン中の owner ユーザー ID
  * @returns {Promise<{get: Function, put: Function, delete: Function}>}
  */
-export async function openPinStore() {
-  const db = await _openDb();
+export async function openPinStore(ownerUserId) {
+  const db = await _openDb(pinStoreDbName(ownerUserId));
   return {
     async get(peerId) {
       const tx = db.transaction(STORE, "readonly");

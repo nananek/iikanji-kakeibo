@@ -108,7 +108,7 @@ function _renderMismatch(el, name, label, b64key, hashHex) {
     </div>`;
 }
 
-async function _renderOne(el, store, mod) {
+async function _renderOne(el, store, mod, b64decode) {
   const auditorId = Number(el.dataset.auditorId);
   const name = el.dataset.auditorName || `ユーザー#${auditorId}`;
   el.innerHTML =
@@ -130,7 +130,6 @@ async function _renderOne(el, store, mod) {
     return;
   }
 
-  const { b64decode } = await import(getStaticRoot() + "js/crypto/b64.js");
   const publicKeyRaw = b64decode(res.publicKey);
   const ev = await mod.evaluatePin(store, auditorId, publicKeyRaw);
 
@@ -149,7 +148,7 @@ async function _renderOne(el, store, mod) {
       btn.disabled = true;
       try {
         await mod.pinKey(store, auditorId, btn.dataset.fpHash, new Date().toISOString());
-        await _renderOne(el, store, mod);
+        await _renderOne(el, store, mod, b64decode);
       } catch (e) {
         btn.disabled = false;
         _renderError(el, name, "保存");
@@ -160,17 +159,23 @@ async function _renderOne(el, store, mod) {
 
 /**
  * ページ内の全 fingerprint ウィジェットを初期化する。
+ *
+ * @param {number|string} ownerUserId  現在ログイン中の owner ユーザー ID。
+ *   pinning ストアを owner ごとにスコープするため必須 (共有ブラウザ対策)。
  */
-export async function initFingerprints() {
+export async function initFingerprints(ownerUserId) {
   const widgets = Array.from(
     document.querySelectorAll("[data-auditor-fingerprint]"),
   );
   if (widgets.length === 0) return;
 
-  const mod = await import(getStaticRoot() + "js/crypto/key_pinning.js");
+  const [mod, { b64decode }] = await Promise.all([
+    import(getStaticRoot() + "js/crypto/key_pinning.js"),
+    import(getStaticRoot() + "js/crypto/b64.js"),
+  ]);
   let store;
   try {
-    store = await mod.openPinStore();
+    store = await mod.openPinStore(ownerUserId);
   } catch (e) {
     for (const el of widgets) {
       el.innerHTML =
@@ -180,5 +185,5 @@ export async function initFingerprints() {
   }
 
   // 並行に評価。各ウィジェットは独立しているので順不同で構わない。
-  await Promise.all(widgets.map((el) => _renderOne(el, store, mod)));
+  await Promise.all(widgets.map((el) => _renderOne(el, store, mod, b64decode)));
 }
