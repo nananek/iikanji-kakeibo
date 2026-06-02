@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}受信したスナップショット - いいかんじ™家計簿{% endblock %}
+
+{% block content %}
+<nav aria-label="breadcrumb">
+  <ol class="breadcrumb">
+    <li class="breadcrumb-item"><a href="{{ url_for('auditor.dashboard') }}">クライアント一覧</a></li>
+    <li class="breadcrumb-item active">受信したスナップショット</li>
+  </ol>
+</nav>
+
+<h2><i class="bi bi-inbox"></i> 受信したスナップショット</h2>
+<p class="text-muted">
+  <strong>{{ grant.owner.username }}</strong> さん
+  （{{ permission_labels.get(grant.permission_level, '不明') }}）
+</p>
+
+<div class="alert alert-secondary small">
+  受信した暗号化スナップショットを、あなたの暗号鍵でこの場で復号して表示します。
+  サーバや当社は中身を読めません。最新ラウンドの内容のみ表示します。
+</div>
+
+<div id="audit-review-status" class="alert alert-info small d-none"></div>
+
+<div id="audit-snapshot-body"></div>
+
+<script id="audit-review-config" type="application/json">
+  {{ {
+    "static_root": url_for('static', filename=''),
+    "grant_id": grant.id,
+    "auditor_id": current_user.id,
+    "owner_id": grant.owner_user_id,
+    "owner_name": grant.owner.username,
+    "permission_level": grant.permission_level
+  } | tojson }}
+</script>
+<script type="module">
+  const cfg = JSON.parse(document.getElementById("audit-review-config").textContent);
+  globalThis.IIKANJI_STATIC_ROOT = cfg.static_root;
+  const { initAuditReview } = await import(
+    cfg.static_root + "js/audit/audit_review_renderer.mjs"
+  );
+  await initAuditReview(cfg);
+</script>
+{% endblock %}

@@ -28,6 +28,26 @@ def dashboard():
     )
 
 
+@bp.route("/packages/<int:grant_id>")
+@login_required
+def packages(grant_id):
+    """受信した監査スナップショットの閲覧ページ (auditor 側, §14.5)。
+
+    HPKE 復号・スナップショット表示・修正案送信はすべてクライアント
+    (audit/audit_review_renderer) が行う。本ビューは描画に必要なメタ (grant /
+    owner) を JSON island で渡すだけ。owner の平文帳簿はサーバに渡らない。
+    """
+    grant = AuditGrant.query.filter_by(
+        id=grant_id, auditor_user_id=current_user.id
+    ).first_or_404()
+
+    return render_template(
+        "auditor/packages.html",
+        grant=grant,
+        permission_labels=PERMISSION_LABELS,
+    )
+
+
 @bp.route("/switch/<int:grant_id>", methods=["POST"])
 @login_required
 def switch(grant_id):

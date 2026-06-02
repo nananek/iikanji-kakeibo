@@ -8,6 +8,12 @@
 // テンプレート側は各 grant に対し
 //   <div data-auditor-fingerprint data-auditor-id="123" data-auditor-name="..."></div>
 // を置く。本モジュールがその中身を描画する。
+//
+// owner↔auditor 双方向で再利用する。data-auditor-id は「相手 (peer) の user_id」、
+// data-peer-role はラベル (iikanji-<ROLE>-...) に埋め込む相手の役割で省略時は
+// "AUDITOR" (owner が auditor の鍵を確認するケース)。auditor が owner の鍵を確認
+// する画面では data-peer-role="OWNER" を指定する。pinning ストアは現在ログイン中の
+// ユーザーでスコープ (initFingerprints の第1引数)。
 
 function getStaticRoot() {
   return globalThis.IIKANJI_STATIC_ROOT || "/static/";
@@ -60,7 +66,7 @@ function _renderUnpinned(el, name, label, hashHex) {
       </div>
       <div class="mb-2">${_labelHtml(label)}</div>
       <p class="mb-2 text-muted">
-        この fingerprint を <strong>監査者本人に電話または対面で読み上げてもらい</strong>、
+        この fingerprint を <strong>相手本人に電話または対面で読み上げてもらい</strong>、
         一致することを確認してから固定してください。メールやチャットなど盗聴され得る
         経路だけで確認しないでください。
       </p>
@@ -94,7 +100,7 @@ function _renderMismatch(el, name, label, hashHex) {
       </div>
       <div class="mb-2">現在の fingerprint: ${_labelHtml(label)}</div>
       <p class="mb-2">
-        監査者本人に連絡し、本当に鍵を作り直したのかを<strong>帯域外で</strong>確認して
+        相手本人に連絡し、本当に鍵を作り直したのかを<strong>帯域外で</strong>確認して
         ください。意図した変更であることを確認できた場合のみ、新しい fingerprint を
         固定し直してください。
       </p>
@@ -109,6 +115,7 @@ function _renderMismatch(el, name, label, hashHex) {
 async function _renderOne(el, store, mod, b64decode) {
   const auditorId = Number(el.dataset.auditorId);
   const name = el.dataset.auditorName || `ユーザー#${auditorId}`;
+  const peerRole = el.dataset.peerRole || "AUDITOR";
   el.innerHTML =
     '<div class="text-muted small"><span class="spinner-border spinner-border-sm"></span> fingerprint を確認中…</div>';
 
@@ -129,7 +136,7 @@ async function _renderOne(el, store, mod, b64decode) {
   }
 
   const publicKeyRaw = b64decode(res.publicKey);
-  const ev = await mod.evaluatePin(store, auditorId, publicKeyRaw);
+  const ev = await mod.evaluatePin(store, auditorId, publicKeyRaw, peerRole);
 
   if (ev.status === "match") {
     _renderMatch(el, name, ev.label, ev.pinnedAt);

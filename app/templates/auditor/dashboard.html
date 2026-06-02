@@ -34,11 +34,15 @@
         </td>
         <td>{{ grant.created_at.strftime('%Y-%m-%d') }}</td>
         <td>
+          <a href="{{ url_for('auditor.packages', grant_id=grant.id) }}"
+             class="btn btn-sm btn-primary">
+            <i class="bi bi-inbox"></i> 受信したスナップショット
+          </a>
           {% if grant.permission_level != 2 or grant.status == 'submitted' %}
           <form method="POST" action="{{ url_for('auditor.switch', grant_id=grant.id) }}" class="d-inline">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-            <button type="submit" class="btn btn-sm btn-outline-primary">
-              <i class="bi bi-box-arrow-in-right"></i> 切替
+            <button type="submit" class="btn btn-sm btn-outline-secondary">
+              <i class="bi bi-box-arrow-in-right"></i> 切替（旧）
             </button>
           </form>
           {% else %}
