@@ -62,6 +62,18 @@ def test_packages_page_renders_for_owner(client, db, user, auditor, accounts):
     assert cfg["accounts_meta"]["5010"]["name"] == "食費"
 
 
+def test_packages_page_renders_responses_review(client, db, user, auditor, accounts):
+    """監査者からの修正案レビュー UI (受信カード + renderer 結線) が描画される"""
+    grant = _grant(db, user, auditor, level=1)
+    _login(client, user)
+    resp = client.get(f"/settings/audit/{grant.id}/packages")
+    assert resp.status_code == 200
+    html = resp.data.decode()
+    assert "audit-responses-review" in html
+    assert "responses_review_renderer.mjs" in html
+    assert "initResponsesReview" in html
+
+
 def test_packages_page_404_for_non_owner_grant(client, db, user, auditor, accounts):
     """他人が owner の grant は 404 (IDOR)。"""
     from app.models.user import User

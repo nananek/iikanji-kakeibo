@@ -34,6 +34,15 @@
 <!-- 未処理 response 警告 (§14.7)、renderer が描画 -->
 <div id="audit-pending-responses"></div>
 
+<!-- 監査者からの修正案 / 差戻しレビュー (§14.9)、responses_review_renderer が描画 -->
+<div class="card mb-3">
+  <div class="card-header">監査者からの修正案 / 差戻し</div>
+  <div class="card-body">
+    <div id="audit-responses-status" class="alert alert-info small d-none"></div>
+    <div id="audit-responses-review" class="text-muted small">読み込み中…</div>
+  </div>
+</div>
+
 <div class="card mb-3">
   <div class="card-header">新しいスナップショットを送信</div>
   <div class="card-body">
@@ -100,5 +109,10 @@
     cfg.static_root + "js/audit/packages_renderer.mjs"
   );
   await initAuditPackages(cfg);
+  // 監査者からの修正案 / 差戻しレビュー UI を初期化 (§14.9)
+  const { initResponsesReview } = await import(
+    cfg.static_root + "js/audit/responses_review_renderer.mjs"
+  );
+  await initResponsesReview(cfg);
 </script>
 {% endblock %}
