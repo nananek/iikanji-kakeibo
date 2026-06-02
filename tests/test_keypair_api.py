@@ -228,3 +228,138 @@ def test_get_rejected_during_proxy_view(client, db):
     _acting_as(client, auditor, owner, level=3)
     r = client.get("/api/v1/keypair")
     assert r.status_code == 403
+
+
+# --- GET /<user_id>/public (監査相手の公開鍵取得) ------------------------
+
+
+def _grant(db, owner, auditor, level=3, revoked=False):
+    from datetime import datetime, timezone
+
+    from app.models.audit import AuditGrant
+
+    g = AuditGrant(
+        owner_user_id=owner.id, auditor_user_id=auditor.id,
+        permission_level=level, status="draft",
+        revoked_at=datetime.now(timezone.utc) if revoked else None,
+    )
+    db.session.add(g)
+    db.session.commit()
+    return g
+
+
+def test_get_public_key_owner_to_auditor_returns_200(client, db):
+    """owner が grant 先の auditor の公開鍵を取得できる。"""
+    owner = _make_user(db, "owner_pk")
+    auditor = _make_user(db, "auditor_pk")
+    auditor.public_key = b"\x07" * 32
+    db.session.commit()
+    _grant(db, owner, auditor)
+
+    _login(client, owner)
+    r = client.get(f"/api/v1/keypair/{auditor.id}/public")
+    assert r.status_code == 200
+    data = r.get_json()
+    assert data["user_id"] == auditor.id
+    assert data["public_key"] == b64encode(b"\x07" * 32).decode()
+
+
+def test_get_public_key_auditor_to_owner_returns_200(client, db):
+    """auditor も同じ grant で owner の公開鍵を取得できる (双方向)。
+
+    Flask-Login の制約上、1 テスト 1 ログインで owner→auditor と別に検証する
+    (複数ログインは最初のユーザーに解決されるため。feedback_flask_login_test_context)。
+    """
+    owner = _make_user(db, "owner_pk2")
+    owner.public_key = b"\x08" * 32
+    auditor = _make_user(db, "auditor_pk2")
+    db.session.commit()
+    _grant(db, owner, auditor)
+
+    _login(client, auditor)
+    r = client.get(f"/api/v1/keypair/{owner.id}/public")
+    assert r.status_code == 200
+    data = r.get_json()
+    assert data["user_id"] == owner.id
+    assert data["public_key"] == b64encode(b"\x08" * 32).decode()
+
+
+def test_get_public_key_peer_unset_returns_null(client, db):
+    """相手がまだ鍵ペア未設定なら 200 + public_key=null (renderer の no-key パス)。"""
+    owner = _make_user(db, "owner_null")
+    auditor = _make_user(db, "auditor_null")  # public_key 未設定
+    db.session.commit()
+    _grant(db, owner, auditor)
+
+    _login(client, owner)
+    r = client.get(f"/api/v1/keypair/{auditor.id}/public")
+    assert r.status_code == 200
+    data = r.get_json()
+    assert data["user_id"] == auditor.id
+    assert data["public_key"] is None
+
+
+def test_get_public_key_without_grant_is_404(client, db):
+    """grant で結ばれていない相手の公開鍵は取得できない (存在を秘匿し 404)。"""
+    me = _make_user(db, "me_nopub")
+    other = _make_user(db, "other_nopub")
+    other.public_key = b"\x07" * 32
+    db.session.commit()
+
+    _login(client, me)
+    r = client.get(f"/api/v1/keypair/{other.id}/public")
+    assert r.status_code == 404
+
+
+def test_get_public_key_revoked_grant_is_404(client, db):
+    """失効した grant では公開鍵を取得できない (§14.10)。"""
+    owner = _make_user(db, "owner_rev")
+    auditor = _make_user(db, "auditor_rev")
+    auditor.public_key = b"\x07" * 32
+    db.session.commit()
+    _grant(db, owner, auditor, revoked=True)
+
+    _login(client, owner)
+    r = client.get(f"/api/v1/keypair/{auditor.id}/public")
+    assert r.status_code == 404
+
+
+def test_get_public_key_rejected_during_proxy_view(client, db):
+    """代理閲覧中は公開鍵取得を遮断する (Lv3 監査者の任意取得を防止)。"""
+    owner = _make_user(db, "owner_proxy_pk")
+    auditor = _make_user(db, "auditor_proxy_pk")
+    auditor.public_key = b"\x07" * 32
+    db.session.commit()
+    _grant(db, owner, auditor)
+
+    _acting_as(client, auditor, owner, level=3)
+    r = client.get(f"/api/v1/keypair/{auditor.id}/public")
+    assert r.status_code == 403
+
+
+def test_get_public_key_requires_auth(client, db):
+    """未認証では公開鍵を取得できない。"""
+    other = _make_user(db, "other_unauth")
+    with client.session_transaction() as sess:
+        sess.clear()
+    r = client.get(f"/api/v1/keypair/{other.id}/public")
+    assert r.status_code in (401, 403)
+
+
+def test_get_public_key_never_leaks_private_key(client, db):
+    """公開鍵レスポンスに秘密鍵関連フィールドが絶対に含まれない。"""
+    owner = _make_user(db, "owner_leak")
+    auditor = _make_user(db, "auditor_leak")
+    auditor.public_key = b"\x07" * 32
+    auditor.encrypted_private_key = b"\xbb" * 64
+    auditor.private_key_iv = b"\xcc" * 12
+    db.session.commit()
+    _grant(db, owner, auditor)
+
+    _login(client, owner)
+    r = client.get(f"/api/v1/keypair/{auditor.id}/public")
+    assert r.status_code == 200
+    data = r.get_json()
+    assert "encrypted_private_key" not in data
+    assert "private_key_iv" not in data
+    assert set(data.keys()) == {"user_id", "public_key"}
