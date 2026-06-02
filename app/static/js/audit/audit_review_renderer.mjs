@@ -19,6 +19,16 @@ function getSharedWorkerUrl() {
   return globalThis.IIKANJI_SHARED_WORKER_URL || "/static/js/crypto/shared-worker.js";
 }
 
+// 復号済みコンテキスト (client / 最新 pkg / snapshot / cfg)。PR-B の修正案送信が
+// getReviewCtx() で受け取る。平文スナップショットを globalThis に置かない (秘密鍵を
+// worker 内に封じる設計ポリシーと整合)。
+let _reviewCtx = null;
+
+/** 直近に復号したスナップショットのコンテキストを返す (PR-B で利用)。 */
+export function getReviewCtx() {
+  return _reviewCtx;
+}
+
 // ---- 純粋ロジック (テスト対象) -----------------------------------------
 
 /**
@@ -183,25 +193,46 @@ function _renderEntries(snapshot) {
     </table></div>`;
 }
 
-function _renderVouchers(snapshot) {
+// 証憑画像は owner が seal した平文に由来し、mime / base64 は敵対的 owner が
+// 自由に細工できる。属性コンテキストへの文字列結合は (_esc が " を素通しするため)
+// XSS になり得るので、DOM API で属性を設定して根本的に防ぐ。
+function _appendVouchers(snapshot, container) {
   const vouchers = snapshot.vouchers || [];
-  if (vouchers.length === 0) return "";
-  const cards = vouchers
-    .map((v) => {
-      if (v._imageError || !v.image_base64) {
-        return `<div class="col-auto"><div class="border rounded p-2 text-muted small">
-          証憑 #${_esc(v.voucher_id)}（画像を復号できませんでした）</div></div>`;
-      }
-      const src = `data:${_esc(v.mime || "image/png")};base64,${_esc(v.image_base64)}`;
-      return `<div class="col-auto text-center">
-        <img src="${src}" alt="証憑 ${_esc(v.voucher_id)}"
-             class="border rounded" style="max-height:160px;max-width:160px;">
-        <div class="small text-muted">#${_esc(v.voucher_id)}</div>
-      </div>`;
-    })
-    .join("");
-  return `<h5 class="mt-4">証憑画像 <span class="text-muted small">(${vouchers.length} 件)</span></h5>
-    <div class="row g-2">${cards}</div>`;
+  if (vouchers.length === 0) return;
+
+  const h = document.createElement("h5");
+  h.className = "mt-4";
+  h.textContent = `証憑画像 (${vouchers.length} 件)`;
+  container.appendChild(h);
+
+  const row = document.createElement("div");
+  row.className = "row g-2";
+  for (const v of vouchers) {
+    const col = document.createElement("div");
+    if (v._imageError || !v.image_base64) {
+      col.className = "col-auto";
+      const box = document.createElement("div");
+      box.className = "border rounded p-2 text-muted small";
+      box.textContent = `証憑 #${v.voucher_id}（画像を復号できませんでした）`;
+      col.appendChild(box);
+    } else {
+      col.className = "col-auto text-center";
+      const img = document.createElement("img");
+      // src への代入は属性パースを経ないため、細工された mime でも JS は実行されない。
+      img.src = `data:${v.mime || "image/png"};base64,${v.image_base64}`;
+      img.alt = `証憑 ${v.voucher_id}`;
+      img.className = "border rounded";
+      img.style.maxHeight = "160px";
+      img.style.maxWidth = "160px";
+      const cap = document.createElement("div");
+      cap.className = "small text-muted";
+      cap.textContent = `#${v.voucher_id}`;
+      col.appendChild(img);
+      col.appendChild(cap);
+    }
+    row.appendChild(col);
+  }
+  container.appendChild(row);
 }
 
 function _renderSnapshot(snapshot, pkg) {
@@ -213,11 +244,11 @@ function _renderSnapshot(snapshot, pkg) {
     <span class="badge bg-primary">${_esc(LEVEL_LABELS[level] || "不明")}</span>
     <span class="text-muted small">対象: ${scope} / 第 ${_esc(pkg.round_id)} 回</span>
   </div>`;
+  // header / 試算表 / 仕訳一覧は全て要素テキストコンテキスト (_esc で安全)。
   body.innerHTML =
-    header +
-    _renderTrialBalance(snapshot) +
-    _renderEntries(snapshot) +
-    _renderVouchers(snapshot);
+    header + _renderTrialBalance(snapshot) + _renderEntries(snapshot);
+  // 証憑のみ属性に owner 制御値が入るので DOM API で追記する。
+  _appendVouchers(snapshot, body);
 }
 
 // ---- メイン ------------------------------------------------------------
@@ -274,8 +305,8 @@ export async function initAuditReview(cfg) {
     const snapshot = parseSnapshot(res.plaintext);
     _renderSnapshot(snapshot, pkg);
     _status(`第 ${pkg.round_id} 回スナップショットを復号しました。`, "success");
-    // PR-B の修正案送信が参照できるようコンテキストを公開する。
-    globalThis.__auditReviewCtx = { client, pkg, snapshot, cfg };
+    // PR-B の修正案送信が getReviewCtx() で参照できるようモジュールスコープに保持。
+    _reviewCtx = { client, pkg, snapshot, cfg };
     document.dispatchEvent(
       new CustomEvent("iikanji:audit-snapshot-ready", {
         detail: { packageId: pkg.id },
