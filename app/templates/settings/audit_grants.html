@@ -95,10 +95,31 @@
           </div>
         </td>
       </tr>
+      <tr class="table-light">
+        <td colspan="5" class="py-2">
+          <div data-auditor-fingerprint
+               data-auditor-id="{{ grant.auditor.id }}"
+               data-auditor-name="{{ grant.auditor.username }}"></div>
+        </td>
+      </tr>
       {% endfor %}
     </tbody>
   </table>
 </div>
+
+<script id="audit-fingerprint-static-root" type="application/json">
+  {{ {"static_root": url_for('static', filename='')} | tojson }}
+</script>
+<script type="module">
+  const sr = JSON.parse(
+    document.getElementById("audit-fingerprint-static-root").textContent,
+  );
+  globalThis.IIKANJI_STATIC_ROOT = sr.static_root;
+  const { initFingerprints } = await import(
+    sr.static_root + "js/audit/fingerprint_renderer.mjs"
+  );
+  await initFingerprints();
+</script>
 {% else %}
 <div class="text-center text-muted py-5">
   <p>監査アクセスはまだ付与されていません。</p>
