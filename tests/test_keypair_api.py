@@ -180,54 +180,10 @@ def test_get_returns_only_own_keypair(client, db):
     assert data["encrypted_private_key"] is None
 
 
-# --- 監査代理閲覧 (acting-as) 中の遮断 ------------------------------------
-
-
-def _acting_as(client, auditor, owner, level=3):
-    with client.session_transaction() as sess:
-        sess.clear()
-        sess["_user_id"] = str(auditor.id)
-        sess["_fresh"] = True
-        sess["acting_as_user_id"] = owner.id
-        sess["acting_as_permission_level"] = level
-
-
-def test_put_rejected_during_proxy_view(client, db):
-    """Lv3 監査者が代理閲覧中にオーナーの鍵ペアを書き込めない (鍵注入防止)。"""
-    from app.models.audit import AuditGrant
-
-    owner = _make_user(db, "owner")
-    auditor = _make_user(db, "auditor")
-    db.session.add(AuditGrant(
-        owner_user_id=owner.id, auditor_user_id=auditor.id,
-        permission_level=3, status="draft",
-    ))
-    db.session.commit()
-
-    _acting_as(client, auditor, owner, level=3)
-    r = client.put("/api/v1/keypair", json=_payload(public=b"\x09" * 32))
-    assert r.status_code == 403
-    # オーナーの鍵ペアは書き込まれていない
-    assert db.session.get(User, owner.id).public_key is None
-
-
-def test_get_rejected_during_proxy_view(client, db):
-    from app.models.audit import AuditGrant
-
-    owner = _make_user(db, "owner2")
-    owner.public_key = b"\x01" * 32
-    owner.encrypted_private_key = b"\xbb" * 64
-    owner.private_key_iv = b"\xcc" * 12
-    auditor = _make_user(db, "auditor2")
-    db.session.add(AuditGrant(
-        owner_user_id=owner.id, auditor_user_id=auditor.id,
-        permission_level=3, status="draft",
-    ))
-    db.session.commit()
-
-    _acting_as(client, auditor, owner, level=3)
-    r = client.get("/api/v1/keypair")
-    assert r.status_code == 403
+# 旧監査代理閲覧 (acting-as) 中の鍵ペア遮断テスト (test_put/get_rejected_during_
+# proxy_view) は、リアルタイム代理閲覧の撤去 (#112) に伴い削除した。鍵ペア API は
+# 常にログイン本人 (current_user) の self-service で、他ユーザーの鍵には到達でき
+# ない (IDOR テストで担保)。reject_if_proxy は no-op の防御ガードとして残置。
 
 
 # --- GET /<user_id>/public (監査相手の公開鍵取得) ------------------------
@@ -322,19 +278,6 @@ def test_get_public_key_revoked_grant_is_404(client, db):
     _login(client, owner)
     r = client.get(f"/api/v1/keypair/{auditor.id}/public")
     assert r.status_code == 404
-
-
-def test_get_public_key_rejected_during_proxy_view(client, db):
-    """代理閲覧中は公開鍵取得を遮断する (Lv3 監査者の任意取得を防止)。"""
-    owner = _make_user(db, "owner_proxy_pk")
-    auditor = _make_user(db, "auditor_proxy_pk")
-    auditor.public_key = b"\x07" * 32
-    db.session.commit()
-    _grant(db, owner, auditor)
-
-    _acting_as(client, auditor, owner, level=3)
-    r = client.get(f"/api/v1/keypair/{auditor.id}/public")
-    assert r.status_code == 403
 
 
 def test_get_public_key_requires_auth(client, db):

@@ -40,15 +40,6 @@ def _login(client, user):
         sess["_fresh"] = True
 
 
-def _acting_as(client, auditor, owner, level=3):
-    with client.session_transaction() as sess:
-        sess.clear()
-        sess["_user_id"] = str(auditor.id)
-        sess["_fresh"] = True
-        sess["acting_as_user_id"] = owner.id
-        sess["acting_as_permission_level"] = level
-
-
 def _grant(db, owner, auditor, level=2, revoked=False):
     g = AuditGrant(
         owner_user_id=owner.id, auditor_user_id=auditor.id,
@@ -370,43 +361,11 @@ def test_acknowledge_by_auditor_forbidden(client, db):
     assert client.post(f"/api/v1/audit-responses/{resp.id}/acknowledge").status_code == 403
 
 
-# === 代理閲覧 (acting-as) 遮断 ==========================================
-
-
-def test_packages_rejected_during_proxy_view(client, db):
-    owner, auditor = _user(db), _user(db)
-    _grant(db, owner, auditor, level=3)
-    _acting_as(client, auditor, owner, level=3)
-    assert client.get("/api/v1/audit-packages").status_code == 403
-
-
-def test_write_endpoints_rejected_during_proxy_view(client, db):
-    # 書き込み系もすべて代理閲覧 (acting-as) 中は 403 (reject_if_proxy)。
-    owner, auditor = _user(db), _user(db)
-    g = _grant(db, owner, auditor, level=3)
-    pkg = _make_package(db, g, owner, auditor, level=3)
-    resp = AuditResponse(
-        audit_package_id=pkg.id, response_type="revision",
-        ephemeral_pubkey=b"\x04" * 32, ciphertext=b"\x05" * 10,
-    )
-    db.session.add(resp)
-    db.session.commit()
-
-    _acting_as(client, auditor, owner, level=3)
-    assert client.post(
-        "/api/v1/audit-packages", json=_pkg_payload(g, level=3, round_id=2)
-    ).status_code == 403
-    assert client.post(
-        f"/api/v1/audit-packages/{pkg.id}/accept"
-    ).status_code == 403
-    assert client.delete(f"/api/v1/audit-packages/{pkg.id}").status_code == 403
-    assert client.post(
-        "/api/v1/audit-responses", json=_resp_payload(pkg)
-    ).status_code == 403
-    assert client.post(
-        f"/api/v1/audit-responses/{resp.id}/acknowledge"
-    ).status_code == 403
-    assert client.get("/api/v1/audit-responses").status_code == 403
+# 旧監査代理閲覧 (acting-as) 中の audit-packages/responses 遮断テストは、
+# リアルタイム代理閲覧の撤去 (#112) に伴い削除した。これらの API は常にログイン
+# 本人 (owner / auditor) の self-service で、IDOR フィルタ (owner_user_id /
+# auditor_user_id) により他者のパッケージには到達できない (上記 IDOR テストで担保)。
+# reject_if_proxy は no-op の防御ガードとして残置。
 
 
 # === 認証必須 ============================================================
@@ -444,16 +403,6 @@ def test_get_other_public_key_revoked_grant_404(client, db):
     _grant(db, owner, auditor, revoked=True)
     _login(client, owner)
     assert client.get(f"/api/v1/keypair/{auditor.id}/public").status_code == 404
-
-
-def test_get_other_public_key_rejected_during_proxy_view(client, db):
-    # 公開鍵取得も代理閲覧 (acting-as) 中は 403 (Lv3 監査者の鍵取得を遮断)。
-    owner, auditor = _user(db), _user(db)
-    auditor.public_key = b"\x07" * 32
-    db.session.commit()
-    _grant(db, owner, auditor, level=3)
-    _acting_as(client, auditor, owner, level=3)
-    assert client.get(f"/api/v1/keypair/{auditor.id}/public").status_code == 403
 
 
 def test_get_other_public_key_never_leaks_private(client, db):
