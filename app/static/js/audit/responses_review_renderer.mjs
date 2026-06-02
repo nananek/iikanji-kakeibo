@@ -287,13 +287,10 @@ function _diffTableEl(diff, accountsMeta) {
 
 // プレースホルダに現行仕訳との差分を描画する。owner 自身の MK で現行仕訳を復号
 // (fetchEntryForDiff) し computeEntryDiff で突合する。取得失敗は局所表示に留める。
-async function _renderDiffJob(job, client, cfg) {
+async function _renderDiffJob(job, client, cfg, fetchEntryForDiff) {
   const el = document.getElementById(job.id);
   if (!el) return;
   try {
-    const { fetchEntryForDiff } = await import(
-      getStaticRoot() + "js/crypto/journals_client.js"
-    );
     const oldEntry = await fetchEntryForDiff({
       client, userId: cfg.owner_id, entryId: job.entryId,
     });
@@ -454,8 +451,14 @@ export async function initResponsesReview(cfg) {
   _wireActions(container);
 
   // 構造化修正案 (§14.9) の差分を、各プレースホルダに後追いで描画する。
-  // 現行仕訳の取得・復号は owner 自身の MK 経路 (fetchEntryForDiff)。
-  for (const job of diffJobs) {
-    await _renderDiffJob(job, client, cfg);
+  // 現行仕訳の取得・復号は owner 自身の MK 経路 (fetchEntryForDiff)。プレースホルダ
+  // は既に DOM 上にあるので、複数 proposal の取得は並列化して往復遅延を抑える。
+  if (diffJobs.length) {
+    const { fetchEntryForDiff } = await import(
+      getStaticRoot() + "js/crypto/journals_client.js"
+    );
+    await Promise.all(
+      diffJobs.map((job) => _renderDiffJob(job, client, cfg, fetchEntryForDiff)),
+    );
   }
 }
