@@ -1646,7 +1646,7 @@ class TestBackupExport:
         assert set(data["data"].keys()) >= {
             "accounts", "fiscal_closes", "journal_entries",
             "journal_entry_lines", "medical_expenses", "balance_cache_blobs",
-            "vouchers", "ai_drafts", "user_ai_config", "webhook_configs",
+            "vouchers", "ai_drafts", "user_ai_config",
             "tax_form_mappings", "csv_column_profiles",
         }
 
@@ -1894,7 +1894,7 @@ class TestBackupExportVouchers:
 
 
 class TestBackupExportRemainingTables:
-    """v5 BU-2b: AIDraft / UserAIConfig / WebhookConfig / TaxFormMapping /
+    """v5 BU-2b: AIDraft / UserAIConfig / TaxFormMapping /
     CsvColumnProfile のエクスポート。"""
 
     def _stub_storage(self, monkeypatch, payload=b"\x01\x02"):
@@ -1947,17 +1947,11 @@ class TestBackupExportRemainingTables:
         assert resp.status_code == 200
         assert resp.get_json()["data"]["user_ai_config"] is None
 
-    def test_webhook_csv_tax_included(
+    def test_csv_tax_included(
         self, app, client, db, user, accounts, auth_header,
     ):
-        from app.models.webhook import WebhookConfig
         from app.models.csv_column_profile import CsvColumnProfile
         from app.models.tax_form import TaxFormField, TaxFormMapping
-        db.session.add(WebhookConfig(
-            user_id=user.id, name="Discord", provider="discord",
-            webhook_url="https://example.com/wh",
-            events_json='["import_success"]',
-        ))
         db.session.add(CsvColumnProfile(
             user_id=user.id, account_code="1010",
             date_col=0, desc_col=1, deposit_col=2, withdrawal_col=3,
@@ -1977,8 +1971,6 @@ class TestBackupExportRemainingTables:
         resp = client.get("/api/v1/backup/export", headers=auth_header)
         assert resp.status_code == 200
         data = resp.get_json()["data"]
-        assert len(data["webhook_configs"]) == 1
-        assert data["webhook_configs"][0]["webhook_url"] == "https://example.com/wh"
         assert len(data["csv_column_profiles"]) == 1
         assert data["csv_column_profiles"][0]["account_code"] == "1010"
         assert len(data["tax_form_mappings"]) == 1
@@ -1987,7 +1979,7 @@ class TestBackupExportRemainingTables:
     def test_remaining_tables_isolated_per_user(
         self, app, client, db, user, accounts, auth_header,
     ):
-        """他人の WebhookConfig / CsvColumnProfile / TaxFormMapping /
+        """他人の CsvColumnProfile / TaxFormMapping /
         UserAIConfig / AIDraft が含まれないこと。"""
         from app.models.account import Account, AccountType
         from app.models.ai_config import UserAIConfig
@@ -1995,7 +1987,6 @@ class TestBackupExportRemainingTables:
         from app.models.csv_column_profile import CsvColumnProfile
         from app.models.tax_form import TaxFormField, TaxFormMapping
         from app.models.user import User
-        from app.models.webhook import WebhookConfig
         other = User(
             username="other_b", email="other_b@example.com", user_type="personal",
         )
@@ -2011,11 +2002,6 @@ class TestBackupExportRemainingTables:
         db.session.flush()
         db.session.add(UserAIConfig(
             user_id=other.id, provider="anthropic", model_name="claude-x",
-        ))
-        db.session.add(WebhookConfig(
-            user_id=other.id, name="OtherWh", provider="discord",
-            webhook_url="https://leak.example/x",
-            events_json='["import_success"]',
         ))
         db.session.add(CsvColumnProfile(
             user_id=other.id, account_code="8888",
@@ -2044,11 +2030,7 @@ class TestBackupExportRemainingTables:
         # AI 設定は本人のみ (= None or 本人のもの)
         if data["user_ai_config"] is not None:
             assert data["user_ai_config"]["model_name"] != "claude-x"
-        # Webhook / CSV / TaxMapping / AIDraft の他人エントリが混じらない
-        assert all(
-            w["webhook_url"] != "https://leak.example/x"
-            for w in data["webhook_configs"]
-        )
+        # CSV / TaxMapping / AIDraft の他人エントリが混じらない
         assert all(p["account_code"] != "8888" for p in data["csv_column_profiles"])
         assert all(t["account_code"] != "8888" for t in data["tax_form_mappings"])
         assert all(

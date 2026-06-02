@@ -10,7 +10,6 @@ from uuid import uuid4
 from app.models import User
 from app.models.ai_config import UserAIConfig
 from app.models.ai_draft import AIDraft
-from app.models.webhook import WebhookConfig
 
 
 def _user(db, name=None):
@@ -30,16 +29,15 @@ def _ai_config(db, user, provider):
 
 
 def _setup(db):
-    """llama_cpp 1 件 + openai 1 件 + webhook 1 件 + discord draft 1 件。"""
+    """llama_cpp 1 件 + openai 1 件 + discord draft 1 件。
+
+    webhook_configs テーブルは E6 PR-2 (migration 064) で DROP 済みのため、
+    CLI の監査表示では「該当なし」になる。ai_drafts.discord_* カラムは PR-3
+    まで現存するので件数が出る。
+    """
     u_llama, u_openai = _user(db), _user(db)
     llama_cfg = _ai_config(db, u_llama, "llama_cpp")
     openai_cfg = _ai_config(db, u_openai, "openai")
-
-    wh = WebhookConfig(
-        user_id=u_openai.id, name="d", provider="discord",
-        webhook_url="https://discord.com/api/webhooks/x/y",
-    )
-    db.session.add(wh)
 
     draft = AIDraft(
         user_id=u_openai.id, image_key="k", image_mime="image/png",
@@ -59,8 +57,9 @@ def test_dry_run_reports_and_deletes_nothing(db, app):
     assert "[dry-run]" in result.output
     # llama_cpp 1 件が削除対象として表示される
     assert "provider='llama_cpp': 1 件" in result.output
-    # 監査表示: webhook / discord の残存件数も出る (PR-1 時点ではテーブル/列が現存)
-    assert "webhook_configs: 1 件" in result.output
+    # webhook_configs テーブルは DROP 済 (064) → 該当なし
+    assert "webhook_configs: 該当なし" in result.output
+    # ai_drafts.discord_* は PR-3 まで現存するので件数が出る
     assert "ai_drafts.discord_*: 1 件" in result.output
 
     db.session.expire_all()
@@ -93,8 +92,7 @@ def test_execute_deletes_only_llama_cpp(db, app):
     # llama_cpp は削除、openai は残る
     assert db.session.get(UserAIConfig, llama_id) is None
     assert db.session.get(UserAIConfig, openai_id) is not None
-    # webhook / discord draft は CLI では削除しない (マイグレーション 064/065 の責務)
-    assert WebhookConfig.query.count() == 1
+    # discord draft は CLI では削除しない (マイグレーション 065 の責務)
     assert AIDraft.query.count() == 1
 
 

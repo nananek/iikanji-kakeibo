@@ -17,7 +17,6 @@ from app.models.ai_draft import AIDraft
 from app.models.ai_usage_log import AIUsageLog
 from app.models.api_key import APIKey
 from app.models.audit import AuditGrant, AuditGrantAccount
-from app.models.webhook import WebhookConfig
 from app.models.balance_cache import BalanceCacheBlob
 from app.models.csv_column_profile import CsvColumnProfile
 from app.models.fiscal import FiscalClose
@@ -144,7 +143,6 @@ def delete_user_account(user_id: int) -> None:
         FiscalClose, MedicalExpense,
         OAuthDevice, OAuthToken,
         StorageUsage, Account, WebAuthnCredential,
-        WebhookConfig,
     ):
         model.query.filter_by(user_id=user_id).delete()
 

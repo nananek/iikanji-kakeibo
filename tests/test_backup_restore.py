@@ -341,7 +341,6 @@ class TestBackupRestoreHappyPath:
                 "vouchers": [],
                 "ai_drafts": [],
                 "user_ai_config": None,
-                "webhook_configs": [],
                 "tax_form_mappings": [],
                 "csv_column_profiles": [],
             },
@@ -436,7 +435,7 @@ class TestBackupRestoreAuditLog:
                 "journal_entries": [], "journal_entry_lines": [],
                 "medical_expenses": [], "balance_cache_blobs": [],
                 "vouchers": [], "ai_drafts": [],
-                "user_ai_config": None, "webhook_configs": [],
+                "user_ai_config": None,
                 "tax_form_mappings": [], "csv_column_profiles": [],
             },
         }
@@ -509,7 +508,7 @@ class TestBackupRestoreImages:
                     },
                 ],
                 "ai_drafts": [],
-                "user_ai_config": None, "webhook_configs": [],
+                "user_ai_config": None,
                 "tax_form_mappings": [], "csv_column_profiles": [],
             },
         }
@@ -595,7 +594,7 @@ class TestBackupRestoreImages:
                     },
                 ],
                 "ai_drafts": [],
-                "user_ai_config": None, "webhook_configs": [],
+                "user_ai_config": None,
                 "tax_form_mappings": [], "csv_column_profiles": [],
             },
         }
@@ -727,7 +726,7 @@ class TestBackupRestoreCoverage:
         self, client, db, user, accounts, auth_header, reset_limiter,
         backup_skeleton,
     ):
-        """balance_cache_blob / user_ai_config / webhook / tax_mapping /
+        """balance_cache_blob / user_ai_config / tax_mapping /
         csv_profile / medical_expense のハッピーパス restore (カバレッジ補強)。"""
         from app.models.tax_form import TaxFormField
         # tax_form_mappings は TaxFormField の seed が必要
@@ -767,11 +766,6 @@ class TestBackupRestoreCoverage:
             "api_key_iv": base64.b64encode(b"\x00" * 12).decode(),
             "custom_prompt": "", "compliance_check": True,
         }
-        backup_skeleton["data"]["webhook_configs"] = [
-            {"name": "Discord", "provider": "discord",
-             "webhook_url": "https://x.example/hook",
-             "events_json": '["import_success"]'},
-        ]
         backup_skeleton["data"]["tax_form_mappings"] = [
             {"account_code": "1010", "field_id": f.id},
         ]
@@ -791,7 +785,6 @@ class TestBackupRestoreCoverage:
         assert r["tables"]["medical_expenses"] == 1
         assert r["tables"]["balance_cache_blobs"] == 1
         assert r["tables"]["user_ai_config"] == 1
-        assert r["tables"]["webhook_configs"] == 1
         assert r["tables"]["tax_form_mappings"] == 1
         assert r["tables"]["csv_column_profiles"] == 1
 
@@ -1213,7 +1206,7 @@ class TestBackupRestoreFailure:
                     },
                 ],
                 "ai_drafts": [], "user_ai_config": None,
-                "webhook_configs": [], "tax_form_mappings": [],
+                "tax_form_mappings": [],
                 "csv_column_profiles": [],
             },
         }

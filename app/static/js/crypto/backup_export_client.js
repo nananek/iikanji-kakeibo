@@ -92,7 +92,6 @@ export async function decryptBackup(client, backup) {
       // UserAIConfig は api_key_blob (暗号文) を含む。本クライアントでは
       // 復号せずパススルー (リストア時に MK が必要なため)。
       user_ai_config: backup.data.user_ai_config || null,
-      webhook_configs: backup.data.webhook_configs || [],
       tax_form_mappings: backup.data.tax_form_mappings || [],
       csv_column_profiles: backup.data.csv_column_profiles || [],
     },

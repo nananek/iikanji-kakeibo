@@ -204,7 +204,6 @@ def backup_skeleton(user):
             "vouchers": [],
             "ai_drafts": [],
             "user_ai_config": None,
-            "webhook_configs": [],
             "tax_form_mappings": [],
             "csv_column_profiles": [],
         },

@@ -6,7 +6,7 @@
 // 表示する件数:
 //   accounts, journal_entries, journal_entry_lines, medical_expenses,
 //   fiscal_closes, balance_cache_blobs, vouchers, ai_drafts,
-//   webhook_configs, tax_form_mappings, csv_column_profiles,
+//   tax_form_mappings, csv_column_profiles,
 //   user_ai_config (オブジェクト, 0 or 1 として件数化)
 
 
@@ -108,7 +108,6 @@ function _renderSummary(backup) {
     ["balance_cache_blobs", "残高キャッシュ"],
     ["vouchers", "証憑 (画像)"],
     ["ai_drafts", "AI 下書き"],
-    ["webhook_configs", "Webhook 設定"],
     ["tax_form_mappings", "決算書マッピング"],
     ["csv_column_profiles", "CSV プロファイル"],
   ];

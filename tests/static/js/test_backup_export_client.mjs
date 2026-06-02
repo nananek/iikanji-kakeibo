@@ -349,16 +349,14 @@ test("user_ai_config: 未設定で null", async () => {
   assert.equal(r.data.user_ai_config, null);
 });
 
-test("webhook / csv / tax_mappings: 配列がパススルー", async () => {
+test("csv / tax_mappings: 配列がパススルー", async () => {
   const client = makeMockClient();
   const r = await decryptBackup(client, {
     user_id: 1, data: {
-      webhook_configs: [{ id: 1, webhook_url: "https://w" }],
       csv_column_profiles: [{ id: 2, account_code: "1010" }],
       tax_form_mappings: [{ id: 3, account_code: "1010", field_id: 5 }],
     },
   });
-  assert.deepEqual(r.data.webhook_configs, [{ id: 1, webhook_url: "https://w" }]);
   assert.deepEqual(r.data.csv_column_profiles, [{ id: 2, account_code: "1010" }]);
   assert.deepEqual(r.data.tax_form_mappings, [
     { id: 3, account_code: "1010", field_id: 5 },
