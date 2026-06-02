@@ -79,39 +79,6 @@ def get_allowed_account_codes():
     }
 
 
-def get_submitted_account_codes(user_id):
-    """提出済みLv2グラントの公開科目コードセットを返す（個人ユーザー用）
-
-    個人ユーザーが自分のデータを編集するときのロック判定に使う。
-    """
-    grants = AuditGrant.query.filter_by(
-        owner_user_id=user_id,
-        permission_level=2,
-        status="submitted",
-    ).all()
-    if not grants:
-        return set()
-    grant_ids = [g.id for g in grants]
-    accounts = AuditGrantAccount.query.filter(
-        AuditGrantAccount.audit_grant_id.in_(grant_ids)
-    ).all()
-    return {a.account_code for a in accounts}
-
-
-def is_entry_locked_for_owner(user_id, entry):
-    """個人ユーザーが伝票を編集・削除できるかチェック
-
-    伝票の明細行にロック科目（提出済みLv2の公開科目）が1つでもあればTrue
-    """
-    locked_codes = get_submitted_account_codes(user_id)
-    if not locked_codes:
-        return False
-    for line in entry.lines:
-        if line.account_code in locked_codes:
-            return True
-    return False
-
-
 def is_entry_locked_for_auditor(entry, allowed_account_codes):
     """監査者が伝票を編集・削除できるかチェック
 

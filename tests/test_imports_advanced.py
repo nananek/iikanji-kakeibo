@@ -30,33 +30,13 @@ def _setup_csv_mapping(client):
     })
 
 
-class TestCashbookLockedAccounts:
-    """確定済み Lv2 ロック科目の挙動"""
+class TestCashbookNewGetOnly:
+    """cashbook.new は GET 専用 (E3-F PR-B1.1)。POST は 405。"""
 
-    def _setup_locked(self, db, user, auditor):
-        """user の 5010 を提出済み Lv2 で公開 → ロック状態"""
-        from app.models.audit import AuditGrant, AuditGrantAccount
-        grant = AuditGrant(
-            owner_user_id=user.id,
-            auditor_user_id=auditor.id,
-            permission_level=2,
-            status="submitted",
-        )
-        db.session.add(grant)
-        db.session.flush()
-        db.session.add(AuditGrantAccount(
-            audit_grant_id=grant.id,
-            account_user_id=user.id, account_code="5010",
-        ))
-        db.session.commit()
-        return grant
-
-    def test_new_with_locked_account_blocked(self, db, logged_in_client, user, accounts, auditor):
-        # E3-F PR-B1.1: cashbook.new は GET 専用化された。提出済み科目の
-        # ロックチェックは batch API (POST /api/v1/journals/batch) 側で
-        # 実施される (test_api.py::TestBatch で別途カバー)。
-        # ここでは POST 経路が無効化され仕訳が作成されないことだけ確認する。
-        self._setup_locked(db, user, auditor)
+    def test_new_post_blocked(self, db, logged_in_client, user, accounts):
+        # E3-F PR-B1.1: cashbook.new は GET 専用化された。仕訳作成は
+        # batch API (POST /api/v1/journals/batch) 側に移行済。
+        # ここでは POST 経路が無効化され仕訳が作成されないことを確認する。
         resp = logged_in_client.post("/cashbook/new", data={
             "date": "2026-02-15",
             "transaction_type": "expense",

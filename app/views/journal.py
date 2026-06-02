@@ -13,8 +13,8 @@ from app.forms.journal import JournalForm
 from app.services.accounting import create_journal_entry
 from app.services.fiscal import check_entry_modifiable, get_effective_period, get_closed_periods_map, get_restricted_before_year
 from app.services.audit import (
-    get_effective_user_id, get_allowed_account_codes, get_submitted_account_codes,
-    is_entry_locked_for_owner, is_entry_locked_for_auditor,
+    get_effective_user_id, get_allowed_account_codes,
+    is_entry_locked_for_auditor,
     is_acting_as_auditor, get_permission_level,
     get_proprietor_account_code, mask_account_name,
 )
@@ -52,7 +52,7 @@ def index():
     """仕訳帳一覧 (E3-F PR-D-4-3 でクライアント描画に移行)。
 
     クライアントが /api/v1/journals を fiscal_year で取得・MK 復号し、編集可否
-    (modifiable) を closed_periods / locked_codes から算出してテーブルを描画する。
+    (modifiable) を closed_periods から算出してテーブルを描画する。
     サーバ側で平文 (date / description / line.account 名) は一切読まない。旧
     date_from/date_to 範囲 filter は fiscal_year セレクタに、description.ilike 検索
     はクライアント側の摘要絞り込みに置換 (date / description は DROP 対象の平文)。
@@ -65,7 +65,6 @@ def index():
         effective_user_id=user_id,
         accounts_meta=_journal_accounts_meta(user_id),
         closed_periods=get_closed_periods_map(user_id),
-        locked_codes=sorted(get_submitted_account_codes(user_id)),
     )
 
 
@@ -110,11 +109,6 @@ def edit(entry_id):
 
     user_id = get_effective_user_id()
     allowed_codes = get_allowed_account_codes()
-
-    # 伝票ロック: 本人側
-    if not is_acting_as_auditor() and is_entry_locked_for_owner(user_id, entry):
-        flash("提出済みの税務科目を含む伝票のため変更できません。", "danger")
-        return redirect(url_for("journal.index"))
 
     # 確定済み期間チェック
     err = check_entry_modifiable(get_effective_user_id(), entry)
@@ -259,10 +253,8 @@ def get_json(entry_id):
                 "blob_iv": _b64_or_none(line.blob_iv),
             })
 
-    # ロック判定（確定済み期間・損益振替・提出ロック）
+    # ロック判定（確定済み期間・損益振替）
     is_readonly = check_entry_modifiable(user_id, entry) is not None
-    if not is_readonly and not is_acting_as_auditor():
-        is_readonly = is_entry_locked_for_owner(user_id, entry)
 
     # E3-F PR-D-6-3b-3: 平文 date / description / fiscal_period / source の返却を
     # 撤去 (これらの列は D-6-5 で DROP)。元帳モーダル (reports/ledger.html
@@ -321,9 +313,7 @@ def delete(entry_id):
 
     # 伝票ロックチェック
     err_msg = None
-    if not is_acting_as_auditor() and is_entry_locked_for_owner(user_id, entry):
-        err_msg = "提出済みの税務科目を含む伝票のため削除できません。"
-    elif is_acting_as_auditor() and allowed_codes is not None and is_entry_locked_for_auditor(entry, allowed_codes):
+    if is_acting_as_auditor() and allowed_codes is not None and is_entry_locked_for_auditor(entry, allowed_codes):
         err_msg = "事業主勘定を含む伝票のため削除できません。"
     else:
         err_msg = check_entry_modifiable(user_id, entry)
@@ -386,8 +376,6 @@ def bulk_delete():
     for entry in entries:
         err = check_entry_modifiable(user_id, entry)
         if err:
-            locked.append(entry)
-        elif not is_acting_as_auditor() and is_entry_locked_for_owner(user_id, entry):
             locked.append(entry)
         elif is_acting_as_auditor() and allowed_codes is not None and is_entry_locked_for_auditor(entry, allowed_codes):
             locked.append(entry)

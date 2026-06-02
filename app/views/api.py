@@ -20,7 +20,6 @@ from app.models.account import Account
 from app.models.balance_cache import BalanceCacheBlob
 from app.models.journal import JournalEntry, JournalEntryLine
 from app.services.accounting import create_journal_entry
-from app.services.audit import get_submitted_account_codes, is_entry_locked_for_owner
 from app.services.fiscal import check_period_open_for_new, check_entry_modifiable
 from app.services.image import serve_voucher_image
 from app.services.storage import (
@@ -312,13 +311,6 @@ def create_journal():
             "blob_iv": line_iv,
         })
 
-    # 提出済みロック科目チェック
-    locked_codes = get_submitted_account_codes(user_id)
-    if locked_codes:
-        used_codes = {ld["account_code"] for ld in lines_data}
-        if used_codes & locked_codes:
-            return jsonify({"error": "提出済みの税務科目を含むため登録できません。"}), 400
-
     # 平文メタ (fiscal_year / fiscal_month) の検証 + 確定済み期間チェック。
     fiscal_year, fiscal_month, err = _parse_fiscal_meta(data)
     if err:
@@ -420,7 +412,7 @@ def _parse_fiscal_meta(data):
     return fiscal_year, fiscal_month, None
 
 
-def _validate_and_parse_batch_entry(e, idx, user_account_codes, locked_codes):
+def _validate_and_parse_batch_entry(e, idx, user_account_codes):
     """batch API 用: 1 entry 分の入力を validate して create_journal_entry 引数に整形。
 
     user_account_codes: そのユーザーの全 account.code を含む set。caller が
@@ -470,13 +462,6 @@ def _validate_and_parse_batch_entry(e, idx, user_account_codes, locked_codes):
             "encrypted_blob": line_blob,
             "blob_iv": line_iv,
         })
-
-    if locked_codes:
-        used_codes = {ld["account_code"] for ld in lines_data}
-        if used_codes & locked_codes:
-            raise ValueError(
-                f"entries[{idx}]: 提出済みの税務科目を含むため登録できません。"
-            )
 
     # account_code がそのユーザーに存在するかチェック (FK 違反による 500 を 400 化)。
     # 全 entry の lines で使う code を caller が事前に 1 クエリで取得した
@@ -570,7 +555,6 @@ def create_journals_batch():
         return jsonify({"error": "batch_id は文字列 (max 64) です。"}), 400
 
     user_id = g.auth_user.id
-    locked_codes = get_submitted_account_codes(user_id)
     # N+1 回避: ユーザーの全 account.code を一括取得して set 集合演算で
     # _validate_and_parse_batch_entry の存在チェックに使い回す。
     user_account_codes = {
@@ -581,7 +565,7 @@ def create_journals_batch():
     try:
         for idx, e in enumerate(entries_in):
             parsed = _validate_and_parse_batch_entry(
-                e, idx, user_account_codes, locked_codes,
+                e, idx, user_account_codes,
             )
 
             # 確定済み期間チェック (fiscal_year / fiscal_month ベース)
@@ -1407,23 +1391,18 @@ def update_journal(entry_id):
     if not entry:
         return jsonify({"error": "仕訳が見つかりません。"}), 404
 
-    # 旧 entry の編集可否 (確定済み期間 / 提出済みロック)
+    # 旧 entry の編集可否 (確定済み期間)
     err = check_entry_modifiable(user_id, entry)
     if err:
         return jsonify({"error": err}), 400
-    if is_entry_locked_for_owner(user_id, entry):
-        return jsonify({
-            "error": "提出済みの税務科目を含む伝票のため変更できません。",
-        }), 400
 
-    locked_codes = get_submitted_account_codes(user_id)
     user_account_codes = {
         a.code for a in Account.query.filter_by(user_id=user_id).all()
     }
 
     try:
         parsed = _validate_and_parse_batch_entry(
-            data, 0, user_account_codes, locked_codes,
+            data, 0, user_account_codes,
         )
     except ValueError as ve:
         msg = str(ve)
@@ -1494,10 +1473,6 @@ def delete_journal(entry_id):
     ).first()
     if not entry:
         return jsonify({"error": "仕訳が見つかりません。"}), 404
-
-    # 提出済みロック科目チェック
-    if is_entry_locked_for_owner(user_id, entry):
-        return jsonify({"error": "提出済みの税務科目を含む伝票のため削除できません。"}), 400
 
     # 確定済み期間チェック
     err = check_entry_modifiable(user_id, entry)
@@ -2591,14 +2566,10 @@ def upsert_medical_expense():
     if not entry:
         return jsonify({"error": "仕訳が見つかりません。"}), 404
 
-    # 確定済み期間 / 提出済みロックの伝票は医療費明細も変更不可。
+    # 確定済み期間の伝票は医療費明細も変更不可。
     err = check_entry_modifiable(user_id, entry)
     if err:
         return jsonify({"error": err}), 400
-    if is_entry_locked_for_owner(user_id, entry):
-        return jsonify({
-            "error": "提出済みの税務科目を含む伝票のため変更できません。",
-        }), 400
 
     # E3-F PR-C: クライアント側で AES-GCM 暗号化された本体は必須。
     blob, iv, err = _decode_record_crypto(

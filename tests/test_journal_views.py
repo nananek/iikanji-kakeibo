@@ -64,9 +64,10 @@ class TestIndex:
         db.session.commit()
         resp = logged_in_client.get("/journal/?year=2026")
         body = resp.get_data(as_text=True)
-        # closed_periods マップが extra JSON に含まれる (クライアント modifiable 判定用)
+        # closed_periods マップが extra JSON に含まれる (クライアント modifiable 判定用)。
+        # locked_codes は owner 編集ロック廃止 (#112) に伴い除去済。
         assert "closed_periods" in body
-        assert "locked_codes" in body
+        assert "locked_codes" not in body
 
 
 class TestNewGet:
