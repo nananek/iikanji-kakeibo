@@ -1,14 +1,16 @@
 """監査枠 (audit_seat) エンタイトルメントゲートのテスト (Phase 2 #67)。
 
-- `/settings/audit/add` で `AuditGrant` を作成する際、auditor または
-  owner のいずれかが `audit_seat` を持っている必要がある
-- `audit_permission_check` フックで代理閲覧中もエンタイトルメントを再検証
+`/settings/audit/add` で `AuditGrant` を作成する際、auditor または owner の
+いずれかが `audit_seat` を持っている必要がある。
 
 セルフホストモード (`BILLING_BACKEND=unlimited`, デフォルト) では
 `UnlimitedBillingClient` が常に True を返すため通過する。
-"""
 
-import pytest
+注: かつて本ファイルにあった `TestActingAsAuditorGate` (旧 audit_permission_check
+before_request フックの代理閲覧中エンタイトルメント再検証) は、リアルタイム代理閲覧
+機構の撤去 (#112) に伴い削除した。`audit/add` の有償ゲート自体は健在のため、
+こちらのカバレッジは維持する。
+"""
 
 from app.models.audit import AuditGrant
 from app.services.entitlement import UnlimitedBillingClient
@@ -91,60 +93,3 @@ class TestAuditAddGate:
         )
         assert resp.status_code in (302, 303)
         assert AuditGrant.query.count() == 1
-
-
-# --- 代理閲覧時の audit_permission_check -----------------------------------
-
-
-class TestActingAsAuditorGate:
-    """`acting_as_user_id` セッション中の有償ゲート"""
-
-    def test_unlimited_allows_acting(self, db, client, app, user, accounts, auditor):
-        """デフォルト (unlimited) では代理閲覧は通常通り動く"""
-        grant = AuditGrant(
-            owner_user_id=user.id, auditor_user_id=auditor.id,
-            permission_level=3,
-        )
-        db.session.add(grant)
-        db.session.commit()
-
-        with app.test_request_context():
-            from flask import url_for
-            entitlement_lost_redirect = url_for("auditor.dashboard")
-
-        with client.session_transaction() as sess:
-            sess["_user_id"] = str(auditor.id)
-            sess["acting_as_user_id"] = user.id
-            sess["acting_as_permission_level"] = 3
-
-        resp = client.get("/")
-        # 200 (代理閲覧成功) または 302 (別画面リダイレクト) を許容、
-        # entitlement 失効時のリダイレクト先と一致しないこと
-        assert resp.status_code in (200, 302, 303)
-        if resp.status_code in (302, 303):
-            assert resp.headers.get("Location", "") != entitlement_lost_redirect
-
-    def test_acting_blocked_when_entitlement_lost(
-        self, db, client, user, accounts, auditor, monkeypatch
-    ):
-        """代理閲覧中に両者とも `audit_seat` 失効 → セッションクリア + 監査ダッシュボードへ"""
-        grant = AuditGrant(
-            owner_user_id=user.id, auditor_user_id=auditor.id,
-            permission_level=3,
-        )
-        db.session.add(grant)
-        db.session.commit()
-
-        _patch_billing(monkeypatch, auditor_ok=False, owner_ok=False)
-
-        with client.session_transaction() as sess:
-            sess["_user_id"] = str(auditor.id)
-            sess["acting_as_user_id"] = user.id
-            sess["acting_as_permission_level"] = 3
-
-        resp = client.get("/", follow_redirects=False)
-        assert resp.status_code in (302, 303)
-        # acting_as_user_id / acting_as_permission_level の両方がクリアされる
-        with client.session_transaction() as sess:
-            assert sess.get("acting_as_user_id") is None
-            assert sess.get("acting_as_permission_level") is None

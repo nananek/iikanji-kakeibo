@@ -6,10 +6,9 @@
 
 <div class="alert alert-info mt-3" role="alert">
   <i class="bi bi-info-circle"></i>
-  監査連携は<strong>非同期スナップショット方式</strong>へ移行中です。各クライアントの
+  監査連携は<strong>非同期スナップショット方式</strong>です。各クライアントの
   「<strong>受信したスナップショット</strong>」から、暗号化された帳簿を復号して監査・修正案の
-  送信ができます。「<strong>切替（旧）</strong>」によるリアルタイム代理閲覧は将来のバージョンで
-  <strong>廃止予定</strong>です。
+  送信ができます。
 </div>
 
 {% if grants %}
@@ -30,12 +29,8 @@
         <td>{{ grant.owner.username }}</td>
         <td>{{ permission_labels.get(grant.permission_level, '不明') }}</td>
         <td>
-          {% if grant.permission_level == 2 %}
-            {% if grant.status == 'submitted' %}
-              <span class="badge bg-success">提出済み</span>
-            {% else %}
-              <span class="badge bg-secondary">未提出</span>
-            {% endif %}
+          {% if grant.revoked_at %}
+            <span class="badge bg-secondary">失効</span>
           {% else %}
             <span class="badge bg-primary">有効</span>
           {% endif %}
@@ -46,16 +41,6 @@
              class="btn btn-sm btn-primary">
             <i class="bi bi-inbox"></i> 受信したスナップショット
           </a>
-          {% if grant.permission_level != 2 or grant.status == 'submitted' %}
-          <form method="POST" action="{{ url_for('auditor.switch', grant_id=grant.id) }}" class="d-inline">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-            <button type="submit" class="btn btn-sm btn-outline-secondary">
-              <i class="bi bi-box-arrow-in-right"></i> 切替（旧）
-            </button>
-          </form>
-          {% else %}
-          <button class="btn btn-sm btn-outline-secondary" disabled>未提出</button>
-          {% endif %}
         </td>
       </tr>
       {% endfor %}

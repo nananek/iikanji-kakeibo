@@ -6,10 +6,9 @@
 
 <div class="alert alert-info mt-3" role="alert">
   <i class="bi bi-info-circle"></i>
-  監査連携は<strong>非同期スナップショット方式</strong>へ移行中です。各監査者へは
-  「スナップショット送信」から、暗号化した帳簿を監査者の公開鍵宛にのみ復号できる形で
-  渡せます。監査者がログインして本人のデータをリアルタイム閲覧する旧方式は将来のバージョンで
-  <strong>廃止予定</strong>です。
+  監査連携は<strong>非同期スナップショット方式</strong>です。各監査者へは
+  「<strong>送信</strong>」から、暗号化した帳簿を監査者の公開鍵宛にのみ復号できる形で
+  渡せます。監査者は受け取ったスナップショットを復号して監査・修正案の送信を行います。
 </div>
 
 <div class="card mt-3 mb-4">
@@ -56,13 +55,8 @@
         <td>{{ grant.auditor.username }}</td>
         <td>{{ permission_labels.get(grant.permission_level, '不明') }}</td>
         <td>
-          {% if grant.permission_level == 2 %}
-            {% if grant.status == 'submitted' %}
-              <span class="badge bg-success">提出済み</span>
-              <small class="text-muted">{{ grant.submitted_at.strftime('%Y-%m-%d') if grant.submitted_at }}</small>
-            {% else %}
-              <span class="badge bg-secondary">未提出</span>
-            {% endif %}
+          {% if grant.revoked_at %}
+            <span class="badge bg-secondary">失効</span>
           {% else %}
             <span class="badge bg-primary">有効</span>
           {% endif %}
@@ -79,23 +73,6 @@
                  class="btn btn-outline-info">
                 <i class="bi bi-list-check"></i> 公開科目
               </a>
-              {% if grant.status == 'draft' %}
-              <form method="POST" action="{{ url_for('settings.audit_submit', grant_id=grant.id) }}" class="d-inline">
-                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                <button type="submit" class="btn btn-outline-success"
-                        onclick="return confirm('提出しますか？提出後は税務科目を含む伝票が編集不可になります。')">
-                  <i class="bi bi-send"></i> 提出
-                </button>
-              </form>
-              {% else %}
-              <form method="POST" action="{{ url_for('settings.audit_unsubmit', grant_id=grant.id) }}" class="d-inline">
-                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                <button type="submit" class="btn btn-outline-warning"
-                        onclick="return confirm('提出を取り消しますか？')">
-                  <i class="bi bi-arrow-counterclockwise"></i> 提出取消
-                </button>
-              </form>
-              {% endif %}
             {% endif %}
             <form method="POST" action="{{ url_for('settings.audit_delete', grant_id=grant.id) }}" class="d-inline">
               <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
