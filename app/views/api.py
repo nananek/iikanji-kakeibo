@@ -1606,10 +1606,7 @@ def ai_prompt_context():
         # デフォルトモデル (UserAIConfig.model_name 未指定時)。
         # サーバ側 ai_receipt.PROVIDER_DEFAULTS と一致させ、E2EE クライアントと
         # 既存サーバ解析 (/ai/analyze) が同じモデルを使うことを保証する。
-        # llama_cpp はサーバ管理者提供前提 + v5.0 で廃止のため除外。
-        "default_model_by_provider": {
-            k: v for k, v in PROVIDER_DEFAULTS.items() if k != "llama_cpp"
-        },
+        "default_model_by_provider": dict(PROVIDER_DEFAULTS),
     })
 
 
@@ -1664,9 +1661,7 @@ def suggest_categories_prompt_context():
         "account_list": account_list,
         "account_map": account_map,
         "custom_prompt": custom_prompt,
-        "default_model_by_provider": {
-            k: v for k, v in PROVIDER_DEFAULTS.items() if k != "llama_cpp"
-        },
+        "default_model_by_provider": dict(PROVIDER_DEFAULTS),
     })
 
 
@@ -1699,9 +1694,7 @@ def voucher_attach_prompt_context():
         "ok": True,
         "prompt_template": prompt,
         "compliance_check_enabled": compliance_check,
-        "default_model_by_provider": {
-            k: v for k, v in PROVIDER_DEFAULTS.items() if k != "llama_cpp"
-        },
+        "default_model_by_provider": dict(PROVIDER_DEFAULTS),
     })
 
 
@@ -1721,10 +1714,7 @@ def web_import_prompt_context():
         # __PAYMENT_ACCOUNT_NAME__ と __RAW_TEXT__ をクライアントで置換する
         "prompt_template": WEB_IMPORT_PROMPT,
         "custom_prompt": custom_prompt,
-        # llama_cpp はサーバ管理者提供前提 + v5.0 で廃止予定のため除外
-        "default_model_by_provider": {
-            k: v for k, v in PROVIDER_DEFAULTS.items() if k != "llama_cpp"
-        },
+        "default_model_by_provider": dict(PROVIDER_DEFAULTS),
     })
 
 

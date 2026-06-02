@@ -12,10 +12,7 @@ from app.models.ai_config import UserAIConfig
 from app.models.api_key import APIKey, ALL_SCOPES, SCOPE_LABELS, SCOPE_DEPENDENCIES
 from app.models.oauth import OAuthToken
 from app.models.audit import AuditGrant, AuditGrantAccount
-from app.services.ai_receipt import (
-    PROVIDER_DEFAULTS, PROVIDER_LABELS,
-    get_available_provider_labels, is_llama_cpp_available,
-)
+from app.services.ai_receipt import PROVIDER_LABELS
 from app.views.accounts import TAX_CATEGORIES
 from app.models.fiscal import FiscalClose
 from app.services.mail import send_email
@@ -288,19 +285,23 @@ def ai_config():
     """AI API設定ページ"""
     from app.services.ai_usage import current_month_summary
     config = UserAIConfig.query.filter_by(user_id=current_user.id).first()
-    available_labels = get_available_provider_labels()
-    # 既存設定の provider が現在利用不可なら警告
+    available_labels = PROVIDER_LABELS
+    # 既存設定の provider が現在サポート外 (例: v5.0 で廃止した llama_cpp) なら警告。
+    # 廃止済 provider は PROVIDER_LABELS に無いため、表示用ラベルを別途補完する。
+    _DEPRECATED_PROVIDER_LABELS = {"llama_cpp": "llama.cpp (サーバー提供)"}
     if config and config.provider not in available_labels:
+        provider_label = _DEPRECATED_PROVIDER_LABELS.get(
+            config.provider, config.provider
+        )
         flash(
-            f"現在「{PROVIDER_LABELS.get(config.provider, config.provider)}」は"
-            "サーバー側で提供されていません。別のプロバイダーに変更してください。",
+            f"現在「{provider_label}」はサポートされていません。"
+            "別のプロバイダーに変更してください。",
             "warning",
         )
     monthly_summary = current_month_summary(current_user.id)
     return render_template(
         "settings/ai_config.html",
         config=config,
-        provider_defaults=PROVIDER_DEFAULTS,
         provider_labels=available_labels,
         monthly_summary=monthly_summary,
         provider_display_labels=PROVIDER_LABELS,

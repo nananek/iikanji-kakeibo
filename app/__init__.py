@@ -543,6 +543,78 @@ def register_cli(app):
         db.session.commit()
         print(f"audit-cleanup: deleted AuditPackage={deleted} 件 (AuditResponse は CASCADE 削除)")
 
+    @app.cli.command("v5-migrate-cleanup")
+    @click.option("--dry-run", is_flag=True, help="削除対象を表示するだけで実行しない (既定)")
+    @click.option("--execute", is_flag=True, help="実際に削除を実行する")
+    def v5_migrate_cleanup_command(dry_run, execute):
+        """v5.0 E2EE 移行に伴う廃止データを掃除する (設計書 §15.3)。
+
+        廃止 provider 'llama_cpp' の user_ai_configs 行を削除する。自家ホスト
+        LLM は E2EE と両立しないため v5.0 で廃止しており、該当ユーザーは設定
+        画面で OpenAI / Anthropic / Google などの BYOK プロバイダーに再登録
+        する必要がある。
+
+        webhook_configs テーブルと ai_drafts.discord_webhook_url /
+        discord_message_id カラムの物理削除は専用マイグレーション (064 / 065)
+        が `flask db upgrade` 時に行う。本コマンドは移行状況の可視化として
+        それらの残存件数も併せて報告する (既に DROP 済みなら「該当なし」)。
+
+        --execute を付けない限り削除は行わない (dry-run が既定)。
+        """
+        from sqlalchemy import inspect as sa_inspect, text
+
+        from app.models.ai_config import UserAIConfig
+
+        do_execute = execute and not dry_run
+
+        # マイグレーション 064/065 適用後はテーブル/カラムが存在しないため、
+        # 監査表示はスキーマの実在を確認してから集計する (前方互換)。
+        insp = sa_inspect(db.engine)
+        tables = set(insp.get_table_names())
+
+        def _safe_scalar(sql):
+            try:
+                return db.session.execute(text(sql)).scalar() or 0
+            except Exception:
+                db.session.rollback()
+                return None
+
+        webhook_count = None
+        if "webhook_configs" in tables:
+            webhook_count = _safe_scalar("SELECT COUNT(*) FROM webhook_configs")
+
+        discord_count = None
+        if "ai_drafts" in tables:
+            draft_cols = {c["name"] for c in insp.get_columns("ai_drafts")}
+            if "discord_webhook_url" in draft_cols or "discord_message_id" in draft_cols:
+                discord_count = _safe_scalar(
+                    "SELECT COUNT(*) FROM ai_drafts "
+                    "WHERE discord_webhook_url IS NOT NULL "
+                    "OR discord_message_id IS NOT NULL"
+                )
+
+        llama_q = UserAIConfig.query.filter_by(provider="llama_cpp")
+        llama_count = llama_q.count()
+
+        def _fmt(count, drop_note):
+            if count is None:
+                return f"該当なし ({drop_note})"
+            return f"{count} 件 ({drop_note})"
+
+        prefix = "[dry-run] " if not do_execute else ""
+        print(f"{prefix}v5-migrate-cleanup 対象:")
+        print(f"  user_ai_configs provider='llama_cpp': {llama_count} 件 (本コマンドが削除)")
+        print(f"  webhook_configs: {_fmt(webhook_count, 'マイグレーション 064 が DROP')}")
+        print(f"  ai_drafts.discord_*: {_fmt(discord_count, 'マイグレーション 065 が DROP')}")
+
+        if not do_execute:
+            print("[dry-run] 削除は実行していません。実行するには --execute を付けてください。")
+            return
+
+        deleted = llama_q.delete(synchronize_session=False)
+        db.session.commit()
+        print(f"v5-migrate-cleanup: deleted user_ai_configs (llama_cpp)={deleted} 件")
+
     # ai-config-migration-status / ai-config-reset-migrate-key CLI は
     # Phase E2-b で Fernet 完全廃止に伴い削除。旧 Fernet データが残存して
     # いるユーザーは設定画面で API キーを再入力する必要がある。

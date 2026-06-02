@@ -36,3 +36,6 @@ playwright-report/
 
 # Claude Code ローカル設定 (許可リスト等は個人ごと)
 .claude/
+
+# ローカル専用の compose override (E2E/実機検証用)
+docker-compose.override.yml

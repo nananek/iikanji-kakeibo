@@ -151,18 +151,15 @@ export function aiConfigForm(initial = {}) {
     async save() {
       this.error = "";
       this.notice = "";
-      const isLlamaCpp = this.provider === "llama_cpp";
-      // llama_cpp はサーバ管理者提供 API なので API キー不要。
-      // 新規登録時の API キー必須は llama_cpp 以外のみ。
-      if (!isLlamaCpp && !this.apiKey && !this.hasConfig) {
+      if (!this.apiKey && !this.hasConfig) {
         this.error = "API キーを入力してください。";
         return;
       }
-      // provider 切替時に既存 blob (= 前 provider 用の暗号化キー、または
-      // llama_cpp の空文字列暗号化) を流用するのは危険。新 API キー必須化。
+      // provider 切替時に既存 blob (= 前 provider 用の暗号化キー) を流用するのは
+      // 危険。新 API キー必須化。
       const providerChanged =
         this._savedProvider !== null && this._savedProvider !== this.provider;
-      if (!isLlamaCpp && providerChanged && !this.apiKey) {
+      if (providerChanged && !this.apiKey) {
         this.error = (
           `プロバイダーを変更しました (${this._savedProvider} → ${this.provider})。` +
           " 新しい API キーを入力してください。"
@@ -171,20 +168,7 @@ export function aiConfigForm(initial = {}) {
       }
       this.saving = true;
       try {
-        if (isLlamaCpp) {
-          // llama_cpp は API キー文字列を持たないが、API スキーマは blob/iv
-          // 必須なので空文字列を暗号化して送る (= 復号して "" を得る)。
-          // クライアント (Web) が llama_cpp 呼出時は MK で復号 → 空文字列を
-          // 取得 → 「サーバ管理者提供 LLM を使う」フラグとして扱う。
-          await this._saveEncrypted({
-            apiKey: "",
-            provider: this.provider,
-            modelName: this.modelName,
-            customPrompt: this.customPrompt,
-            complianceCheck: this.complianceCheck,
-          });
-          this.notice = "設定を保存しました (llama_cpp、API キー不要)。";
-        } else if (!this.apiKey) {
+        if (!this.apiKey) {
           // 既存設定の更新で api_key を変更しない場合は現在の blob/iv を維持
           // → PUT は blob/iv 必須なため、GET で取得して流用する
           const cur = await _getAiConfig();
