@@ -565,7 +565,15 @@ function _makeProposalEditor(accountsMeta) {
   return editor;
 }
 
-// 選択中の仕訳を初期値としてエディタを一度だけ埋める (既入力を上書きしない)。
+// エディタの日付 / 摘要 / 明細をすべて空にする (対象仕訳の切替時に使う)。
+function _clearProposalEditor(editor) {
+  editor.querySelector(".audit-proposal-date").value = "";
+  editor.querySelector(".audit-proposal-desc").value = "";
+  editor.querySelector(".audit-proposal-lines").innerHTML = "";
+}
+
+// 選択中の仕訳を初期値としてエディタを埋める (既入力があれば上書きしない)。
+// 対象仕訳の切替時は呼び出し側で _clearProposalEditor 済みなので再プリフィルされる。
 function _prefillProposal(row, entry, accountsMeta) {
   const editor = row.querySelector(".audit-proposal-editor");
   const linesWrap = editor.querySelector(".audit-proposal-lines");
@@ -654,7 +662,17 @@ function _addCommentRow(entries, accountsMeta) {
     if (!eligible) {
       cb.checked = false;
       editor.classList.add("d-none");
-      editor.querySelector(".audit-proposal-lines").innerHTML = "";
+      _clearProposalEditor(editor);
+      row._proposalEntryId = null;
+      return;
+    }
+    // チェック ON のまま対象仕訳を切り替えたら、エディタを作り直して新仕訳の値に
+    // 合わせる。さもないと entry_id は新仕訳・proposal 内容は旧仕訳のまま送信され
+    // 不整合になる (validateProposal は entry との対応を検証できない)。
+    if (cb.checked && row._proposalEntryId !== e.id) {
+      _clearProposalEditor(editor);
+      _prefillProposal(row, e, accountsMeta || {});
+      row._proposalEntryId = e.id;
     }
   }
   sel.addEventListener("change", updateAvailability);
@@ -662,7 +680,10 @@ function _addCommentRow(entries, accountsMeta) {
     if (cb.checked) {
       editor.classList.remove("d-none");
       const e = sel.value ? entryById.get(Number(sel.value)) : null;
-      if (e) _prefillProposal(row, e, accountsMeta || {});
+      if (e) {
+        _prefillProposal(row, e, accountsMeta || {});
+        row._proposalEntryId = e.id;
+      }
     } else {
       editor.classList.add("d-none");
     }
