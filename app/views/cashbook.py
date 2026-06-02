@@ -12,7 +12,7 @@ from app.forms.cashbook import CashbookForm
 from app.services.fiscal import check_entry_modifiable, get_closed_periods_map, get_restricted_before_year
 from app.services.audit import (
     get_effective_user_id, get_allowed_account_codes,
-    is_entry_locked_for_owner, is_entry_locked_for_auditor,
+    is_entry_locked_for_auditor,
     is_acting_as_auditor, mask_account_name,
 )
 from app.views.helpers import get_grouped_accounts
@@ -110,10 +110,7 @@ def edit(entry_id):
         id=entry_id, user_id=user_id
     ).first_or_404()
 
-    # 伝票ロックチェック
-    if not is_acting_as_auditor() and is_entry_locked_for_owner(user_id, entry):
-        flash("提出済みの税務科目を含む伝票のため変更できません。", "danger")
-        return redirect(url_for("cashbook.index"))
+    # 伝票ロックチェック (監査者向け masking ロック)
     if is_acting_as_auditor() and allowed_codes is not None and is_entry_locked_for_auditor(entry, allowed_codes):
         flash("事業主勘定を含む伝票のため変更できません。", "danger")
         return redirect(url_for("cashbook.index"))
@@ -198,9 +195,7 @@ def delete(entry_id):
         flash(msg, "danger")
         return redirect(url_for("cashbook.index"))
 
-    # 伝票ロックチェック
-    if not is_acting_as_auditor() and is_entry_locked_for_owner(user_id, entry):
-        return _hx_error("提出済みの税務科目を含む伝票のため削除できません。")
+    # 伝票ロックチェック (監査者向け masking ロック)
     if is_acting_as_auditor() and allowed_codes is not None and is_entry_locked_for_auditor(entry, allowed_codes):
         return _hx_error("事業主勘定を含む伝票のため削除できません。")
 

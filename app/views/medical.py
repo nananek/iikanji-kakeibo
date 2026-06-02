@@ -9,7 +9,6 @@ from app.forms.medical import MedicalExpenseForm
 from app.services.fiscal import check_entry_modifiable
 from app.services.audit import (
     get_effective_user_id, get_allowed_account_codes,
-    is_entry_locked_for_owner,
     is_entry_locked_for_auditor, is_acting_as_auditor,
     mask_account_name,
 )
@@ -119,12 +118,9 @@ def delete(expense_id):
         id=expense_id, user_id=user_id
     ).first_or_404()
 
-    # 伝票ロックチェック
+    # 伝票ロックチェック (監査者向け masking ロック)
     if expense.journal_entry:
         allowed_codes = get_allowed_account_codes()
-        if not is_acting_as_auditor() and is_entry_locked_for_owner(user_id, expense.journal_entry):
-            flash("提出済みの税務科目を含む伝票のため削除できません。", "danger")
-            return redirect(url_for("medical.index"))
         if is_acting_as_auditor() and allowed_codes is not None and is_entry_locked_for_auditor(expense.journal_entry, allowed_codes):
             flash("事業主勘定を含む伝票のため削除できません。", "danger")
             return redirect(url_for("medical.index"))

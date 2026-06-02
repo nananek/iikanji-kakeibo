@@ -1,4 +1,9 @@
-"""audit.py のテスト — 監査権限・提出ロック・科目隠蔽・ユーザー隔離"""
+"""audit.py のテスト — 監査権限・科目隠蔽・ユーザー隔離
+
+owner 編集ロック (get_submitted_account_codes / is_entry_locked_for_owner) と
+その API 提出ロックは旧リアルタイム代理閲覧の撤去 (#112) に伴い廃止したため、
+関連テストは削除した。
+"""
 
 from datetime import date
 
@@ -10,9 +15,7 @@ from app.models.journal import JournalEntry
 from app.services.audit import (
     get_allowed_account_codes,
     get_proprietor_account_code,
-    get_submitted_account_codes,
     is_entry_locked_for_auditor,
-    is_entry_locked_for_owner,
     mask_account_name,
 )
 from tests.conftest import make_journal
@@ -55,157 +58,6 @@ class TestGetProprietorAccountCode:
     def test_not_found(self, db, user, account_types):
         """事業主科目がない場合"""
         assert get_proprietor_account_code(user.id) is None
-
-
-# =================================================================
-# get_submitted_account_codes — 提出済み公開科目
-# =================================================================
-
-
-class TestGetSubmittedAccountCodes:
-    def test_no_grants(self, db, user, accounts):
-        """グラントなし → 空"""
-        result = get_submitted_account_codes(user.id)
-        assert result == set()
-
-    def test_draft_grant_not_included(self, db, user, accounts, auditor):
-        """下書き状態のグラントは含まれない"""
-        grant = AuditGrant(
-            owner_user_id=user.id, auditor_user_id=auditor.id,
-            permission_level=2, status="draft",
-        )
-        db.session.add(grant)
-        db.session.commit()
-        db.session.add(AuditGrantAccount(
-            audit_grant_id=grant.id,
-            account_user_id=user.id,
-            account_code="5010",
-        ))
-        db.session.commit()
-        result = get_submitted_account_codes(user.id)
-        assert result == set()
-
-    def test_submitted_grant(self, db, user, accounts, auditor):
-        """提出済みグラントの公開科目が返される"""
-        grant = AuditGrant(
-            owner_user_id=user.id, auditor_user_id=auditor.id,
-            permission_level=2, status="submitted",
-        )
-        db.session.add(grant)
-        db.session.commit()
-        db.session.add_all([
-            AuditGrantAccount(audit_grant_id=grant.id, account_user_id=user.id, account_code="5010"),
-            AuditGrantAccount(audit_grant_id=grant.id, account_user_id=user.id, account_code="5020"),
-        ])
-        db.session.commit()
-        result = get_submitted_account_codes(user.id)
-        assert result == {"5010", "5020"}
-
-    def test_lv1_grant_not_included(self, db, user, accounts, auditor):
-        """Lv1グラント（提出済み）は対象外（Lv2のみ）"""
-        grant = AuditGrant(
-            owner_user_id=user.id, auditor_user_id=auditor.id,
-            permission_level=1, status="submitted",
-        )
-        db.session.add(grant)
-        db.session.commit()
-        result = get_submitted_account_codes(user.id)
-        assert result == set()
-
-    def test_lv3_grant_not_included(self, db, user, accounts, auditor):
-        """Lv3グラント（提出済み）は対象外（Lv2のみ）"""
-        grant = AuditGrant(
-            owner_user_id=user.id, auditor_user_id=auditor.id,
-            permission_level=3, status="submitted",
-        )
-        db.session.add(grant)
-        db.session.commit()
-        result = get_submitted_account_codes(user.id)
-        assert result == set()
-
-    def test_other_user_grants_not_included(self, db, user, accounts, auditor):
-        """他ユーザーのグラントは含まれない"""
-        grant = AuditGrant(
-            owner_user_id=auditor.id, auditor_user_id=user.id,
-            permission_level=2, status="submitted",
-        )
-        db.session.add(grant)
-        db.session.commit()
-        result = get_submitted_account_codes(user.id)
-        assert result == set()
-
-
-# =================================================================
-# is_entry_locked_for_owner — 伝票の提出ロック
-# =================================================================
-
-
-class TestIsEntryLockedForOwner:
-    def test_no_grant(self, db, user, accounts):
-        """グラントなし → ロックなし"""
-        entry = make_journal(db, user.id, "5010", "1010", 1000)
-        assert is_entry_locked_for_owner(user.id, entry) is False
-
-    def test_not_locked_when_no_overlap(self, db, user, accounts, auditor):
-        """提出済み科目と伝票の科目が重ならない → ロックなし"""
-        grant = AuditGrant(
-            owner_user_id=user.id, auditor_user_id=auditor.id,
-            permission_level=2, status="submitted",
-        )
-        db.session.add(grant)
-        db.session.commit()
-        db.session.add(AuditGrantAccount(
-            audit_grant_id=grant.id, account_user_id=user.id, account_code="5020",
-        ))
-        db.session.commit()
-        # 5010(食費)/1010(現金) → 5020 はロック対象だが使っていない
-        entry = make_journal(db, user.id, "5010", "1010", 1000)
-        assert is_entry_locked_for_owner(user.id, entry) is False
-
-    def test_locked_when_overlap(self, db, user, accounts, auditor):
-        """提出済み科目を含む伝票 → ロック"""
-        grant = AuditGrant(
-            owner_user_id=user.id, auditor_user_id=auditor.id,
-            permission_level=2, status="submitted",
-        )
-        db.session.add(grant)
-        db.session.commit()
-        db.session.add(AuditGrantAccount(
-            audit_grant_id=grant.id, account_user_id=user.id, account_code="5010",
-        ))
-        db.session.commit()
-        entry = make_journal(db, user.id, "5010", "1010", 1000)
-        assert is_entry_locked_for_owner(user.id, entry) is True
-
-    def test_locked_by_credit_side(self, db, user, accounts, auditor):
-        """貸方科目がロック対象でもロックされる"""
-        grant = AuditGrant(
-            owner_user_id=user.id, auditor_user_id=auditor.id,
-            permission_level=2, status="submitted",
-        )
-        db.session.add(grant)
-        db.session.commit()
-        db.session.add(AuditGrantAccount(
-            audit_grant_id=grant.id, account_user_id=user.id, account_code="1010",
-        ))
-        db.session.commit()
-        entry = make_journal(db, user.id, "5010", "1010", 1000)
-        assert is_entry_locked_for_owner(user.id, entry) is True
-
-    def test_draft_grant_does_not_lock(self, db, user, accounts, auditor):
-        """下書き状態のグラントではロックされない"""
-        grant = AuditGrant(
-            owner_user_id=user.id, auditor_user_id=auditor.id,
-            permission_level=2, status="draft",
-        )
-        db.session.add(grant)
-        db.session.commit()
-        db.session.add(AuditGrantAccount(
-            audit_grant_id=grant.id, account_user_id=user.id, account_code="5010",
-        ))
-        db.session.commit()
-        entry = make_journal(db, user.id, "5010", "1010", 1000)
-        assert is_entry_locked_for_owner(user.id, entry) is False
 
 
 # =================================================================
@@ -410,78 +262,6 @@ class TestAPIUserIsolation:
         resp = client.get("/api/v1/ai/drafts/1",
                           headers={"Authorization": f"Bearer {key}"})
         assert resp.status_code == 404
-
-
-class TestAPISubmitLock:
-    """API における提出ロック（Lv2グラント提出済み科目の制限）"""
-
-    def _setup_submitted_grant(self, db, user, accounts, auditor, locked_account_codes):
-        """提出済みLv2グラントを作成"""
-        grant = AuditGrant(
-            owner_user_id=user.id, auditor_user_id=auditor.id,
-            permission_level=2, status="submitted",
-        )
-        db.session.add(grant)
-        db.session.commit()
-        for code in locked_account_codes:
-            db.session.add(AuditGrantAccount(
-                audit_grant_id=grant.id, account_user_id=user.id, account_code=code,
-            ))
-        db.session.commit()
-        return grant
-
-    def test_create_blocked_by_submit_lock(self, client, db, user, accounts,
-                                            auditor, auth_header):
-        """提出済み科目を含む仕訳の起票が拒否される"""
-        from tests.conftest import encrypt_lines, encrypted_payload
-        self._setup_submitted_grant(db, user, accounts, auditor,
-                                     ["5010"])
-        resp = client.post("/api/v1/journals", headers=auth_header, json={
-            "date": "2026-02-15",
-            "description": "ロック対象",
-            "lines": encrypt_lines([
-                {"account_code": accounts["5010"].code, "debit": 1000},
-                {"account_code": accounts["1010"].code, "credit": 1000},
-            ]),
-            **encrypted_payload(),
-        })
-        assert resp.status_code == 400
-        assert "提出済み" in resp.get_json()["error"]
-
-    def test_create_allowed_for_unlocked_accounts(self, client, db, user, accounts,
-                                                    auditor, auth_header):
-        """提出済み科目を含まない仕訳は起票できる"""
-        from tests.conftest import encrypt_lines, encrypted_payload
-        self._setup_submitted_grant(db, user, accounts, auditor,
-                                     ["5020"])
-        resp = client.post("/api/v1/journals", headers=auth_header, json={
-            "fiscal_year": 2026, "fiscal_month": 2,
-            "lines": encrypt_lines([
-                {"account_code": accounts["5010"].code, "debit": 1000},
-                {"account_code": accounts["1010"].code, "credit": 1000},
-            ]),
-            **encrypted_payload(),
-        })
-        assert resp.status_code == 201
-
-    def test_delete_blocked_by_submit_lock(self, client, db, user, accounts,
-                                            auditor, auth_header):
-        """提出済み科目を含む伝票の削除が拒否される"""
-        entry = make_journal(db, user.id, "5010", "1010", 1000)
-        self._setup_submitted_grant(db, user, accounts, auditor,
-                                     ["5010"])
-        resp = client.delete(f"/api/v1/journals/{entry.id}", headers=auth_header)
-        assert resp.status_code == 400
-        assert "提出済み" in resp.get_json()["error"]
-
-    def test_delete_allowed_for_unlocked_entry(self, client, db, user, accounts,
-                                                auditor, auth_header):
-        """提出済み科目を含まない伝票は削除できる"""
-        entry = make_journal(db, user.id, "5010", "1010", 1000)
-        self._setup_submitted_grant(db, user, accounts, auditor,
-                                     ["5020"])
-        resp = client.delete(f"/api/v1/journals/{entry.id}", headers=auth_header)
-        assert resp.status_code == 200
 
 
 # =================================================================

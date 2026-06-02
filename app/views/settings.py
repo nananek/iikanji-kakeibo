@@ -848,34 +848,6 @@ def audit_delete(grant_id):
     return redirect(url_for("settings.audit"))
 
 
-@bp.route("/audit/<int:grant_id>/submit", methods=["POST"])
-@login_required
-def audit_submit(grant_id):
-    """Lv2: 提出"""
-    grant = AuditGrant.query.filter_by(
-        id=grant_id, owner_user_id=current_user.id, permission_level=2
-    ).first_or_404()
-    grant.status = "submitted"
-    grant.submitted_at = datetime.now(timezone.utc)
-    db.session.commit()
-    flash(f"「{grant.auditor.username}」に提出しました。", "success")
-    return redirect(url_for("settings.audit"))
-
-
-@bp.route("/audit/<int:grant_id>/unsubmit", methods=["POST"])
-@login_required
-def audit_unsubmit(grant_id):
-    """Lv2: 提出取消"""
-    grant = AuditGrant.query.filter_by(
-        id=grant_id, owner_user_id=current_user.id, permission_level=2
-    ).first_or_404()
-    grant.status = "draft"
-    grant.submitted_at = None
-    db.session.commit()
-    flash(f"「{grant.auditor.username}」への提出を取り消しました。", "success")
-    return redirect(url_for("settings.audit"))
-
-
 @bp.route("/audit/<int:grant_id>/accounts")
 @login_required
 def audit_accounts(grant_id):
@@ -982,10 +954,6 @@ def audit_accounts_save(grant_id):
     grant = AuditGrant.query.filter_by(
         id=grant_id, owner_user_id=current_user.id, permission_level=2
     ).first_or_404()
-
-    if grant.status == "submitted":
-        flash("提出済みのため公開科目を変更できません。", "danger")
-        return redirect(url_for("settings.audit_accounts", grant_id=grant_id))
 
     selected_codes = set(request.form.getlist("account_codes"))
 

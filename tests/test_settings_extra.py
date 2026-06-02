@@ -4,13 +4,11 @@
 こちらは passkeys / ai / api-keys / fiscal / audit / tax-form 等を網羅。
 """
 
-from datetime import datetime, timezone
-
 import pytest
 
 from app.models.ai_config import UserAIConfig
 from app.models.api_key import APIKey
-from app.models.audit import AuditGrant, AuditGrantAccount
+from app.models.audit import AuditGrant
 from app.models.fiscal import FiscalClose
 from app.models.webauthn import WebAuthnCredential
 
@@ -357,31 +355,6 @@ class TestAuditSettings:
         resp = logged_in_client.post(f"/settings/audit/{g.id}/delete")
         assert resp.status_code == 404
 
-    def test_submit_lv2(self, db, logged_in_client, user, accounts, auditor):
-        g = AuditGrant(
-            owner_user_id=user.id, auditor_user_id=auditor.id,
-            permission_level=2, status="draft",
-        )
-        db.session.add(g)
-        db.session.commit()
-        resp = logged_in_client.post(f"/settings/audit/{g.id}/submit")
-        assert resp.status_code in (302, 303)
-        db.session.refresh(g)
-        assert g.status == "submitted"
-
-    def test_unsubmit_lv2(self, db, logged_in_client, user, accounts, auditor):
-        g = AuditGrant(
-            owner_user_id=user.id, auditor_user_id=auditor.id,
-            permission_level=2, status="submitted",
-            submitted_at=datetime.now(timezone.utc),
-        )
-        db.session.add(g)
-        db.session.commit()
-        resp = logged_in_client.post(f"/settings/audit/{g.id}/unsubmit")
-        assert resp.status_code in (302, 303)
-        db.session.refresh(g)
-        assert g.status == "draft"
-
     def test_audit_accounts_get(self, db, logged_in_client, user, accounts, auditor):
         g = AuditGrant(
             owner_user_id=user.id, auditor_user_id=auditor.id,
@@ -409,22 +382,6 @@ class TestAuditSettings:
         assert "1010" in codes
         # 事業主 (3030) は自動追加
         assert "3030" in codes
-
-    def test_audit_accounts_save_blocked_when_submitted(self, db, logged_in_client,
-                                                         user, accounts, auditor):
-        g = AuditGrant(
-            owner_user_id=user.id, auditor_user_id=auditor.id,
-            permission_level=2, status="submitted",
-        )
-        db.session.add(g)
-        db.session.commit()
-        resp = logged_in_client.post(
-            f"/settings/audit/{g.id}/accounts",
-            data={"account_codes": ["5010"]},
-        )
-        assert resp.status_code in (302, 303)
-        # 保存されない
-        assert AuditGrantAccount.query.filter_by(audit_grant_id=g.id).count() == 0
 
 
 class TestTaxForm:

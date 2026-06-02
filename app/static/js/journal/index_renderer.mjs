@@ -12,10 +12,9 @@
 // 一括削除は既存 bulkSelect (Alpine) + bulk_delete endpoint を再利用。削除は
 // 既存 endpoint を htmx で叩く (動的生成行に htmx.process)。
 //
-// modifiable はサーバ check_entry_modifiable / is_entry_locked_for_owner と等価:
+// modifiable はサーバ check_entry_modifiable と等価:
 //   modifiable = !is_closing
 //                && !(period <= closed_period[year])   // period = fiscal_month ?? fiscal_period ?? date.month
-//                && !(いずれかの line.account_code が locked_codes に含まれる)
 // これは UI ヒント (チェックボックス/編集ボタン vs ロックアイコン) であり、
 // 実際の削除・編集はサーバ側 endpoint が再検証する (権威はサーバ)。
 //
@@ -74,29 +73,25 @@ function _periodOf(entry) {
 /**
  * 復号済み journals から仕訳帳一覧行を生成。
  *
- * サーバ check_entry_modifiable / is_entry_locked_for_owner と等価の編集可否
- * (modifiable) を付与し、date 降順 / entry_number 降順でソート (旧 order_by と
- * 同じ並び)。全 source を含む (仕訳帳は出納帳・AI・取込も表示)。
+ * サーバ check_entry_modifiable と等価の編集可否 (modifiable) を付与し、
+ * date 降順 / entry_number 降順でソート (旧 order_by と同じ並び)。全 source を
+ * 含む (仕訳帳は出納帳・AI・取込も表示)。
  *
  * @param {Array<Object>} journals     fetchJournalsForYear の戻り値
  * @param {Object} accountsMeta        code → {name} (監査 Lv2 はマスク済み)
  * @param {Object} opts
  * @param {Object} opts.closedPeriods  {year: closed_period}
- * @param {Array<string>} opts.lockedCodes  提出済み Lv2 科目コード
  * @returns {Array<Object>}
  */
 export function buildJournalRows(journals, accountsMeta, opts = {}) {
   const meta = accountsMeta || {};
   const closedPeriods = opts.closedPeriods || {};
-  const lockedCodes = new Set(opts.lockedCodes || []);
   const rows = [];
   for (const entry of journals || []) {
     const debitNames = [];
     const creditNames = [];
     let amount = 0;
-    let lockedByOwner = false;
     for (const line of entry.lines || []) {
-      if (lockedCodes.has(line.account_code)) lockedByOwner = true;
       if ((line.debit || 0) > 0) {
         debitNames.push(_accountName(line.account_code, meta));
         amount += line.debit || 0;
@@ -112,7 +107,7 @@ export function buildJournalRows(journals, accountsMeta, opts = {}) {
     const closed = closedPeriods[year];
     const periodLocked =
       closed != null && period != null && period <= closed;
-    const modifiable = !isClosing && !periodLocked && !lockedByOwner;
+    const modifiable = !isClosing && !periodLocked;
 
     const vouchers = entry.vouchers || [];
     rows.push({
@@ -388,7 +383,6 @@ async function _run() {
     });
     _allRows = buildJournalRows(journals, accountsMeta, {
       closedPeriods: extra.closed_periods || {},
-      lockedCodes: extra.locked_codes || [],
     });
     _rerender();
   } catch (e) {

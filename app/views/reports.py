@@ -10,7 +10,7 @@ from app.models.account import Account, AccountType
 from app.models.journal import JournalEntry, JournalEntryLine
 # app.services.tax のサーバ集計関数は Phase E3-F-4a/c/d/e で撤去済
 from flask_login import current_user as _current_user
-from app.services.audit import get_effective_user_id, get_allowed_account_codes, mask_account_name, is_entry_locked_for_owner
+from app.services.audit import get_effective_user_id, get_allowed_account_codes, mask_account_name
 from app.services.fiscal import check_entry_modifiable, period_range_filter, get_closed_period
 from app.views.helpers import get_grouped_accounts
 
@@ -337,10 +337,7 @@ def ledger():
             for v in voucher_rows:
                 voucher_map.setdefault(v.journal_entry_id, []).append(v)
             for eid, eo in entry_objs.items():
-                is_readonly = bool(
-                    check_entry_modifiable(user_id, eo) is not None
-                    or is_entry_locked_for_owner(user_id, eo)
-                )
+                is_readonly = check_entry_modifiable(user_id, eo) is not None
                 vlist = voucher_map.get(eid, [])
                 entries_meta[eid] = {
                     "is_readonly": is_readonly,

@@ -1,8 +1,8 @@
 // journal/index_renderer.buildJournalRows の Node 単体テスト。
 //
 // 仕訳帳一覧のクライアント描画 (E3-F PR-D-4-3) の行生成・編集可否 (modifiable)
-// 判定を検証する。modifiable は旧サーバ check_entry_modifiable /
-// is_entry_locked_for_owner と等価。
+// 判定を検証する。modifiable はサーバ check_entry_modifiable と等価
+// (旧 owner 編集ロックは #112 で廃止)。
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -87,14 +87,6 @@ test("確定期間より後の月は modifiable=true", () => {
   const rows = run([entry({ id: 1, entry_number: 1, date: "2026-03-15", fiscal_year: 2026, fiscal_month: 3 })],
     { closedPeriods: { 2026: 2 } });
   assert.equal(rows[0].modifiable, true);
-});
-
-test("locked_codes に含まれる科目があれば modifiable=false", () => {
-  const rows = run([entry({
-    id: 1, entry_number: 1, date: "2026-05-15",
-    lines: [{ account_code: "5010", debit: 100, credit: 0 }, { account_code: "1010", debit: 0, credit: 100 }],
-  })], { lockedCodes: ["5010"] });
-  assert.equal(rows[0].modifiable, false);
 });
 
 test("period は fiscal_month → fiscal_period → date.month の順で導出", () => {
