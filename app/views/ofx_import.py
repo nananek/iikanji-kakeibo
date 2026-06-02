@@ -1,11 +1,10 @@
 """OFX明細取り込みビュー"""
 
 from flask import Blueprint, render_template, redirect, url_for, flash, request, session
-from flask_login import login_required
+from flask_login import login_required, current_user
 
 from app.models.account import Account, AccountType
 from app.models.ai_config import UserAIConfig
-from app.services.audit import get_effective_user_id
 from app.services.ofx_import import parse_ofx
 from app.services.fiscal import (
     get_restricted_before_year,
@@ -24,7 +23,7 @@ MAX_OFX_SIZE = 5 * 1024 * 1024  # 5MB
 @login_required
 def upload():
     """Step 1: OFXファイルアップロード"""
-    grouped_accounts = get_grouped_accounts(get_effective_user_id())
+    grouped_accounts = get_grouped_accounts(current_user.id)
 
     if request.method == "POST":
         ofx_file = request.files.get("ofx_file")
@@ -100,7 +99,7 @@ def confirm():
         flash("データがありません。もう一度アップロードしてください。", "warning")
         return redirect(url_for("ofx_import.upload"))
 
-    user_id = get_effective_user_id()
+    user_id = current_user.id
     payment_account = Account.query.filter_by(user_id=user_id, code=payment_account_code).first()
 
     expense_type = AccountType.query.filter_by(code="expense").first()

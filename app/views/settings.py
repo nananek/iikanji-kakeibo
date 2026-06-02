@@ -6,7 +6,6 @@ from flask_login import login_required, logout_user, current_user
 
 from app.extensions import db, limiter
 from app.models.user import User
-from app.services.audit import get_effective_user_id
 from app.models.account import Account, AccountType
 from app.models.webauthn import WebAuthnCredential
 from app.models.ai_config import UserAIConfig
@@ -580,7 +579,7 @@ def oauth_token_revoke(token_id):
 def fiscal():
     """月次確定管理ページ"""
     year = request.args.get("year", date.today().year, type=int)
-    user_id = get_effective_user_id()
+    user_id = current_user.id
     year_open = is_year_open(user_id, year)
     closed = get_closed_period(user_id, year)
 
@@ -623,7 +622,7 @@ def fiscal():
 def fiscal_open_year():
     """古い年度を開設する"""
     year = request.form.get("year", type=int)
-    user_id = get_effective_user_id()
+    user_id = current_user.id
 
     if is_year_open(user_id, year):
         flash(f"{year}年度は既に開設済みです。", "info")
@@ -663,7 +662,7 @@ def fiscal_close():
     year = request.form.get("year", type=int)
     period = request.form.get("period", type=int)
 
-    err = close_period(get_effective_user_id(), year, period)
+    err = close_period(current_user.id, year, period)
     label = PERIOD_LABELS.get(period, f"{period}月")
 
     if is_htmx:
@@ -696,7 +695,7 @@ def fiscal_reopen():
     year = request.form.get("year", type=int)
     period = request.form.get("period", type=int)
 
-    err = reopen_period(get_effective_user_id(), year, period)
+    err = reopen_period(current_user.id, year, period)
     label = PERIOD_LABELS.get(period, f"{period}月")
 
     if is_htmx:
@@ -1026,7 +1025,7 @@ def tax_form():
     form_type = request.args.get("form_type", "general")
     if form_type not in ("general", "real_estate"):
         form_type = "general"
-    user_id = get_effective_user_id()
+    user_id = current_user.id
 
     fields = get_mappable_fields(form_type)
     field_mappings = get_user_mappings(user_id, form_type)
@@ -1070,7 +1069,7 @@ def tax_form_save_mappings():
     """マッピングの一括保存"""
     from app.services.tax_form import save_mappings
 
-    user_id = get_effective_user_id()
+    user_id = current_user.id
     mapping_data = []
 
     for key, value in request.form.items():
@@ -1096,7 +1095,7 @@ def tax_form_bulk_create():
     """決算書欄から科目を一括作成"""
     from app.services.tax_form import bulk_create_accounts
 
-    user_id = get_effective_user_id()
+    user_id = current_user.id
     field_ids = [int(fid) for fid in request.form.getlist("field_ids") if fid]
 
     form_type = request.form.get("form_type", "general")

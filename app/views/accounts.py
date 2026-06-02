@@ -8,7 +8,6 @@ from sqlalchemy import func
 from app.extensions import db
 from app.models.account import Account, AccountType
 from app.models.journal import JournalEntry, JournalEntryLine
-from app.services.audit import get_effective_user_id, get_allowed_account_codes
 
 
 def _get_account_balance(account):
@@ -69,15 +68,10 @@ def index():
     account_types = AccountType.query.order_by(AccountType.display_order).all()
     accounts = (
         Account.query
-        .filter_by(user_id=get_effective_user_id())
+        .filter_by(user_id=current_user.id)
         .order_by(Account.code)
         .all()
     )
-
-    # Lv2: 公開科目のみ
-    allowed_codes = get_allowed_account_codes()
-    if allowed_codes is not None:
-        accounts = [a for a in accounts if a.code in allowed_codes]
 
     grouped = {}
     for at in account_types:
@@ -101,7 +95,7 @@ def index():
     # 対象年度を列挙するため、ユーザーの仕訳が存在する年度の範囲を渡す。
     year_range = db.session.query(
         func.min(JournalEntry.fiscal_year), func.max(JournalEntry.fiscal_year)
-    ).filter(JournalEntry.user_id == get_effective_user_id()).first()
+    ).filter(JournalEntry.user_id == current_user.id).first()
     if year_range and year_range[0] is not None:
         fiscal_years = list(range(int(year_range[0]), int(year_range[1]) + 1))
     else:
@@ -126,7 +120,7 @@ def index():
 def api_get(account_code):
     """編集・コピー用: アカウントデータをJSONで返す"""
     account = Account.query.filter_by(
-        user_id=get_effective_user_id(), code=account_code
+        user_id=current_user.id, code=account_code
     ).first_or_404()
 
     copy = request.args.get("copy") == "1"
@@ -144,7 +138,7 @@ def api_get(account_code):
         "system_role": account.system_role or "",
     }
     if copy:
-        data["code"] = _next_code(account.code, get_effective_user_id())
+        data["code"] = _next_code(account.code, current_user.id)
         data["is_system"] = False
         data["system_role"] = ""
 
@@ -156,7 +150,7 @@ def api_get(account_code):
 def api_balance(account_code):
     """科目の残高を返す"""
     account = Account.query.filter_by(
-        user_id=get_effective_user_id(), code=account_code
+        user_id=current_user.id, code=account_code
     ).first_or_404()
     balance = _get_account_balance(account)
     return jsonify({
@@ -187,13 +181,13 @@ def api_create():
         return jsonify({"error": "科目区分は必須です。"}), 400
 
     existing = Account.query.filter_by(
-        user_id=get_effective_user_id(), code=code
+        user_id=current_user.id, code=code
     ).first()
     if existing:
         return jsonify({"error": "この科目コードは既に使われています。"}), 400
 
     account = Account(
-        user_id=get_effective_user_id(),
+        user_id=current_user.id,
         account_type_id=int(account_type_id),
         code=code,
         name=name,
@@ -215,7 +209,7 @@ def api_create():
 def api_update(account_code):
     """更新API"""
     account = Account.query.filter_by(
-        user_id=get_effective_user_id(), code=account_code
+        user_id=current_user.id, code=account_code
     ).first_or_404()
 
     data = request.get_json()
@@ -263,7 +257,7 @@ def api_update(account_code):
             return jsonify({"error": "科目コードは10文字以内にしてください。"}), 400
 
         existing = Account.query.filter_by(
-            user_id=get_effective_user_id(), code=code
+            user_id=current_user.id, code=code
         ).filter(Account.code != account_code).first()
         if existing:
             return jsonify({"error": "この科目コードは既に使われています。"}), 400

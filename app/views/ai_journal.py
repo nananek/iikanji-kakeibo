@@ -7,13 +7,12 @@ from flask import (
     Blueprint, render_template, redirect, url_for, flash, request, session,
     jsonify,
 )
-from flask_login import login_required
+from flask_login import login_required, current_user
 
 from app.extensions import db
 from app.models.ai_config import UserAIConfig
 from app.models.ai_draft import AIDraft
 from app.models.user import User
-from app.services.audit import get_effective_user_id
 from app.services.fiscal import get_closed_periods_map, get_restricted_before_year
 from app.services.image import serve_draft_image, serve_voucher_image
 from app.services.storage import (
@@ -30,7 +29,7 @@ bp = Blueprint("ai_journal", __name__, url_prefix="/ai-journal")
 @login_required
 def upload():
     """証憑画像アップロード画面"""
-    user_id = get_effective_user_id()
+    user_id = current_user.id
     config = UserAIConfig.query.filter_by(user_id=user_id).first()
     draft_count = AIDraft.query.filter_by(
         user_id=user_id, status="analyzed"
@@ -88,7 +87,7 @@ def drafts_save():
         return jsonify({"error": "保存するデータがありません。"}), 400
 
     draft = AIDraft.query.get(draft_id)
-    if not draft or draft.user_id != get_effective_user_id():
+    if not draft or draft.user_id != current_user.id:
         return jsonify({"error": "保存するデータがありません。"}), 400
 
     draft.status = "analyzed"
@@ -102,7 +101,7 @@ def drafts_save():
 @login_required
 def drafts():
     """一時保存一覧"""
-    user_id = get_effective_user_id()
+    user_id = current_user.id
     items = (
         AIDraft.query
         .filter_by(user_id=user_id)
@@ -180,7 +179,7 @@ def drafts():
 def draft_image(draft_id):
     """ドラフトの画像を返す"""
     draft = AIDraft.query.get_or_404(draft_id)
-    if draft.user_id != get_effective_user_id():
+    if draft.user_id != current_user.id:
         return "", 403
     try:
         # E5 (#111): E2EE 下書き (encrypted_meta_blob) は octet-stream 配信、
@@ -195,7 +194,7 @@ def draft_image(draft_id):
 def voucher_image(voucher_id):
     """証憑画像を返す"""
     voucher = Voucher.active().filter_by(id=voucher_id).first_or_404()
-    if voucher.user_id != get_effective_user_id():
+    if voucher.user_id != current_user.id:
         return "", 403
     try:
         return serve_voucher_image(voucher)
@@ -208,7 +207,7 @@ def voucher_image(voucher_id):
 def drafts_delete(draft_id):
     """ドラフト削除"""
     draft = AIDraft.query.get_or_404(draft_id)
-    if draft.user_id != get_effective_user_id():
+    if draft.user_id != current_user.id:
         flash("権限がありません。", "danger")
         return redirect(url_for("ai_journal.drafts"))
 
@@ -241,7 +240,7 @@ def drafts_delete(draft_id):
 def drafts_review(draft_id):
     """ドラフトからreview画面へ遷移"""
     draft = AIDraft.query.get_or_404(draft_id)
-    if draft.user_id != get_effective_user_id():
+    if draft.user_id != current_user.id:
         flash("権限がありません。", "danger")
         return redirect(url_for("ai_journal.drafts"))
 
@@ -265,7 +264,7 @@ def review():
     draft = None
     if draft_id:
         draft = AIDraft.query.get(draft_id)
-        if draft and draft.user_id != get_effective_user_id():
+        if draft and draft.user_id != current_user.id:
             draft = None
 
     if not draft or not draft.suggestions_json:
@@ -280,7 +279,7 @@ def review():
 
     selected = suggestions[suggestion_index]
 
-    user_id = get_effective_user_id()
+    user_id = current_user.id
     grouped_accounts = get_grouped_accounts(user_id)
     closed_periods = get_closed_periods_map(user_id)
     restricted_before = get_restricted_before_year(user_id)
