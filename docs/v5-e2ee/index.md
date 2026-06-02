@@ -338,6 +338,8 @@ Discord 等に **平文で送信** している。E3 で仕訳が暗号化され
 
 ## 7. 監査者連携
 
+> **実装状況 (2026-06)**: モデル (d) 非同期ワークフロー方式が E5 ([#112](https://github.com/nananek/iikanji-kakeibo/issues/112)) で実装完了。旧リアルタイム代理閲覧 (`acting_as_user_id` / モデル a-c) は撤去済み。利用者向けの移行手順は **[監査連携の移行ガイド](audit-migration.html)** を参照。
+
 監査者連携には大きく 2 つのモデルがある:
 
 - **鍵共有モデル (a/b/c)**: owner の MK を auditor に渡す。auditor がログインして

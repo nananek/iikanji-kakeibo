@@ -39,8 +39,6 @@
 - `create_app()` で Flask アプリを生成
 - 16個の Blueprint を登録
 - WebAuthn API は CSRF を免除 (`csrf.exempt`)
-- before_request フックで監査権限を制御
-- テンプレートフィルタ `mask_account` で監査時の科目隠蔽
 - CLI: `flask seed`（科目区分投入）、`flask seed-user`（ユーザー別科目投入）
 
 ### Blueprint 一覧
@@ -60,7 +58,7 @@
 | ai_journal | `/ai-journal` | AI証憑仕訳 |
 | settings | `/settings` | 設定トップ・外部AI・Passkey・月次確定・通知・APIキー管理・監査アクセス |
 | webauthn | `/webauthn` | Passkey API（JSON、CSRF免除） |
-| auditor | `/auditor` | 監査ダッシュボード・代理閲覧 |
+| auditor | `/auditor` | 監査ダッシュボード・受信スナップショット閲覧（非同期ワークフロー） |
 | vouchers | `/vouchers` | 証憑一覧（電帳法検索要件対応） |
 | api | `/api/v1` | REST API（仕訳CRUD・AI証憑仕訳・Bearer認証） |
 | oauth | `/oauth` | OAuth 2.0 Device Authorization Grant (RFC 8628) |
@@ -76,7 +74,8 @@
 | JournalEntryLine | journal_entry_lines | journal_entry_id, account_user_id, account_code, debit_amount, credit_amount |
 | FiscalClose | fiscal_closes | user_id, year, closed_period |
 | MedicalExpense | medical_expenses | patient_name, hospital_name, amount_paid, insurance_reimbursement, provider_type |
-| AuditGrant | audit_grants | owner_user_id, auditor_user_id, permission_level (1/2/3), status |
+| AuditGrant | audit_grants | owner_user_id, auditor_user_id, permission_level (1/2/3), revoked_at（status/submitted_at は代理閲覧撤去で廃止・DROP予定） |
+| AuditPackage / AuditResponse | audit_packages / audit_responses | 非同期監査ワークフロー（owner→auditor の HPKE 暗号化スナップショット / auditor→owner の修正案） |
 | AuditGrantAccount | audit_grant_accounts | audit_grant_id, account_user_id, account_code（Lv2の可視科目） |
 | AIDraft | ai_drafts | user_id, status (pending/analyzed), image_path, suggestions (JSON), discord_webhook_url, discord_message_id |
 | UserAIConfig | user_ai_configs | provider, api_key_encrypted, model_name, custom_prompt, base_url |
@@ -96,7 +95,6 @@
 |---------|------|
 | accounting.py | 仕訳自動生成（出納帳→仕訳変換、振替、直接仕訳） |
 | fiscal.py | 月次確定・年度オープン判定・期間チェック・元入金科目取得 |
-| audit.py | 監査権限・代理閲覧・科目隠蔽・提出ロック |
 | csv_import.py | CSVパース（エンコーディング自動判定・日付/金額パース） |
 | ofx_import.py | OFX/QFXパース |
 | ai_receipt.py | AI証憑解析・Web明細抽出（OpenAI/Gemini/Claude/Ollama対応） |
@@ -178,10 +176,9 @@
 - 確定済み期間の仕訳は追加・変更・削除不可
 
 ### 監査用アカウント
-- Lv1: 集計結果のみ閲覧
-- Lv2: 指定された税務科目の閲覧・編集、非公開科目は「事業主」で隠蔽
-- Lv3: 本人同等の全操作
-- セッションに `acting_as_user_id` で代理閲覧状態を管理
+- Lv1: 集計結果のみ / Lv2: 指定税務科目のみ / Lv3: 本人同等（`AuditGrant.permission_level`）
+- **非同期スナップショットワークフロー**（owner が HPKE 暗号化したスナップショットを送信 → auditor が復号・監査 → 修正案を暗号化返信）。`AuditPackage` / `AuditResponse` で管理
+- 旧リアルタイム代理閲覧（`acting_as_user_id` セッション方式）は撤去済み（#112）。移行手順は `docs/v5-e2ee/audit-migration.md`
 
 ### CSRF
 - `CSRFProtect()` でグローバル有効
