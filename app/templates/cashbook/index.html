@@ -3,7 +3,7 @@
 
 {% block content %}
 <script id="cashbook-index-params" type="application/json">
-{{ {"year": year, "user_id": effective_user_id, "is_audit_proxy": session.get('acting_as_user_id') is not none} | tojson }}
+{{ {"year": year, "user_id": effective_user_id} | tojson }}
 </script>
 <script id="cashbook-index-accounts-meta" type="application/json">
 {{ accounts_meta | tojson }}

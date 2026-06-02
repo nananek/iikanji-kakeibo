@@ -53,7 +53,6 @@ async function _run() {
     console.warn("bcb_sync_hook: failed to parse params", e);
     return;
   }
-  if (params.is_audit_proxy) return;
   if (typeof params.user_id !== "number") return;
   if (typeof params.year !== "number") return;
   // closed_period = -1 (全期間 reopen 後) でも stale 削除が走るよう、< 0 で

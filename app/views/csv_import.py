@@ -272,9 +272,7 @@ def confirm():
     """Step 3: 確認画面 (取込は batch API 経由)。
 
     Phase E3-F-5 で旧サーバ POST 経路を撤去。確定は `submitImportBatch`
-    (entries_builder + /api/v1/journals/batch) のみ。E3-F-1 で
-    resolve_bearer_or_session が acting_as_user_id を解決するため、監査
-    代理閲覧時も batch API で正しいオーナー仕訳として処理される。
+    (entries_builder + /api/v1/journals/batch) のみ。
     """
     data_key = session.get("csv_data_key")
     payment_account_code = session.get("csv_payment_account_code")

@@ -604,16 +604,12 @@ def fiscal():
                 "can_reopen": p == closed,
             })
 
-    # 監査代理閲覧時は BCB API が current_user.id で動くため、対象ユーザー
-    # ではなく監査者の BCB が作られる。クライアント hook は is_audit_proxy で skip。
-    is_audit_proxy = flask_session.get("acting_as_user_id") is not None
     return render_template(
         "settings/fiscal.html",
         year=year,
         periods=periods,
         closed_period=closed,
         year_open=year_open,
-        is_audit_proxy=is_audit_proxy,
     )
 
 
@@ -1092,15 +1088,9 @@ def delete_account():
     パスワード再認証 + 同意チェックを経て、ユーザーの全データを削除する。
     電帳法保管対象の `VoucherAuditLog` は user_id NULL 化で匿名化保持、
     他は物理削除 (詳細は `app.services.account_deletion` 参照)。
-
-    代理閲覧中 (`acting_as_user_id` セッション設定) は破壊操作を禁止。
     """
     from app.forms.settings import DeleteAccountForm
     from app.services.account_deletion import delete_user_account
-
-    if flask_session.get("acting_as_user_id") is not None:
-        flash("代理閲覧中はアカウントを削除できません。", "danger")
-        return redirect(url_for("settings.index"))
 
     form = DeleteAccountForm()
     if form.validate_on_submit():

@@ -74,13 +74,6 @@ test("hydrateEditForm: 新規 (isEdit=false) は skip", async () => {
   assert.equal(r, null);
 });
 
-test("hydrateEditForm: 監査代理中は skip", async () => {
-  const r = await hydrateEditForm({
-    isEdit: true, entryId: 1, userId: 1, isProxyMode: true,
-  });
-  assert.equal(r, null);
-});
-
 test("hydrateEditForm: entryId 欠落は skip", async () => {
   const r = await hydrateEditForm({ isEdit: true, entryId: null, userId: 1 });
   assert.equal(r, null);

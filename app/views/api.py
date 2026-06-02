@@ -8,7 +8,7 @@ from base64 import b64decode, b64encode
 from binascii import Error as BinasciiError
 from datetime import datetime, timezone
 
-from flask import Blueprint, current_app, jsonify, request, g, session as flask_session
+from flask import Blueprint, current_app, jsonify, request, g
 
 from app.extensions import db, limiter
 from app.models.api_key import APIKey
@@ -144,65 +144,6 @@ def _is_sha256_hex(s) -> bool:
     except ValueError:
         return False
     return True
-
-
-def _proxy_block_resp():
-    return jsonify({
-        "error": "代理閲覧モードでは暗号化書き込みできません。本人アカウントで実行してください。",
-    }), 403
-
-
-def _audit_proxy_blocks_encrypted_writes(payload):
-    """代理閲覧 (acting_as_user_id セッション) 中、payload に encrypted_blob /
-    blob_iv が含まれていれば 403 を返す。該当しなければ None。
-
-    クライアント側 AAD は監査人の userId で構築されるため、owner DB に
-    保存すると永久に復号不能になる。一方、平文-only の POST は既存設計
-    (Lv3 = 本人同等、test_resolve_acting_as) で許可されているのでブロック
-    しない。
-
-    クライアント側 (alpine-components.js の `isProxyMode`) のガードに加えて
-    curl 直接叩きへの defense-in-depth として機能する。
-    """
-    if not flask_session.get("acting_as_user_id"):
-        return None
-    if not isinstance(payload, dict):
-        return None
-    # single POST / PUT: top-level に encrypted_blob/blob_iv
-    if payload.get("encrypted_blob") or payload.get("blob_iv"):
-        return _proxy_block_resp()
-    # PUT 経路では entries[] が無く top-level lines[] が直接置かれるため、
-    # ここで line-level の encrypted_blob も検出する必要がある。
-    top_lines = payload.get("lines")
-    if isinstance(top_lines, list):
-        for ln in top_lines:
-            if isinstance(ln, dict) and (
-                ln.get("encrypted_blob") or ln.get("blob_iv")
-            ):
-                return _proxy_block_resp()
-    # batch POST: entries[] / その lines[] を 1 レベル再帰でチェック
-    entries = payload.get("entries")
-    if isinstance(entries, list):
-        for e in entries:
-            if not isinstance(e, dict):
-                continue
-            if e.get("encrypted_blob") or e.get("blob_iv"):
-                return _proxy_block_resp()
-            lines = e.get("lines")
-            if isinstance(lines, list):
-                for ln in lines:
-                    if isinstance(ln, dict) and (
-                        ln.get("encrypted_blob") or ln.get("blob_iv")
-                    ):
-                        return _proxy_block_resp()
-    return None
-
-
-def _audit_proxy_blocks_all_writes():
-    """代理閲覧中なら無条件 403。backup/restore など破壊的書き込み用。"""
-    if flask_session.get("acting_as_user_id"):
-        return _proxy_block_resp()
-    return None
 
 
 def _decode_record_crypto(d: dict, label: str, blob_key: str, iv_key: str,
@@ -536,12 +477,6 @@ def create_journals_batch():
     if not data:
         return jsonify({"error": "JSON ボディが必要です。"}), 400
 
-    # 代理閲覧中の暗号化書込みを拒否 (AAD 不一致で復号不能になるため)。
-    # 平文 POST は既存設計通り Lv3 で許可。
-    proxy_block = _audit_proxy_blocks_encrypted_writes(data)
-    if proxy_block:
-        return proxy_block
-
     entries_in = data.get("entries")
     if not isinstance(entries_in, list) or not entries_in:
         return jsonify({"error": "entries は必須です（非空配列）。"}), 400
@@ -649,10 +584,6 @@ def list_balance_cache_blobs():
     Query: year=YYYY (必須)
     Response: {blobs: [{year, period, encrypted_blob, blob_iv, updated_at}]}
     クライアントが起動時に自分の MK で復号して IndexedDB に展開する。
-
-    TODO(E3-F): 監査代理閲覧 (session["acting_as_user_id"]) に未対応。
-    resolve_bearer_or_session が acting_as_user_id を見るようになったら、
-    Lv3 監査員のセッションでも対象ユーザーの blob が返るようになる。
     """
     year_str = request.args.get("year")
     if not year_str:
@@ -687,8 +618,6 @@ def list_balance_cache_blobs():
 @bp.route("/balance-cache-blobs/<int:year>/<int:period>", methods=["PUT"])
 @auth_required(write=True, scope="journals:create", allow_session=True)
 @limiter.limit("60 per hour", key_func=rate_limit_key)
-# TODO(E3-F): 監査代理閲覧 (acting_as_user_id) 対応は resolve_bearer_or_session
-# 側の改修待ち。代理閲覧中に PUT すると現状は監査員自身の blob を更新する。
 def upsert_balance_cache_blob(year, period):
     """(year, period) の blob を upsert する。
 
@@ -744,8 +673,6 @@ def upsert_balance_cache_blob(year, period):
 @bp.route("/balance-cache-blobs/<int:year>", methods=["DELETE"])
 @auth_required(write=True, scope="journals:delete", allow_session=True)
 @limiter.limit("60 per hour", key_func=rate_limit_key)
-# TODO(E3-F): 監査代理閲覧 (acting_as_user_id) 対応は resolve_bearer_or_session
-# 側の改修待ち。
 def delete_balance_cache_blobs(year):
     """指定年の blob を削除。確定解除時にクライアントから呼ぶ想定。
     Query: from_period=N (任意、N 以降のみ削除。省略時は year 全部)
@@ -794,10 +721,6 @@ def backup_export():
     含めないもの:
       webauthn_credentials, api_keys, oauth_tokens, voucher_audit_log
       → 復元時はユーザーが再登録する想定 (鍵類は災害時に再生成が安全)。
-
-    監査代理閲覧では他人のデータを export できない: 監査者の MK ではオーナーの
-    encrypted_blob を復号できないため、結果として復号失敗するが、API としては
-    監査者自身のデータが返るだけ (acting_as 解決は将来 PR)。
 
     画像取得失敗 (ストレージ欠落 / I/O エラー) はその voucher / ai_draft の
     image_data を null にして "_imageError" フィールドにメッセージを記録し、
@@ -1103,11 +1026,6 @@ def backup_restore():
         restore_user_backup,
     )
 
-    # restore は破壊的全置換のため、代理閲覧中は無条件で拒否。
-    proxy_block = _audit_proxy_blocks_all_writes()
-    if proxy_block:
-        return proxy_block
-
     if g.auth_user.user_type == "auditor":
         return jsonify({"error": "監査アカウントはリストア対象外です。"}), 403
 
@@ -1379,10 +1297,6 @@ def update_journal(entry_id):
     data = request.get_json(silent=True)
     if not data:
         return jsonify({"error": "JSON ボディが必要です。"}), 400
-
-    proxy_block = _audit_proxy_blocks_encrypted_writes(data)
-    if proxy_block:
-        return proxy_block
 
     user_id = g.auth_user.id
     entry = JournalEntry.query.filter_by(
@@ -2026,13 +1940,9 @@ def init_ai_draft_endpoint():
     aad_id は 63bit のため、JS Number の 2^53 精度を超えて欠落しないよう
     **文字列**で返す (クライアントは BigInt でパースして AAD に束縛する)。
 
-    代理閲覧 (acting_as) 中は一律 403。下書きは E2EE のみで、監査人は owner の
-    MK を持たないため owner が復号可能な暗号文を作れない (voucher init と同じ)。
+    下書きは E2EE のみで、監査人は owner の MK を持たないため owner が復号可能な
+    暗号文を作れない (voucher init と同じ)。
     """
-    blocked = _audit_proxy_blocks_all_writes()
-    if blocked:
-        return blocked
-
     user_id = g.auth_user.id
     data = request.get_json(silent=True) or {}
     comment = (data.get("comment") or "").strip()[:500]
@@ -2062,10 +1972,6 @@ def upload_ai_draft_endpoint(draft_id):
     サーバは file_hash_cipher = SHA-256(image_ct) を計算して保存する。
     init 直後の空 row のみ受け付け、既にアップロード済みなら 409。
     """
-    blocked = _audit_proxy_blocks_all_writes()
-    if blocked:
-        return blocked
-
     user_id = g.auth_user.id
     draft = AIDraft.query.filter_by(id=draft_id, user_id=user_id).first()
     if not draft:
@@ -2147,13 +2053,9 @@ def init_voucher_endpoint():
     aad_id は 63bit のため、JS Number の 2^53 精度を超えて欠落しないよう
     **文字列**で返す (クライアントは BigInt でパースして AAD に束縛する)。
 
-    代理閲覧 (acting_as) 中は一律 403。証憑は E2EE のみで平文 write 経路が無く、
-    監査人は owner の MK を持たないため owner が復号可能な暗号文を作れない。
+    証憑は E2EE のみで平文 write 経路が無く、監査人は owner の MK を持たない
+    ため owner が復号可能な暗号文を作れない。
     """
-    blocked = _audit_proxy_blocks_all_writes()
-    if blocked:
-        return blocked
-
     user_id = g.auth_user.id
     data = request.get_json(silent=True) or {}
 
@@ -2194,10 +2096,6 @@ def upload_voucher_endpoint(voucher_id):
     サーバは file_hash_cipher = SHA-256(image_ct) を計算して保存する。
     電帳法の改ざん防止のため、既に確定済みの証憑への上書きは 409 で拒否する。
     """
-    blocked = _audit_proxy_blocks_all_writes()
-    if blocked:
-        return blocked
-
     user_id = g.auth_user.id
     voucher = Voucher.active().filter_by(
         id=voucher_id, user_id=user_id,
@@ -2546,11 +2444,6 @@ def upsert_medical_expense():
     data = request.get_json(silent=True)
     if not data:
         return jsonify({"error": "JSON ボディが必要です。"}), 400
-
-    # 代理閲覧中の暗号化書込みは AAD 不一致で復号不能になるため拒否。
-    proxy_block = _audit_proxy_blocks_encrypted_writes(data)
-    if proxy_block:
-        return proxy_block
 
     user_id = g.auth_user.id
 

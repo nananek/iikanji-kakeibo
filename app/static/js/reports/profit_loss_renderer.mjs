@@ -181,13 +181,6 @@ async function _run() {
       );
       return;
     }
-    if (params.is_audit_proxy) {
-      _setStatus(
-        "監査代理閲覧中です。オーナーの暗号化された仕訳はあなたの暗号鍵では復号できないため、損益計算書は空表示になります (E2EE アーキテクチャ仕様)。",
-        "info",
-      );
-      return;
-    }
     _clearStatus();
 
     // 事業科目は P/L から除外。accountTypeByCode の生成時に biz_codes を skip

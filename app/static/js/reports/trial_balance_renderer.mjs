@@ -244,14 +244,6 @@ async function _run() {
       _clearTbody();
       return;
     }
-    if (params.is_audit_proxy) {
-      _setStatusMessage(
-        "監査代理閲覧中です。オーナーの暗号化された仕訳はあなたの暗号鍵では復号できないため、試算表は空表示になります (E2EE アーキテクチャ仕様)。",
-        "info",
-      );
-      _clearTbody();
-      return;
-    }
     _clearStatus();
     const pf = params.fiscal_period_from;
     const pt = params.fiscal_period_to;

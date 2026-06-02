@@ -6,7 +6,7 @@
    GET /api/v1/journals/batches を fetch し、復号 blob から種別ラベルと日付
    範囲を組み立ててクライアント描画する (batches_renderer.mjs)。 #}
 <script id="batches-params" type="application/json">
-{{ {"user_id": effective_user_id, "is_audit_proxy": session.get('acting_as_user_id') is not none} | tojson }}
+{{ {"user_id": effective_user_id} | tojson }}
 </script>
 <script id="batches-source-labels" type="application/json">
 {{ source_labels | tojson }}

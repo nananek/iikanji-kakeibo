@@ -385,26 +385,6 @@ class TestVoucherDelete:
         # 削除されていない
         assert db.session.get(Voucher, voucher.id) is not None
 
-    def test_delete_blocked_during_proxy_view(
-        self, logged_in_client, db, user, app, mock_storage, reset_limiter,
-    ):
-        """代理閲覧中 (acting_as_user_id セッション) は削除禁止."""
-        voucher = self._make_voucher(db, user, file_size=2 * MB)
-
-        with logged_in_client.session_transaction() as sess:
-            sess["acting_as_user_id"] = 999  # 何かしらの id
-
-        resp = logged_in_client.post(
-            f"/vouchers/{voucher.id}/delete", follow_redirects=False,
-        )
-        # acting_as_user_id がセットされている = 代理閲覧モードなので
-        # delete はリダイレクトされる (redirect は 302)
-        assert resp.status_code == 302
-        # Voucher は残っている
-        assert db.session.get(Voucher, voucher.id) is not None
-        # StorageUsage も解放されない
-        assert db.session.get(StorageUsage, user.id).used_bytes == 2 * MB
-
     def test_delete_persists_audit_log(
         self, logged_in_client, db, user, app, mock_storage, reset_limiter,
     ):

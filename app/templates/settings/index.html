@@ -184,8 +184,6 @@
   {% endif %}
 </div>
 
-{# 退会フローは本人モード時のみ表示 (代理閲覧中の auditor は破壊操作禁止) #}
-{% if session.get('acting_as_user_id') is none %}
 <h5 class="mt-4 mb-3 text-danger"><i class="bi bi-exclamation-triangle"></i> 危険ゾーン</h5>
 <div class="card mb-4 shadow-sm border-danger">
   <div class="card-body">
@@ -202,5 +200,4 @@
     </a>
   </div>
 </div>
-{% endif %}
 {% endblock %}

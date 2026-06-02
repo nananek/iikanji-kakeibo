@@ -3,7 +3,7 @@
 
 {% block content %}
 <script id="vouchers-index-params" type="application/json">
-{{ {"user_id": effective_user_id, "can_delete": can_delete, "is_audit_proxy": session.get('acting_as_user_id') is not none} | tojson }}
+{{ {"user_id": effective_user_id} | tojson }}
 </script>
 <script id="vouchers-index-meta" type="application/json">
 {{ voucher_meta | tojson }}

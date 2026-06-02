@@ -173,7 +173,6 @@ function _clearStatus() {
 
 // 描画状態。
 let _allCards = [];
-let _canDelete = false;
 let _csrfToken = "";
 // E4 PR-C2: 暗号化証憑の復号表示用。MK 解錠かつ本人モード時のみ _client を
 // 保持し (ページ生存中はクローズしない)、サムネ/本体を fetch + 復号する。
@@ -417,19 +416,17 @@ function _renderCard(c) {
     fRight.appendChild(jl);
   }
 
-  if (_canDelete) {
-    const df = _postForm(
-      "/vouchers/" + encodeURIComponent(String(c.voucher_id)) + "/delete",
-      "この証憑を削除します。電帳法の訂正削除履歴はアプリケーションログにのみ残ります。削除しますか？",
-    );
-    const db_ = document.createElement("button");
-    db_.type = "submit";
-    db_.className = "btn btn-outline-danger btn-sm py-0 px-1";
-    db_.title = "削除";
-    db_.innerHTML = '<i class="bi bi-trash"></i>';
-    df.appendChild(db_);
-    fRight.appendChild(df);
-  }
+  const df = _postForm(
+    "/vouchers/" + encodeURIComponent(String(c.voucher_id)) + "/delete",
+    "この証憑を削除します。電帳法の訂正削除履歴はアプリケーションログにのみ残ります。削除しますか？",
+  );
+  const db_ = document.createElement("button");
+  db_.type = "submit";
+  db_.className = "btn btn-outline-danger btn-sm py-0 px-1";
+  db_.title = "削除";
+  db_.innerHTML = '<i class="bi bi-trash"></i>';
+  df.appendChild(db_);
+  fRight.appendChild(df);
 
   footer.appendChild(fLeft);
   footer.appendChild(fRight);
@@ -485,7 +482,6 @@ async function _run() {
     _setStatus("証憑一覧の初期化に失敗しました (params)。", "danger");
     return;
   }
-  _canDelete = !!params.can_delete;
   _userId = params.user_id;
   const csrfMeta = document.querySelector('meta[name="csrf-token"]');
   _csrfToken = csrfMeta ? csrfMeta.getAttribute("content") : "";
@@ -546,14 +542,6 @@ async function _run() {
       _setStatus(
         "暗号鍵 (MK) がロックされているため、仕訳の日付・摘要・金額と暗号化証憑画像は表示されません。保存日・伝票番号は表示されます (設定 → 暗号鍵管理 で解除)。",
         "warning",
-      );
-      buildAndRender(new Map());
-      return;
-    }
-    if (params.is_audit_proxy) {
-      _setStatus(
-        "監査代理閲覧中です。オーナーの暗号化された仕訳・証憑画像は復号できないため、保存日・伝票番号のみ表示されます (E2EE アーキテクチャ仕様)。",
-        "info",
       );
       buildAndRender(new Map());
       return;

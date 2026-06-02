@@ -162,21 +162,6 @@ class TestAIDraftInit:
         }
         assert len(ids) == 5
 
-    def test_init_blocked_during_proxy(self, client, db, user, auditor):
-        from app.models.audit import AuditGrant
-        db.session.add(AuditGrant(
-            owner_user_id=user.id, auditor_user_id=auditor.id,
-            permission_level=3,
-        ))
-        db.session.commit()
-        with client.session_transaction() as sess:
-            sess["_user_id"] = str(auditor.id)
-            sess["acting_as_user_id"] = user.id
-            sess["acting_as_permission_level"] = 3
-        resp = client.post("/api/v1/ai/uploads/init", json={})
-        assert resp.status_code == 403
-        assert AIDraft.query.count() == 0
-
 
 class TestAIDraftUpload:
     """PUT /api/v1/ai/uploads/<id> — 暗号文 ingest。"""

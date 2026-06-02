@@ -349,13 +349,6 @@ async function _run() {
       );
       return;
     }
-    if (params.is_audit_proxy) {
-      _setStatus(
-        "監査代理閲覧中です。オーナーの暗号化された仕訳はあなたの暗号鍵では復号できないため、元帳は空表示になります (E2EE アーキテクチャ仕様)。",
-        "info",
-      );
-      return;
-    }
     _clearStatus();
 
     const meta = accountsMeta[params.account_code] || {};

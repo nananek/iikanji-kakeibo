@@ -333,13 +333,6 @@ async function _run() {
       );
       return;
     }
-    if (params.is_audit_proxy) {
-      _setStatus(
-        "監査代理閲覧中です。オーナーの暗号化された仕訳はあなたの暗号鍵では復号できないため、決算書は空表示になります (E2EE アーキテクチャ仕様)。",
-        "info",
-      );
-      return;
-    }
     _clearStatus();
 
     // 仕訳ゼロ件 (min_year=null) なら空 view を描画

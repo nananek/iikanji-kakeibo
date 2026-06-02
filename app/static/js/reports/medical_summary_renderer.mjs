@@ -384,13 +384,6 @@ async function _run() {
       );
       return;
     }
-    if (params.is_audit_proxy) {
-      _setStatus(
-        "監査代理閲覧中です。オーナーの暗号化された医療費データはあなたの暗号鍵では復号できないため、集計は空表示になります (E2EE アーキテクチャ仕様)。",
-        "info",
-      );
-      return;
-    }
     _clearStatus();
 
     const [entries, mexpenses] = await Promise.all([
