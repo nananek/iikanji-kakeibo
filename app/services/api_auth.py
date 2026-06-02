@@ -12,12 +12,11 @@ from __future__ import annotations
 import functools
 from datetime import datetime, timezone
 
-from flask import g, jsonify, request, session
+from flask import g, jsonify, request
 from flask_login import current_user
 
 from app.extensions import db
 from app.models.api_key import APIKey
-from app.models.audit import AuditGrant
 from app.models.oauth import OAuthToken
 from app.models.user import User
 
@@ -78,43 +77,11 @@ def resolve_bearer_or_session(
         return user, None
 
     # Web セッション
+    #
+    # 旧リアルタイム代理閲覧 (acting_as_user_id) は撤去済み (#112)。セッション
+    # 認証は常にログイン本人を返す。監査連携は非同期スナップショットワーク
+    # フロー (audit_packages) に一本化された。
     if allow_session and current_user.is_authenticated:
-        # 監査代理閲覧中なら effective user (= 対象オーナー) を返す。
-        # write 操作は permission_level=3 (full access) のみ許可。
-        acting_as = session.get("acting_as_user_id")
-        if acting_as:
-            grant = AuditGrant.query.filter_by(
-                owner_user_id=acting_as,
-                auditor_user_id=current_user.id,
-            ).first()
-            # Lv2 grant が submitted 状態でなくなった (オーナーが提出取消した)
-            # 場合もアクセス遮断する。auditor.switch() ビューと同じ条件。
-            if not grant or (
-                grant.permission_level == 2 and grant.status != "submitted"
-            ):
-                session.pop("acting_as_user_id", None)
-                session.pop("acting_as_permission_level", None)
-                return current_user._get_current_object(), None
-            # 権限レベルは DB grant から直接読む (session キャッシュを信頼しない:
-            # オーナーの権限変更がリアルタイム反映される、SECRET_KEY 漏洩時の
-            # セッション偽造でも grant.permission_level は守られる)。
-            #
-            # Lv1 (集計結果のみ閲覧) は API 経由の代理閲覧を一律遮断する。
-            # API は生の仕訳・証憑データを返すため、Lv1 の仕様 (集計のみ) と
-            # 整合しない。Lv1 監査者は Web UI のサーバ render 集計ページ
-            # のみ利用可能。
-            if grant.permission_level < 2:
-                return None, (jsonify(
-                    error="Lv1 監査アカウントは API 経由の代理閲覧をサポートしません。"
-                ), 403)
-            if write and grant.permission_level < 3:
-                return None, (jsonify(
-                    error="代理閲覧中の書込操作は権限レベル 3 (full access) のみ可能です。"
-                ), 403)
-            effective_user = db.session.get(User, acting_as)
-            if effective_user is None:
-                return None, (jsonify(error="User not found"), 401)
-            return effective_user, None
         return current_user._get_current_object(), None
     return None, (jsonify(error="Authentication required"), 401)
 
@@ -148,14 +115,13 @@ def auth_required(
 
 
 def reject_if_proxy():
-    """監査代理閲覧 (acting-as) 中のリクエストを 403 で拒否する。
+    """g.auth_user と current_user の不一致を 403 で拒否する防御ガード。
 
-    `auth_required` (resolve_bearer_or_session) は Lv3 代理閲覧時に
-    `g.auth_user = owner` を返す。鍵ペア管理・監査ワークフロー API は「常に
-    ログイン本人の self-service」が前提なので、本人 (current_user) と effective
-    user (g.auth_user) の不一致を検知して遮断する (Lv3 監査者による鍵注入・
-    なりすまし防止)。Bearer 認証時は current_user 非認証なので対象外
-    (代理閲覧の概念がない)。
+    旧リアルタイム代理閲覧 (acting-as) は撤去済み (#112) のため、
+    `resolve_bearer_or_session` はセッション認証時に常にログイン本人を返す。
+    したがって本ガードは現状では常に `None` を返す no-op だが、鍵ペア管理・
+    監査ワークフロー API の「常にログイン本人の self-service」前提が将来の改修で
+    崩れた場合 (g.auth_user != current_user) の最終防壁として残置する。
 
     戻り値: 拒否時は `(response, 403)`、許可時は `None`。
     """
