@@ -12,12 +12,6 @@ from app.models.voucher_audit_log import VoucherAuditLog
 from app.forms.journal import JournalForm
 from app.services.accounting import create_journal_entry
 from app.services.fiscal import check_entry_modifiable, get_effective_period, get_closed_periods_map, get_restricted_before_year
-from app.services.audit import (
-    get_effective_user_id, get_allowed_account_codes,
-    is_entry_locked_for_auditor,
-    is_acting_as_auditor, get_permission_level,
-    get_proprietor_account_code, mask_account_name,
-)
 from app.views.helpers import get_grouped_accounts, is_safe_internal_path, safe_user_error
 
 bp = Blueprint("journal", __name__, url_prefix="/journal")
@@ -29,19 +23,15 @@ def _journal_accounts_meta(user_id):
     """仕訳帳一覧 (journal/index.html) のクライアント描画が科目名解決に使う
     code → {name} メタ。account テーブルは非暗号化メタデータなのでサーバ側で
     構築してよい。仕訳は無効化済み科目も参照しうるため is_active で絞らず全科目を
-    含める。監査 Lv2 では allowed_codes でフィルタ + 非公開科目名はマスクする
-    (代理閲覧時はクライアント側で復号できず空表示になる)。
+    含める。
     """
-    allowed_codes = get_allowed_account_codes()
     accounts = (
         Account.query.filter_by(user_id=user_id)
         .order_by(Account.code)
         .all()
     )
-    if allowed_codes is not None:
-        accounts = [a for a in accounts if a.code in allowed_codes]
     return {
-        a.code: {"name": mask_account_name(a.name, a.code, allowed_codes)}
+        a.code: {"name": a.name}
         for a in accounts
     }
 
@@ -58,7 +48,7 @@ def index():
     はクライアント側の摘要絞り込みに置換 (date / description は DROP 対象の平文)。
     """
     year = request.args.get("year", date.today().year, type=int)
-    user_id = get_effective_user_id()
+    user_id = current_user.id
     return render_template(
         "journal/index.html",
         year=year,
@@ -81,9 +71,8 @@ def index():
 @login_required
 def new():
     form = JournalForm()
-    user_id = get_effective_user_id()
-    allowed_codes = get_allowed_account_codes()
-    grouped_accounts = get_grouped_accounts(user_id, allowed_codes)
+    user_id = current_user.id
+    grouped_accounts = get_grouped_accounts(user_id)
     closed_periods = get_closed_periods_map(user_id)
     restricted_before = get_restricted_before_year(user_id)
 
@@ -103,22 +92,19 @@ def new():
 @bp.route("/<int:entry_id>/edit", methods=["GET"])
 @login_required
 def edit(entry_id):
+    user_id = current_user.id
     entry = JournalEntry.query.filter_by(
-        id=entry_id, user_id=get_effective_user_id()
+        id=entry_id, user_id=user_id
     ).first_or_404()
 
-    user_id = get_effective_user_id()
-    allowed_codes = get_allowed_account_codes()
-
     # 確定済み期間チェック
-    err = check_entry_modifiable(get_effective_user_id(), entry)
+    err = check_entry_modifiable(user_id, entry)
     if err:
         flash(err, "danger")
         return redirect(url_for("journal.index"))
 
     form = JournalForm()
-    grouped_accounts = get_grouped_accounts(get_effective_user_id(), allowed_codes)
-    proprietor_code = get_proprietor_account_code(user_id) if allowed_codes is not None else None
+    grouped_accounts = get_grouped_accounts(user_id)
     closed_periods = get_closed_periods_map(user_id)
     restricted_before = get_restricted_before_year(user_id)
 
@@ -129,47 +115,19 @@ def edit(entry_id):
     # (両者は書込時に同期されており等価)。
     form.fiscal_period.data = str(entry.fiscal_month) if entry.fiscal_month is not None else ""
 
-    # Lv2: 公開行 + 事業主集約行
-    # E3-F PR-D-6-5-pre2: 行摘要 (description) は平文列を読まず空で返し、編集
-    # フォームのクライアント hydration (edit_form_prefill.js) が line の
-    # encrypted_blob を復号して line id で対応行へ埋める。id を付与してマッチング
-    # 可能にする (集約行は合成なので id=None)。
-    if allowed_codes is not None and proprietor_code:
-        proprietor_debit = 0
-        proprietor_credit = 0
-        existing_lines = []
-        for line in entry.lines:
-            if line.account_code in allowed_codes:
-                existing_lines.append({
-                    "id": line.id,
-                    "account_code": line.account_code,
-                    "debit_amount": int(line.debit_amount),
-                    "credit_amount": int(line.credit_amount),
-                    "description": "",
-                })
-            else:
-                proprietor_debit += int(line.debit_amount)
-                proprietor_credit += int(line.credit_amount)
-        if proprietor_debit > 0 or proprietor_credit > 0:
-            existing_lines.append({
-                "id": None,
-                "account_code": proprietor_code,
-                "debit_amount": proprietor_debit,
-                "credit_amount": proprietor_credit,
-                "description": "",
-                "is_proprietor": True,
-            })
-    else:
-        existing_lines = [
-            {
-                "id": line.id,
-                "account_code": line.account_code,
-                "debit_amount": int(line.debit_amount),
-                "credit_amount": int(line.credit_amount),
-                "description": "",
-            }
-            for line in entry.lines
-        ]
+    # 行摘要 (description) は平文列を読まず空で返し、編集フォームのクライアント
+    # hydration (edit_form_prefill.js) が line の encrypted_blob を復号して line id
+    # で対応行へ埋める。
+    existing_lines = [
+        {
+            "id": line.id,
+            "account_code": line.account_code,
+            "debit_amount": int(line.debit_amount),
+            "credit_amount": int(line.credit_amount),
+            "description": "",
+        }
+        for line in entry.lines
+    ]
 
     return render_template(
         "journal/form.html",
@@ -199,59 +157,25 @@ def get_json(entry_id):
     が MK で復号して取り出す。lines / is_readonly / vouchers はサーバ側ロジック
     を要するため引き続きサーバが算出する。
     """
-    user_id = get_effective_user_id()
+    user_id = current_user.id
     entry = JournalEntry.query.filter_by(
         id=entry_id, user_id=user_id
     ).first_or_404()
 
-    allowed_codes = get_allowed_account_codes()
-    proprietor_code = get_proprietor_account_code(user_id) if allowed_codes is not None else None
-
     # E3-F PR-D-6-5-pre2: 行摘要 (description) は平文列を読まず空で返し、line の
     # encrypted_blob / blob_iv / id を返す。元帳モーダル (reports/ledger.html
     # openEditModal) が line blob を自分の MK で復号して line id で対応行へ埋める。
-    # 集約行は合成なので id / blob は None。
     lines = []
-    if allowed_codes is not None and proprietor_code:
-        # Lv2: 非公開行を事業主バランス行に集約
-        proprietor_debit = 0
-        proprietor_credit = 0
-        for line in entry.lines:
-            if line.account_code in allowed_codes:
-                lines.append({
-                    "id": line.id,
-                    "account_code": line.account_code,
-                    "debit_amount": int(line.debit_amount),
-                    "credit_amount": int(line.credit_amount),
-                    "description": "",
-                    "encrypted_blob": _b64_or_none(line.encrypted_blob),
-                    "blob_iv": _b64_or_none(line.blob_iv),
-                })
-            else:
-                proprietor_debit += int(line.debit_amount)
-                proprietor_credit += int(line.credit_amount)
-        if proprietor_debit > 0 or proprietor_credit > 0:
-            lines.append({
-                "id": None,
-                "account_code": proprietor_code,
-                "debit_amount": proprietor_debit,
-                "credit_amount": proprietor_credit,
-                "description": "",
-                "is_proprietor": True,
-                "encrypted_blob": None,
-                "blob_iv": None,
-            })
-    else:
-        for line in entry.lines:
-            lines.append({
-                "id": line.id,
-                "account_code": line.account_code,
-                "debit_amount": int(line.debit_amount),
-                "credit_amount": int(line.credit_amount),
-                "description": "",
-                "encrypted_blob": _b64_or_none(line.encrypted_blob),
-                "blob_iv": _b64_or_none(line.blob_iv),
-            })
+    for line in entry.lines:
+        lines.append({
+            "id": line.id,
+            "account_code": line.account_code,
+            "debit_amount": int(line.debit_amount),
+            "credit_amount": int(line.credit_amount),
+            "description": "",
+            "encrypted_blob": _b64_or_none(line.encrypted_blob),
+            "blob_iv": _b64_or_none(line.blob_iv),
+        })
 
     # ロック判定（確定済み期間・損益振替）
     is_readonly = check_entry_modifiable(user_id, entry) is not None
@@ -304,19 +228,13 @@ def log_voucher_orphan(entry, user_id):
 def delete(entry_id):
     is_htmx = bool(request.headers.get("HX-Request"))
     is_ajax = is_htmx or request.headers.get("X-Requested-With") == "XMLHttpRequest"
-    user_id = get_effective_user_id()
+    user_id = current_user.id
     entry = JournalEntry.query.filter_by(
         id=entry_id, user_id=user_id
     ).first_or_404()
 
-    allowed_codes = get_allowed_account_codes()
-
-    # 伝票ロックチェック
-    err_msg = None
-    if is_acting_as_auditor() and allowed_codes is not None and is_entry_locked_for_auditor(entry, allowed_codes):
-        err_msg = "事業主勘定を含む伝票のため削除できません。"
-    else:
-        err_msg = check_entry_modifiable(user_id, entry)
+    # 確定済み期間チェック
+    err_msg = check_entry_modifiable(user_id, entry)
 
     if err_msg:
         if is_htmx:
@@ -362,22 +280,18 @@ def bulk_delete():
         flash("削除する仕訳が選択されていません。", "warning")
         return redirect(redirect_url)
 
+    user_id = current_user.id
     entries = JournalEntry.query.filter(
         JournalEntry.id.in_(entry_ids),
-        JournalEntry.user_id == get_effective_user_id(),
+        JournalEntry.user_id == user_id,
     ).all()
 
-    user_id = get_effective_user_id()
-    allowed_codes = get_allowed_account_codes()
-
-    # 確定済み期間 + 伝票ロックチェック
+    # 確定済み期間チェック
     locked = []
     deletable = []
     for entry in entries:
         err = check_entry_modifiable(user_id, entry)
         if err:
-            locked.append(entry)
-        elif is_acting_as_auditor() and allowed_codes is not None and is_entry_locked_for_auditor(entry, allowed_codes):
             locked.append(entry)
         else:
             deletable.append(entry)
@@ -416,7 +330,7 @@ def batches():
     """
     return render_template(
         "journal/batches.html",
-        effective_user_id=get_effective_user_id(),
+        effective_user_id=current_user.id,
         source_labels=SOURCE_LABELS,
     )
 
@@ -426,7 +340,7 @@ def batches():
 def delete_batch(batch_id):
     """インポートバッチの一括削除"""
     entries = JournalEntry.query.filter_by(
-        user_id=get_effective_user_id(), batch_id=batch_id
+        user_id=current_user.id, batch_id=batch_id
     ).all()
 
     if not entries:
@@ -437,7 +351,7 @@ def delete_batch(batch_id):
     locked = []
     deletable = []
     for entry in entries:
-        err = check_entry_modifiable(get_effective_user_id(), entry)
+        err = check_entry_modifiable(current_user.id, entry)
         if err:
             locked.append(entry)
         else:
@@ -447,7 +361,7 @@ def delete_batch(batch_id):
         flash(f"{len(locked)}件の仕訳は確定済み期間のため削除できませんでした。", "warning")
 
     count = len(deletable)
-    user_id = get_effective_user_id()
+    user_id = current_user.id
     for entry in deletable:
         log_voucher_orphan(entry, user_id)
         db.session.delete(entry)

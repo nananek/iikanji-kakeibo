@@ -16,7 +16,6 @@
 <body>
   {% if is_dev %}<div class="dev-badge">DEV</div>{% endif %}
   {% if current_user.is_authenticated %}
-  {% set perm = audit_permission_level %}
   <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
     <div class="container-fluid">
       {% if current_user.user_type == 'auditor' %}
@@ -40,16 +39,8 @@
               <i class="bi bi-people"></i> クライアント一覧
             </a>
           </li>
-          {% elif perm == 1 %}
-          {# Lv1: 確定申告用集計のみ #}
-          <li class="nav-item">
-            <a class="nav-link {% if request.endpoint == 'reports.tax' %}active{% endif %}"
-               href="{{ url_for('reports.tax') }}">
-              <i class="bi bi-bar-chart"></i> 確定申告用集計
-            </a>
-          </li>
           {% else %}
-          {# 個人ユーザー or Lv2/Lv3 #}
+          {# 個人ユーザー #}
           <li class="nav-item">
             <a class="nav-link {% if request.endpoint == 'dashboard.index' %}active{% endif %}"
                href="{{ url_for('dashboard.index') }}">
@@ -62,7 +53,6 @@
               <i class="bi bi-wallet2"></i> 出納帳
             </a>
           </li>
-          {% if perm is none or perm >= 3 %}
           <li class="nav-item dropdown">
             <a class="nav-link dropdown-toggle {% if request.endpoint and (request.endpoint.startswith('csv_import.') or request.endpoint.startswith('web_import.') or request.endpoint.startswith('ofx_import.')) %}active{% endif %}"
                href="#" role="button" data-bs-toggle="dropdown">
@@ -80,7 +70,6 @@
               <i class="bi bi-robot"></i> AI証憑仕訳
             </a>
           </li>
-          {% endif %}
           <li class="nav-item">
             <a class="nav-link {% if request.endpoint and request.endpoint.startswith('journal.') %}active{% endif %}"
                href="{{ url_for('journal.index') }}">

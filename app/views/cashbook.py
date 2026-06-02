@@ -10,11 +10,6 @@ from app.models.account import Account
 from app.models.journal import JournalEntry
 from app.forms.cashbook import CashbookForm
 from app.services.fiscal import check_entry_modifiable, get_closed_periods_map, get_restricted_before_year
-from app.services.audit import (
-    get_effective_user_id, get_allowed_account_codes,
-    is_entry_locked_for_auditor,
-    is_acting_as_auditor, mask_account_name,
-)
 from app.views.helpers import get_grouped_accounts
 
 bp = Blueprint("cashbook", __name__, url_prefix="/cashbook")
@@ -31,19 +26,15 @@ def _cashbook_accounts_meta(user_id):
     """出納帳一覧 (cashbook/index.html) のクライアント描画が科目名解決に使う
     code → {name} メタ。account テーブルは非暗号化メタデータなのでサーバ側で
     構築してよい。出納帳仕訳は無効化済み科目も参照しうるため is_active で絞らず
-    全科目を含める。監査 Lv2 では allowed_codes でフィルタ + 非公開科目名は
-    マスクする (代理閲覧時はクライアント側で復号できず空表示になる)。
+    全科目を含める。
     """
-    allowed_codes = get_allowed_account_codes()
     accounts = (
         Account.query.filter_by(user_id=user_id)
         .order_by(Account.code)
         .all()
     )
-    if allowed_codes is not None:
-        accounts = [a for a in accounts if a.code in allowed_codes]
     return {
-        a.code: {"name": mask_account_name(a.name, a.code, allowed_codes)}
+        a.code: {"name": a.name}
         for a in accounts
     }
 
@@ -59,7 +50,7 @@ def index():
     範囲 filter は fiscal_year セレクタに置換 (date は DROP 対象の平文カラム)。
     """
     year = request.args.get("year", date.today().year, type=int)
-    user_id = get_effective_user_id()
+    user_id = current_user.id
     return render_template(
         "cashbook/index.html",
         year=year,
@@ -77,15 +68,14 @@ def index():
 @login_required
 def new():
     form = CashbookForm()
-    user_id = get_effective_user_id()
-    allowed_codes = get_allowed_account_codes()
+    user_id = current_user.id
     closed_periods = get_closed_periods_map(user_id)
     restricted_before = get_restricted_before_year(user_id)
 
     if not form.date.data:
         form.date.data = date.today()
 
-    grouped_accounts = get_grouped_accounts(user_id, allowed_codes)
+    grouped_accounts = get_grouped_accounts(user_id)
     payment_account_name = _account_name(form.payment_account_code.data, user_id)
     category_account_name = _account_name(form.category_account_code.data, user_id)
     return render_template(
@@ -101,19 +91,13 @@ def new():
 @bp.route("/<int:entry_id>/edit", methods=["GET"])
 @login_required
 def edit(entry_id):
-    user_id = get_effective_user_id()
-    allowed_codes = get_allowed_account_codes()
+    user_id = current_user.id
     # E3-F PR-D-6-5: source 列は DROP 済のため source="cashbook" で絞れない。
     # 出納帳一覧はクライアントが復号 blob の source で抽出する (client 描画)。
     # サーバは id + user_id で本人の仕訳のみに限定する。
     entry = JournalEntry.query.filter_by(
         id=entry_id, user_id=user_id
     ).first_or_404()
-
-    # 伝票ロックチェック (監査者向け masking ロック)
-    if is_acting_as_auditor() and allowed_codes is not None and is_entry_locked_for_auditor(entry, allowed_codes):
-        flash("事業主勘定を含む伝票のため変更できません。", "danger")
-        return redirect(url_for("cashbook.index"))
 
     # 確定済み期間チェック
     err = check_entry_modifiable(user_id, entry)
@@ -159,7 +143,7 @@ def edit(entry_id):
             form.category_account_code.data = debit_line.account_code
             form.amount.data = int(debit_line.debit_amount)
 
-    grouped_accounts = get_grouped_accounts(user_id, allowed_codes)
+    grouped_accounts = get_grouped_accounts(user_id)
     payment_account_name = _account_name(form.payment_account_code.data, user_id)
     category_account_name = _account_name(form.category_account_code.data, user_id)
     return render_template(
@@ -175,8 +159,7 @@ def edit(entry_id):
 @bp.route("/<int:entry_id>/delete", methods=["POST"])
 @login_required
 def delete(entry_id):
-    user_id = get_effective_user_id()
-    allowed_codes = get_allowed_account_codes()
+    user_id = current_user.id
     # E3-F PR-D-6-5: source 列は DROP 済のため source="cashbook" で絞れない。
     # 出納帳一覧はクライアントが復号 blob の source で抽出する (client 描画)。
     # サーバは id + user_id で本人の仕訳のみに限定する。
@@ -194,10 +177,6 @@ def delete(entry_id):
             return resp
         flash(msg, "danger")
         return redirect(url_for("cashbook.index"))
-
-    # 伝票ロックチェック (監査者向け masking ロック)
-    if is_acting_as_auditor() and allowed_codes is not None and is_entry_locked_for_auditor(entry, allowed_codes):
-        return _hx_error("事業主勘定を含む伝票のため削除できません。")
 
     # 確定済み期間チェック
     err = check_entry_modifiable(user_id, entry)
