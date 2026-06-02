@@ -78,8 +78,9 @@ export function normalizeEntries(snapshot) {
       id: e.id,
       date: e.date ?? "",
       description: e.description ?? "",
-      // 構造化修正案 (§14.9) の対象可否判定に使う。損益振替 (is_closing) /
-      // 決算整理 (fiscal_period 16) は手動置換不可なので proposal を作らせない。
+      // 構造化修正案 (§14.9) の対象可否判定に使う。損益振替
+      // (fiscal_period=16, is_closing=true) は自動生成専用で手動置換不可なので
+      // proposal を作らせない。
       is_closing: e.is_closing ?? false,
       fiscal_period: e.fiscal_period ?? null,
       lines: (e.lines || []).map(_normLine),
@@ -628,7 +629,7 @@ function _addCommentRow(entries, accountsMeta) {
   top.append(selCol, noteCol, delCol);
 
   // 構造化修正案 (§14.9) のトグル + エディタ。仕訳を選んだとき、かつ
-  // 損益振替 / 決算整理でないときのみ作成可能。
+  // 損益振替 (fiscal_period=16, is_closing=true) でないときのみ作成可能。
   const toggleWrap = document.createElement("div");
   toggleWrap.className = "form-check mt-2 d-none audit-proposal-toggle";
   const cb = document.createElement("input");
@@ -645,6 +646,9 @@ function _addCommentRow(entries, accountsMeta) {
 
   function updateAvailability() {
     const e = sel.value ? entryById.get(Number(sel.value)) : null;
+    // is_closing と fiscal_period===16 はサーバ実装上は等価 (損益振替は両方が立つ)
+    // だが、snapshot のソース (Lv2: fetchJournalsForYear / Lv3: decryptBackup) で
+    // 片方が欠ける可能性に備えて両方を防御的にチェックする。
     const eligible = !!e && !e.is_closing && e.fiscal_period !== 16;
     toggleWrap.classList.toggle("d-none", !eligible);
     if (!eligible) {
