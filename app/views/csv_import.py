@@ -8,7 +8,6 @@ from flask_login import login_required, current_user
 from app.extensions import limiter
 from app.models.account import Account, AccountType
 from app.models.ai_config import UserAIConfig
-from app.services.audit import get_effective_user_id
 from app.services.csv_import import (
     parse_csv_preview,
     parse_csv_full,
@@ -34,7 +33,7 @@ MAX_CSV_SIZE = 5 * 1024 * 1024  # 5MB
 @login_required
 def upload():
     """Step 1: CSVアップロード"""
-    grouped_accounts = get_grouped_accounts(get_effective_user_id())
+    grouped_accounts = get_grouped_accounts(current_user.id)
 
     if request.method == "POST":
         csv_file = request.files.get("csv_file")
@@ -99,7 +98,7 @@ def mapping():
     col_indices = list(range(len(headers)))
     num_cols = len(headers)
 
-    user_id = get_effective_user_id()
+    user_id = current_user.id
     payment_account = Account.query.filter_by(
         user_id=user_id, code=payment_account_code
     ).first()
@@ -249,7 +248,7 @@ def columns_detect_context():
             )
     sample_text = "\n".join(sample_lines)
 
-    user_id = get_effective_user_id()
+    user_id = current_user.id
     config = UserAIConfig.query.filter_by(user_id=user_id).first()
     custom_prompt = config.custom_prompt if config else ""
 
@@ -283,7 +282,7 @@ def confirm():
     if not parsed or not payment_account_code:
         flash("データがありません。もう一度アップロードしてください。", "warning")
         return redirect(url_for("csv_import.upload"))
-    user_id = get_effective_user_id()
+    user_id = current_user.id
     payment_account = Account.query.filter_by(user_id=user_id, code=payment_account_code).first()
 
     expense_type = AccountType.query.filter_by(code="expense").first()
@@ -341,7 +340,7 @@ def ai_reconcile_context():
     )
     from app.services.ai_receipt import PROVIDER_DEFAULTS
 
-    user_id = get_effective_user_id()
+    user_id = current_user.id
     config = UserAIConfig.query.filter_by(user_id=user_id).first()
     custom_prompt = config.custom_prompt if config else ""
 

@@ -9,10 +9,9 @@ parsed_transactions[] + payment_account_code を受け取り、session に保存
 import math
 
 from flask import Blueprint, render_template, redirect, url_for, flash, request, session, jsonify
-from flask_login import login_required
+from flask_login import login_required, current_user
 
 from app.models.account import Account, AccountType
-from app.services.audit import get_effective_user_id
 from app.models.ai_config import UserAIConfig
 from app.services.fiscal import (
     get_restricted_before_year,
@@ -74,7 +73,7 @@ def upload():
     POST (JSON): クライアント側で抽出済みの parsed_transactions[] を受け取り
                  session に保存する
     """
-    user_id = get_effective_user_id()
+    user_id = current_user.id
     config = UserAIConfig.query.filter_by(user_id=user_id).first()
     has_config = config is not None
     config_is_e2ee = bool(config and config.is_e2ee)
@@ -152,7 +151,7 @@ def confirm():
     if not parsed or not payment_account_code:
         flash("データがありません。もう一度入力してください。", "warning")
         return redirect(url_for("web_import.upload"))
-    user_id = get_effective_user_id()
+    user_id = current_user.id
     payment_account = Account.query.filter_by(user_id=user_id, code=payment_account_code).first()
 
     expense_type = AccountType.query.filter_by(code="expense").first()

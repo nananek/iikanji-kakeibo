@@ -13,7 +13,6 @@ from app.extensions import db, limiter
 from app.models.user import User
 from app.models.voucher import Voucher
 from app.models.voucher_audit_log import VoucherAuditLog
-from app.services.audit import get_effective_user_id
 from app.services.storage import get_storage_backend, make_thumbnail_key
 from app.services.storage_quota import record_delete
 
@@ -34,7 +33,7 @@ def index():
     クライアント側で行う。サーバ側で entry.date / description / total_debit は
     一切読まない (entry_number / fiscal_year は DROP 対象外の平文メタ)。
     """
-    user_id = get_effective_user_id()
+    user_id = current_user.id
 
     vouchers = (
         Voucher.active()
@@ -76,7 +75,7 @@ def index():
 @login_required
 def verify(voucher_id):
     """証憑ハッシュ検証"""
-    user_id = get_effective_user_id()
+    user_id = current_user.id
     voucher = Voucher.active().filter_by(
         id=voucher_id, user_id=user_id,
     ).first_or_404()
