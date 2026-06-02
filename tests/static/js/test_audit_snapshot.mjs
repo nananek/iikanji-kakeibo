@@ -116,7 +116,12 @@ function backupFetch() {
       ],
       medical_expenses: [],
       balance_cache_blobs: [],
-      vouchers: [{ id: 5, image_data: "ZmFrZQ==", encrypted_meta_blob: "x" }],
+      // voucher 5 = 復号可能な PNG (aad_id あり)、voucher 6 = aad_id 無し → _imageError。
+      vouchers: [
+        { id: 5, aad_id: 99, journal_entry_id: 1, file_hash: "abc",
+          image_data: b64encode(VOUCHER_BLOB) },
+        { id: 6, image_data: "ZmFrZQ==", encrypted_meta_blob: "x" },
+      ],
       user_ai_config: { api_key_blob: "secret" },
       webhook_configs: [{ url: "https://x" }],
     },
@@ -129,9 +134,16 @@ function backupFetch() {
   };
 }
 
-test("buildSnapshotLv3 decrypts ledger and excludes settings + vouchers", async () => {
+// iv(12B 0埋め) || ct(PNG マジック + padding)。identityClient は ct を平文として返す。
+const PNG_CT = new Uint8Array(16);
+PNG_CT.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], 0);
+const VOUCHER_BLOB = new Uint8Array(12 + PNG_CT.length);
+VOUCHER_BLOB.set(PNG_CT, 12);
+
+test("buildSnapshotLv3 decrypts ledger, excludes settings, inlines vouchers", async () => {
   const snap = await buildSnapshotLv3({
-    client: identityClient, accountsMeta: ACCOUNTS_META, fetchImpl: backupFetch(),
+    client: identityClient, userId: 7,
+    accountsMeta: ACCOUNTS_META, fetchImpl: backupFetch(),
   });
   assert.equal(snap.level, 3);
   // 台帳は復号されている
@@ -141,16 +153,27 @@ test("buildSnapshotLv3 decrypts ledger and excludes settings + vouchers", async 
   assert.equal(snap.journal_entry_lines[0].debit, undefined); // body は debit_amount キー
   assert.equal(snap.journal_entry_lines[0].debit_amount, 100);
   assert.deepEqual(snap.accounts, [{ code: "1010", name: "現金" }]);
-  // 設定系・証憑は含めない
-  assert.equal(snap.vouchers, undefined);
+  // 設定系は含めない
   assert.equal(snap.user_ai_config, undefined);
   assert.equal(snap.webhook_configs, undefined);
+  // 証憑は inline base64 で同梱 (§14.6)
+  assert.equal(snap.vouchers.length, 2);
+  const v5 = snap.vouchers.find((v) => v.voucher_id === 5);
+  assert.equal(v5.mime, "image/png");
+  assert.equal(v5.journal_entry_id, 1);
+  assert.equal(v5.aad_id, 99);
+  assert.equal(v5.image_base64, b64encode(PNG_CT));
+  assert.ok(!v5._imageError);
+  // aad_id 無しは復号できず _imageError で局所スキップ
+  const v6 = snap.vouchers.find((v) => v.voucher_id === 6);
+  assert.equal(v6._imageError, true);
+  assert.equal(v6.image_base64, undefined);
 });
 
 test("buildSnapshotLv3 throws on backup export HTTP error", async () => {
   const fetchImpl = async () => ({ ok: false, status: 500, async json() { return {}; } });
   await assert.rejects(
-    () => buildSnapshotLv3({ client: identityClient, accountsMeta: {}, fetchImpl }),
+    () => buildSnapshotLv3({ client: identityClient, userId: 7, accountsMeta: {}, fetchImpl }),
     /backup export HTTP 500/,
   );
 });

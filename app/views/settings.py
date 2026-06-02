@@ -910,6 +910,72 @@ def audit_accounts(grant_id):
     )
 
 
+@bp.route("/audit/<int:grant_id>/packages")
+@login_required
+def audit_packages(grant_id):
+    """監査スナップショットの送信ページ (owner 側, §14.5)。
+
+    HPKE seal・スナップショット生成・送信はすべてクライアント (audit/packages_renderer)
+    が行う。本ビューは描画に必要なメタ (科目・年度・grant) を JSON island で渡すだけ。
+    """
+    if current_user.user_type != "personal":
+        flash("この機能は個人ユーザー専用です。", "warning")
+        return redirect(url_for("dashboard.index"))
+
+    grant = AuditGrant.query.filter_by(
+        id=grant_id, owner_user_id=current_user.id
+    ).first_or_404()
+    if grant.revoked_at is not None:
+        flash("この監査アクセスは失効しています。", "warning")
+        return redirect(url_for("settings.audit"))
+
+    # 遅延 import: 年度リスト用 (settings の top import を増やさない)。
+    from app.models.journal import JournalEntry
+
+    accounts = (
+        Account.query
+        .filter_by(user_id=current_user.id, is_active=True)
+        .order_by(Account.code)
+        .all()
+    )
+    # Lv2 は公開科目 (AuditGrantAccount) のみメタに含め、非公開科目名を監査者に
+    # 漏らさない。Lv1 (集計のみ) / Lv3 (本人同等) は全科目。
+    if grant.permission_level == 2:
+        published = {ga.account_code for ga in grant.grant_accounts}
+        accounts = [a for a in accounts if a.code in published]
+
+    accounts_meta = {
+        a.code: {
+            "type": a.account_type.code,
+            "normal_balance": a.account_type.normal_balance,
+            "name": a.name,
+            "tax_category": a.tax_category,
+        }
+        for a in accounts
+    }
+
+    # fiscal_year は平文カラム。仕訳のある年度を新しい順に提示する。
+    year_rows = (
+        db.session.query(JournalEntry.fiscal_year)
+        .filter(
+            JournalEntry.user_id == current_user.id,
+            JournalEntry.fiscal_year.isnot(None),
+        )
+        .distinct()
+        .order_by(JournalEntry.fiscal_year.desc())
+        .all()
+    )
+    fiscal_years = [r[0] for r in year_rows]
+
+    return render_template(
+        "settings/audit_packages.html",
+        grant=grant,
+        accounts_meta=accounts_meta,
+        fiscal_years=fiscal_years,
+        permission_labels=PERMISSION_LABELS,
+    )
+
+
 @bp.route("/audit/<int:grant_id>/accounts", methods=["POST"])
 @login_required
 def audit_accounts_save(grant_id):

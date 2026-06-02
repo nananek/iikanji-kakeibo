@@ -147,6 +147,10 @@ async function _renderOne(el, store, mod, b64decode) {
       try {
         await mod.pinKey(store, auditorId, btn.dataset.fpHash, new Date().toISOString());
         await _renderOne(el, store, mod, b64decode);
+        // 同一ページの他 UI (送信ボタンのゲート等) が pin 成立を検知できるよう通知。
+        document.dispatchEvent(
+          new CustomEvent("iikanji:tofu-pinned", { detail: { auditorId } }),
+        );
       } catch (e) {
         btn.disabled = false;
         _renderError(el, name, "保存");
