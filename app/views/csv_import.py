@@ -120,8 +120,8 @@ def mapping():
             mapping_source = "saved"
 
     # AI 列推定 UI を出すかは E2EE 形式の AI 設定があるかで判定。
-    # llama_cpp はサーバ管理者向けで client-side LLM 呼出に対応していないため
-    # ボタン自体を出さない (orchestrator のエラーを生で見せないため)。
+    # client-side LLM 呼出に対応する provider のときだけボタンを出す
+    # (orchestrator のエラーを生で見せないため)。
     _cfg = UserAIConfig.query.filter_by(user_id=user_id).first()
     _client_side_providers = {"openai", "anthropic", "google"}
     has_ai_config = bool(
@@ -260,9 +260,7 @@ def columns_detect_context():
         "sample_count": len(sample_lines),
         "num_cols": len(headers),
         "custom_prompt": custom_prompt,
-        "default_model_by_provider": {
-            k: v for k, v in PROVIDER_DEFAULTS.items() if k != "llama_cpp"
-        },
+        "default_model_by_provider": dict(PROVIDER_DEFAULTS),
     })
 
 
@@ -347,7 +345,5 @@ def ai_reconcile_context():
         "prompt_template": AI_RECONCILE_PROMPT_TEMPLATE,
         "batch_size": AI_RECONCILE_BATCH_SIZE,
         "custom_prompt": custom_prompt,
-        "default_model_by_provider": {
-            k: v for k, v in PROVIDER_DEFAULTS.items() if k != "llama_cpp"
-        },
+        "default_model_by_provider": dict(PROVIDER_DEFAULTS),
     })

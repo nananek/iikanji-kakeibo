@@ -49,38 +49,19 @@ class JournalSuggestion:
 
 # --- プロバイダー設定 ---
 
+# 自家ホスト LLM (llama_cpp provider) は E2EE と両立不可なため v5.0 (Phase E6)
+# で廃止。BYOK の openai / google / anthropic のみをサポートする。
 PROVIDER_DEFAULTS = {
     "openai": "gpt-4o",
     "google": "gemini-2.0-flash",
     "anthropic": "claude-sonnet-4-20250514",
-    "llama_cpp": "default",
 }
 
 PROVIDER_LABELS = {
     "openai": "OpenAI (GPT-4o)",
     "google": "Google Gemini",
     "anthropic": "Anthropic Claude",
-    "llama_cpp": "llama.cpp (サーバー提供)",
 }
-
-
-def is_llama_cpp_available(app_config=None) -> bool:
-    """サーバー管理者が llama.cpp エンドポイントを設定しているか。"""
-    if app_config is None:
-        from flask import current_app
-        app_config = current_app.config
-    return bool((app_config.get("LLAMA_CPP_URL") or "").strip())
-
-
-def get_available_provider_labels(app_config=None) -> dict:
-    """UI で表示すべきプロバイダー候補を返す。
-
-    llama.cpp はサーバー設定 (LLAMA_CPP_URL) があるときのみ含める。
-    """
-    labels = {k: v for k, v in PROVIDER_LABELS.items() if k != "llama_cpp"}
-    if is_llama_cpp_available(app_config):
-        labels["llama_cpp"] = PROVIDER_LABELS["llama_cpp"]
-    return labels
 
 RECEIPT_PROMPT = """あなたは日本の家計簿アプリのアシスタントです。
 領収書・レシートの画像を解析して、以下のJSON形式で情報を抽出してください。

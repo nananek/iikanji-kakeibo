@@ -34,8 +34,8 @@ bp = Blueprint("ai_config_api", __name__, url_prefix="/api/v1/ai-config")
 MAX_API_KEY_BLOB_SIZE = 1024
 # IV は AES-GCM 仕様で 12B 固定
 WRAP_IV_SIZE = 12
-# provider 名 (openai/anthropic/google/llama_cpp 等)
-ALLOWED_PROVIDERS = {"openai", "anthropic", "google", "llama_cpp"}
+# provider 名 (自家ホスト llama_cpp は E2EE 非両立につき v5.0 で廃止)
+ALLOWED_PROVIDERS = {"openai", "anthropic", "google"}
 MAX_MODEL_NAME_LENGTH = 100
 MAX_CUSTOM_PROMPT_LENGTH = 10000
 

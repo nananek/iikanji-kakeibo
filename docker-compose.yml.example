@@ -21,9 +21,6 @@ services:
     network_mode: service:tailscale
     environment:
       - TZ=Asia/Tokyo
-      # ローカル LLM (llama.cpp / llama-server) を提供したい場合のみ設定。
-      # 未設定なら UI から llama.cpp 選択肢が消える。
-      # - LLAMA_CPP_URL=http://llama-server:8080
     volumes:
       - vouchers:/app/data/vouchers
     env_file:

@@ -105,14 +105,7 @@
               </select>
             </div>
 
-            <div class="mb-3" x-show="provider === 'llama_cpp'" x-cloak>
-              <div class="alert alert-info small mb-0">
-                <i class="bi bi-info-circle"></i>
-                llama.cpp はサーバー管理者が提供しています。API キーは不要です。
-              </div>
-            </div>
-
-            <div class="mb-3" x-show="provider !== 'llama_cpp'" x-cloak>
+            <div class="mb-3">
               <label class="form-label">
                 API キー
                 <span class="text-muted" x-show="isE2ee">(設定済み・変更する場合のみ入力)</span>
@@ -201,40 +194,8 @@
             console.anthropic.com
           </a> でAPIキーを作成
         </p>
-        {% if "llama_cpp" in provider_labels %}
-        <h6>llama.cpp (サーバー提供)</h6>
-        <p class="small">
-          このサーバーには管理者が用意したローカル LLM (llama.cpp) が組み込まれています。
-          APIキーや外部アカウントの登録は不要で、そのまま利用できます。
-          外部プロバイダーにデータを送らずに済むのが利点です。
-        </p>
-        {% endif %}
       </div>
     </div>
   </div>
 </div>
-{% endblock %}
-
-{% block scripts %}
-<script>
-const defaults = {{ provider_defaults | tojson }};
-const select = document.getElementById('providerSelect');
-const hint = document.getElementById('defaultModelHint');
-const llamaCppNote = document.getElementById('llamaCppNote');
-const apiKeyInput = document.getElementById('apiKeyInput');
-const apiKeyOptional = document.getElementById('apiKeyOptional');
-
-function updateProvider() {
-  const isLocal = select.value === 'llama_cpp';
-  hint.textContent = 'デフォルト: ' + (defaults[select.value] || '');
-  llamaCppNote.style.display = isLocal ? '' : 'none';
-  apiKeyOptional.style.display = isLocal ? '' : 'none';
-  // 新規登録時のみ required 制御（既存設定時は常に optional）
-  {% if not config %}
-  apiKeyInput.required = !isLocal;
-  {% endif %}
-}
-select.addEventListener('change', updateProvider);
-updateProvider();
-</script>
 {% endblock %}
