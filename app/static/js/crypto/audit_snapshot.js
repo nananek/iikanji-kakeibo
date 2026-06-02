@@ -19,6 +19,8 @@ import { computeBalanceSheet } from "./reports/balance_sheet.js";
 import { computeMonthlyComparison } from "./reports/monthly_comparison.js";
 import { computeTaxSummary } from "./reports/tax_summary.js";
 import { decryptBackup } from "./backup_export_client.js";
+import { decryptVoucherBlob, sniffImageMime } from "./voucher_download.js";
+import { b64encode, b64decode } from "./b64.js";
 
 const SNAPSHOT_VERSION = 1;
 
@@ -114,12 +116,60 @@ export async function buildSnapshotLv2({ client, userId, fiscalYear, accountsMet
 }
 
 /**
+ * backup export の vouchers (暗号文 image_data パススルー) を MK 復号し、
+ * 平文画像を base64 で同梱できる形に変換する (§14.6: Lv3 inline base64)。
+ *
+ * image_data は配信エンドポイントと同じ opaque blob (iv||ct||tag) なので
+ * decryptVoucherBlob で再 fetch せず復号する。aad_id は E2EE 証憑で必須
+ * (Option C)。復号失敗行は _imageError として記録し局所スキップする
+ * (既存レポート系と同じ robustness)。
+ *
+ * @returns {Promise<Array<Object>>}
+ */
+async function _decryptVouchers(client, userId, vouchers) {
+  const out = [];
+  for (const v of vouchers || []) {
+    const base = {
+      voucher_id: v.id,
+      journal_entry_id: v.journal_entry_id ?? null,
+      aad_id: v.aad_id ?? null,
+      file_hash: v.file_hash ?? null,
+      uploaded_at: v.uploaded_at ?? null,
+    };
+    try {
+      if (v.image_data == null || v.aad_id == null) {
+        out.push({ ...base, _imageError: true });
+        continue;
+      }
+      const blob = b64decode(v.image_data);
+      const plain = await decryptVoucherBlob({
+        client, userId, aadId: v.aad_id, blob,
+      });
+      out.push({
+        ...base,
+        mime: sniffImageMime(plain),
+        image_base64: b64encode(plain),
+      });
+    } catch (e) {
+      out.push({ ...base, _imageError: true });
+    }
+  }
+  return out;
+}
+
+/**
  * Lv3 (本人同等) スナップショット。全台帳を decryptBackup で復号して同梱する。
  * /api/v1/backup/export はサーバが暗号文のまま返し、decryptBackup が本人 MK で復号する。
  * 設定系 (user_ai_config / webhook 等) は監査に不要なので除外する。
- * 証憑画像は本 PR では未同梱 (サイズ / 別添方式は送信 UI ラウンドで決める)。
+ * 証憑画像 (§14.6) は MK 復号して inline base64 で同梱する。
+ *
+ * @param {Object} a
+ * @param {Object} a.client       SharedCryptoClient
+ * @param {number} a.userId       証憑 AAD 束縛用 (vimg + user_id + aad_id)
+ * @param {Object} a.accountsMeta
+ * @param {typeof fetch} [a.fetchImpl]
  */
-export async function buildSnapshotLv3({ client, accountsMeta, fetchImpl }) {
+export async function buildSnapshotLv3({ client, userId, accountsMeta, fetchImpl }) {
   const f = fetchImpl ?? globalThis.fetch;
   const r = await f("/api/v1/backup/export", { credentials: "include" });
   if (!r.ok) {
@@ -139,6 +189,6 @@ export async function buildSnapshotLv3({ client, accountsMeta, fetchImpl }) {
     journal_entry_lines: d.journal_entry_lines || [],
     medical_expenses: d.medical_expenses || [],
     balance_cache_blobs: d.balance_cache_blobs || [],
-    // vouchers: 証憑画像同梱は送信 UI ラウンドで対応 (本 PR では未同梱)。
+    vouchers: await _decryptVouchers(client, userId, d.vouchers),
   };
 }

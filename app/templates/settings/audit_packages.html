@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+{% block title %}監査スナップショット送信 - いいかんじ™家計簿{% endblock %}
+
+{% block content %}
+<nav aria-label="breadcrumb">
+  <ol class="breadcrumb">
+    <li class="breadcrumb-item"><a href="{{ url_for('settings.audit') }}">監査アクセス管理</a></li>
+    <li class="breadcrumb-item active">スナップショット送信</li>
+  </ol>
+</nav>
+
+<h2><i class="bi bi-send"></i> 監査スナップショット送信</h2>
+<p class="text-muted">
+  <strong>{{ grant.auditor.username }}</strong> 宛
+  （{{ permission_labels.get(grant.permission_level, '不明') }}）
+</p>
+
+<div class="alert alert-secondary small">
+  帳簿データをこの場で暗号化し、監査者の公開鍵宛にのみ復号できる形で送信します。
+  サーバや当社は中身を読めません。送信前に監査者の公開鍵 fingerprint を本人に確認
+  （固定）してください。
+</div>
+
+<!-- fingerprint 確認 (PR-A の widget を再利用)。固定するまで送信できない。 -->
+<div class="card mb-3">
+  <div class="card-header">監査者の公開鍵 fingerprint</div>
+  <div class="card-body">
+    <div data-auditor-fingerprint
+         data-auditor-id="{{ grant.auditor.id }}"
+         data-auditor-name="{{ grant.auditor.username }}"></div>
+  </div>
+</div>
+
+<!-- 未処理 response 警告 (§14.7)、renderer が描画 -->
+<div id="audit-pending-responses"></div>
+
+<div class="card mb-3">
+  <div class="card-header">新しいスナップショットを送信</div>
+  <div class="card-body">
+    {% if grant.permission_level == 3 %}
+      <p class="mb-3">
+        <i class="bi bi-database"></i>
+        全データ（仕訳・医療費・残高・証憑画像）を本人同等の内容で送信します。
+      </p>
+    {% else %}
+      <div class="mb-3 col-md-4">
+        <label class="form-label" for="audit-fiscal-year">対象年度</label>
+        <select id="audit-fiscal-year" class="form-select">
+          {% for y in fiscal_years %}
+          <option value="{{ y }}">{{ y }} 年度</option>
+          {% endfor %}
+        </select>
+        {% if not fiscal_years %}
+        <div class="form-text text-warning">仕訳のある年度がありません。</div>
+        {% endif %}
+      </div>
+      {% if grant.permission_level == 2 %}
+      <p class="text-muted small">
+        Lv2 では公開科目に該当する仕訳のみが監査者に渡ります（非公開科目は含まれません）。
+      </p>
+      {% endif %}
+    {% endif %}
+
+    <button id="audit-send-btn" class="btn btn-primary" disabled>
+      <i class="bi bi-send"></i> スナップショットを送信
+    </button>
+    <div id="audit-send-status" class="mt-3 d-none"></div>
+  </div>
+</div>
+
+<div class="card mb-3">
+  <div class="card-header">送信済みスナップショット</div>
+  <div class="card-body">
+    <div id="audit-packages-list" class="text-muted small">読み込み中…</div>
+  </div>
+</div>
+
+<script id="audit-packages-config" type="application/json">
+  {{ {
+    "static_root": url_for('static', filename=''),
+    "owner_id": current_user.id,
+    "grant_id": grant.id,
+    "auditor_id": grant.auditor.id,
+    "auditor_name": grant.auditor.username,
+    "permission_level": grant.permission_level,
+    "accounts_meta": accounts_meta,
+    "fiscal_years": fiscal_years
+  } | tojson }}
+</script>
+<script type="module">
+  const cfg = JSON.parse(document.getElementById("audit-packages-config").textContent);
+  globalThis.IIKANJI_STATIC_ROOT = cfg.static_root;
+  // fingerprint widget (PR-A) を初期化
+  const { initFingerprints } = await import(
+    cfg.static_root + "js/audit/fingerprint_renderer.mjs"
+  );
+  await initFingerprints(cfg.owner_id);
+  // 送信 UI を初期化
+  const { initAuditPackages } = await import(
+    cfg.static_root + "js/audit/packages_renderer.mjs"
+  );
+  await initAuditPackages(cfg);
+</script>
+{% endblock %}

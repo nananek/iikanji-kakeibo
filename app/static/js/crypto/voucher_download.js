@@ -79,11 +79,33 @@ export async function fetchAndDecryptVoucherImage({
     throw new Error(`fetchAndDecryptVoucherImage: HTTP ${r.status}`);
   }
   const buf = new Uint8Array(await r.arrayBuffer());
-  if (buf.byteLength < _GCM_OVERHEAD) {
-    throw new Error("fetchAndDecryptVoucherImage: ciphertext too short");
+  return decryptVoucherBlob({ client, userId, aadId, blob: buf, thumb });
+}
+
+
+/**
+ * 既に手元にある opaque blob (iv(12B) || ciphertext || GCM tag) を AAD を組んで
+ * MK 復号し、平文画像バイト列を返す。配信エンドポイントから取得済みの blob や、
+ * backup export の image_data を再 fetch せず復号する用途 (監査 Lv3 スナップショット
+ * の証憑同梱など) に使う。
+ *
+ * @param {Object} args
+ * @param {Object} args.client            SharedCryptoClient
+ * @param {number|bigint} args.userId
+ * @param {number|bigint} args.aadId      AAD 束縛用安定識別子 (vimg/vthumb)
+ * @param {Uint8Array} args.blob          iv(12B) || ciphertext || tag
+ * @param {boolean} [args.thumb=false]
+ * @returns {Promise<Uint8Array>} 平文画像バイト列
+ */
+export async function decryptVoucherBlob({ client, userId, aadId, blob, thumb = false }) {
+  if (!client || typeof client.decrypt !== "function") {
+    throw new Error("client (SharedCryptoClient) is required");
   }
-  const iv = buf.slice(0, 12);
-  const ct = buf.slice(12);
+  if (!(blob instanceof Uint8Array) || blob.byteLength < _GCM_OVERHEAD) {
+    throw new Error("decryptVoucherBlob: ciphertext too short");
+  }
+  const iv = blob.slice(0, 12);
+  const ct = blob.slice(12);
   const aad = buildAAD(thumb ? "vthumb" : "vimg", userId, aadId);
   const res = await client.decrypt(ct, iv, aad);
   return res.plaintext;
