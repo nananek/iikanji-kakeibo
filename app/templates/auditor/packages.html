@@ -24,6 +24,61 @@
 
 <div id="audit-snapshot-body"></div>
 
+<!-- 修正案 / 差戻しの作成・送信 (PR-B)。復号成功時のみ JS が表示する。 -->
+<div id="audit-compose" class="card mt-4 d-none">
+  <div class="card-header">監査結果を返す（修正案 / 差戻し）</div>
+  <div class="card-body">
+    <p class="text-muted small">
+      指摘内容を <strong>{{ grant.owner.username }}</strong> さんの公開鍵宛にのみ復号できる形で
+      暗号化して送信します。サーバや当社は中身を読めません。送信前に相手の公開鍵 fingerprint を
+      本人に確認（固定）してください。
+    </p>
+
+    <!-- owner 公開鍵 fingerprint 確認 (PR-A の widget を相手=owner で再利用) -->
+    <div class="card mb-3">
+      <div class="card-header">相手の公開鍵 fingerprint</div>
+      <div class="card-body">
+        <div data-auditor-fingerprint
+             data-auditor-id="{{ grant.owner_user_id }}"
+             data-auditor-name="{{ grant.owner.username }}"
+             data-peer-role="OWNER"></div>
+      </div>
+    </div>
+
+    <div class="mb-3">
+      <div class="form-check form-check-inline">
+        <input class="form-check-input" type="radio" name="audit-response-type"
+               id="audit-rt-revision" value="revision" checked>
+        <label class="form-check-label" for="audit-rt-revision">修正案あり</label>
+      </div>
+      <div class="form-check form-check-inline">
+        <input class="form-check-input" type="radio" name="audit-response-type"
+               id="audit-rt-rejection" value="rejection">
+        <label class="form-check-label" for="audit-rt-rejection">差戻し / 問題なし</label>
+      </div>
+    </div>
+
+    <div class="mb-3">
+      <label class="form-label" for="audit-compose-summary">全体コメント</label>
+      <textarea id="audit-compose-summary" class="form-control" rows="3"
+                placeholder="全体的な指摘や所見を入力してください。"></textarea>
+    </div>
+
+    <div id="audit-compose-comments-wrap" class="mb-3">
+      <label class="form-label">仕訳ごとの指摘</label>
+      <div id="audit-compose-comments"></div>
+      <button type="button" id="audit-compose-add" class="btn btn-sm btn-outline-secondary">
+        <i class="bi bi-plus"></i> 指摘を追加
+      </button>
+    </div>
+
+    <button id="audit-compose-send" class="btn btn-primary" disabled>
+      <i class="bi bi-send"></i> 送信
+    </button>
+    <div id="audit-compose-status" class="mt-2 d-none"></div>
+  </div>
+</div>
+
 <script id="audit-review-config" type="application/json">
   {{ {
     "static_root": url_for('static', filename=''),
@@ -37,9 +92,16 @@
 <script type="module">
   const cfg = JSON.parse(document.getElementById("audit-review-config").textContent);
   globalThis.IIKANJI_STATIC_ROOT = cfg.static_root;
-  const { initAuditReview } = await import(
+  // 相手 (owner) の公開鍵 fingerprint widget を初期化 (PR-A の renderer を再利用)。
+  const { initFingerprints } = await import(
+    cfg.static_root + "js/audit/fingerprint_renderer.mjs"
+  );
+  await initFingerprints(cfg.auditor_id);
+  const { initAuditReview, initAuditCompose } = await import(
     cfg.static_root + "js/audit/audit_review_renderer.mjs"
   );
   await initAuditReview(cfg);
+  // 復号成功後に修正案フォームを初期化 (getReviewCtx を参照)。
+  await initAuditCompose(cfg);
 </script>
 {% endblock %}

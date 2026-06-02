@@ -61,6 +61,10 @@ class TestPackages:
         # クライアント側で復号する設定 island が描画される
         assert "audit-review-config" in body
         assert "audit_review_renderer.mjs" in body
+        # PR-B: 修正案送信フォームと owner 公開鍵 fingerprint widget が描画される
+        assert "audit-compose" in body
+        assert 'data-peer-role="OWNER"' in body
+        assert "initAuditCompose" in body
 
     def test_personal_user_redirected(self, db, client, auditor, user):
         """個人ユーザーは /auditor/packages にアクセスすると dashboard へリダイレクト"""

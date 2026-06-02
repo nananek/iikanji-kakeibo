@@ -8,7 +8,8 @@ const M = new URL(
   "../../../app/static/js/audit/audit_review_renderer.mjs",
   import.meta.url,
 );
-const { latestRound, parseSnapshot, normalizeEntries } = await import(M.href);
+const { latestRound, parseSnapshot, normalizeEntries, buildResponseJson } =
+  await import(M.href);
 
 test("latestRound: 空なら null", () => {
   assert.equal(latestRound([]), null);
@@ -82,4 +83,49 @@ test("normalizeEntries: Lv3 (journal_entries + lines を結合、debit_amount �
   assert.deepEqual(e1.lines[0], { account_code: "1010", debit: 100, credit: 0 });
   // 明細のない仕訳は空配列
   assert.deepEqual(out.find((e) => e.id === 2).lines, []);
+});
+
+test("buildResponseJson: revision は summary + comments を含める", () => {
+  const out = buildResponseJson({
+    responseType: "revision",
+    summary: " 全体所見 ",
+    comments: [
+      { entry_id: 123, ref: " 2026-05-22 携帯料金 ", note: " 貸方は普通預金では？ " },
+      { entry_id: null, ref: "", note: "   " }, // note 空はスキップ
+    ],
+  });
+  assert.deepEqual(out, {
+    v: 1,
+    response_type: "revision",
+    summary: "全体所見",
+    comments: [{ entry_id: 123, note: "貸方は普通預金では？", ref: "2026-05-22 携帯料金" }],
+  });
+});
+
+test("buildResponseJson: entry_id 無しの全体指摘は entry_id=null", () => {
+  const out = buildResponseJson({
+    responseType: "revision",
+    comments: [{ note: "全体について" }],
+  });
+  assert.equal(out.comments.length, 1);
+  assert.equal(out.comments[0].entry_id, null);
+  assert.equal(out.comments[0].ref, undefined);
+  assert.equal(out.summary, undefined);
+});
+
+test("buildResponseJson: revision で内容が空なら throw", () => {
+  assert.throws(
+    () => buildResponseJson({ responseType: "revision", summary: "  ", comments: [] }),
+    /1 つ以上/,
+  );
+});
+
+test("buildResponseJson: rejection は内容空でも可", () => {
+  const out = buildResponseJson({ responseType: "rejection" });
+  assert.deepEqual(out, { v: 1, response_type: "rejection" });
+});
+
+test("buildResponseJson: 未知の response_type は revision に正規化", () => {
+  const out = buildResponseJson({ responseType: "bogus", summary: "x" });
+  assert.equal(out.response_type, "revision");
 });
