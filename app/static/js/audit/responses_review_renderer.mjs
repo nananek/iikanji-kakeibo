@@ -50,6 +50,55 @@ export function parseResponse(plaintextBytes) {
   return JSON.parse(new TextDecoder().decode(plaintextBytes));
 }
 
+/**
+ * 旧仕訳 (owner が自分の MK で復号した現行仕訳) と auditor の構造化修正案 (§14.9)
+ * を突合し、フィールド単位の差分を返す純粋関数。明細は位置 (index) で対応付ける
+ * (proposal エディタが旧明細をその場で編集する前提と整合)。
+ *
+ * @param {?Object} oldEntry  {date, description, lines:[{account_code, debit, credit, description}]}
+ * @param {Object} proposal   {date, description, lines:[{account_code, debit, credit, description?}]}
+ * @returns {{date:Object, description:Object, lines:Array}}
+ */
+export function computeEntryDiff(oldEntry, proposal) {
+  const o = oldEntry || {};
+  const p = proposal || {};
+  const oldLines = o.lines || [];
+  const newLines = p.lines || [];
+  const n = Math.max(oldLines.length, newLines.length);
+  const lines = [];
+  for (let i = 0; i < n; i++) {
+    const ol = oldLines[i] || null;
+    const nl = newLines[i] || null;
+    if (ol && nl) {
+      const fields = {
+        account_code: String(ol.account_code ?? "") !== String(nl.account_code ?? ""),
+        debit: Number(ol.debit ?? 0) !== Number(nl.debit ?? 0),
+        credit: Number(ol.credit ?? 0) !== Number(nl.credit ?? 0),
+        description: String(ol.description ?? "") !== String(nl.description ?? ""),
+      };
+      const changed = fields.account_code || fields.debit || fields.credit || fields.description;
+      lines.push({ status: changed ? "changed" : "unchanged", old: ol, new: nl, fields });
+    } else if (nl) {
+      lines.push({ status: "added", old: null, new: nl, fields: null });
+    } else {
+      lines.push({ status: "removed", old: ol, new: null, fields: null });
+    }
+  }
+  return {
+    date: {
+      old: o.date ?? null,
+      new: p.date ?? null,
+      changed: String(o.date ?? "") !== String(p.date ?? ""),
+    },
+    description: {
+      old: o.description ?? null,
+      new: p.description ?? null,
+      changed: String(o.description ?? "") !== String(p.description ?? ""),
+    },
+    lines,
+  };
+}
+
 // ---- DOM ヘルパー -------------------------------------------------------
 
 function _esc(s) {
@@ -86,7 +135,15 @@ async function _fetchResponses() {
 
 // ---- レンダリング ------------------------------------------------------
 
-function _commentsHtml(payload) {
+function _yen(n) {
+  return Number(n || 0).toLocaleString("ja-JP");
+}
+
+// proposal を持つ comment には差分の描画先プレースホルダを置き、後で
+// (DOM 挿入後に) fetchEntryForDiff → computeEntryDiff で中身を埋める。
+// proposal の中身 (科目コード/金額) は owner 制御外なので属性へは入れず、
+// diffJobs 配列に退避して id だけで結びつける (id はこちらが採番する安全値)。
+function _commentsHtml(payload, diffJobs) {
   const comments = (payload && payload.comments) || [];
   if (comments.length === 0) return "";
   const rows = comments
@@ -94,13 +151,161 @@ function _commentsHtml(payload) {
       const ref = c.entry_id != null
         ? `仕訳 #${_esc(c.entry_id)}${c.ref ? "（" + _esc(c.ref) + "）" : ""}`
         : "全体";
-      return `<li><strong>${ref}:</strong> ${_esc(c.note)}</li>`;
+      const note = c.note ? `: ${_esc(c.note)}` : "";
+      let proposalHtml = "";
+      if (c.proposal && c.entry_id != null) {
+        const id = `audit-diff-${diffJobs.length}`;
+        diffJobs.push({ id, entryId: c.entry_id, proposal: c.proposal });
+        proposalHtml =
+          `<div class="audit-proposal-diff border rounded p-2 mt-1" id="${id}">` +
+          '<span class="text-muted small">修正案の差分を読み込み中…</span></div>';
+      }
+      return `<li class="mb-2"><strong>${ref}</strong>${note}${proposalHtml}</li>`;
     })
     .join("");
-  return `<ul class="mb-2">${rows}</ul>`;
+  return `<ul class="mb-2 list-unstyled">${rows}</ul>`;
 }
 
-function _cardHtml(r, payload) {
+// ---- 構造化差分テーブル (§14.9) ----------------------------------------
+
+function _acctLabel(accountsMeta, code) {
+  if (code == null || code === "") return "";
+  const m = (accountsMeta || {})[code];
+  return m && m.name ? `${code} ${m.name}` : String(code);
+}
+
+// 旧→新 を 1 セルに描画する。値はすべて textContent 経由 (XSS 安全)。
+function _diffCell(oldText, newText, ln, fieldChanged, isNum) {
+  const td = document.createElement("td");
+  if (isNum) td.className = "text-end";
+  if (ln.status === "added") {
+    td.textContent = newText;
+    td.classList.add("text-success");
+  } else if (ln.status === "removed") {
+    td.textContent = oldText;
+    td.classList.add("text-muted", "text-decoration-line-through");
+  } else if (ln.status === "changed" && fieldChanged) {
+    const o = document.createElement("span");
+    o.className = "text-muted text-decoration-line-through";
+    o.textContent = oldText;
+    const nw = document.createElement("span");
+    nw.className = "text-danger";
+    nw.textContent = newText;
+    td.append(o, document.createTextNode(" → "), nw);
+  } else {
+    td.textContent = newText;
+  }
+  return td;
+}
+
+function _metaChangeRow(label, oldV, newV) {
+  const div = document.createElement("div");
+  div.className = "small mb-1";
+  const strong = document.createElement("strong");
+  strong.textContent = `${label}: `;
+  const o = document.createElement("span");
+  o.className = "text-muted text-decoration-line-through";
+  o.textContent = oldV == null ? "" : String(oldV);
+  const nw = document.createElement("span");
+  nw.className = "text-danger";
+  nw.textContent = newV == null ? "" : String(newV);
+  div.append(strong, o, document.createTextNode(" → "), nw);
+  return div;
+}
+
+function _diffLineRow(ln, accountsMeta) {
+  const tr = document.createElement("tr");
+  const f = ln.fields || {};
+
+  const status = document.createElement("td");
+  status.className = "small";
+  status.textContent =
+    { added: "追加", removed: "削除", changed: "変更", unchanged: "" }[ln.status] || "";
+  if (ln.status === "added") status.classList.add("text-success");
+  else if (ln.status === "removed") status.classList.add("text-danger");
+  tr.appendChild(status);
+
+  tr.appendChild(
+    _diffCell(
+      _acctLabel(accountsMeta, ln.old && ln.old.account_code),
+      _acctLabel(accountsMeta, ln.new && ln.new.account_code),
+      ln, f.account_code, false,
+    ),
+  );
+  tr.appendChild(
+    _diffCell(
+      ln.old ? _yen(ln.old.debit) : "",
+      ln.new ? _yen(ln.new.debit) : "",
+      ln, f.debit, true,
+    ),
+  );
+  tr.appendChild(
+    _diffCell(
+      ln.old ? _yen(ln.old.credit) : "",
+      ln.new ? _yen(ln.new.credit) : "",
+      ln, f.credit, true,
+    ),
+  );
+  tr.appendChild(
+    _diffCell(
+      ln.old ? ln.old.description || "" : "",
+      ln.new ? ln.new.description || "" : "",
+      ln, f.description, false,
+    ),
+  );
+  return tr;
+}
+
+// computeEntryDiff の結果を表 (科目/借方/貸方/摘要) として DOM 構築する。
+// 全ての値は要素テキストコンテキストにのみ置く (科目名・金額・摘要)。
+function _diffTableEl(diff, accountsMeta) {
+  const wrap = document.createElement("div");
+  if (diff.date.changed) wrap.appendChild(_metaChangeRow("日付", diff.date.old, diff.date.new));
+  if (diff.description.changed) {
+    wrap.appendChild(_metaChangeRow("摘要", diff.description.old, diff.description.new));
+  }
+
+  const table = document.createElement("table");
+  table.className = "table table-sm mb-0 mt-1";
+  const thead = document.createElement("thead");
+  const htr = document.createElement("tr");
+  for (const h of ["", "科目", "借方", "貸方", "摘要"]) {
+    const th = document.createElement("th");
+    th.textContent = h;
+    if (h === "借方" || h === "貸方") th.className = "text-end";
+    htr.appendChild(th);
+  }
+  thead.appendChild(htr);
+  table.appendChild(thead);
+
+  const tbody = document.createElement("tbody");
+  for (const ln of diff.lines) tbody.appendChild(_diffLineRow(ln, accountsMeta));
+  table.appendChild(tbody);
+  wrap.appendChild(table);
+  return wrap;
+}
+
+// プレースホルダに現行仕訳との差分を描画する。owner 自身の MK で現行仕訳を復号
+// (fetchEntryForDiff) し computeEntryDiff で突合する。取得失敗は局所表示に留める。
+async function _renderDiffJob(job, client, cfg) {
+  const el = document.getElementById(job.id);
+  if (!el) return;
+  try {
+    const { fetchEntryForDiff } = await import(
+      getStaticRoot() + "js/crypto/journals_client.js"
+    );
+    const oldEntry = await fetchEntryForDiff({
+      client, userId: cfg.owner_id, entryId: job.entryId,
+    });
+    const diff = computeEntryDiff(oldEntry, job.proposal);
+    el.innerHTML = "";
+    el.appendChild(_diffTableEl(diff, cfg.accounts_meta || {}));
+  } catch (e) {
+    el.textContent = `修正案の差分を表示できませんでした（${e.message || e}）。`;
+  }
+}
+
+function _cardHtml(r, payload, diffJobs) {
   const typeBadge = payload.response_type === "rejection"
     ? '<span class="badge bg-secondary">差戻し / 問題なし</span>'
     : '<span class="badge bg-warning text-dark">修正案</span>';
@@ -120,7 +325,7 @@ function _cardHtml(r, payload) {
       <div class="mb-2">${typeBadge}${acked}
         <span class="text-muted small ms-2">${created} 受信</span></div>
       ${summary}
-      ${_commentsHtml(payload)}
+      ${_commentsHtml(payload, diffJobs)}
       <div class="d-flex gap-2 mt-2" data-response-actions="${_esc(r.id)}">
         ${ackBtn}
         <button type="button" class="btn btn-sm btn-outline-primary"
@@ -229,6 +434,7 @@ export async function initResponsesReview(cfg) {
 
   const privAad = privateKeyAAD(cfg.owner_id);
   const htmlParts = [];
+  const diffJobs = [];
   for (const r of mine) {
     try {
       const res = await client.hpkeOpen({
@@ -239,11 +445,17 @@ export async function initResponsesReview(cfg) {
         ciphertext: b64decode(r.ciphertext),
         aad: responseAAD(r.audit_package_id),
       });
-      htmlParts.push(_cardHtml(r, parseResponse(res.plaintext)));
+      htmlParts.push(_cardHtml(r, parseResponse(res.plaintext), diffJobs));
     } catch (err) {
       htmlParts.push(_renderError(r, err.message || String(err)));
     }
   }
   container.innerHTML = htmlParts.join("");
   _wireActions(container);
+
+  // 構造化修正案 (§14.9) の差分を、各プレースホルダに後追いで描画する。
+  // 現行仕訳の取得・復号は owner 自身の MK 経路 (fetchEntryForDiff)。
+  for (const job of diffJobs) {
+    await _renderDiffJob(job, client, cfg);
+  }
 }

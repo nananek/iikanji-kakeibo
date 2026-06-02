@@ -12,7 +12,7 @@ const CLIENT = new URL(
 );
 const {
   fetchJournalsForYear, decryptEntryMeta, fetchEntryFields,
-  decryptLineDescriptions,
+  decryptLineDescriptions, fetchEntryForDiff,
 } = await import(CLIENT.href);
 
 const REC = new URL(
@@ -581,4 +581,84 @@ test("fetchEntryFields: lines の行摘要も復号して返す", async () => {
   assert.equal(fields.description, "出張");
   assert.equal(fields.lines.length, 1);
   assert.deepEqual(fields.lines[0], { id: 800, description: "新幹線" });
+});
+
+// ============ fetchEntryForDiff (E5 §14.9 構造化差分の旧仕訳取得) ============
+
+test("fetchEntryForDiff: GET /api/v1/journals/<id> を完全復号し明細科目/金額を返す", async () => {
+  const client = makeMockClient();
+  const userId = 8;
+  const apiEntry = await makeEncryptedEntry(client, userId, 700, {
+    v: 1, date: "2026-05-22", description: "携帯料金", source: "journal",
+    fiscal_period: 5, fiscal_year: 2026,
+  });
+  apiEntry.lines = [
+    await makeEncryptedLine(client, userId, 700, 70, {
+      account_code: "5010", debit_amount: 5000, credit_amount: 0, description: "",
+    }),
+    await makeEncryptedLine(client, userId, 700, 71, {
+      account_code: "1010", debit_amount: 0, credit_amount: 5000, description: "",
+    }),
+  ];
+  let calledUrl = null;
+  const fetchImpl = async (url) => {
+    calledUrl = url;
+    return { ok: true, json: async () => ({ ok: true, journal: apiEntry }) };
+  };
+  const out = await fetchEntryForDiff({ client, userId, entryId: 700, fetchImpl });
+  assert.equal(calledUrl, "/api/v1/journals/700");
+  assert.equal(out.date, "2026-05-22");
+  assert.equal(out.description, "携帯料金");
+  assert.equal(out.lines.length, 2);
+  assert.equal(out.lines[0].account_code, "5010");
+  assert.equal(out.lines[0].debit, 5000);
+  assert.equal(out.lines[1].account_code, "1010");
+  assert.equal(out.lines[1].credit, 5000);
+});
+
+test("fetchEntryForDiff: line 復号失敗は平文メタへフォールバック", async () => {
+  const client = makeMockClient();
+  const userId = 8;
+  const apiEntry = await makeEncryptedEntry(client, userId, 701, {
+    v: 1, date: "2026-05-22", description: "x", source: "journal",
+    fiscal_period: 5, fiscal_year: 2026,
+  });
+  // 別 userId で暗号化した line → AAD 不一致で復号失敗 → 平文メタへ fallback。
+  const badLine = await makeEncryptedLine(client, 999, 701, 72, {
+    account_code: "5010", debit_amount: 5000, credit_amount: 0, description: "",
+  });
+  badLine.account_code = "5010";
+  badLine.debit = 5000;
+  apiEntry.lines = [badLine];
+  const fetchImpl = async () => ({ ok: true, json: async () => ({ ok: true, journal: apiEntry }) });
+  const out = await fetchEntryForDiff({ client, userId, entryId: 701, fetchImpl });
+  assert.equal(out.lines[0].account_code, "5010");
+  assert.equal(out.lines[0].debit, 5000);
+});
+
+test("fetchEntryForDiff: client なしで throw", async () => {
+  await assert.rejects(() => fetchEntryForDiff({ userId: 1, entryId: 1 }), /client.*required/);
+});
+
+test("fetchEntryForDiff: entryId なしで throw", async () => {
+  const client = makeMockClient();
+  await assert.rejects(() => fetchEntryForDiff({ client, userId: 1 }), /entryId is required/);
+});
+
+test("fetchEntryForDiff: HTTP エラーで throw", async () => {
+  const client = makeMockClient();
+  const fetchImpl = async () => ({ ok: false, status: 404, json: async () => ({ error: "見つかりません" }) });
+  await assert.rejects(
+    () => fetchEntryForDiff({ client, userId: 1, entryId: 9, fetchImpl }),
+    /HTTP 404/,
+  );
+});
+
+test("fetchEntryForDiff: journal 欠落で throw", async () => {
+  const client = makeMockClient();
+  const fetchImpl = async () => ({ ok: true, json: async () => ({ ok: true }) });
+  await assert.rejects(
+    () => fetchEntryForDiff({ client, userId: 1, entryId: 9, fetchImpl }),
+    /missing journal/,
+  );
 });

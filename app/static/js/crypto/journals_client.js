@@ -283,3 +283,46 @@ export async function fetchEntryFields({ client, userId, entryId, fetchImpl }) {
   const lines = await decryptLineDescriptions(client, userId, apiEntry.lines);
   return { ...meta, lines };
 }
+
+
+/**
+ * 単一仕訳を `GET /api/v1/journals/<id>` から取得し、本人 MK で entry / 各 line を
+ * 復号した完全な正規化形を返す (fetchJournalsForYear と同形)。監査の構造化修正案
+ * (§14.9) で owner が「旧仕訳 vs 修正案」の差分を出すために、明細の科目・金額・
+ * 摘要を含む現行仕訳を取得する用途 (fetchEntryFields は行摘要のみで科目/金額を
+ * 含まないため別関数とする)。
+ *
+ * /api/v1/journals/<id> は本人 (g.auth_user) の仕訳のみ返す。line の復号失敗は
+ * _normalizeLine が平文メタへ局所フォールバックする。
+ *
+ * @param {Object} args
+ * @param {Object} args.client          SharedCryptoClient (decrypt 用)
+ * @param {number|bigint} args.userId   復号 AAD に使う
+ * @param {number} args.entryId
+ * @param {Function} [args.fetchImpl]   テスト DI
+ * @returns {Promise<Object>} {id, date, description, source, fiscal_period,
+ *   is_closing, fiscal_month, lines:[{account_code, debit, credit, description}]}
+ */
+export async function fetchEntryForDiff({ client, userId, entryId, fetchImpl }) {
+  if (!client || typeof client.decrypt !== "function") {
+    throw new Error("client (SharedCryptoClient) is required");
+  }
+  if (userId === undefined || userId === null) {
+    throw new Error("userId is required");
+  }
+  if (entryId === undefined || entryId === null) {
+    throw new Error("entryId is required");
+  }
+  const f = fetchImpl ?? globalThis.fetch;
+  const r = await f(`/api/v1/journals/${entryId}`, { credentials: "include" });
+  if (!r.ok) {
+    const e = await r.json().catch(() => ({}));
+    throw new Error(`fetchEntryForDiff: HTTP ${r.status} ${e.error || ""}`);
+  }
+  const body = await r.json();
+  const apiEntry = body.journal;
+  if (!apiEntry) {
+    throw new Error("fetchEntryForDiff: response missing journal");
+  }
+  return _normalizeEntry(client, userId, apiEntry);
+}
