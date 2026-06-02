@@ -8,8 +8,15 @@ const M = new URL(
   "../../../app/static/js/audit/audit_review_renderer.mjs",
   import.meta.url,
 );
-const { latestRound, parseSnapshot, normalizeEntries, buildResponseJson } =
-  await import(M.href);
+const {
+  latestRound,
+  parseSnapshot,
+  normalizeEntries,
+  buildResponseJson,
+  validateProposal,
+} = await import(M.href);
+
+const META = { "1010": { name: "現金" }, "1020": { name: "普通預金" }, "5010": { name: "通信費" } };
 
 test("latestRound: 空なら null", () => {
   assert.equal(latestRound([]), null);
@@ -128,4 +135,198 @@ test("buildResponseJson: rejection は内容空でも可", () => {
 test("buildResponseJson: 未知の response_type は revision に正規化", () => {
   const out = buildResponseJson({ responseType: "bogus", summary: "x" });
   assert.equal(out.response_type, "revision");
+});
+
+// ---- §14.9 構造化修正案 (proposal) -------------------------------------
+
+const VALID_PROPOSAL = {
+  date: "2026-05-22",
+  description: "携帯料金",
+  lines: [
+    { account_code: "5010", debit: 5000, credit: 0 },
+    { account_code: "1020", debit: 0, credit: 5000 },
+  ],
+};
+
+test("validateProposal: null は null を返す", () => {
+  assert.equal(validateProposal(null, META), null);
+});
+
+test("validateProposal: 正常系は date/description/lines を正規化", () => {
+  const out = validateProposal(VALID_PROPOSAL, META);
+  assert.deepEqual(out, {
+    date: "2026-05-22",
+    description: "携帯料金",
+    lines: [
+      { account_code: "5010", debit: 5000, credit: 0 },
+      { account_code: "1020", debit: 0, credit: 5000 },
+    ],
+  });
+});
+
+test("validateProposal: 文字列金額を整数へ強制 (フォーム値)", () => {
+  const out = validateProposal(
+    { date: "2026-05-22", lines: [
+      { account_code: "5010", debit: "5000", credit: "" },
+      { account_code: "1020", debit: "", credit: "5000" },
+    ] },
+    META,
+  );
+  assert.equal(out.lines[0].debit, 5000);
+  assert.equal(out.lines[1].credit, 5000);
+  assert.equal(out.description, "");
+});
+
+test("validateProposal: date 必須", () => {
+  assert.throws(() => validateProposal({ ...VALID_PROPOSAL, date: "  " }, META), /日付/);
+});
+
+test("validateProposal: date は YYYY-MM-DD 形式必須", () => {
+  assert.throws(
+    () => validateProposal({ ...VALID_PROPOSAL, date: "2026/05/22" }, META),
+    /YYYY-MM-DD/,
+  );
+  assert.throws(
+    () => validateProposal({ ...VALID_PROPOSAL, date: "2026-5-2" }, META),
+    /YYYY-MM-DD/,
+  );
+});
+
+test("validateProposal: 行 2 未満は throw", () => {
+  assert.throws(
+    () => validateProposal({ date: "2026-05-22", lines: [{ account_code: "5010", debit: 5000, credit: 0 }] }, META),
+    /2 行以上/,
+  );
+});
+
+test("validateProposal: 科目未選択は throw", () => {
+  assert.throws(
+    () => validateProposal({ date: "2026-05-22", lines: [
+      { account_code: "", debit: 5000, credit: 0 },
+      { account_code: "1020", debit: 0, credit: 5000 },
+    ] }, META),
+    /科目を選択/,
+  );
+});
+
+test("validateProposal: accountsMeta に無い科目は throw", () => {
+  assert.throws(
+    () => validateProposal({ date: "2026-05-22", lines: [
+      { account_code: "9999", debit: 5000, credit: 0 },
+      { account_code: "1020", debit: 0, credit: 5000 },
+    ] }, META),
+    /存在しません/,
+  );
+});
+
+test("validateProposal: 非整数・負数の金額は throw", () => {
+  assert.throws(
+    () => validateProposal({ date: "2026-05-22", lines: [
+      { account_code: "5010", debit: 50.5, credit: 0 },
+      { account_code: "1020", debit: 0, credit: 50.5 },
+    ] }, META),
+    /整数/,
+  );
+  assert.throws(
+    () => validateProposal({ date: "2026-05-22", lines: [
+      { account_code: "5010", debit: -5000, credit: 0 },
+      { account_code: "1020", debit: 0, credit: -5000 },
+    ] }, META),
+    /整数/,
+  );
+});
+
+test("validateProposal: 借方貸方の両側非ゼロは throw", () => {
+  assert.throws(
+    () => validateProposal({ date: "2026-05-22", lines: [
+      { account_code: "5010", debit: 5000, credit: 5000 },
+      { account_code: "1020", debit: 0, credit: 5000 },
+    ] }, META),
+    /どちらか一方/,
+  );
+});
+
+test("validateProposal: 借方貸方の両側ゼロは throw", () => {
+  assert.throws(
+    () => validateProposal({ date: "2026-05-22", lines: [
+      { account_code: "5010", debit: 0, credit: 0 },
+      { account_code: "1020", debit: 0, credit: 5000 },
+    ] }, META),
+    /どちらか一方/,
+  );
+});
+
+test("validateProposal: 貸借不一致は throw", () => {
+  assert.throws(
+    () => validateProposal({ date: "2026-05-22", lines: [
+      { account_code: "5010", debit: 5000, credit: 0 },
+      { account_code: "1020", debit: 0, credit: 4000 },
+    ] }, META),
+    /貸借が一致しません/,
+  );
+});
+
+test("buildResponseJson: proposal を含む comment を保持", () => {
+  const out = buildResponseJson({
+    responseType: "revision",
+    comments: [{ entry_id: 5, note: "貸方は普通預金では？", proposal: VALID_PROPOSAL }],
+    accountsMeta: META,
+  });
+  assert.equal(out.comments.length, 1);
+  assert.equal(out.comments[0].entry_id, 5);
+  assert.equal(out.comments[0].note, "貸方は普通預金では？");
+  assert.deepEqual(out.comments[0].proposal.lines[1], { account_code: "1020", debit: 0, credit: 5000 });
+});
+
+test("buildResponseJson: note 空でも proposal があれば comment を残す", () => {
+  const out = buildResponseJson({
+    responseType: "revision",
+    comments: [{ entry_id: 5, note: "  ", proposal: VALID_PROPOSAL }],
+    accountsMeta: META,
+  });
+  assert.equal(out.comments.length, 1);
+  assert.equal(out.comments[0].note, undefined);
+  assert.ok(out.comments[0].proposal);
+});
+
+test("buildResponseJson: 不正な proposal は throw を伝播", () => {
+  assert.throws(
+    () => buildResponseJson({
+      responseType: "revision",
+      comments: [{ entry_id: 5, proposal: { ...VALID_PROPOSAL, date: "" } }],
+      accountsMeta: META,
+    }),
+    /日付/,
+  );
+});
+
+test("normalizeEntries: is_closing / fiscal_period を伝播 (Lv2)", () => {
+  const out = normalizeEntries({
+    level: 2,
+    entries: [
+      { id: 1, date: "2026-05-22", description: "x", is_closing: true, fiscal_period: 16, lines: [] },
+      { id: 2, date: "2026-05-22", description: "y", lines: [] },
+    ],
+  });
+  assert.equal(out[0].is_closing, true);
+  assert.equal(out[0].fiscal_period, 16);
+  assert.equal(out[1].is_closing, false);
+  assert.equal(out[1].fiscal_period, null);
+});
+
+test("normalizeEntries: is_closing / fiscal_period を伝播 (Lv3)", () => {
+  const out = normalizeEntries({
+    level: 3,
+    journal_entries: [
+      { id: 10, date: "2026-05-22", description: "損益振替", is_closing: true, fiscal_period: 16 },
+      { id: 11, date: "2026-05-22", description: "通常" },
+    ],
+    journal_entry_lines: [],
+  });
+  const e10 = out.find((e) => e.id === 10);
+  const e11 = out.find((e) => e.id === 11);
+  assert.equal(e10.is_closing, true);
+  assert.equal(e10.fiscal_period, 16);
+  assert.equal(e11.is_closing, false);
+  assert.equal(e11.fiscal_period, null);
 });
