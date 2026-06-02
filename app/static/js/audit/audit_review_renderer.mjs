@@ -78,6 +78,10 @@ export function normalizeEntries(snapshot) {
       id: e.id,
       date: e.date ?? "",
       description: e.description ?? "",
+      // 構造化修正案 (§14.9) の対象可否判定に使う。損益振替 (is_closing) /
+      // 決算整理 (fiscal_period 16) は手動置換不可なので proposal を作らせない。
+      is_closing: e.is_closing ?? false,
+      fiscal_period: e.fiscal_period ?? null,
       lines: (e.lines || []).map(_normLine),
     }));
   }
@@ -92,6 +96,8 @@ export function normalizeEntries(snapshot) {
       id: e.id,
       date: e.date ?? "",
       description: e.description ?? "",
+      is_closing: e.is_closing ?? false,
+      fiscal_period: e.fiscal_period ?? null,
       lines: linesByEntry.get(e.id) || [],
     }));
   }
@@ -326,28 +332,86 @@ export async function initAuditReview(cfg) {
 //
 // auditor がスナップショットを見ながらコメント (全体 + 仕訳ごとの指摘) を書き、
 // AuditResponse 平文 JSON を owner の公開鍵で HPKE seal して POST する。
-// 送信契約 (§14.2 / 設計方針):
-//   { v:1, response_type:"revision"|"rejection", summary?, comments?:[{entry_id, ref?, note}] }
+// 送信契約 (§14.2 / §14.9 / 設計方針):
+//   { v:1, response_type:"revision"|"rejection", summary?,
+//     comments?:[{ entry_id, ref?, note?,
+//                  proposal?:{ date, description, lines:[{account_code, debit, credit, description?}] } }] }
 // revision は summary か comments を 1 つ以上必須。rejection は差戻し/問題なしの合図で
-// summary 任意。サーバは response_type のみ管理し中身は読めない。
+// summary 任意。comment は note (自由文) と proposal (構造化置換案, §14.9) の片方以上を持つ。
+// サーバは response_type のみ管理し中身は読めない (HPKE 暗号文)。
+
+/**
+ * 構造化修正案 (§14.9) を検証して正規化する純粋関数。owner 側が採用時に呼ぶ
+ * buildJournalEntry と同一ルール (行 >= 2 / 貸借一致 / debit XOR credit / 非負整数)
+ * に揃え、採用時の builder throw を未然に防ぐ。account_code は accountsMeta に存在必須。
+ * @param {Object} proposal  { date, description?, lines:[{account_code, debit, credit, description?}] }
+ * @param {Object} accountsMeta  code -> {name, ...} (owner/auditor 共通の科目メタ)
+ * @returns {{date:string, description:string, lines:Array}}
+ * @throws {Error} 検証失敗時 (UI にそのまま表示する日本語メッセージ)
+ */
+export function validateProposal(proposal, accountsMeta) {
+  if (proposal == null) return null;
+  const date = (proposal.date || "").trim();
+  if (!date) throw new Error("修正案の日付を入力してください。");
+  const lines = Array.isArray(proposal.lines) ? proposal.lines : [];
+  if (lines.length < 2) throw new Error("修正案の明細は 2 行以上必要です。");
+  const meta = accountsMeta || {};
+  let totalDebit = 0;
+  let totalCredit = 0;
+  const clean = [];
+  for (let i = 0; i < lines.length; i++) {
+    const l = lines[i] || {};
+    const code = String(l.account_code ?? "").trim();
+    if (!code) throw new Error(`修正案 ${i + 1} 行目の科目を選択してください。`);
+    if (!Object.prototype.hasOwnProperty.call(meta, code)) {
+      throw new Error(`修正案 ${i + 1} 行目の科目 (${code}) は存在しません。`);
+    }
+    const debit = Number(l.debit ?? 0);
+    const credit = Number(l.credit ?? 0);
+    if (!Number.isInteger(debit) || debit < 0) {
+      throw new Error(`修正案 ${i + 1} 行目の借方は 0 以上の整数で入力してください。`);
+    }
+    if (!Number.isInteger(credit) || credit < 0) {
+      throw new Error(`修正案 ${i + 1} 行目の貸方は 0 以上の整数で入力してください。`);
+    }
+    if ((debit > 0) === (credit > 0)) {
+      throw new Error(`修正案 ${i + 1} 行目は借方・貸方のどちらか一方のみを入力してください。`);
+    }
+    totalDebit += debit;
+    totalCredit += credit;
+    const item = { account_code: code, debit, credit };
+    const ld = String(l.description ?? "").trim();
+    if (ld) item.description = ld;
+    clean.push(item);
+  }
+  if (totalDebit !== totalCredit) {
+    throw new Error(`修正案の貸借が一致しません (借方 ${totalDebit} / 貸方 ${totalCredit})。`);
+  }
+  if (totalDebit === 0) throw new Error("修正案の金額を入力してください。");
+  return { date, description: String(proposal.description ?? "").trim(), lines: clean };
+}
 
 /**
  * 入力から AuditResponse 平文 JSON を組み立てる純粋関数 (バリデーション込み)。
  * @param {Object} a
  * @param {string} a.responseType  "revision" | "rejection"
  * @param {string} [a.summary]
- * @param {Array<{entry_id:?number, ref?:string, note:string}>} [a.comments]
+ * @param {Array<{entry_id:?number, ref?:string, note?:string, proposal?:Object}>} [a.comments]
+ * @param {Object} [a.accountsMeta]  proposal の科目存在チェック用 (code -> meta)
  * @returns {{v:number, response_type:string, summary?:string, comments?:Array}}
  */
-export function buildResponseJson({ responseType, summary, comments }) {
+export function buildResponseJson({ responseType, summary, comments, accountsMeta }) {
   const type = responseType === "rejection" ? "rejection" : "revision";
   const cleanComments = [];
   for (const c of comments || []) {
     const note = (c.note || "").trim();
-    if (!note) continue;
-    const item = { entry_id: Number.isInteger(c.entry_id) ? c.entry_id : null, note };
+    const proposal = c.proposal != null ? validateProposal(c.proposal, accountsMeta) : null;
+    if (!note && !proposal) continue;
+    const item = { entry_id: Number.isInteger(c.entry_id) ? c.entry_id : null };
+    if (note) item.note = note;
     const ref = (c.ref || "").trim();
     if (ref) item.ref = ref;
+    if (proposal) item.proposal = proposal;
     cleanComments.push(item);
   }
   const sum = (summary || "").trim();
@@ -389,11 +453,134 @@ function _entryOptionLabel(e) {
   return `#${e.id} ${date} ${desc}`.trim();
 }
 
-function _addCommentRow(entries) {
+// 科目セレクタの option を accountsMeta から埋める。option.textContent は
+// textContent 経由なので科目名の XSS は起きない。
+function _fillAccountOptions(sel, accountsMeta, selectedCode) {
+  const optNone = document.createElement("option");
+  optNone.value = "";
+  optNone.textContent = "（科目を選択）";
+  sel.appendChild(optNone);
+  for (const [code, meta] of Object.entries(accountsMeta || {})) {
+    const opt = document.createElement("option");
+    opt.value = code;
+    opt.textContent = `${code} ${(meta && meta.name) || ""}`.trim();
+    sel.appendChild(opt);
+  }
+  if (selectedCode != null && selectedCode !== "") sel.value = String(selectedCode);
+}
+
+// 構造化修正案 (§14.9) の 1 明細行 (科目 / 借方 / 貸方 / 削除) を生成する。
+// 行摘要は snapshot に含まれないため UI には出さず、proposal スキーマ上 optional。
+function _makeProposalLineRow(accountsMeta, line) {
+  line = line || {};
+  const lr = document.createElement("div");
+  lr.className = "row g-1 mb-1 align-items-center audit-proposal-line";
+
+  const acctCol = document.createElement("div");
+  acctCol.className = "col-md-5";
+  const acct = document.createElement("select");
+  acct.className = "form-select form-select-sm audit-proposal-acct";
+  _fillAccountOptions(acct, accountsMeta, line.account_code);
+  acctCol.appendChild(acct);
+
+  const debitCol = document.createElement("div");
+  debitCol.className = "col-md-3";
+  const debit = document.createElement("input");
+  debit.type = "number";
+  debit.min = "0";
+  debit.step = "1";
+  debit.className = "form-control form-control-sm audit-proposal-debit";
+  debit.placeholder = "借方";
+  if (line.debit) debit.value = String(line.debit);
+  debitCol.appendChild(debit);
+
+  const creditCol = document.createElement("div");
+  creditCol.className = "col-md-3";
+  const credit = document.createElement("input");
+  credit.type = "number";
+  credit.min = "0";
+  credit.step = "1";
+  credit.className = "form-control form-control-sm audit-proposal-credit";
+  credit.placeholder = "貸方";
+  if (line.credit) credit.value = String(line.credit);
+  creditCol.appendChild(credit);
+
+  const delCol = document.createElement("div");
+  delCol.className = "col-md-1";
+  const del = document.createElement("button");
+  del.type = "button";
+  del.className = "btn btn-sm btn-outline-danger";
+  del.textContent = "×";
+  del.addEventListener("click", () => lr.remove());
+  delCol.appendChild(del);
+
+  lr.append(acctCol, debitCol, creditCol, delCol);
+  return lr;
+}
+
+// 構造化修正案エディタ (日付 / 摘要 / 明細群 + 明細追加) を生成する。
+function _makeProposalEditor(accountsMeta) {
+  const editor = document.createElement("div");
+  editor.className = "audit-proposal-editor border-top mt-2 pt-2 d-none";
+
+  const head = document.createElement("div");
+  head.className = "row g-2 mb-2";
+  const dateCol = document.createElement("div");
+  dateCol.className = "col-md-4";
+  const date = document.createElement("input");
+  date.type = "date";
+  date.className = "form-control form-control-sm audit-proposal-date";
+  dateCol.appendChild(date);
+  const descCol = document.createElement("div");
+  descCol.className = "col-md-8";
+  const desc = document.createElement("input");
+  desc.type = "text";
+  desc.className = "form-control form-control-sm audit-proposal-desc";
+  desc.placeholder = "摘要";
+  descCol.appendChild(desc);
+  head.append(dateCol, descCol);
+
+  const linesWrap = document.createElement("div");
+  linesWrap.className = "audit-proposal-lines";
+
+  const addLine = document.createElement("button");
+  addLine.type = "button";
+  addLine.className = "btn btn-sm btn-outline-secondary";
+  addLine.textContent = "明細を追加";
+  addLine.addEventListener("click", () =>
+    linesWrap.appendChild(_makeProposalLineRow(accountsMeta, {})),
+  );
+
+  editor.append(head, linesWrap, addLine);
+  return editor;
+}
+
+// 選択中の仕訳を初期値としてエディタを一度だけ埋める (既入力を上書きしない)。
+function _prefillProposal(row, entry, accountsMeta) {
+  const editor = row.querySelector(".audit-proposal-editor");
+  const linesWrap = editor.querySelector(".audit-proposal-lines");
+  if (linesWrap.children.length > 0) return;
+  editor.querySelector(".audit-proposal-date").value = entry.date || "";
+  editor.querySelector(".audit-proposal-desc").value = entry.description || "";
+  const lines = entry.lines || [];
+  if (lines.length === 0) {
+    linesWrap.appendChild(_makeProposalLineRow(accountsMeta, {}));
+    linesWrap.appendChild(_makeProposalLineRow(accountsMeta, {}));
+  } else {
+    for (const l of lines) linesWrap.appendChild(_makeProposalLineRow(accountsMeta, l));
+  }
+}
+
+function _addCommentRow(entries, accountsMeta) {
   const list = document.getElementById("audit-compose-comments");
   if (!list) return;
+  const entryById = new Map((entries || []).map((e) => [e.id, e]));
+
   const row = document.createElement("div");
-  row.className = "row g-2 mb-2 align-items-center audit-comment-row";
+  row.className = "mb-3 p-2 border rounded audit-comment-row";
+
+  const top = document.createElement("div");
+  top.className = "row g-2 align-items-center";
 
   const selCol = document.createElement("div");
   selCol.className = "col-md-4";
@@ -403,7 +590,7 @@ function _addCommentRow(entries) {
   optNone.value = "";
   optNone.textContent = "（全体について）";
   sel.appendChild(optNone);
-  for (const e of entries) {
+  for (const e of entries || []) {
     const opt = document.createElement("option");
     opt.value = String(e.id);
     opt.textContent = _entryOptionLabel(e); // textContent なので XSS 安全
@@ -429,10 +616,48 @@ function _addCommentRow(entries) {
   del.addEventListener("click", () => row.remove());
   delCol.appendChild(del);
 
-  row.appendChild(selCol);
-  row.appendChild(noteCol);
-  row.appendChild(delCol);
+  top.append(selCol, noteCol, delCol);
+
+  // 構造化修正案 (§14.9) のトグル + エディタ。仕訳を選んだとき、かつ
+  // 損益振替 / 決算整理でないときのみ作成可能。
+  const toggleWrap = document.createElement("div");
+  toggleWrap.className = "form-check mt-2 d-none audit-proposal-toggle";
+  const cb = document.createElement("input");
+  cb.type = "checkbox";
+  cb.className = "form-check-input audit-proposal-enable";
+  cb.id = `audit-proposal-enable-${list.children.length}-${entries ? entries.length : 0}`;
+  const cbLabel = document.createElement("label");
+  cbLabel.className = "form-check-label small";
+  cbLabel.setAttribute("for", cb.id);
+  cbLabel.textContent = "この仕訳の構造化修正案を作成（owner が 1 クリックで採用できます）";
+  toggleWrap.append(cb, cbLabel);
+
+  const editor = _makeProposalEditor(accountsMeta || {});
+
+  function updateAvailability() {
+    const e = sel.value ? entryById.get(Number(sel.value)) : null;
+    const eligible = !!e && !e.is_closing && e.fiscal_period !== 16;
+    toggleWrap.classList.toggle("d-none", !eligible);
+    if (!eligible) {
+      cb.checked = false;
+      editor.classList.add("d-none");
+      editor.querySelector(".audit-proposal-lines").innerHTML = "";
+    }
+  }
+  sel.addEventListener("change", updateAvailability);
+  cb.addEventListener("change", () => {
+    if (cb.checked) {
+      editor.classList.remove("d-none");
+      const e = sel.value ? entryById.get(Number(sel.value)) : null;
+      if (e) _prefillProposal(row, e, accountsMeta || {});
+    } else {
+      editor.classList.add("d-none");
+    }
+  });
+
+  row.append(top, toggleWrap, editor);
   list.appendChild(row);
+  updateAvailability();
 }
 
 function _collectComments() {
@@ -443,7 +668,21 @@ function _collectComments() {
     const entryId = sel && sel.value ? Number(sel.value) : null;
     const opt = sel && sel.selectedOptions[0];
     const ref = opt ? opt.dataset.ref || "" : "";
-    return { entry_id: entryId, ref, note: note ? note.value : "" };
+    const cb = row.querySelector(".audit-proposal-enable");
+    let proposal = null;
+    if (cb && cb.checked) {
+      const editor = row.querySelector(".audit-proposal-editor");
+      proposal = {
+        date: editor.querySelector(".audit-proposal-date").value,
+        description: editor.querySelector(".audit-proposal-desc").value,
+        lines: Array.from(editor.querySelectorAll(".audit-proposal-line")).map((lr) => ({
+          account_code: lr.querySelector(".audit-proposal-acct").value,
+          debit: lr.querySelector(".audit-proposal-debit").value,
+          credit: lr.querySelector(".audit-proposal-credit").value,
+        })),
+      };
+    }
+    return { entry_id: entryId, ref, note: note ? note.value : "", proposal };
   });
 }
 
@@ -471,7 +710,8 @@ export async function initAuditCompose(cfg) {
   if (entries.length === 0) {
     if (commentsWrap) commentsWrap.classList.add("d-none");
   } else if (addBtn) {
-    addBtn.addEventListener("click", () => _addCommentRow(entries));
+    const accountsMeta = (ctx.snapshot && ctx.snapshot.accounts_meta) || {};
+    addBtn.addEventListener("click", () => _addCommentRow(entries, accountsMeta));
   }
 
   await _evaluateComposeGate(cfg, ctx);
@@ -549,6 +789,7 @@ async function _sendResponse(cfg, ctx) {
       responseType: _selectedResponseType(),
       summary: (document.getElementById("audit-compose-summary") || {}).value,
       comments: _collectComments(),
+      accountsMeta: (ctx.snapshot && ctx.snapshot.accounts_meta) || {},
     });
   } catch (e) {
     _composeStatus(e.message || String(e), "warning");
