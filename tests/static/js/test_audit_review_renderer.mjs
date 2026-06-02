@@ -292,3 +292,20 @@ test("normalizeEntries: is_closing / fiscal_period を伝播 (Lv2)", () => {
   assert.equal(out[1].is_closing, false);
   assert.equal(out[1].fiscal_period, null);
 });
+
+test("normalizeEntries: is_closing / fiscal_period を伝播 (Lv3)", () => {
+  const out = normalizeEntries({
+    level: 3,
+    journal_entries: [
+      { id: 10, date: "2026-05-22", description: "損益振替", is_closing: true, fiscal_period: 16 },
+      { id: 11, date: "2026-05-22", description: "通常" },
+    ],
+    journal_entry_lines: [],
+  });
+  const e10 = out.find((e) => e.id === 10);
+  const e11 = out.find((e) => e.id === 11);
+  assert.equal(e10.is_closing, true);
+  assert.equal(e10.fiscal_period, 16);
+  assert.equal(e11.is_closing, false);
+  assert.equal(e11.fiscal_period, null);
+});

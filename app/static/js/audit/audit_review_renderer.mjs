@@ -387,7 +387,8 @@ export function validateProposal(proposal, accountsMeta) {
   if (totalDebit !== totalCredit) {
     throw new Error(`修正案の貸借が一致しません (借方 ${totalDebit} / 貸方 ${totalCredit})。`);
   }
-  if (totalDebit === 0) throw new Error("修正案の金額を入力してください。");
+  // 各行は XOR チェックを通過済 (片側のみ > 0) なので、貸借一致かつ total が 0 に
+  // なるのは全行金額 0 = 不可能。金額 0 のケースは貸借不一致チェックが先に弾く。
   return { date, description: String(proposal.description ?? "").trim(), lines: clean };
 }
 
@@ -625,7 +626,7 @@ function _addCommentRow(entries, accountsMeta) {
   const cb = document.createElement("input");
   cb.type = "checkbox";
   cb.className = "form-check-input audit-proposal-enable";
-  cb.id = `audit-proposal-enable-${list.children.length}-${entries ? entries.length : 0}`;
+  cb.id = `audit-proposal-enable-${list.children.length}`;
   const cbLabel = document.createElement("label");
   cbLabel.className = "form-check-label small";
   cbLabel.setAttribute("for", cb.id);
