@@ -1872,6 +1872,8 @@ audit_responses
 | response_type    | text        | CHECK (response_type IN ('revision', 'rejection')) | 修正案 / 差戻し |
 | ephemeral_pubkey | bytea (32)  | NOT NULL                            | HPKE (auditor → owner 方向) |
 | ciphertext       | bytea       | NOT NULL                            | HPKE 暗号文 (修正案 JSON or 差戻し理由) |
+|                  |             |                                     | 修正案 JSON: `{v:1, response_type, summary?, comments?:[{entry_id, ref?, note?, proposal?}]}` |
+|                  |             |                                     | `proposal`: `{date, description, lines:[{account_code, debit, credit, description?}]}` = §14.9 構造化置換案 |
 | created_at       | timestamptz | NOT NULL                            | |
 | expires_at       | timestamptz | NOT NULL                            | 同 90 days |
 | owner_acknowledged_at | timestamptz | NULL                          | owner が確認した時刻 |
@@ -1884,7 +1886,7 @@ INDEX (expires_at)
 
 owner が「採用」を選んだ場合は **AuditResponse は作成しない**。理由:
 
-- 修正案の採用 = E3 フローで新仕訳を作成すること (AuditResponse とは別の操作)
+- 修正案の採用 = E3 フローで仕訳を更新すること (AuditResponse とは別の操作)
 - auditor 側は「対応する仕訳が更新された」ことを次回スナップショットで観察
   可能 (差分表示)
 - 別 endpoint で `audit_packages.owner_accepted_at` を更新し、auditor 画面に
@@ -1894,7 +1896,14 @@ owner が「採用」を選んだ場合は **AuditResponse は作成しない**�
   ```
 - `audit_packages` に `owner_accepted_at timestamptz NULL` カラムを追加
 
-これにより auditor は (a) 採用 / (b) 差戻し / (c) 修正案 (新仕訳作成) の
+**個別 proposal の 1 クリック採用 (§14.9) と package accept は別操作**:
+
+- `comments[].proposal` (構造化置換案) を持つ修正案は、owner が「採用」ボタンで
+  **当該仕訳 1 件を置換**する (後述 §14.9。`PUT /api/v1/journals/<id>` で全置換)。
+- `owner_accepted_at` (上記 `/accept`) は **その監査ラウンド全体を「対応完了」と締める**
+  操作で、個別仕訳の置換とは独立。両ボタンは UI 上で共存する。
+
+これにより auditor は (a) 採用 / (b) 差戻し / (c) 修正案 (仕訳置換) の
 3 つの結果を区別できる。
 
 #### HPKE base mode の送信者認証
@@ -2122,8 +2131,23 @@ owner 画面:
 | #124 | 摘要 「電話代」→「通信費」  | ☐    | ☐     |
 ```
 
-採用すると `JournalEntry` を新規作成 (旧仕訳の削除 + 新仕訳の作成) し、E3 の
-フローに従う。差戻しは何もしない (またはコメント返信)。
+採用すると owner クライアントが当該 `JournalEntry` を **`PUT /api/v1/journals/<id>`
+で全置換**する (旧明細を DELETE + 新明細を INSERT する 1 トランザクション)。
+当初案の「旧仕訳の削除 + 新仕訳の作成」より優れる:
+
+- **entry_id を保つ**ので `Voucher.journal_entry_id` (ON DELETE SET NULL) が孤立せず、
+  証憑リンクが維持される。
+- 1 commit で atomic。AAD は Option B (`buildAAD("je"/"jel", user_id)`、entry_id 非依存)
+  なので同一 entry_id への再暗号化で AAD 不一致は起きない。
+
+owner クライアントは proposal の `{date, description, lines}` を自分の MK で再暗号化
+(`buildJournalEntry`)、source / fiscal_period は現行仕訳から引き継ぐ。確定済み期間・
+科目存在・貸借一致は **サーバ側 (`check_entry_modifiable` / `check_period_open_for_new`
+/ PUT 検証) が権威**で、フロントのガードは UX 目的。差戻しは何もしない (新ラウンド送信で対応)。
+
+実装ノート (実装時の整合): owner レビュー画面は復号した現行仕訳 (`fetchEntryForDiff`)
+と proposal を `computeEntryDiff` で**位置 (index) 対応**で突合して差分表示する。採用 PUT も
+proposal の行順をそのまま送るため、差分表示と置換結果の行対応が一致する。
 
 ### 14.10 権限取消の単純化
 

@@ -99,6 +99,35 @@ export function computeEntryDiff(oldEntry, proposal) {
   };
 }
 
+/**
+ * 構造化修正案を 1 クリック採用する際に buildJournalEntry へ渡す引数を組み立てる
+ * 純粋関数 (client 以外)。proposal の行順をそのまま使う (computeEntryDiff の位置
+ * 対応・PUT ペイロード順と一致、§14.9)。source / fiscal_period は現行仕訳から
+ * 引き継ぎ、fiscal_month 導出を旧仕訳と整合させる。
+ *
+ * @param {Object} proposal  {date, description?, lines:[{account_code, debit, credit, description?}]}
+ * @param {Object} oldEntry  現行仕訳 (fetchEntryForDiff の戻り)
+ * @param {number|bigint} userId
+ * @returns {Object} buildJournalEntry の引数 (client を除く)
+ */
+export function buildAdoptArgs(proposal, oldEntry, userId) {
+  const p = proposal || {};
+  const o = oldEntry || {};
+  return {
+    userId,
+    date: p.date,
+    description: p.description || "",
+    lines: (p.lines || []).map((l) => ({
+      account_code: l.account_code,
+      debit: Number(l.debit) || 0,
+      credit: Number(l.credit) || 0,
+      description: l.description || "",
+    })),
+    source: o.source || "journal",
+    fiscalPeriod: o.fiscal_period ?? null,
+  };
+}
+
 // ---- DOM ヘルパー -------------------------------------------------------
 
 function _esc(s) {
@@ -285,8 +314,60 @@ function _diffTableEl(diff, accountsMeta) {
   return wrap;
 }
 
+// 1 クリック採用 (§14.9): 修正案を owner 自身の MK で再暗号化し、PUT で既存仕訳を
+// 全置換する (entry_id 保持で Voucher リンク維持・atomic)。確定済み期間・科目存在・
+// 貸借一致はサーバ (check_entry_modifiable / check_period_open_for_new / PUT 検証) が
+// 権威。フロントは結果を表示するのみ。oldEntry は差分描画で取得済を再利用する。
+async function _adoptProposal(job, oldEntry, client, cfg, btn, statusEl) {
+  const setMsg = (m, cls) => {
+    statusEl.textContent = m;
+    statusEl.className = `small mt-1 text-${cls}`;
+  };
+  if (!globalThis.confirm(
+    `この修正案を採用すると、現在の仕訳 #${job.entryId} が置き換わります。よろしいですか？`,
+  )) return;
+  btn.disabled = true;
+  setMsg("暗号化して採用しています…", "muted");
+  try {
+    const { buildJournalEntry } = await import(
+      getStaticRoot() + "js/crypto/entries_builder.js"
+    );
+    const payload = await buildJournalEntry({
+      client,
+      ...buildAdoptArgs(job.proposal, oldEntry, cfg.owner_id),
+    });
+    const resp = await fetch(`/api/v1/journals/${job.entryId}`, {
+      method: "PUT",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json", "X-CSRFToken": _csrfToken() },
+      body: JSON.stringify(payload),
+    });
+    if (resp.ok) {
+      setMsg("採用しました。仕訳を置き換えました。", "success");
+      btn.remove();
+      return;
+    }
+    if (resp.status === 400) {
+      const e = await resp.json().catch(() => ({}));
+      setMsg(
+        `採用できませんでした: ${e.error || "確定済み期間・科目・貸借をご確認ください"}`,
+        "danger",
+      );
+    } else if (resp.status === 403) {
+      setMsg("採用できませんでした（権限または期間の制約があります）。", "danger");
+    } else {
+      setMsg(`採用に失敗しました (HTTP ${resp.status})。`, "danger");
+    }
+    btn.disabled = false;
+  } catch (err) {
+    setMsg(`採用中にエラーが発生しました: ${err.message || err}`, "danger");
+    btn.disabled = false;
+  }
+}
+
 // プレースホルダに現行仕訳との差分を描画する。owner 自身の MK で現行仕訳を復号
 // (fetchEntryForDiff) し computeEntryDiff で突合する。取得失敗は局所表示に留める。
+// 取得できたら「採用」ボタンを添える (oldEntry を closure で採用ハンドラに渡す)。
 async function _renderDiffJob(job, client, cfg, fetchEntryForDiff) {
   const el = document.getElementById(job.id);
   if (!el) return;
@@ -297,6 +378,19 @@ async function _renderDiffJob(job, client, cfg, fetchEntryForDiff) {
     const diff = computeEntryDiff(oldEntry, job.proposal);
     el.innerHTML = "";
     el.appendChild(_diffTableEl(diff, cfg.accounts_meta || {}));
+
+    const adoptBtn = document.createElement("button");
+    adoptBtn.type = "button";
+    adoptBtn.className = "btn btn-sm btn-primary";
+    adoptBtn.textContent = "この修正案を採用（仕訳を置換）";
+    const adoptStatus = document.createElement("div");
+    adoptBtn.addEventListener("click", () =>
+      _adoptProposal(job, oldEntry, client, cfg, adoptBtn, adoptStatus),
+    );
+    const actions = document.createElement("div");
+    actions.className = "mt-2";
+    actions.append(adoptBtn, adoptStatus);
+    el.appendChild(actions);
   } catch (e) {
     el.textContent = `修正案の差分を表示できませんでした（${e.message || e}）。`;
   }
