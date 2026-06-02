@@ -486,6 +486,12 @@ export async function initAuditCompose(cfg) {
 async function _evaluateComposeGate(cfg, ctx) {
   const sendBtn = document.getElementById("audit-compose-send");
   if (!sendBtn) return;
+  // 送信中はゲートを評価しない (await 中の再評価で送信ボタンを再有効化して二重 POST
+  // させない, Finding 3)。
+  if (ctx.sending) return;
+  // どの早期 return パスでもボタンを無効のままにする。再評価が条件未達で抜けても
+  // 古い ctx.ownerPubRaw のまま送信されないようにする (Finding 1)。
+  sendBtn.disabled = true;
 
   const ownerPubB64 = await _fetchPeerPublicKey(cfg.owner_id);
   if (!ownerPubB64) {
@@ -515,6 +521,8 @@ async function _evaluateComposeGate(cfg, ctx) {
     return;
   }
 
+  // await をまたいだ間に送信が始まっていたら有効化しない (Finding 3)。
+  if (ctx.sending) return;
   ctx.ownerPubRaw = pubRaw;
   _composeStatus("送信できます。", "success");
   sendBtn.disabled = false;
@@ -538,6 +546,8 @@ async function _sendResponse(cfg, ctx) {
     return;
   }
 
+  // 送信中はゲート再評価がボタンを再有効化しないようにフラグを立てる (Finding 3)。
+  ctx.sending = true;
   sendBtn.disabled = true;
   try {
     const [hpke, { b64encode }] = await Promise.all([
@@ -566,20 +576,28 @@ async function _sendResponse(cfg, ctx) {
       const label = payload.response_type === "rejection" ? "差戻し" : "修正案";
       _composeStatus(`${label}を送信しました。`, "success");
       _resetCompose();
+      ctx.sending = false;
       sendBtn.disabled = false;
       return;
     }
     if (resp.status === 403) {
+      // 失効 / 期限切れは恒久失敗。再有効化せず無限リトライを防ぐ (Finding 2)。
       _composeStatus("送信が拒否されました。監査アクセスが失効、または送信期限を過ぎています。", "danger");
-    } else if (resp.status === 400) {
+      ctx.sending = false;
+      return;
+    }
+    if (resp.status === 400) {
       const e = await resp.json().catch(() => ({}));
       _composeStatus(`送信に失敗しました: ${e.error || resp.status}`, "danger");
     } else {
       _composeStatus(`送信に失敗しました (HTTP ${resp.status})。`, "danger");
     }
+    // 400 / その他 HTTP は再試行余地があるので再有効化する。
+    ctx.sending = false;
     sendBtn.disabled = false;
   } catch (e) {
     _composeStatus(`送信中にエラーが発生しました: ${e.message || e}`, "danger");
+    ctx.sending = false;
     sendBtn.disabled = false;
   }
 }
