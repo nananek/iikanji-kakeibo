@@ -21,6 +21,15 @@ class TestDashboard:
         resp = client.get("/auditor/")
         assert resp.status_code == 200
 
+    def test_deprecation_banner_shown(self, db, client, auditor):
+        """非同期方式への移行 deprecation 告知バナーが表示される (§14.11)"""
+        with client.session_transaction() as sess:
+            sess["_user_id"] = str(auditor.id)
+        resp = client.get("/auditor/")
+        body = resp.get_data(as_text=True)
+        assert "非同期スナップショット方式" in body
+        assert "廃止予定" in body
+
     def test_auditor_sees_grants(self, db, client, auditor, user):
         grant = AuditGrant(
             owner_user_id=user.id,

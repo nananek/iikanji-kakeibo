@@ -4,6 +4,14 @@
 {% block content %}
 <h2><i class="bi bi-people"></i> クライアント一覧</h2>
 
+<div class="alert alert-info mt-3" role="alert">
+  <i class="bi bi-info-circle"></i>
+  監査連携は<strong>非同期スナップショット方式</strong>へ移行中です。各クライアントの
+  「<strong>受信したスナップショット</strong>」から、暗号化された帳簿を復号して監査・修正案の
+  送信ができます。「<strong>切替（旧）</strong>」によるリアルタイム代理閲覧は将来のバージョンで
+  <strong>廃止予定</strong>です。
+</div>
+
 {% if grants %}
 <div class="table-responsive mt-3">
   <table class="table table-hover">
