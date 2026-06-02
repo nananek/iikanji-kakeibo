@@ -343,8 +343,20 @@ async function _adoptProposal(job, oldEntry, client, cfg, btn, statusEl) {
       body: JSON.stringify(payload),
     });
     if (resp.ok) {
-      setMsg("採用しました。仕訳を置き換えました。", "success");
-      btn.remove();
+      // 採用後は差分テーブルが残ると「まだ差分がある = 未反映」に見えるので、
+      // プレースホルダ全体を成功メッセージへ差し替えて折りたたむ。
+      const box = document.getElementById(job.id);
+      if (box) {
+        box.innerHTML = "";
+        const msg = document.createElement("div");
+        msg.className = "small text-success";
+        msg.textContent =
+          "採用しました。仕訳を置き換えました（ページを再読み込みすると反映が確認できます）。";
+        box.appendChild(msg);
+      } else {
+        setMsg("採用しました。仕訳を置き換えました。", "success");
+        btn.remove();
+      }
       return;
     }
     if (resp.status === 400) {
