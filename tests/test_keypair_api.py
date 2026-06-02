@@ -284,6 +284,21 @@ def test_get_public_key_auditor_to_owner_returns_200(client, db):
     assert data["public_key"] == b64encode(b"\x08" * 32).decode()
 
 
+def test_get_public_key_peer_unset_returns_null(client, db):
+    """相手がまだ鍵ペア未設定なら 200 + public_key=null (renderer の no-key パス)。"""
+    owner = _make_user(db, "owner_null")
+    auditor = _make_user(db, "auditor_null")  # public_key 未設定
+    db.session.commit()
+    _grant(db, owner, auditor)
+
+    _login(client, owner)
+    r = client.get(f"/api/v1/keypair/{auditor.id}/public")
+    assert r.status_code == 200
+    data = r.get_json()
+    assert data["user_id"] == auditor.id
+    assert data["public_key"] is None
+
+
 def test_get_public_key_without_grant_is_404(client, db):
     """grant で結ばれていない相手の公開鍵は取得できない (存在を秘匿し 404)。"""
     me = _make_user(db, "me_nopub")

@@ -51,7 +51,7 @@ function _renderError(el, name, status) {
     </div>`;
 }
 
-function _renderUnpinned(el, name, label, b64key, hashHex) {
+function _renderUnpinned(el, name, label, hashHex) {
   el.innerHTML = `
     <div class="alert alert-info small mb-0">
       <div class="mb-2">
@@ -66,8 +66,7 @@ function _renderUnpinned(el, name, label, b64key, hashHex) {
       </p>
       <button type="button" class="btn btn-sm btn-primary"
               data-fp-action="pin"
-              data-fp-hash="${_esc(hashHex)}"
-              data-fp-key="${_esc(b64key)}">
+              data-fp-hash="${_esc(hashHex)}">
         <i class="bi bi-pin-angle"></i> 本人に確認した — 固定する
       </button>
     </div>`;
@@ -85,7 +84,7 @@ function _renderMatch(el, name, label, pinnedAt) {
     </div>`;
 }
 
-function _renderMismatch(el, name, label, b64key, hashHex) {
+function _renderMismatch(el, name, label, hashHex) {
   el.innerHTML = `
     <div class="alert alert-danger small mb-0">
       <div class="mb-2">
@@ -101,8 +100,7 @@ function _renderMismatch(el, name, label, b64key, hashHex) {
       </p>
       <button type="button" class="btn btn-sm btn-outline-danger"
               data-fp-action="pin"
-              data-fp-hash="${_esc(hashHex)}"
-              data-fp-key="${_esc(b64key)}">
+              data-fp-hash="${_esc(hashHex)}">
         <i class="bi bi-pin-angle"></i> 本人に確認した — 新しい鍵で固定し直す
       </button>
     </div>`;
@@ -136,9 +134,9 @@ async function _renderOne(el, store, mod, b64decode) {
   if (ev.status === "match") {
     _renderMatch(el, name, ev.label, ev.pinnedAt);
   } else if (ev.status === "mismatch") {
-    _renderMismatch(el, name, ev.label, res.publicKey, ev.hashHex);
+    _renderMismatch(el, name, ev.label, ev.hashHex);
   } else {
-    _renderUnpinned(el, name, ev.label, res.publicKey, ev.hashHex);
+    _renderUnpinned(el, name, ev.label, ev.hashHex);
   }
 
   // 固定ボタンのハンドラ。確認済の意思表示としてユーザーが押したら pin する。
