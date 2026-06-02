@@ -578,8 +578,9 @@ function _clearProposalEditor(editor) {
   editor.querySelector(".audit-proposal-lines").innerHTML = "";
 }
 
-// 選択中の仕訳を初期値としてエディタを埋める (既入力があれば上書きしない)。
-// 対象仕訳の切替時は呼び出し側で _clearProposalEditor 済みなので再プリフィルされる。
+// 選択中の仕訳を初期値としてエディタを埋める。children > 0 のとき早期 return する
+// のは二重プリフィル防止用 (呼び出し側は切替時に _clearProposalEditor 済み、
+// OFF→ON 経路も OFF 時にクリア済みなので、通常は children===0 で通過する)。
 function _prefillProposal(row, entry, accountsMeta) {
   const editor = row.querySelector(".audit-proposal-editor");
   const linesWrap = editor.querySelector(".audit-proposal-lines");
@@ -691,7 +692,12 @@ function _addCommentRow(entries, accountsMeta) {
         row._proposalEntryId = e.id;
       }
     } else {
+      // OFF 時に内容と記録をクリアする。さもないと「ON→OFF→別仕訳に切替→再 ON」で
+      // _prefillProposal の children ガードに弾かれ、旧仕訳の明細が新仕訳の
+      // entry_id に付いたまま送信されて不整合になる。
       editor.classList.add("d-none");
+      _clearProposalEditor(editor);
+      row._proposalEntryId = null;
     }
   });
 
