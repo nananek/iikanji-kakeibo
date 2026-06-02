@@ -150,94 +150,6 @@ def create_app(config_class=Config):
         # 元々アクセスしようとしていたパスに戻れるよう ?next= を引き継ぐ
         return redirect(url_for("auth.accept_terms", next=request.path))
 
-    # Before-request hook for audit permission control
-    @app.before_request
-    def audit_permission_check():
-        from flask import request, redirect, url_for, session
-        from flask_login import current_user as cu
-        if not cu.is_authenticated:
-            return
-        from app.services.audit import (
-            get_permission_level, is_acting_as_auditor, require_permission,
-        )
-        perm = get_permission_level()
-        if perm is None:
-            return
-        endpoint = request.endpoint or ""
-        # Static files, auth, external API, legal pages (contact 含む) は
-        # 監査権限制御の対象外 (公開ページ・お問い合わせは権限レベル問わず可)
-        if (
-            endpoint.startswith("static")
-            or endpoint.startswith("auth.")
-            or endpoint.startswith("api.")
-            or endpoint.startswith("legal.")
-            # E2EE 鍵管理 API は監査者本人 (Lv1-3) も自分の wrapped_keys に
-            # アクセスする必要がある (auditor 自身の MK 管理)。代理閲覧中の
-            # owner 鍵には触れないので、user_id フィルタで安全に分離されている。
-            or endpoint.startswith("wrapped_keys.")
-            # X25519 鍵ペアも各ユーザー本人の鍵管理 (g.auth_user で self 限定)。
-            or endpoint.startswith("keypair.")
-            # 監査連携 API は self-service。代理閲覧中はエンドポイント側で
-            # reject_if_proxy() が 403 を返す (gate でブロックせず素通し)。
-            or endpoint.startswith("audit_packages.")
-        ):
-            return
-        # Auditor exit: always allow
-        if endpoint == "auditor.exit_acting":
-            return
-        # 有償ゲート: 代理閲覧中、auditor 側または被監査 owner 側のいずれかで
-        # 監査枠エンタイトルメントが必要。両者とも未契約 (= billing 側で枠が
-        # 失効した) なら代理閲覧を即時終了させて auditor 自身のダッシュボードへ。
-        # セルフホストモードでは UnlimitedBillingClient が常に True を返す。
-        from app.services.entitlement import has_entitlement
-        owner_id = session.get("acting_as_user_id")
-        if owner_id:
-            from app.models.user import User
-            owner = db.session.get(User, owner_id)
-            if owner is None or not (
-                has_entitlement(cu, "audit_seat")
-                or has_entitlement(owner, "audit_seat")
-            ):
-                # 既存パターン (services/audit.py / views/auditor.py:exit_acting)
-                # と揃えて両セッションキーをクリアする。
-                session.pop("acting_as_user_id", None)
-                session.pop("acting_as_permission_level", None)
-                from flask import flash
-                flash(
-                    "監査枠の有効期限が切れています。被監査者または監査者の"
-                    "プラン状況をご確認ください。",
-                    "warning",
-                )
-                return redirect(url_for("auditor.dashboard"))
-        # Lv1: only tax report
-        if perm == 1:
-            if endpoint != "reports.tax":
-                return redirect(url_for("reports.tax"))
-        # Lv2: block import/AI/account changes/fiscal settings
-        elif perm == 2:
-            blocked_prefixes = (
-                "csv_import.", "web_import.", "ofx_import.", "ai_journal.",
-                "settings.fiscal", "settings.fiscal_close", "settings.fiscal_reopen",
-            )
-            if endpoint in blocked_prefixes or any(endpoint.startswith(p) for p in blocked_prefixes):
-                from flask import flash
-                flash("この権限レベルではこの機能を使用できません。", "warning")
-                return redirect(url_for("dashboard.index"))
-            # accounts: block modification (new, edit, toggle, delete)
-            if endpoint in ("accounts.new", "accounts.edit", "accounts.toggle", "accounts.delete", "accounts.api_add"):
-                from flask import flash
-                flash("この権限レベルでは勘定科目を変更できません。", "warning")
-                return redirect(url_for("accounts.index"))
-            # vouchers: 書き込み系操作 (削除) は Lv2 では禁止。
-            # 閲覧 (index, verify GET) は許可。Phase 5 で quota 統合に
-            # より StorageUsage を消費・解放する書き込みが入ったため、
-            # 監査者が容量計上を勝手に操作できないよう明示的にブロックする。
-            # (E4 PR-E: 平文添付 vouchers.attach は撤去済。暗号化 upload は
-            # api blueprint の init/PUT 側で proxy ブロックを行う。)
-            if endpoint == "vouchers.delete":
-                from flask import flash
-                flash("この権限レベルでは証憑を変更できません。", "warning")
-                return redirect(url_for("dashboard.index"))
 
     # Context processor for dev flag
     @app.context_processor
@@ -254,25 +166,18 @@ def create_app(config_class=Config):
         }
 
     # Context processor for audit
+    #
+    # 旧リアルタイム代理閲覧 (acting_as_user_id セッション方式) は撤去済み (#112)。
+    # 監査連携は非同期スナップショットワークフロー (audit_packages) に一本化された
+    # ため、これらの変数は常に「代理閲覧していない」固定値を返す。テンプレート側の
+    # 参照除去は後続 PR で行うため、互換のためスタブとして残す。
     @app.context_processor
     def inject_audit_context():
-        from flask_login import current_user as cu
-        if not cu.is_authenticated:
-            return {
-                "is_acting_as": False,
-                "acting_as_user": None,
-                "audit_permission_level": None,
-                "audit_allowed_account_codes": None,
-            }
-        from app.services.audit import (
-            is_acting_as_auditor, get_acting_as_user,
-            get_permission_level, get_allowed_account_codes,
-        )
         return {
-            "is_acting_as": is_acting_as_auditor(),
-            "acting_as_user": get_acting_as_user() if is_acting_as_auditor() else None,
-            "audit_permission_level": get_permission_level(),
-            "audit_allowed_account_codes": get_allowed_account_codes(),
+            "is_acting_as": False,
+            "acting_as_user": None,
+            "audit_permission_level": None,
+            "audit_allowed_account_codes": None,
         }
 
     # Template filter for account name masking

@@ -1,14 +1,13 @@
 """app/__init__.py のテスト
 
-audit_permission_check before_request, context processors, security headers,
-service worker route, CLI コマンド (seed/seed-user/auto-import/generate-thumbnails)
+context processors, security headers, service worker route,
+CLI コマンド (seed/seed-user/auto-import/generate-thumbnails)
+
+旧リアルタイム代理閲覧 (acting_as_user_id) の before_request ゲートと
+auditor.exit ルートは撤去済み (#112) のため、関連テストは削除した。
 """
 
 from unittest.mock import MagicMock, patch
-
-import pytest
-
-from app.models.audit import AuditGrant
 
 
 class TestServiceWorker:
@@ -24,95 +23,6 @@ class TestSecurityHeaders:
         assert resp.headers.get("X-Content-Type-Options") == "nosniff"
         assert resp.headers.get("X-Frame-Options") == "SAMEORIGIN"
         assert "Referrer-Policy" in resp.headers
-
-
-class TestAuditPermissionCheck:
-    def _setup_acting(self, db, client, owner, auditor, level=1):
-        grant = AuditGrant(
-            owner_user_id=owner.id,
-            auditor_user_id=auditor.id,
-            permission_level=level,
-            status="active",
-        )
-        db.session.add(grant)
-        db.session.commit()
-        with client.session_transaction() as sess:
-            sess["_user_id"] = str(auditor.id)
-            sess["acting_as_user_id"] = owner.id
-            sess["acting_as_permission_level"] = level
-
-    def test_lv1_redirected_from_dashboard(self, db, client, user, auditor, accounts):
-        self._setup_acting(db, client, user, auditor, level=1)
-        resp = client.get("/", follow_redirects=False)
-        assert resp.status_code in (302, 303)
-
-    def test_lv1_allowed_on_tax(self, db, client, user, auditor, accounts):
-        self._setup_acting(db, client, user, auditor, level=1)
-        resp = client.get("/reports/tax")
-        assert resp.status_code == 200
-
-    def test_lv2_blocked_from_csv_import(self, db, client, user, auditor, accounts):
-        self._setup_acting(db, client, user, auditor, level=2)
-        resp = client.get("/csv-import/", follow_redirects=False)
-        assert resp.status_code in (302, 303)
-
-    def test_lv2_blocked_from_ai_journal(self, db, client, user, auditor, accounts):
-        self._setup_acting(db, client, user, auditor, level=2)
-        resp = client.get("/ai-journal/", follow_redirects=False)
-        assert resp.status_code in (302, 303)
-
-    def test_lv2_blocked_from_fiscal_close(self, db, client, user, auditor, accounts):
-        self._setup_acting(db, client, user, auditor, level=2)
-        resp = client.post("/settings/fiscal/close", data={
-            "year": "2026", "period": "0",
-        }, follow_redirects=False)
-        assert resp.status_code in (302, 303)
-
-    def test_lv2_allowed_on_accounts_listing(self, db, client, user, auditor, accounts):
-        # accounts.index (GET /accounts/) は Lv2 でも閲覧可能
-        self._setup_acting(db, client, user, auditor, level=2)
-        resp = client.get("/accounts/")
-        assert resp.status_code == 200
-
-    def test_lv2_allowed_on_journal(self, db, client, user, auditor, accounts):
-        self._setup_acting(db, client, user, auditor, level=2)
-        resp = client.get("/journal/")
-        assert resp.status_code == 200
-
-    def test_lv3_unrestricted(self, db, client, user, auditor, accounts):
-        self._setup_acting(db, client, user, auditor, level=3)
-        resp = client.get("/csv-import/")
-        assert resp.status_code == 200  # Lv3 はブロックされない
-
-    def test_unauthenticated_passes_through(self, client):
-        # 認証されていないユーザーは audit check では何もしない
-        resp = client.get("/login")
-        assert resp.status_code == 200
-
-    def test_static_files_pass_through(self, client):
-        # static/ は認証なしでも before_request で許可される
-        resp = client.get("/static/css/style.css")
-        # ファイルが無い場合 404 だが before_request では弾かれない
-        assert resp.status_code in (200, 404)
-
-
-class TestAuditorExit:
-    def test_can_always_exit_even_at_lv1(self, db, client, user, auditor, accounts):
-        grant = AuditGrant(
-            owner_user_id=user.id,
-            auditor_user_id=auditor.id,
-            permission_level=1,
-            status="active",
-        )
-        db.session.add(grant)
-        db.session.commit()
-        with client.session_transaction() as sess:
-            sess["_user_id"] = str(auditor.id)
-            sess["acting_as_user_id"] = user.id
-            sess["acting_as_permission_level"] = 1
-        # 終了は常に許可
-        resp = client.post("/auditor/exit", follow_redirects=False)
-        assert resp.status_code in (302, 303)
 
 
 class TestMaskAccountFilter:

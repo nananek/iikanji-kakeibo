@@ -21,14 +21,17 @@ class TestDashboard:
         resp = client.get("/auditor/")
         assert resp.status_code == 200
 
-    def test_deprecation_banner_shown(self, db, client, auditor):
-        """非同期方式への移行 deprecation 告知バナーが表示される (§14.11)"""
+    def test_snapshot_workflow_banner_shown(self, db, client, auditor):
+        """非同期スナップショット方式の案内バナーが表示される (§14.11)。
+
+        旧リアルタイム代理閲覧は撤去済み (#112) のため「廃止予定」表記は無く、
+        スナップショット方式の案内のみを表示する。
+        """
         with client.session_transaction() as sess:
             sess["_user_id"] = str(auditor.id)
         resp = client.get("/auditor/")
         body = resp.get_data(as_text=True)
         assert "非同期スナップショット方式" in body
-        assert "廃止予定" in body
 
     def test_auditor_sees_grants(self, db, client, auditor, user):
         grant = AuditGrant(
@@ -128,111 +131,13 @@ class TestPackages:
         assert resp.status_code == 404
 
 
-class TestSwitch:
-    def test_unauthenticated(self, client):
-        resp = client.post("/auditor/switch/1")
-        assert resp.status_code in (302, 401)
+class TestProxyRoutesRemoved:
+    """旧リアルタイム代理閲覧ルート (switch/exit) は撤去済み (#112)。"""
 
-    def test_idor_other_auditor_grant(self, db, client, auditor, user):
-        # 別の監査ユーザーへの grant
-        from app.models.user import User
-        other_auditor = User(username="other_aud", email="o@x.com",
-                              user_type="auditor")
-        other_auditor.set_password("pw")
-        db.session.add(other_auditor)
-        db.session.commit()
-        grant = AuditGrant(
-            owner_user_id=user.id,
-            auditor_user_id=other_auditor.id,
-            permission_level=3,
-            status="active",
-        )
-        db.session.add(grant)
-        db.session.commit()
-        with client.session_transaction() as sess:
-            sess["_user_id"] = str(auditor.id)
-        resp = client.post(f"/auditor/switch/{grant.id}")
+    def test_switch_route_gone(self, client):
+        resp = client.post("/auditor/switch/1")
         assert resp.status_code == 404
 
-    def test_lv3_switch(self, db, client, auditor, user):
-        grant = AuditGrant(
-            owner_user_id=user.id,
-            auditor_user_id=auditor.id,
-            permission_level=3,
-            status="active",
-        )
-        db.session.add(grant)
-        db.session.commit()
-        with client.session_transaction() as sess:
-            sess["_user_id"] = str(auditor.id)
-        resp = client.post(f"/auditor/switch/{grant.id}")
-        assert resp.status_code in (302, 303)
-        with client.session_transaction() as sess:
-            assert sess["acting_as_user_id"] == user.id
-            assert sess["acting_as_permission_level"] == 3
-
-    def test_lv1_switch_redirects_to_tax(self, db, client, auditor, user):
-        grant = AuditGrant(
-            owner_user_id=user.id,
-            auditor_user_id=auditor.id,
-            permission_level=1,
-            status="active",
-        )
-        db.session.add(grant)
-        db.session.commit()
-        with client.session_transaction() as sess:
-            sess["_user_id"] = str(auditor.id)
-        resp = client.post(f"/auditor/switch/{grant.id}")
-        assert resp.status_code in (302, 303)
-        assert "reports/tax" in resp.headers.get("Location", "") or \
-               "tax" in resp.headers.get("Location", "")
-
-    def test_lv2_unsubmitted_blocked(self, db, client, auditor, user):
-        grant = AuditGrant(
-            owner_user_id=user.id,
-            auditor_user_id=auditor.id,
-            permission_level=2,
-            status="active",  # not submitted
-        )
-        db.session.add(grant)
-        db.session.commit()
-        with client.session_transaction() as sess:
-            sess["_user_id"] = str(auditor.id)
-        resp = client.post(f"/auditor/switch/{grant.id}")
-        assert resp.status_code in (302, 303)
-        # acting_as は設定されない
-        with client.session_transaction() as sess:
-            assert "acting_as_user_id" not in sess
-
-    def test_lv2_submitted_allowed(self, db, client, auditor, user):
-        grant = AuditGrant(
-            owner_user_id=user.id,
-            auditor_user_id=auditor.id,
-            permission_level=2,
-            status="submitted",
-        )
-        db.session.add(grant)
-        db.session.commit()
-        with client.session_transaction() as sess:
-            sess["_user_id"] = str(auditor.id)
-        resp = client.post(f"/auditor/switch/{grant.id}")
-        assert resp.status_code in (302, 303)
-        with client.session_transaction() as sess:
-            assert sess.get("acting_as_user_id") == user.id
-
-
-class TestExit:
-    def test_unauthenticated(self, client):
+    def test_exit_route_gone(self, client):
         resp = client.post("/auditor/exit")
-        assert resp.status_code in (302, 401)
-
-    def test_clears_session(self, db, client, auditor, user):
-        with client.session_transaction() as sess:
-            sess["_user_id"] = str(auditor.id)
-            sess["acting_as_user_id"] = user.id
-            sess["acting_as_permission_level"] = 3
-        resp = client.post("/auditor/exit")
-        assert resp.status_code in (302, 303)
-        with client.session_transaction() as sess:
-            assert "acting_as_user_id" not in sess
-            assert "acting_as_permission_level" not in sess
+        assert resp.status_code == 404

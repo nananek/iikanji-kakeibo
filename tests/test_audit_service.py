@@ -206,20 +206,7 @@ class TestCheckAuditorRedirect:
         resp = client.get("/reports/tax")
         assert resp.status_code in (200, 302)  # 200 か他のリダイレクト
 
-    def test_lv1_on_dashboard_redirects(self, client, auditor, db, user, accounts):
-        from app.models.audit import AuditGrant
-        grant = AuditGrant(
-            owner_user_id=user.id,
-            auditor_user_id=auditor.id,
-            permission_level=1,
-            status="active",
-        )
-        db.session.add(grant)
-        db.session.commit()
-        with client.session_transaction() as sess:
-            sess["_user_id"] = str(auditor.id)
-            sess["acting_as_user_id"] = user.id
-            sess["acting_as_permission_level"] = 1
-        # dashboard.index は Lv1 から弾かれる
-        resp = client.get("/", follow_redirects=False)
-        assert resp.status_code in (302, 303)
+    # 注: 旧 audit_permission_check ゲート (Lv1 を dashboard から弾く) は撤去済み
+    # (#112)。endpoint ベースのリダイレクト挙動を検証していた
+    # test_lv1_on_dashboard_redirects はゲート削除に伴い削除した。
+    # check_auditor_redirect 関数自体の純粋ロジックは PR-5 で関数ごと撤去予定。
