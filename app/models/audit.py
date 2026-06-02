@@ -35,8 +35,6 @@ class AuditGrant(db.Model):
         db.Integer, db.ForeignKey("users.id"), nullable=False
     )
     permission_level = db.Column(db.Integer, nullable=False)  # 1/2/3
-    status = db.Column(db.String(10), nullable=False, default="draft")
-    submitted_at = db.Column(db.DateTime, nullable=True)
     created_at = db.Column(
         db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc)
     )

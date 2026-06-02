@@ -196,7 +196,7 @@ def _grant(db, owner, auditor, level=3, revoked=False):
 
     g = AuditGrant(
         owner_user_id=owner.id, auditor_user_id=auditor.id,
-        permission_level=level, status="draft",
+        permission_level=level,
         revoked_at=datetime.now(timezone.utc) if revoked else None,
     )
     db.session.add(g)

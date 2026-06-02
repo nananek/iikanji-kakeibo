@@ -197,14 +197,14 @@ class TestAuditGrantModel:
         """同一オーナー・監査者のグラントは1つのみ"""
         g1 = AuditGrant(
             owner_user_id=user.id, auditor_user_id=auditor.id,
-            permission_level=1, status="draft",
+            permission_level=1,
         )
         db.session.add(g1)
         db.session.commit()
 
         g2 = AuditGrant(
             owner_user_id=user.id, auditor_user_id=auditor.id,
-            permission_level=2, status="draft",
+            permission_level=2,
         )
         db.session.add(g2)
         with pytest.raises(Exception):
@@ -215,7 +215,7 @@ class TestAuditGrantModel:
         """グラント削除時に公開科目も削除される"""
         grant = AuditGrant(
             owner_user_id=user.id, auditor_user_id=auditor.id,
-            permission_level=2, status="draft",
+            permission_level=2,
         )
         db.session.add(grant)
         db.session.commit()
@@ -240,23 +240,8 @@ class TestAuditGrantModel:
 
             grant = AuditGrant(
                 owner_user_id=user.id, auditor_user_id=auditor.id,
-                permission_level=level, status="draft",
+                permission_level=level,
             )
             db.session.add(grant)
             db.session.commit()
             assert grant.permission_level == level
-
-    def test_status_transitions(self, db, user, auditor):
-        """ステータスの遷移: draft → submitted"""
-        grant = AuditGrant(
-            owner_user_id=user.id, auditor_user_id=auditor.id,
-            permission_level=2, status="draft",
-        )
-        db.session.add(grant)
-        db.session.commit()
-        assert grant.status == "draft"
-
-        grant.status = "submitted"
-        db.session.commit()
-        refreshed = db.session.get(AuditGrant, grant.id)
-        assert refreshed.status == "submitted"
