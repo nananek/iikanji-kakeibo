@@ -118,6 +118,11 @@ function _yen(n) {
   return Number(n || 0).toLocaleString("ja-JP");
 }
 
+function _csrfToken() {
+  const meta = document.querySelector('meta[name="csrf-token"]');
+  return meta ? meta.getAttribute("content") : "";
+}
+
 const LEVEL_LABELS = { 1: "Lv1: 集計のみ", 2: "Lv2: 税務科目", 3: "Lv3: 本人同等" };
 
 // ---- データ取得 --------------------------------------------------------
@@ -314,5 +319,294 @@ export async function initAuditReview(cfg) {
     );
   } catch (e) {
     _status(`スナップショットを復号できませんでした: ${e.message || e}`, "danger");
+  }
+}
+
+// ---- PR-B: 修正案 / 差戻しの作成・送信 (コメント方式) -------------------
+//
+// auditor がスナップショットを見ながらコメント (全体 + 仕訳ごとの指摘) を書き、
+// AuditResponse 平文 JSON を owner の公開鍵で HPKE seal して POST する。
+// 送信契約 (§14.2 / 設計方針):
+//   { v:1, response_type:"revision"|"rejection", summary?, comments?:[{entry_id, ref?, note}] }
+// revision は summary か comments を 1 つ以上必須。rejection は差戻し/問題なしの合図で
+// summary 任意。サーバは response_type のみ管理し中身は読めない。
+
+/**
+ * 入力から AuditResponse 平文 JSON を組み立てる純粋関数 (バリデーション込み)。
+ * @param {Object} a
+ * @param {string} a.responseType  "revision" | "rejection"
+ * @param {string} [a.summary]
+ * @param {Array<{entry_id:?number, ref?:string, note:string}>} [a.comments]
+ * @returns {{v:number, response_type:string, summary?:string, comments?:Array}}
+ */
+export function buildResponseJson({ responseType, summary, comments }) {
+  const type = responseType === "rejection" ? "rejection" : "revision";
+  const cleanComments = [];
+  for (const c of comments || []) {
+    const note = (c.note || "").trim();
+    if (!note) continue;
+    const item = { entry_id: Number.isInteger(c.entry_id) ? c.entry_id : null, note };
+    const ref = (c.ref || "").trim();
+    if (ref) item.ref = ref;
+    cleanComments.push(item);
+  }
+  const sum = (summary || "").trim();
+  if (type === "revision" && cleanComments.length === 0 && !sum) {
+    throw new Error("修正案には全体コメントか、仕訳ごとの指摘を 1 つ以上入力してください。");
+  }
+  const out = { v: 1, response_type: type };
+  if (sum) out.summary = sum;
+  if (cleanComments.length) out.comments = cleanComments;
+  return out;
+}
+
+function _composeStatus(msg, type = "info") {
+  const el = document.getElementById("audit-compose-status");
+  if (!el) return;
+  el.textContent = msg;
+  el.className = "mt-2 alert alert-" + type + " small";
+  el.classList.remove("d-none");
+}
+
+async function _fetchPeerPublicKey(peerId) {
+  const r = await fetch(`/api/v1/keypair/${peerId}/public`, {
+    credentials: "same-origin",
+  });
+  if (!r.ok) return null;
+  const d = await r.json();
+  return d.public_key || null;
+}
+
+function _selectedResponseType() {
+  const checked = document.querySelector('input[name="audit-response-type"]:checked');
+  return checked ? checked.value : "revision";
+}
+
+// 仕訳ごとの指摘行の entry_id select を、復号したスナップショットの仕訳で埋める。
+function _entryOptionLabel(e) {
+  const date = e.date || "";
+  const desc = e.description || "";
+  return `#${e.id} ${date} ${desc}`.trim();
+}
+
+function _addCommentRow(entries) {
+  const list = document.getElementById("audit-compose-comments");
+  if (!list) return;
+  const row = document.createElement("div");
+  row.className = "row g-2 mb-2 align-items-center audit-comment-row";
+
+  const selCol = document.createElement("div");
+  selCol.className = "col-md-4";
+  const sel = document.createElement("select");
+  sel.className = "form-select form-select-sm audit-comment-entry";
+  const optNone = document.createElement("option");
+  optNone.value = "";
+  optNone.textContent = "（全体について）";
+  sel.appendChild(optNone);
+  for (const e of entries) {
+    const opt = document.createElement("option");
+    opt.value = String(e.id);
+    opt.textContent = _entryOptionLabel(e); // textContent なので XSS 安全
+    opt.dataset.ref = `${e.date || ""} ${e.description || ""}`.trim();
+    sel.appendChild(opt);
+  }
+  selCol.appendChild(sel);
+
+  const noteCol = document.createElement("div");
+  noteCol.className = "col-md-7";
+  const note = document.createElement("input");
+  note.type = "text";
+  note.className = "form-control form-control-sm audit-comment-note";
+  note.placeholder = "指摘内容（例: 貸方は普通預金では？）";
+  noteCol.appendChild(note);
+
+  const delCol = document.createElement("div");
+  delCol.className = "col-md-1";
+  const del = document.createElement("button");
+  del.type = "button";
+  del.className = "btn btn-sm btn-outline-danger";
+  del.textContent = "×";
+  del.addEventListener("click", () => row.remove());
+  delCol.appendChild(del);
+
+  row.appendChild(selCol);
+  row.appendChild(noteCol);
+  row.appendChild(delCol);
+  list.appendChild(row);
+}
+
+function _collectComments() {
+  const rows = Array.from(document.querySelectorAll(".audit-comment-row"));
+  return rows.map((row) => {
+    const sel = row.querySelector(".audit-comment-entry");
+    const note = row.querySelector(".audit-comment-note");
+    const entryId = sel && sel.value ? Number(sel.value) : null;
+    const opt = sel && sel.selectedOptions[0];
+    const ref = opt ? opt.dataset.ref || "" : "";
+    return { entry_id: entryId, ref, note: note ? note.value : "" };
+  });
+}
+
+function _resetCompose() {
+  const summary = document.getElementById("audit-compose-summary");
+  if (summary) summary.value = "";
+  const list = document.getElementById("audit-compose-comments");
+  if (list) list.innerHTML = "";
+}
+
+/**
+ * 修正案作成フォームを初期化する。initAuditReview の後に呼ぶ (getReviewCtx が必要)。
+ * 復号できていない / 受信パッケージが無い場合は何もしない。
+ */
+export async function initAuditCompose(cfg) {
+  const ctx = getReviewCtx();
+  const form = document.getElementById("audit-compose");
+  if (!ctx || !form) return;
+  form.classList.remove("d-none");
+
+  const entries = normalizeEntries(ctx.snapshot);
+  // Lv1 (集計のみ) は仕訳本体が無いので指摘行 UI は出さず、全体コメント/差戻しのみ。
+  const addBtn = document.getElementById("audit-compose-add");
+  const commentsWrap = document.getElementById("audit-compose-comments-wrap");
+  if (entries.length === 0) {
+    if (commentsWrap) commentsWrap.classList.add("d-none");
+  } else if (addBtn) {
+    addBtn.addEventListener("click", () => _addCommentRow(entries));
+  }
+
+  await _evaluateComposeGate(cfg, ctx);
+  // owner 公開鍵 (peer=owner_id) の pin 成立でゲート再評価。
+  document.addEventListener("iikanji:tofu-pinned", (e) => {
+    if (!e.detail || Number(e.detail.auditorId) === Number(cfg.owner_id)) {
+      _evaluateComposeGate(cfg, ctx);
+    }
+  });
+}
+
+async function _evaluateComposeGate(cfg, ctx) {
+  const sendBtn = document.getElementById("audit-compose-send");
+  if (!sendBtn) return;
+  // 送信中はゲートを評価しない (await 中の再評価で送信ボタンを再有効化して二重 POST
+  // させない, Finding 3)。
+  if (ctx.sending) return;
+  // どの早期 return パスでもボタンを無効のままにする。再評価が条件未達で抜けても
+  // 古い ctx.ownerPubRaw のまま送信されないようにする (Finding 1)。
+  sendBtn.disabled = true;
+
+  // ネットワーク障害等で fetch/evaluatePin が throw してもボタンが無応答で固まらない
+  // ようエラーを表面化する。鍵を検証できていないので有効化はしない (安全側)。
+  try {
+    const ownerPubB64 = await _fetchPeerPublicKey(cfg.owner_id);
+    if (!ownerPubB64) {
+      _composeStatus("相手 (owner) がまだ暗号鍵を設定していないため送信できません。", "secondary");
+      return;
+    }
+
+    const keyPinning = await import(getStaticRoot() + "js/crypto/key_pinning.js");
+    let store;
+    try {
+      store = await keyPinning.openPinStore(cfg.auditor_id);
+    } catch (e) {
+      _composeStatus("この環境では fingerprint の固定 (IndexedDB) が使えないため送信できません。", "warning");
+      return;
+    }
+    const { b64decode } = await import(getStaticRoot() + "js/crypto/b64.js");
+    const pubRaw = b64decode(ownerPubB64);
+    const ev = await keyPinning.evaluatePin(store, cfg.owner_id, pubRaw, "OWNER");
+    if (ev.status !== "match") {
+      _composeStatus("送信する前に、上の相手の公開鍵 fingerprint を本人に確認して固定してください。", "info");
+      return;
+    }
+
+    const st = await ctx.client.status();
+    if (!st.hasKey) {
+      _composeStatus("暗号鍵 (MK) がロックされています。設定 → 暗号鍵管理 で解除してください。", "warning");
+      return;
+    }
+
+    // await をまたいだ間に送信が始まっていたら有効化しない (Finding 3)。
+    if (ctx.sending) return;
+    ctx.ownerPubRaw = pubRaw;
+    _composeStatus("送信できます。", "success");
+    sendBtn.disabled = false;
+    if (!ctx.composeWired) {
+      ctx.composeWired = true;
+      sendBtn.addEventListener("click", () => _sendResponse(cfg, ctx));
+    }
+  } catch (e) {
+    _composeStatus(
+      `送信の準備中にエラーが発生しました: ${e.message || e}。ページを再読み込みして再試行してください。`,
+      "danger",
+    );
+  }
+}
+
+async function _sendResponse(cfg, ctx) {
+  const sendBtn = document.getElementById("audit-compose-send");
+  let payload;
+  try {
+    payload = buildResponseJson({
+      responseType: _selectedResponseType(),
+      summary: (document.getElementById("audit-compose-summary") || {}).value,
+      comments: _collectComments(),
+    });
+  } catch (e) {
+    _composeStatus(e.message || String(e), "warning");
+    return;
+  }
+
+  // 送信中はゲート再評価がボタンを再有効化しないようにフラグを立てる (Finding 3)。
+  ctx.sending = true;
+  sendBtn.disabled = true;
+  try {
+    const [hpke, { b64encode }] = await Promise.all([
+      import(getStaticRoot() + "js/crypto/audit_hpke.js"),
+      import(getStaticRoot() + "js/crypto/b64.js"),
+    ]);
+    _composeStatus("暗号化して送信しています…", "info");
+    const plaintext = new TextEncoder().encode(JSON.stringify(payload));
+    const sealed = await hpke.sealAuditResponse(ctx.ownerPubRaw, plaintext, ctx.pkg.id);
+
+    const resp = await fetch("/api/v1/audit-responses", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: {
+        "Content-Type": "application/json",
+        "X-CSRFToken": _csrfToken(),
+      },
+      body: JSON.stringify({
+        audit_package_id: ctx.pkg.id,
+        response_type: payload.response_type,
+        ephemeral_pubkey: b64encode(sealed.ephemeralPubkey),
+        ciphertext: b64encode(sealed.ciphertext),
+      }),
+    });
+    if (resp.status === 201) {
+      const label = payload.response_type === "rejection" ? "差戻し" : "修正案";
+      _composeStatus(`${label}を送信しました。`, "success");
+      _resetCompose();
+      ctx.sending = false;
+      sendBtn.disabled = false;
+      return;
+    }
+    if (resp.status === 403) {
+      // 失効 / 期限切れは恒久失敗。再有効化せず無限リトライを防ぐ (Finding 2)。
+      _composeStatus("送信が拒否されました。監査アクセスが失効、または送信期限を過ぎています。", "danger");
+      ctx.sending = false;
+      return;
+    }
+    if (resp.status === 400) {
+      const e = await resp.json().catch(() => ({}));
+      _composeStatus(`送信に失敗しました: ${e.error || resp.status}`, "danger");
+    } else {
+      _composeStatus(`送信に失敗しました (HTTP ${resp.status})。`, "danger");
+    }
+    // 400 / その他 HTTP は再試行余地があるので再有効化する。
+    ctx.sending = false;
+    sendBtn.disabled = false;
+  } catch (e) {
+    _composeStatus(`送信中にエラーが発生しました: ${e.message || e}`, "danger");
+    ctx.sending = false;
+    sendBtn.disabled = false;
   }
 }
