@@ -37,6 +37,9 @@ def packages(grant_id):
     (audit/audit_review_renderer) が行う。本ビューは描画に必要なメタ (grant /
     owner) を JSON island で渡すだけ。owner の平文帳簿はサーバに渡らない。
     """
+    if current_user.user_type != "auditor":
+        return redirect(url_for("dashboard.index"))
+
     grant = AuditGrant.query.filter_by(
         id=grant_id, auditor_user_id=current_user.id
     ).first_or_404()
