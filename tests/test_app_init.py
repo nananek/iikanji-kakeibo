@@ -25,29 +25,9 @@ class TestSecurityHeaders:
         assert "Referrer-Policy" in resp.headers
 
 
-class TestMaskAccountFilter:
-    def test_filter_in_template(self, app, user):
-        with app.test_request_context():
-            from flask_login import login_user
-            login_user(user)
-            # mask_account_filter を呼び出す
-            with app.test_client() as client:
-                with client.session_transaction() as sess:
-                    sess["_user_id"] = str(user.id)
-                # 通常ユーザーなら隠蔽されない
-                from app.services.audit import mask_account_name
-                result = mask_account_name("食費", "5010", None)
-                assert result == "食費"
-
-    def test_filter_lv2_masks(self, app):
-        from app.services.audit import mask_account_name
-        result = mask_account_name("給与収入", "4010", {"5010"})
-        assert result == "事業主"
-
-    def test_filter_lv2_keeps_allowed(self, app):
-        from app.services.audit import mask_account_name
-        result = mask_account_name("食費", "5010", {"5010"})
-        assert result == "食費"
+# 旧 mask_account template filter (TestMaskAccountFilter) は科目隠蔽 (Lv2 監査
+# 代理閲覧) 専用で、旧リアルタイム代理閲覧の撤去 (#112) に伴い filter ごと削除した
+# (app/services/audit.py も削除)。
 
 
 class TestSeedCommand:
