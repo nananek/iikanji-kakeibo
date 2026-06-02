@@ -3,7 +3,7 @@
 
 {% block content %}
 <script id="dashboard-server-params" type="application/json">
-{{ {"year": year, "month": month, "user_id": effective_user_id, "is_audit_proxy": is_audit_proxy} | tojson }}
+{{ {"year": year, "month": month, "user_id": effective_user_id, "is_audit_proxy": false} | tojson }}
 </script>
 <script id="dashboard-accounts-meta" type="application/json">
 {{ accounts_meta | tojson }}

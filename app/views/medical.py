@@ -1,17 +1,12 @@
 from datetime import date
 
 from flask import Blueprint, render_template, redirect, url_for, flash, request
-from flask_login import login_required
+from flask_login import login_required, current_user
 from app.extensions import db
 from app.models.account import Account
 from app.models.medical import MedicalExpense
 from app.forms.medical import MedicalExpenseForm
 from app.services.fiscal import check_entry_modifiable
-from app.services.audit import (
-    get_effective_user_id, get_allowed_account_codes,
-    is_entry_locked_for_auditor, is_acting_as_auditor,
-    mask_account_name,
-)
 from app.views.helpers import get_grouped_accounts
 
 bp = Blueprint("medical", __name__, url_prefix="/medical")
@@ -39,20 +34,16 @@ def _medical_accounts_meta(user_id):
 
     クライアント側 (medical/index.html) が仕訳 + MedicalExpense をマージする際に
     医療費科目コードの判定と科目名解決に使う。account テーブルは非暗号化メタ
-    データなのでサーバ側で構築してよい。監査 Lv2 では allowed_codes でフィルタ +
-    非公開科目名はマスクする (代理閲覧時はクライアント側で復号せず空表示)。
+    データなのでサーバ側で構築してよい。
     """
-    allowed_codes = get_allowed_account_codes()
     accounts = (
         Account.query.filter_by(user_id=user_id)
         .order_by(Account.code)
         .all()
     )
-    if allowed_codes is not None:
-        accounts = [a for a in accounts if a.code in allowed_codes]
     return {
         a.code: {
-            "name": mask_account_name(a.name, a.code, allowed_codes),
+            "name": a.name,
             "tax_category": a.tax_category,
         }
         for a in accounts
@@ -70,7 +61,7 @@ def index():
     (date / patient_name / hospital_name 等) は一切読まない。
     """
     year = request.args.get("year", date.today().year, type=int)
-    user_id = get_effective_user_id()
+    user_id = current_user.id
     return render_template(
         "medical/index.html",
         year=year,
@@ -88,13 +79,13 @@ def new():
     暗号化 POST する (medicalNewSubmitE2EE)。サーバ側の平文 POST は撤去済。
     """
     form = MedicalExpenseForm()
-    user_id = get_effective_user_id()
+    user_id = current_user.id
 
     if not form.date.data:
         form.date.data = date.today()
 
     medical_account = _get_medical_account(user_id)
-    grouped_accounts = get_grouped_accounts(user_id, get_allowed_account_codes())
+    grouped_accounts = get_grouped_accounts(user_id)
     payment_account_name = None
     if form.payment_account_code.data:
         a = Account.query.filter_by(
@@ -113,21 +104,14 @@ def new():
 @bp.route("/<int:expense_id>/delete", methods=["POST"])
 @login_required
 def delete(expense_id):
-    user_id = get_effective_user_id()
+    user_id = current_user.id
     expense = MedicalExpense.query.filter_by(
         id=expense_id, user_id=user_id
     ).first_or_404()
 
-    # 伝票ロックチェック (監査者向け masking ロック)
-    if expense.journal_entry:
-        allowed_codes = get_allowed_account_codes()
-        if is_acting_as_auditor() and allowed_codes is not None and is_entry_locked_for_auditor(expense.journal_entry, allowed_codes):
-            flash("事業主勘定を含む伝票のため削除できません。", "danger")
-            return redirect(url_for("medical.index"))
-
     # 確定済み期間チェック
     if expense.journal_entry:
-        err = check_entry_modifiable(get_effective_user_id(), expense.journal_entry)
+        err = check_entry_modifiable(user_id, expense.journal_entry)
         if err:
             flash(err, "danger")
             return redirect(url_for("medical.index"))

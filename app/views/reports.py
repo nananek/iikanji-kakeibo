@@ -9,8 +9,6 @@ from app.extensions import db
 from app.models.account import Account, AccountType
 from app.models.journal import JournalEntry, JournalEntryLine
 # app.services.tax のサーバ集計関数は Phase E3-F-4a/c/d/e で撤去済
-from flask_login import current_user as _current_user
-from app.services.audit import get_effective_user_id, get_allowed_account_codes, mask_account_name
 from app.services.fiscal import check_entry_modifiable, period_range_filter, get_closed_period
 from app.views.helpers import get_grouped_accounts
 
@@ -33,7 +31,7 @@ def balance():
 
     year = request.args.get("year", date.today().year, type=int)
     if "pf" not in request.args and "pt" not in request.args:
-        pref = _current_user.get_pref("reports_default_period", "all")
+        pref = current_user.get_pref("reports_default_period", "all")
         if pref == "current_month":
             pf = pt = date.today().month
         else:
@@ -44,7 +42,7 @@ def balance():
     pf = max(0, min(16, pf))
     pt = max(pf, min(16, pt))
 
-    user_id = get_effective_user_id()
+    user_id = current_user.id
     accounts = (
         Account.query
         .filter_by(user_id=user_id)
@@ -52,20 +50,13 @@ def balance():
         .all()
     )
     accounts = [a for a in accounts if a.is_active or (a.deactivated_year and a.deactivated_year >= year)]
-    allowed_codes = get_allowed_account_codes()
-    if allowed_codes is not None:
-        accounts = [a for a in accounts if a.code in allowed_codes]
 
     # クライアント描画用に accountsMeta を JSON で渡す。
-    # `accounts` は line 62-63 で allowed_codes フィルタ適用済みのため
-    # Lv2 で非公開の科目はここに含まれない (= 監査者に名前が漏れない)。
-    # mask_account_name は防御的多層化のための残置 (allowed_codes フィルタを
-    # 将来うっかり外しても「事業主」マスクは効く)。
     accounts_meta = {
         a.code: {
             "type": a.account_type.code,
             "normal_balance": a.account_type.normal_balance,
-            "name": mask_account_name(a.name, a.code, allowed_codes),
+            "name": a.name,
         }
         for a in accounts
     }
@@ -88,9 +79,8 @@ def bs():
     クライアントが min_year..year の全 entries を MK で復号して累計集計。
     """
     year = request.args.get("year", date.today().year, type=int)
-    user_id = get_effective_user_id()
+    user_id = current_user.id
 
-    allowed_codes = get_allowed_account_codes()
     all_accounts = (
         Account.query
         .filter_by(user_id=user_id)
@@ -101,8 +91,6 @@ def bs():
         a for a in all_accounts
         if a.is_active or (a.deactivated_year and a.deactivated_year >= year)
     ]
-    if allowed_codes is not None:
-        all_accounts = [a for a in all_accounts if a.code in allowed_codes]
 
     # B/S 累計の最古年度。仕訳ゼロなら None で fetch ループを skip
     min_year = (
@@ -111,14 +99,13 @@ def bs():
         .scalar()
     )
 
-    # accounts_meta: name は allowed_codes フィルタ適用済のみ含む
     # (Lv2 非公開はここに含まれない)。type/normal_balance はクライアント
     # 側 computeBalanceSheet が必要とする情報。
     accounts_meta = {
         a.code: {
             "type": a.account_type.code,
             "normal_balance": a.account_type.normal_balance,
-            "name": mask_account_name(a.name, a.code, allowed_codes),
+            "name": a.name,
         }
         for a in all_accounts
     }
@@ -144,7 +131,7 @@ def pl():
 
     year = request.args.get("year", date.today().year, type=int)
     month = request.args.get("month", 0, type=int)
-    user_id = get_effective_user_id()
+    user_id = current_user.id
 
     accounts = (
         Account.query
@@ -152,19 +139,15 @@ def pl():
         .order_by(Account.code)
         .all()
     )
-    allowed_codes = get_allowed_account_codes()
-    if allowed_codes is not None:
-        accounts = [a for a in accounts if a.code in allowed_codes]
 
     # 事業科目セット (TaxFormMapping 経由) — P/L はこれらを除外して集計する
     biz_codes = get_business_account_codes(user_id)
 
-    # accounts_meta: name は allowed_codes フィルタ適用済みのみ (Lv2 非公開は除外)。
     # is_business は P/L 側で除外用フラグ。
     accounts_meta = {
         a.code: {
             "type": a.account_type.code,
-            "name": mask_account_name(a.name, a.code, allowed_codes),
+            "name": a.name,
             "is_business": a.code in biz_codes,
         }
         for a in accounts
@@ -191,22 +174,19 @@ def tax():
     - medical_summary: Phase E3-F-3g でクライアント完結化
     """
     year = request.args.get("year", date.today().year, type=int)
-    user_id = get_effective_user_id()
+    user_id = current_user.id
 
-    allowed_codes = get_allowed_account_codes()
     accounts = (
         Account.query
         .filter_by(user_id=user_id)
         .order_by(Account.code)
         .all()
     )
-    if allowed_codes is not None:
-        accounts = [a for a in accounts if a.code in allowed_codes]
 
     # tax_summary 用 (medical/resident_tax は除外)
     tax_accounts_meta = {
         a.code: {
-            "name": mask_account_name(a.name, a.code, allowed_codes),
+            "name": a.name,
             "tax_category": a.tax_category,
         }
         for a in accounts
@@ -215,7 +195,7 @@ def tax():
     # medical_summary 用 (medical 科目のみ)
     medical_accounts_meta = {
         a.code: {
-            "name": mask_account_name(a.name, a.code, allowed_codes),
+            "name": a.name,
             "tax_category": a.tax_category,
         }
         for a in accounts
@@ -248,7 +228,7 @@ def ledger():
 
     year = request.args.get("year", date.today().year, type=int)
     if "pf" not in request.args and "pt" not in request.args:
-        pref = _current_user.get_pref("reports_default_period", "all")
+        pref = current_user.get_pref("reports_default_period", "all")
         if pref == "current_month":
             pf = pt = date.today().month
         else:
@@ -257,15 +237,14 @@ def ledger():
         pf = request.args.get("pf", 0, type=int)
         pt = request.args.get("pt", 15, type=int)
     account_code = request.args.get("account_code", "")
-    sort_order = request.args.get("sort", _current_user.get_pref("ledger_sort_order", "asc"))
+    sort_order = request.args.get("sort", current_user.get_pref("ledger_sort_order", "asc"))
     if sort_order not in ("asc", "desc"):
         sort_order = "asc"
 
     pf = max(0, min(16, pf))
     pt = max(pf, min(16, pt))
 
-    user_id = get_effective_user_id()
-    allowed_codes = get_allowed_account_codes()
+    user_id = current_user.id
 
     account_types = AccountType.query.order_by(AccountType.display_order).all()
     accounts = (
@@ -275,8 +254,6 @@ def ledger():
         .all()
     )
     accounts = [a for a in accounts if a.is_active or (a.deactivated_year and a.deactivated_year >= year)]
-    if allowed_codes is not None:
-        accounts = [a for a in accounts if a.code in allowed_codes]
 
     grouped_accounts = {}
     for at in account_types:
@@ -287,7 +264,7 @@ def ledger():
     # accounts_meta は client が name / normal_balance / type を参照する
     accounts_meta = {
         a.code: {
-            "name": mask_account_name(a.name, a.code, allowed_codes),
+            "name": a.name,
             "type": a.account_type.code,
             "normal_balance": a.account_type.normal_balance,
         }
@@ -299,9 +276,6 @@ def ledger():
 
     if account_code:
         # Lv2: 非公開科目アクセスを 403 で遮断
-        if allowed_codes is not None and account_code not in allowed_codes:
-            from flask import abort
-            abort(403)
 
         selected_account = Account.query.filter_by(
             user_id=user_id, code=account_code,
@@ -345,7 +319,7 @@ def ledger():
                     "entry_number": eo.entry_number,
                 }
 
-    all_grouped = get_grouped_accounts(user_id, allowed_codes)
+    all_grouped = get_grouped_accounts(user_id)
 
     return render_template(
         "reports/ledger.html",
@@ -378,7 +352,7 @@ def tax_form_report():
     form_type = request.args.get("form_type", "general")
     if form_type not in ("general", "real_estate"):
         form_type = "general"
-    user_id = get_effective_user_id()
+    user_id = current_user.id
 
     fields = get_form_fields(form_type)
     field_mappings = get_user_mappings(user_id, form_type)
@@ -412,20 +386,17 @@ def tax_form_report():
     }
 
     # accounts_meta: normal_balance を client が必要とする
-    allowed_codes = get_allowed_account_codes()
     accounts = (
         Account.query
         .filter_by(user_id=user_id)
         .order_by(Account.code)
         .all()
     )
-    if allowed_codes is not None:
-        accounts = [a for a in accounts if a.code in allowed_codes]
     accounts_meta = {
         a.code: {
             "type": a.account_type.code,
             "normal_balance": a.account_type.normal_balance,
-            "name": mask_account_name(a.name, a.code, allowed_codes),
+            "name": a.name,
         }
         for a in accounts
     }
@@ -454,28 +425,25 @@ def monthly():
     from app.services.tax_form import get_business_account_codes
 
     year = request.args.get("year", date.today().year, type=int)
-    user_id = get_effective_user_id()
+    user_id = current_user.id
 
     today = date.today()
     current_month = today.month if year == today.year else None
     projection_method = current_user.get_pref("projection_method", "pro_rata")
 
-    allowed_codes = get_allowed_account_codes()
     accounts = (
         Account.query
         .filter_by(user_id=user_id)
         .order_by(Account.code)
         .all()
     )
-    if allowed_codes is not None:
-        accounts = [a for a in accounts if a.code in allowed_codes]
 
     biz_codes = get_business_account_codes(user_id)
 
     accounts_meta = {
         a.code: {
             "type": a.account_type.code,
-            "name": mask_account_name(a.name, a.code, allowed_codes),
+            "name": a.name,
             "cost_type": a.cost_type or "occasional",
             "is_business": a.code in biz_codes,
         }

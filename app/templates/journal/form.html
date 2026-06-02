@@ -13,7 +13,7 @@
       var _closedPeriods = {{ (closed_periods or {})|tojson }};
       var _restrictedBefore = {{ restricted_before_year|tojson }};
       var _userId = {{ current_user.id|tojson }};
-      var _isProxyMode = {{ is_acting_as|tojson }};
+      var _isProxyMode = false;
       var _isEdit = {{ is_edit|tojson }};
       var _entryId = {{ (entry.id if is_edit else None)|tojson }};
     </script>

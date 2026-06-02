@@ -1,42 +1,18 @@
 """レポート (reports.py) の高度なエッジケース
 
-期間範囲指定、ユーザー設定 (pref)、Lv2 監査者制限、決算月、
-キャッシュ vs 非キャッシュ、closing entries、事業科目折りたたみ等を網羅。
+期間範囲指定、ユーザー設定 (pref)、決算月、キャッシュ vs 非キャッシュ、
+closing entries、事業科目折りたたみ等を網羅。
+
+旧 Lv2 監査者向けの accounts_meta フィルタ / マスキング / ledger 403 のテストは
+旧リアルタイム代理閲覧の撤去 (#112) に伴い削除した。
 """
 
-import json
-import re
 from datetime import date
 
 import pytest
 
-from app.models.audit import AuditGrant, AuditGrantAccount
 from app.models.fiscal import FiscalClose
 from tests.conftest import make_journal
-
-
-@pytest.fixture
-def lv2_setup(db, client, user, auditor, accounts):
-    """Lv2 監査ユーザーで user を代理閲覧"""
-    grant = AuditGrant(
-        owner_user_id=user.id,
-        auditor_user_id=auditor.id,
-        permission_level=2,
-        status="active",
-    )
-    db.session.add(grant)
-    db.session.flush()
-    db.session.add_all([
-        AuditGrantAccount(audit_grant_id=grant.id,
-                          account_user_id=user.id, account_code="5010"),
-        AuditGrantAccount(audit_grant_id=grant.id,
-                          account_user_id=user.id, account_code="3030"),
-    ])
-    db.session.commit()
-    with client.session_transaction() as sess:
-        sess["_user_id"] = str(auditor.id)
-        sess["acting_as_user_id"] = user.id
-        sess["acting_as_permission_level"] = 2
 
 
 class TestBalanceWithPref:
@@ -102,113 +78,6 @@ class TestBalanceWithPref:
         _db.session.commit()
         resp = logged_in_client.get("/reports/balance?year=2026")
         assert resp.status_code == 200
-
-
-class TestBalanceLv2:
-    def test_filtered_by_allowed_codes(self, lv2_setup, client, user):
-        """Lv2 監査者の代理閲覧時、accounts_meta JSON にオーナーの非公開科目が
-        含まれず、effective_user_id がオーナーの ID であることを検証する。
-
-        E3-F-3a 以降は試算表をクライアントが描画するので、サーバが渡す
-        accounts_meta / effective_user_id の中身そのものが Lv2 隠蔽の
-        要となる。HTTP 200 だけでは回帰検出できない。
-        """
-        import json
-        import re
-        resp = client.get("/reports/balance")
-        assert resp.status_code == 200
-        html = resp.data.decode()
-
-        # accounts_meta は allowed_codes でフィルタ済みであるべき
-        m = re.search(
-            r'<script id="trial-balance-accounts-meta"[^>]*>(.*?)</script>',
-            html, flags=re.DOTALL,
-        )
-        assert m, "accounts_meta script not found"
-        meta = json.loads(m.group(1).strip())
-        # lv2_setup fixture が公開した科目: 5010, 3030
-        assert "5010" in meta
-        assert "3030" in meta
-        # 公開していない科目 (1010 等) は含まれない
-        assert "1010" not in meta
-        assert "4010" not in meta
-
-        # effective_user_id (= 試算表 server params の user_id) はオーナーの ID
-        m2 = re.search(
-            r'<script id="trial-balance-server-params"[^>]*>(.*?)</script>',
-            html, flags=re.DOTALL,
-        )
-        assert m2, "server-params script not found"
-        params = json.loads(m2.group(1).strip())
-        assert params["user_id"] == user.id
-        assert params["is_audit_proxy"] is True
-
-
-class TestTaxLv2:
-    """Lv2 監査代理閲覧時、tax page の accounts_meta / server-params が
-    オーナーの状態を正しく反映していることを検証する (E3-F-3f 後)。
-
-    accounts_meta は tax_category が設定された科目のみ含むため、
-    `accounts` fixture の科目 (1010 現金 / 4010 給与収入 / 5010 食費 等) は
-    通常 tax_category=None で含まれない。tax_category 付きの科目をテスト
-    用に追加し、Lv2 公開リストと突合する形にする。"""
-
-    def test_accounts_meta_filtered_by_allowed_codes(
-            self, lv2_setup, client, user, db, account_types,
-    ):
-        """Lv2 で公開した科目 (5310) は accounts_meta に含まれるが、
-        公開していない科目 (5311) は除外される。effective_user_id も
-        オーナー ID が入る。"""
-        from app.models.account import Account
-        from app.models.audit import AuditGrant, AuditGrantAccount
-        # tax_category 付きの 2 科目をオーナーに作成
-        public_acc = Account(
-            user_id=user.id, code="5310", name="社会保険料 (公開)",
-            account_type_id=account_types["expense"].id,
-            is_active=True, tax_category="social_insurance",
-        )
-        private_acc = Account(
-            user_id=user.id, code="5311", name="生命保険料 (非公開)",
-            account_type_id=account_types["expense"].id,
-            is_active=True, tax_category="life_insurance",
-        )
-        db.session.add_all([public_acc, private_acc])
-        db.session.flush()
-        # lv2 grant の AuditGrantAccount に 5310 だけ追加
-        grant = AuditGrant.query.filter_by(
-            owner_user_id=user.id, permission_level=2,
-        ).first()
-        assert grant is not None
-        db.session.add(AuditGrantAccount(
-            audit_grant_id=grant.id,
-            account_user_id=user.id, account_code="5310",
-        ))
-        db.session.commit()
-
-        resp = client.get("/reports/tax?year=2026")
-        assert resp.status_code == 200
-        html = resp.data.decode()
-
-        m = re.search(
-            r'<script id="tax-summary-accounts-meta"[^>]*>(.*?)</script>',
-            html, flags=re.DOTALL,
-        )
-        assert m, "tax-summary-accounts-meta script not found"
-        meta = json.loads(m.group(1).strip())
-        # 公開した tax_category 付き科目は含まれる
-        assert "5310" in meta
-        assert meta["5310"]["tax_category"] == "social_insurance"
-        # 非公開科目は含まれない
-        assert "5311" not in meta
-
-        m2 = re.search(
-            r'<script id="tax-summary-server-params"[^>]*>(.*?)</script>',
-            html, flags=re.DOTALL,
-        )
-        assert m2
-        params = json.loads(m2.group(1).strip())
-        assert params["user_id"] == user.id
-        assert params["is_audit_proxy"] is True
 
 
 class TestBsAdvanced:
@@ -288,15 +157,6 @@ class TestLedgerAdvanced:
         resp = logged_in_client.get(
             "/reports/ledger?account_code=1010&year=2026"
         )
-        assert resp.status_code == 200
-
-    def test_lv2_blocked_from_non_public(self, lv2_setup, client):
-        # 5020 は公開していない
-        resp = client.get("/reports/ledger?account_code=5020")
-        assert resp.status_code == 403
-
-    def test_lv2_allowed_for_public(self, lv2_setup, client):
-        resp = client.get("/reports/ledger?account_code=5010")
         assert resp.status_code == 200
 
     def test_unknown_account_code(self, logged_in_client, accounts):

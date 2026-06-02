@@ -5,7 +5,7 @@
 <script>
   // クライアント側暗号化での仕訳登録 (batch API draft_id 連携) に使う。
   var _userId = {{ current_user.id|tojson }};
-  var _isProxyMode = {{ is_acting_as|tojson }};
+  var _isProxyMode = false;
   var _reviewDraftId = {{ draft_db_id|tojson }};
   var _reviewRedirect = {{ (url_for('ai_journal.drafts') if is_saved_draft else url_for('journal.index'))|tojson }};
 </script>

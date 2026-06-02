@@ -165,31 +165,6 @@ def create_app(config_class=Config):
             "captcha_api_url": app.config.get("CAPTCHA_API_URL"),
         }
 
-    # Context processor for audit
-    #
-    # 旧リアルタイム代理閲覧 (acting_as_user_id セッション方式) は撤去済み (#112)。
-    # 監査連携は非同期スナップショットワークフロー (audit_packages) に一本化された
-    # ため、これらの変数は常に「代理閲覧していない」固定値を返す。テンプレート側の
-    # 参照除去は後続 PR で行うため、互換のためスタブとして残す。
-    @app.context_processor
-    def inject_audit_context():
-        return {
-            "is_acting_as": False,
-            "acting_as_user": None,
-            "audit_permission_level": None,
-            "audit_allowed_account_codes": None,
-        }
-
-    # Template filter for account name masking
-    @app.template_filter("mask_account")
-    def mask_account_filter(account_name, account_code):
-        from flask_login import current_user as cu
-        if not cu.is_authenticated:
-            return account_name
-        from app.services.audit import get_allowed_account_codes, mask_account_name
-        allowed = get_allowed_account_codes()
-        return mask_account_name(account_name, account_code, allowed)
-
     # Serve service worker from root scope
     @app.route("/sw.js")
     def service_worker():

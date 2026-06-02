@@ -15,7 +15,7 @@
   var _paymentCode = {{ payment_account.code | tojson }};
   var _capitalCode = {{ (capital_code or '') | tojson }};
   var _userId = {{ current_user.id | tojson }};
-  var _isProxyMode = {{ is_acting_as | tojson }};
+  var _isProxyMode = false;
 </script>
 <div x-data="importConfirm({
   rows: _importRows,

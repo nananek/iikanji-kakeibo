@@ -68,46 +68,9 @@ def mixed_journal(db, user, accounts):
     return e
 
 
-class TestJournalGetJsonLv2:
-    def test_aggregates_non_public_into_proprietor(self, lv2_setup, mixed_journal, client):
-        resp = client.get(f"/journal/{mixed_journal.id}/json")
-        assert resp.status_code == 200
-        data = resp.get_json()
-        # 公開行 (5010, 1010) と事業主集約行 (3030) が含まれる
-        codes = [l["account_code"] for l in data["lines"]]
-        assert "5010" in codes
-        assert "1010" in codes
-        # 5020 (非公開) は事業主に集約される
-        assert "5020" not in codes
-        assert "3030" in codes  # proprietor
-        # E3-F PR-D-6-5-pre2: 許可行は line id + encrypted_blob/blob_iv を持ち
-        # (行摘要の client 復号用)、集約行 (proprietor) は合成なので id/blob=None。
-        by_code = {l["account_code"]: l for l in data["lines"]}
-        assert by_code["5010"]["id"] is not None
-        assert "encrypted_blob" in by_code["5010"]
-        assert "blob_iv" in by_code["5010"]
-        prop = by_code["3030"]
-        assert prop["id"] is None
-        assert prop["encrypted_blob"] is None
-        assert prop["blob_iv"] is None
-
-
-class TestJournalEditGetLv2:
-    """Lv2 監査者が編集画面 (GET /journal/<id>/edit) を開いたとき、
-    非公開行を事業主集約行 (is_proprietor) にまとめた existing_lines が
-    フォームに渡る (保存自体は暗号化 PUT で行うため別経路)。"""
-
-    def test_edit_form_aggregates_non_public_into_proprietor(
-        self, lv2_setup, mixed_journal, client
-    ):
-        resp = client.get(f"/journal/{mixed_journal.id}/edit")
-        assert resp.status_code == 200
-        body = resp.get_data(as_text=True)
-        # existing_lines は JSON で埋め込まれる。公開行 + proprietor 集約行を含む。
-        assert '"is_proprietor": true' in body or '"is_proprietor":true' in body
-        assert "5010" in body
-        # 非公開コード 5020 は集約され生の科目コードとしては出ない
-        assert '"account_code": "5020"' not in body
+# 旧 Lv2 masking (非公開行を事業主集約行にまとめる get_json / edit の proprietor
+# 集約) は旧リアルタイム代理閲覧の撤去 (#112) に伴い廃止したため、関連テスト
+# (TestJournalGetJsonLv2 / TestJournalEditGetLv2) は削除した。
 
 
 class TestJournalEditApiLv2Removed:
