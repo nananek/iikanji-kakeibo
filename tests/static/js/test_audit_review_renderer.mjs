@@ -225,10 +225,20 @@ test("validateProposal: 非整数・負数の金額は throw", () => {
   );
 });
 
-test("validateProposal: 借方貸方の両側非ゼロ/両側ゼロは throw", () => {
+test("validateProposal: 借方貸方の両側非ゼロは throw", () => {
   assert.throws(
     () => validateProposal({ date: "2026-05-22", lines: [
       { account_code: "5010", debit: 5000, credit: 5000 },
+      { account_code: "1020", debit: 0, credit: 5000 },
+    ] }, META),
+    /どちらか一方/,
+  );
+});
+
+test("validateProposal: 借方貸方の両側ゼロは throw", () => {
+  assert.throws(
+    () => validateProposal({ date: "2026-05-22", lines: [
+      { account_code: "5010", debit: 0, credit: 0 },
       { account_code: "1020", debit: 0, credit: 5000 },
     ] }, META),
     /どちらか一方/,

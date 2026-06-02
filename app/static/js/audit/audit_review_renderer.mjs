@@ -454,14 +454,22 @@ function _entryOptionLabel(e) {
   return `#${e.id} ${date} ${desc}`.trim();
 }
 
+// 構造化修正案の checkbox id を行ごとに一意化するための単調増加カウンタ。
+// list.children.length は行削除で再利用されて衝突する (label の for が誤った
+// checkbox を指す) ため、モジュールスコープの counter を使う。
+let _proposalIdCounter = 0;
+
 // 科目セレクタの option を accountsMeta から埋める。option.textContent は
-// textContent 経由なので科目名の XSS は起きない。
+// textContent 経由なので科目名の XSS は起きない。コード昇順で並べる。
 function _fillAccountOptions(sel, accountsMeta, selectedCode) {
   const optNone = document.createElement("option");
   optNone.value = "";
   optNone.textContent = "（科目を選択）";
   sel.appendChild(optNone);
-  for (const [code, meta] of Object.entries(accountsMeta || {})) {
+  const entries = Object.entries(accountsMeta || {}).sort(([a], [b]) =>
+    a.localeCompare(b),
+  );
+  for (const [code, meta] of entries) {
     const opt = document.createElement("option");
     opt.value = code;
     opt.textContent = `${code} ${(meta && meta.name) || ""}`.trim();
@@ -626,7 +634,7 @@ function _addCommentRow(entries, accountsMeta) {
   const cb = document.createElement("input");
   cb.type = "checkbox";
   cb.className = "form-check-input audit-proposal-enable";
-  cb.id = `audit-proposal-enable-${list.children.length}`;
+  cb.id = `audit-proposal-enable-${_proposalIdCounter++}`;
   const cbLabel = document.createElement("label");
   cbLabel.className = "form-check-label small";
   cbLabel.setAttribute("for", cb.id);
@@ -678,8 +686,8 @@ function _collectComments() {
         description: editor.querySelector(".audit-proposal-desc").value,
         lines: Array.from(editor.querySelectorAll(".audit-proposal-line")).map((lr) => ({
           account_code: lr.querySelector(".audit-proposal-acct").value,
-          debit: lr.querySelector(".audit-proposal-debit").value,
-          credit: lr.querySelector(".audit-proposal-credit").value,
+          debit: Number(lr.querySelector(".audit-proposal-debit").value),
+          credit: Number(lr.querySelector(".audit-proposal-credit").value),
         })),
       };
     }
