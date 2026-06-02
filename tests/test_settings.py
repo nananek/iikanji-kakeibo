@@ -64,6 +64,13 @@ class TestSettingsIndex:
         html = resp.data.decode()
         assert "監査アクセス管理" in html
 
+    def test_audit_page_deprecation_banner(self, db, logged_in_client, user):
+        """監査アクセス管理に非同期方式移行の告知バナーが表示される (§14.11)"""
+        resp = logged_in_client.get("/settings/audit")
+        html = resp.data.decode()
+        assert "非同期スナップショット方式" in html
+        assert "廃止予定" in html
+
     def test_auditor_does_not_see_audit(self, app, client, auditor):
         with client.session_transaction() as sess:
             sess["_user_id"] = str(auditor.id)
