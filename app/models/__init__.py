@@ -21,6 +21,7 @@ from app.models.ai_usage_log import AIUsageLog
 from app.models.storage import StorageUsage
 from app.models.invitation import InvitationToken
 from app.models.wrapped_key import WrappedKey
+from app.models.export_job import ExportJob
 
 __all__ = [
     "User",
@@ -48,4 +49,5 @@ __all__ = [
     "StorageUsage",
     "InvitationToken",
     "WrappedKey",
+    "ExportJob",
 ]
