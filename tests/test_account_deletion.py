@@ -227,6 +227,15 @@ class TestDeleteAccountView:
         assert "name=\"password\"" in body
         assert "name=\"confirm\"" in body
 
+    def test_get_shows_export_cta_for_personal(self, logged_in_client, reset_limiter):
+        """退会前エクスポート導線が表示される (E6 #113 §15.5 PR-4)。"""
+        resp = logged_in_client.get("/settings/delete-account")
+        body = resp.get_data(as_text=True)
+        assert "/settings/export" in body
+        assert "退会前にデータをダウンロード" in body
+        # 旧来の「一括ダウンロード機能はありません」表記は撤去済
+        assert "一括ダウンロード機能はありません" not in body
+
     def test_post_wrong_password_keeps_user(
         self, logged_in_client, db, user, mock_storage, reset_limiter,
     ):
