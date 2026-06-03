@@ -99,6 +99,8 @@ with KakeiboClient("https://your-server.example.com", "ik_your_api_key") as clie
 ## 開発ロードマップ
 
 - [v5.0 E2EE 設計書 (たたき台)]({{ '/v5-e2ee/' | relative_url }}) — Epic #84、サーバが平文を持たない構成への移行計画
+- [v4.x → v5.0 移行ガイド]({{ '/v5-e2ee/migration.html' | relative_url }}) — E2EE 化で何が変わるか・廃止機能・利用者がすべきこと
+- [監査連携の移行ガイド]({{ '/v5-e2ee/audit-migration.html' | relative_url }}) — 代理閲覧 → 非同期スナップショット送信
 
 ## 技術スタック
 
