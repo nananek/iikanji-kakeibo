@@ -141,14 +141,25 @@ def _b64_or_400(
 @auth_required(write=False)
 @limiter.limit("120 per hour", key_func=rate_limit_key)
 def list_wrapped_keys():
-    """自身の wrapped_keys 一覧を返す。"""
+    """自身の wrapped_keys 一覧を返す。
+
+    トップレベルに数値 `user_id` (users.id) も返す。Python クライアント
+    (client-py E2EE 化, E6 §15.1) は MK アンラップのため必ずこの endpoint を
+    叩くため、AAD 構築 (record.js buildAAD = tableType + uint64_be(user_id))
+    に要る user_id をここで併せて渡す。専用の軽量 /me endpoint を増やさず
+    既存呼出に相乗りさせる最小経路。漏れても良い情報 (AAD / backup export に
+    既出) なので Bearer / session いずれでも返す。
+    """
     rows = (
         WrappedKey.query
         .filter_by(user_id=g.auth_user.id)
         .order_by(WrappedKey.id.asc())
         .all()
     )
-    return jsonify(wrapped_keys=[_serialize(r) for r in rows])
+    return jsonify(
+        user_id=g.auth_user.id,
+        wrapped_keys=[_serialize(r) for r in rows],
+    )
 
 
 def _is_int(x) -> bool:

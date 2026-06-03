@@ -127,11 +127,14 @@ def test_list_returns_only_own_rows(client, db):
     _login(client, me)
     resp = client.get("/api/v1/wrapped-keys")
     assert resp.status_code == 200
-    rows = resp.get_json()["wrapped_keys"]
+    body = resp.get_json()
+    rows = body["wrapped_keys"]
     assert len(rows) == 1
     assert rows[0]["method"] == METHOD_PASSPHRASE
     # base64 で wrapped_master_key が返却される (raw bytes ではない)
     assert isinstance(rows[0]["wrapped_master_key"], str)
+    # E6 §15.1: client-py の AAD 構築用に数値 user_id をトップレベルで返す
+    assert body["user_id"] == me.id
 
 
 # --- POST ---
