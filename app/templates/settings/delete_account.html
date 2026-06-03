@@ -32,16 +32,26 @@
   </div>
 
   <div class="alert alert-info">
-    <h5 class="alert-heading"><i class="bi bi-info-circle"></i> 削除前の確認</h5>
-    <p class="mb-1 small">
-      仕訳データや証憑画像が必要な場合は、削除前にバックアップを取って
-      ください (現状一括ダウンロード機能はありません。必要な場合は
-      <a href="{{ url_for('legal.contact') }}">お問い合わせ</a>
-      から開示請求してください)。
+    <h5 class="alert-heading"><i class="bi bi-download"></i> 退会前にデータをダウンロード</h5>
+    <p class="mb-2 small">
+      削除後、あなたのデータは<strong>復元できません</strong>。E2EE のため運営者も
+      復元できません。仕訳データや証憑画像が必要な場合は、退会前に全データを
+      エクスポートしてください。
     </p>
-    <p class="mb-0 small">
-      削除後にデータは復元できません。
+    {% if current_user.user_type == 'personal' %}
+    <a href="{{ url_for('settings.export') }}" target="_blank" rel="noopener"
+       class="btn btn-outline-primary btn-sm">
+      <i class="bi bi-file-earmark-zip"></i> 全データエクスポート (別タブで開く)
+    </a>
+    <p class="mt-2 mb-0 small text-muted">
+      CSV + 証憑画像 + <code>backup.json</code> を zip でダウンロードできます。
+      エクスポートが完了したことを確認してから、下のフォームで削除を実行してください。
     </p>
+    {% else %}
+    <p class="mb-0 small text-muted">
+      監査アカウントにはエクスポート対象のデータがありません。
+    </p>
+    {% endif %}
   </div>
 
   <form method="POST" class="mt-4">
