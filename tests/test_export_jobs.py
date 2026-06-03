@@ -126,6 +126,10 @@ class TestExportJobCreate:
 class TestExportJobsList:
     """GET /api/v1/export/jobs"""
 
+    def test_unauthenticated_401_or_redirect(self, client):
+        resp = client.get("/api/v1/export/jobs")
+        assert resp.status_code in (401, 302)
+
     def test_lists_only_own_jobs(self, db, logged_in_client, user):
         other = _second_user(db)
         mine = _make_job(db, user.id)
@@ -147,6 +151,10 @@ class TestExportJobsList:
 
 class TestExportJobDownload:
     """GET /api/v1/export/jobs/<id>/download"""
+
+    def test_unauthenticated_401_or_redirect(self, client):
+        resp = client.get("/api/v1/export/jobs/1/download")
+        assert resp.status_code in (401, 302)
 
     def test_owner_downloads_blob(self, db, logged_in_client, user):
         body = b"CIPHERTEXT-123"

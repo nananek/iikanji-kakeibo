@@ -31,6 +31,14 @@ STATUS_FAILED = "failed"
 
 
 def _default_expires_at():
+    # アプリコンテキストがあれば config の EXPORT_TTL_HOURS を尊重する
+    # (api.py の export_job_create は明示的に expires_at を渡すが、ExportJob を
+    #  デフォルトで使うコードでも設定値が効くようにする)。
+    from flask import current_app, has_app_context
+
+    if has_app_context():
+        hours = current_app.config.get("EXPORT_TTL_HOURS", 24)
+        return datetime.now(timezone.utc) + timedelta(hours=hours)
     return datetime.now(timezone.utc) + EXPORT_TTL
 
 
