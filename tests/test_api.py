@@ -1420,6 +1420,61 @@ class TestMedicalExpensesUpsert:
     # しない)。旧 test_provider_type_empty_becomes_null を削除。
 
 
+# --- 勘定科目一覧 (E6 §15.1, client-py レポート用) ---
+
+
+class TestListAccounts:
+    def test_returns_accounts_with_metadata(self, client, db, user, accounts, auth_header):
+        resp = client.get("/api/v1/accounts", headers=auth_header)
+        assert resp.status_code == 200
+        body = resp.get_json()
+        assert body["ok"] is True
+        by_code = {a["code"]: a for a in body["accounts"]}
+        # 全科目が返る
+        assert set(by_code) == set(accounts)
+        cash = by_code["1010"]
+        assert cash["name"] == "現金"
+        assert cash["account_type"] == "asset"
+        assert cash["account_type_name"] == "資産"
+        assert cash["normal_balance"] == "debit"
+        assert cash["is_active"] is True
+        # 費用科目 (normal_balance=debit) / 収益科目 (credit)
+        assert by_code["5010"]["account_type"] == "expense"
+        assert by_code["4010"]["normal_balance"] == "credit"
+        # system_role が伝播する
+        assert by_code["3030"]["system_role"] == "proprietor"
+
+    def test_ordered_by_display_order(self, client, db, user, accounts, auth_header):
+        resp = client.get("/api/v1/accounts", headers=auth_header)
+        codes = [a["code"] for a in resp.get_json()["accounts"]]
+        assert codes == sorted(codes, key=lambda c: ({a.code: a.display_order for a in accounts.values()}[c], c))
+
+    def test_requires_auth(self, client, db, user, accounts):
+        resp = client.get("/api/v1/accounts")
+        assert resp.status_code == 401
+
+    def test_only_own_accounts(self, client, db, user, accounts, auth_header):
+        # 別ユーザーの科目は返らない
+        from app.models.user import User
+        from app.models.account import Account, AccountType
+        other = User(
+            username="other_acct", email="other_acct@example.com",
+            user_type="personal",
+        )
+        other.set_password("x")
+        db.session.add(other)
+        db.session.commit()
+        at = AccountType.query.filter_by(code="asset").first()
+        db.session.add(Account(
+            user_id=other.id, account_type_id=at.id, code="9999",
+            name="他人の科目", is_active=True, display_order=1,
+        ))
+        db.session.commit()
+        resp = client.get("/api/v1/accounts", headers=auth_header)
+        codes = {a["code"] for a in resp.get_json()["accounts"]}
+        assert "9999" not in codes
+
+
 # --- 残高キャッシュ blob (E3-E-1) ---
 
 
