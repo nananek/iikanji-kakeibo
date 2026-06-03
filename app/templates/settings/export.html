@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block title %}全データエクスポート - いいかんじ™家計簿{% endblock %}
+
+{% block content %}
+<h2 class="mb-3"><i class="bi bi-file-earmark-zip"></i> 全データエクスポート</h2>
+
+<div class="alert alert-info small">
+  <i class="bi bi-info-circle"></i>
+  仕訳帳・勘定科目・医療費・証憑メタを <strong>人間が読める CSV</strong> に、
+  証憑画像を画像ファイルに変換し、機械可読な <code>backup.json</code> とともに
+  1 つの <strong>zip</strong> としてダウンロードします。
+</div>
+
+<div class="card shadow-sm mb-4">
+  <div class="card-body">
+    <h5 class="card-title mb-3">zip に含まれるもの</h5>
+    <ul class="small mb-3">
+      <li><code>journal.csv</code> — 仕訳帳 (明細 1 行 = 1 レコード)</li>
+      <li><code>accounts.csv</code> — 勘定科目マスタ</li>
+      <li><code>medical.csv</code> — 医療費</li>
+      <li><code>vouchers.csv</code> + <code>vouchers/</code> — 証憑メタと画像ファイル</li>
+      <li>
+        <code>backup.json</code> — 機械可読バックアップ (暗号文のまま)。
+        <strong>設定 → 全データリストア</strong> で再取り込みできます。
+      </li>
+    </ul>
+    <p class="small text-muted mb-3">
+      <i class="bi bi-shield-check"></i>
+      サーバは暗号文のまま返します。本ブラウザの暗号鍵 (MK) で復号してから
+      ファイル化するので、サーバ管理者からは中身が見えません。
+    </p>
+    <p class="small text-muted mb-3">
+      <i class="bi bi-exclamation-triangle"></i>
+      証憑が多い (200 枚 / 200MB 超) 場合はブラウザのメモリ上限に近づくことがあります。
+      その際は <code>client-py</code> の <code>iikanji export</code> をご利用ください。
+    </p>
+
+    <div id="export-status" class="alert alert-warning small d-none"></div>
+
+    <button id="export-btn" class="btn btn-primary">
+      <i class="bi bi-file-earmark-zip"></i> エクスポート (zip)
+    </button>
+  </div>
+</div>
+
+<script id="export-static-root" type="application/json">
+  {{ {"static_root": url_for('static', filename='')} | tojson }}
+</script>
+
+<script type="module">
+  const sr = JSON.parse(document.getElementById("export-static-root").textContent);
+  globalThis.IIKANJI_STATIC_ROOT = sr.static_root;
+  const { runExport } = await import(sr.static_root + "js/export/export_renderer.mjs");
+
+  const btn = document.getElementById("export-btn");
+  btn.addEventListener("click", () => runExport());
+</script>
+{% endblock %}
