@@ -1,0 +1,5 @@
+{
+  "type": "module",
+  "private": true,
+  "description": "E6 (#113) 全データエクスポート JS モジュール。ESM。type=module で Node が .js を ESM として import 可能 (csv.js の単体テスト用)。ブラウザでは <script type=\"module\"> で読み込まれる。"
+}

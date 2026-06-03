@@ -113,6 +113,23 @@ def backup():
     return render_template("settings/backup.html")
 
 
+@bp.route("/export")
+@login_required
+def export():
+    """全データエクスポート (E6 #113 §15.4 PR-1)。
+
+    クライアントが GET /api/v1/backup/export で暗号文付き JSON を取り、本人 MK
+    で復号 → 人間可読 CSV + 証憑画像 + 機械可読 backup.json を fflate で zip 化
+    してダウンロードする。サーバはテンプレートを返すだけ (新規 API なし)。
+
+    監査ユーザーは他人のデータを export できないため対象外。
+    """
+    if current_user.user_type == "auditor":
+        flash("監査アカウントは全データエクスポートの対象外です。", "info")
+        return redirect(url_for("settings.index"))
+    return render_template("settings/export.html")
+
+
 @bp.route("/restore")
 @login_required
 def restore():

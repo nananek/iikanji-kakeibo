@@ -110,6 +110,39 @@ class TestBackupView:
         assert "/settings/" in resp.headers["Location"]
 
 
+class TestExportView:
+    """GET /settings/export — 全データエクスポート (E6 #113 §15.4 PR-1)"""
+
+    def test_unauthenticated_redirects(self, client):
+        resp = client.get("/settings/export")
+        assert resp.status_code == 302
+        assert "/login" in resp.headers["Location"]
+
+    def test_personal_user_200(self, db, logged_in_client):
+        resp = logged_in_client.get("/settings/export")
+        assert resp.status_code == 200
+        html = resp.data.decode()
+        assert "全データエクスポート" in html
+        # クライアント JS が読み込まれている
+        assert "export_renderer.mjs" in html
+        # CSV + backup.json を含む案内
+        assert "journal.csv" in html
+        assert "backup.json" in html
+
+    def test_auditor_redirects_to_settings_index(self, app, client, auditor):
+        with client.session_transaction() as sess:
+            sess["_user_id"] = str(auditor.id)
+        resp = client.get("/settings/export", follow_redirects=False)
+        assert resp.status_code == 302
+        assert "/settings/" in resp.headers["Location"]
+
+    def test_personal_sees_export_card(self, db, logged_in_client):
+        resp = logged_in_client.get("/settings/")
+        html = resp.data.decode()
+        assert "/settings/export" in html
+        assert "全データエクスポート" in html
+
+
 class TestRestoreView:
     """GET /settings/restore — 全データリストア preview (Phase v5 BU-4a)"""
 
