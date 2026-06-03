@@ -2216,7 +2216,12 @@ E1–E5 で確立した暗号化基盤を **全クライアント (Web / client-
 
 ### 15.1 全クライアントの対応マトリクス
 
-| 機能 | Web | client-py | client-tui | iikanji-mcp |
+> **更新 (E6 トラック3):** `client-tui` は E2EE 移植を行わず **v5.0 で廃止・
+> リポジトリ archive 化**する (`iikanji-mcp` と同様)。CLI クライアントの E2EE
+> 対応は `client-py` に一本化する。以下マトリクスの client-tui 列は v4.x まで
+> の到達点であり、v5.0 では「廃止」。
+
+| 機能 | Web | client-py | ~~client-tui~~ (廃止) | iikanji-mcp |
 |---|---|---|---|---|
 | Master Key 管理 (§10) | ✅ SharedWorker (リロード跨ぎ・全タブ共有・60 分 idle 自動ロック) | ✅ OS keyring | ✅ OS keyring | ❌ E2EE 非両立 |
 | Passkey PRF | ✅ WebAuthn | — (Bearer + パスフレーズ) | — | — |
