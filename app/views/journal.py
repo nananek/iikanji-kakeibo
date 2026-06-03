@@ -10,7 +10,6 @@ from app.models.journal import JournalEntry
 from app.models.voucher import Voucher
 from app.models.voucher_audit_log import VoucherAuditLog
 from app.forms.journal import JournalForm
-from app.services.accounting import create_journal_entry
 from app.services.fiscal import check_entry_modifiable, get_effective_period, get_closed_periods_map, get_restricted_before_year
 from app.views.helpers import get_grouped_accounts, is_safe_internal_path, safe_user_error
 
@@ -60,10 +59,8 @@ def index():
 
 # E3-F PR-B2: new() / edit() は GET 専用。フォーム送信は JS が
 # entries_builder.buildJournalEntry で暗号化 → POST /api/v1/journals/batch (新規)
-# / PUT /api/v1/journals/<id> (更新) に直接送る (E2EE 経路)。
-# accounting.create_journal_entry は本 view からは呼ばれなくなったが、ai_journal /
-# auto_import / tests 由来の呼出が残るため関数自体は dual-storage 完了 (PR-D) まで
-# 保持する。
+# / PUT /api/v1/journals/<id> (更新) に直接送る (E2EE 経路)。仕訳の実作成は
+# api.py 内の create_journal_entry 経由のみ (本 view は呼び出さない)。
 # get_json は編集モーダルの初期表示データを返す (Lv2 では非公開行を proprietor
 # 行に集約)。保存は暗号化済み API 側で行うため、Lv2 監査代理での暗号化 write は
 # AAD 不一致で復号不能になり PUT/batch のガードでブロックされる (E2EE 仕様)。
