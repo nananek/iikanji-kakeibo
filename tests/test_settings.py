@@ -128,6 +128,11 @@ class TestExportView:
         # CSV + backup.json を含む案内
         assert "journal.csv" in html
         assert "backup.json" in html
+        # PR-2: サーバ保存 (メール配信) UI
+        assert "メールで受け取る" in html
+        assert 'id="export-passphrase"' in html
+        assert 'id="export-server-btn"' in html
+        assert 'id="export-jobs"' in html
 
     def test_auditor_redirects_to_settings_index(self, app, client, auditor):
         with client.session_transaction() as sess:

@@ -6,9 +6,9 @@ import json
 import uuid
 from base64 import b64decode, b64encode
 from binascii import Error as BinasciiError
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
-from flask import Blueprint, current_app, jsonify, request, g
+from flask import Blueprint, Response, current_app, jsonify, request, g, url_for
 
 from app.extensions import db, limiter
 from app.models.api_key import APIKey
@@ -41,7 +41,9 @@ from app.services.voucher import (
 from app.models.user import User
 from app.models.voucher import Voucher
 from app.models.voucher_audit_log import VoucherAuditLog
+from app.models.export_job import ExportJob
 from app.services.api_auth import auth_required, rate_limit_key
+from app.services.mail import send_email
 from app.views.helpers import safe_user_error
 
 bp = Blueprint("api", __name__, url_prefix="/api/v1")
@@ -1025,6 +1027,130 @@ def backup_restore():
         return jsonify({"error": "リストアに失敗しました。"}), 500
 
     return jsonify({"ok": True, "restored": result}), 200
+
+
+# --- 全データエクスポート: サーバ一時保存 + メール配信 (E6 #113 §15.4 PR-2) ---
+
+
+@bp.route("/export/jobs", methods=["POST"])
+@auth_required(scope="journals:read", allow_session=True)
+@limiter.limit("3 per hour", key_func=rate_limit_key)
+def export_job_create():
+    """クライアントが生成・暗号化したエクスポート zip (.ikexport) を受け取り、
+    storage に一時保存してジョブを作成、完了メールを送る。
+
+    リクエストボディは `encryptBackupArchive` の出力バイナリそのまま
+    (application/octet-stream)。サーバは暗号文を預かるだけで平文 / パスフレーズ /
+    MK を一切持たない。エクスポートは read 操作なので journals:read スコープで可。
+    """
+    user = g.auth_user
+    max_bytes = current_app.config.get("EXPORT_MAX_UPLOAD_BYTES", 500 * 1024 * 1024)
+    # Content-Length で巨大ボディを読み込む前に弾く (メモリ枯渇防止)
+    if request.content_length is not None and request.content_length > max_bytes:
+        return jsonify({"error": "エクスポートサイズが上限を超えています。"}), 413
+    data = request.get_data()
+    if not data:
+        return jsonify({"error": "暗号化済みエクスポートデータが必要です。"}), 400
+    if len(data) > max_bytes:
+        return jsonify({"error": "エクスポートサイズが上限を超えています。"}), 413
+
+    now = datetime.now(timezone.utc)
+    ttl_hours = current_app.config.get("EXPORT_TTL_HOURS", 24)
+    job = ExportJob(
+        user_id=user.id,
+        status="ready",
+        storage_key="",  # job.id 採番後に確定
+        file_size=len(data),
+        created_at=now,
+        ready_at=now,
+        expires_at=now + timedelta(hours=ttl_hours),
+        download_count=0,
+    )
+    db.session.add(job)
+    db.session.flush()  # job.id を採番
+    job.storage_key = f"exports/{user.id}/{job.id}.ikexport"
+
+    storage = get_storage_backend()
+    storage.put(job.storage_key, data, "application/octet-stream")
+    db.session.commit()
+
+    # 完了メール (テンプレ不備等は握りつぶし、アップロード自体は成功扱い)
+    if user.email:
+        try:
+            send_email(
+                user.email,
+                "export_ready",
+                {
+                    "username": user.username,
+                    "expires_at": job.expires_at.strftime("%Y-%m-%d %H:%M UTC"),
+                    "url": url_for("settings.export", _external=True),
+                },
+            )
+        except Exception:
+            current_app.logger.exception("export_ready email render failed")
+
+    return jsonify(
+        {"ok": True, "job_id": job.id, "expires_at": job.expires_at.isoformat()}
+    ), 201
+
+
+@bp.route("/export/jobs", methods=["GET"])
+@auth_required(scope="journals:read", allow_session=True)
+def export_jobs_list():
+    """本人のエクスポートジョブ一覧。期限切れは status=expired で返す。"""
+    user = g.auth_user
+    now = datetime.now(timezone.utc)
+    jobs = (
+        ExportJob.query.filter_by(user_id=user.id)
+        .order_by(ExportJob.created_at.desc())
+        .all()
+    )
+    out = [
+        {
+            "id": j.id,
+            "status": "expired" if j.is_expired(now) else j.status,
+            "created_at": j.created_at.isoformat() if j.created_at else None,
+            "expires_at": j.expires_at.isoformat() if j.expires_at else None,
+            "file_size": j.file_size,
+            "download_count": j.download_count,
+        }
+        for j in jobs
+    ]
+    return jsonify({"ok": True, "jobs": out})
+
+
+@bp.route("/export/jobs/<int:job_id>/download", methods=["GET"])
+@auth_required(scope="journals:read", allow_session=True)
+def export_job_download(job_id):
+    """暗号化済みエクスポート blob を配信する。本人のみ。期限切れ / 回数超過は 410。
+
+    クライアントが受け取った blob をパスフレーズで復号 (decryptBackupArchive) して
+    平文 zip を得る。サーバは復号に関与しない。
+    """
+    user = g.auth_user
+    job = ExportJob.query.filter_by(id=job_id, user_id=user.id).first()
+    if job is None:
+        return jsonify({"error": "エクスポートが見つかりません。"}), 404
+    if job.is_expired():
+        return jsonify({"error": "このエクスポートは有効期限切れです。"}), 410
+    max_dl = current_app.config.get("EXPORT_MAX_DOWNLOADS", 3)
+    if job.download_count >= max_dl:
+        return jsonify({"error": "ダウンロード回数の上限に達しました。"}), 410
+
+    storage = get_storage_backend()
+    try:
+        data = storage.get(job.storage_key)
+    except FileNotFoundError:
+        return jsonify({"error": "エクスポートが見つかりません。"}), 404
+
+    job.download_count += 1
+    db.session.commit()
+
+    resp = Response(data, mimetype="application/octet-stream")
+    resp.headers["Content-Disposition"] = (
+        f'attachment; filename="iikanji-export-{job_id}.ikexport"'
+    )
+    return resp
 
 
 # --- 仕訳閲覧 ---

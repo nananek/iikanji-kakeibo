@@ -112,3 +112,13 @@ class Config:
     STORAGE_QUOTA_BYTES_DEFAULT = int(
         os.environ.get("STORAGE_QUOTA_BYTES_DEFAULT", str(500 * 1024 * 1024))
     )
+
+    # E6 #113 §15.4 PR-2: サーバ保存版データエクスポート。
+    # EXPORT_TTL_HOURS = DL リンクの有効期間 (期限切れは 410 + PR-3 で物理削除)。
+    # EXPORT_MAX_DOWNLOADS = 1 ジョブの最大 DL 回数 (超過で 410)。
+    # EXPORT_MAX_UPLOAD_BYTES = アップロード暗号化 zip の上限 (DoS 防止)。
+    EXPORT_TTL_HOURS = int(os.environ.get("EXPORT_TTL_HOURS", "24"))
+    EXPORT_MAX_DOWNLOADS = int(os.environ.get("EXPORT_MAX_DOWNLOADS", "3"))
+    EXPORT_MAX_UPLOAD_BYTES = int(
+        os.environ.get("EXPORT_MAX_UPLOAD_BYTES", str(500 * 1024 * 1024))
+    )

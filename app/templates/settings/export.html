@@ -43,6 +43,39 @@
   </div>
 </div>
 
+<div class="card shadow-sm mb-4">
+  <div class="card-body">
+    <h5 class="card-title mb-2">
+      <i class="bi bi-envelope-arrow-up"></i> メールで受け取る (サーバに一時保存)
+    </h5>
+    <p class="small text-muted mb-3">
+      zip を <strong>パスフレーズで暗号化</strong>してサーバに一時保存し、ダウンロード用の
+      リンクをメールでお知らせします。別の端末からでも受け取れます。サーバには暗号文しか
+      保存されず、パスフレーズは保持しません (約 24 時間で自動削除)。
+    </p>
+
+    <div class="mb-3">
+      <label for="export-passphrase" class="form-label fw-bold small mb-1">
+        パスフレーズ <span class="text-muted">(8 文字以上)</span>
+      </label>
+      <input type="password" id="export-passphrase" class="form-control form-control-sm"
+             autocomplete="new-password" minlength="8"
+             placeholder="ダウンロード時の復号に使うパスフレーズ">
+      <div class="form-text small">
+        このパスフレーズを失うとダウンロードしたファイルを復号できません。
+        MK とは別に、メモアプリ等で管理してください。
+      </div>
+    </div>
+
+    <button id="export-server-btn" class="btn btn-outline-primary mb-3">
+      <i class="bi bi-cloud-arrow-up"></i> サーバに保存してメール送信
+    </button>
+
+    <h6 class="mb-2">保存済みエクスポート</h6>
+    <div id="export-jobs" class="small">読み込み中…</div>
+  </div>
+</div>
+
 <script id="export-static-root" type="application/json">
   {{ {"static_root": url_for('static', filename='')} | tojson }}
 </script>
@@ -50,9 +83,16 @@
 <script type="module">
   const sr = JSON.parse(document.getElementById("export-static-root").textContent);
   globalThis.IIKANJI_STATIC_ROOT = sr.static_root;
-  const { runExport } = await import(sr.static_root + "js/export/export_renderer.mjs");
+  const { runExport, runServerExport, loadExportJobs } = await import(
+    sr.static_root + "js/export/export_renderer.mjs"
+  );
 
-  const btn = document.getElementById("export-btn");
-  btn.addEventListener("click", () => runExport());
+  document.getElementById("export-btn")
+    .addEventListener("click", () => runExport());
+  document.getElementById("export-server-btn")
+    .addEventListener("click", () => runServerExport());
+
+  // 保存済みジョブ一覧を初期表示
+  loadExportJobs();
 </script>
 {% endblock %}
