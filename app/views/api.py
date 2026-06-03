@@ -575,6 +575,49 @@ def _validate_year(year):
         )
 
 
+@bp.route("/accounts", methods=["GET"])
+@auth_required(scope="journals:read")
+@limiter.limit("120 per hour", key_func=rate_limit_key)
+def list_accounts():
+    """勘定科目の一覧を返す (E6 §15.1, client-py レポート集計用)。
+
+    科目 (accounts) は設計上 E2EE 対象外で平文維持 (§15.6: account_user_id FK
+    のみサーバ参照)。Web の accounts blueprint は session 認証のみだが、client-py
+    (Bearer) が試算表・P/L・B/S 等を集計するには科目メタ (区分 / 正常残高 / 名称)
+    が要る。そのため Bearer でも読める read-only 一覧をここに追加する。
+
+    Response: {ok, accounts: [{code, name, account_type, account_type_name,
+      normal_balance, is_active, system_role, tax_category, cost_type,
+      display_order}]}
+    """
+    user_id = g.auth_user.id
+    accounts = (
+        Account.query.filter_by(user_id=user_id)
+        .order_by(Account.display_order, Account.code)
+        .all()
+    )
+    return jsonify({
+        "ok": True,
+        "accounts": [
+            {
+                "code": a.code,
+                "name": a.name,
+                # AccountType.code = asset/liability/equity/revenue/expense
+                "account_type": a.account_type.code,
+                "account_type_name": a.account_type.name,
+                # normal_balance = "debit" / "credit"
+                "normal_balance": a.account_type.normal_balance,
+                "is_active": a.is_active,
+                "system_role": a.system_role,
+                "tax_category": a.tax_category,
+                "cost_type": a.cost_type,
+                "display_order": a.display_order,
+            }
+            for a in accounts
+        ],
+    })
+
+
 @bp.route("/balance-cache-blobs", methods=["GET"])
 @auth_required(scope="journals:read", allow_session=True)
 @limiter.limit("120 per hour", key_func=rate_limit_key)
