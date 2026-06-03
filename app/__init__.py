@@ -543,6 +543,47 @@ def register_cli(app):
         db.session.commit()
         print(f"audit-cleanup: deleted AuditPackage={deleted} 件 (AuditResponse は CASCADE 削除)")
 
+    @app.cli.command("export-cleanup")
+    @click.option("--dry-run", is_flag=True, help="削除せず対象件数のみ表示")
+    def export_cleanup_command(dry_run):
+        """期限切れ (expires_at 経過) の ExportJob を blob ごと削除する (E6 #113 §15.4 PR-3)。
+
+        全データエクスポートのサーバ一時保存 (export_jobs, §15.4) は 24h TTL で
+        自動消滅させる。期限切れジョブのストレージ blob (.ikexport) を先に削除し、
+        次に DB 行を削除する。blob 削除失敗 (既に無い等) はログのみで続行する
+        (storage.delete は冪等)。cron / systemd timer で 1 時間ごとに起動する想定。
+        """
+        from datetime import datetime, timezone
+
+        from app.models.export_job import ExportJob
+        from app.services.storage import get_storage_backend
+
+        now = datetime.now(timezone.utc)
+        expired = ExportJob.query.filter(ExportJob.expires_at < now).all()
+        if dry_run:
+            print(
+                f"[DRY RUN] export-cleanup: 期限切れ ExportJob={len(expired)} 件 (削除せず)"
+            )
+            return
+
+        backend = get_storage_backend()
+        blob_deleted = 0
+        for job in expired:
+            if job.storage_key:
+                try:
+                    backend.delete(job.storage_key)
+                    blob_deleted += 1
+                except Exception:
+                    app.logger.exception(
+                        "export-cleanup: blob 削除失敗 key=%s", job.storage_key
+                    )
+            db.session.delete(job)
+        db.session.commit()
+        print(
+            f"export-cleanup: deleted ExportJob={len(expired)} 件 "
+            f"(blob={blob_deleted} 件)"
+        )
+
     @app.cli.command("v5-migrate-cleanup")
     @click.option("--dry-run", is_flag=True, help="削除対象を表示するだけで実行しない (既定)")
     @click.option("--execute", is_flag=True, help="実際に削除を実行する")

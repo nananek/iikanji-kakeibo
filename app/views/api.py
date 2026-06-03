@@ -1072,7 +1072,20 @@ def export_job_create():
 
     storage = get_storage_backend()
     storage.put(job.storage_key, data, "application/octet-stream")
-    db.session.commit()
+    try:
+        db.session.commit()
+    except Exception:
+        # DB commit が失敗したら storage の孤立 blob を消してから rollback
+        # (export-cleanup は DB 行起点で削除するため、行が残らない blob は
+        #  回収できない。ここで commit 失敗時の孤立を防ぐ)。
+        db.session.rollback()
+        try:
+            storage.delete(job.storage_key)
+        except Exception:
+            current_app.logger.exception(
+                "export upload rollback 後の blob 削除失敗 key=%s", job.storage_key
+            )
+        raise
 
     # 完了メール (テンプレ不備等は握りつぶし、アップロード自体は成功扱い)
     if user.email:
@@ -1096,6 +1109,7 @@ def export_job_create():
 
 @bp.route("/export/jobs", methods=["GET"])
 @auth_required(scope="journals:read", allow_session=True)
+@limiter.limit("60 per hour", key_func=rate_limit_key)
 def export_jobs_list():
     """本人のエクスポートジョブ一覧。期限切れは status=expired で返す。"""
     user = g.auth_user
@@ -1121,6 +1135,7 @@ def export_jobs_list():
 
 @bp.route("/export/jobs/<int:job_id>/download", methods=["GET"])
 @auth_required(scope="journals:read", allow_session=True)
+@limiter.limit("20 per hour", key_func=rate_limit_key)
 def export_job_download(job_id):
     """暗号化済みエクスポート blob を配信する。本人のみ。期限切れ / 回数超過は 410。
 
