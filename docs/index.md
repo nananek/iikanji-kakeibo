@@ -56,7 +56,9 @@ AIが証憑を読み取って仕訳を提案。
 - [証憑 API]({{ '/api/vouchers.html' | relative_url }}) — 証憑一覧・画像取得・ハッシュ検証・操作ログ
 - [レポート API]({{ '/api/reports.html' | relative_url }}) — 試算表・損益計算書・月次比較・確定申告集計
 
-## MCP サーバー
+## MCP サーバー（v4.x 専用 / v5.0 で廃止）
+
+> **⚠️ v5.0 で廃止予定。** v5.0 の End-to-End 暗号化 (E2EE) 化に伴い、サーバーは平文の財務データを保持しなくなります。MCP は LLM (Claude Desktop 等) に平文を渡す仕組みで E2EE と本質的に両立しないため、`iikanji-mcp` は v5.0 では利用できません。v5.0 以降で Claude にデータを分析させたい場合は、`client-py` でローカルにエクスポートしてから手動でアップロードしてください。
 
 [`iikanji-mcp`](https://github.com/nananek/iikanji-kakeibo-client-mcp) を使うと、Claude Desktop 等の MCP クライアントから財務分析が可能になります。OAuth 読み取り専用トークンと組み合わせれば、構造的に書き込み不可で安全。
 
