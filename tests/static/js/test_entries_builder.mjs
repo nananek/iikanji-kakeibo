@@ -281,11 +281,11 @@ test("encrypted: client + userId 指定で encrypted_blob / blob_iv / fiscal_yea
   for (const line of e.lines) {
     assert.ok(typeof line.encrypted_blob === "string" && line.encrypted_blob.length > 0);
     assert.ok(typeof line.blob_iv === "string" && line.blob_iv.length > 0);
-    // 保持する平文メタは集計用の account_code / debit / credit のみ。
-    assert.ok(typeof line.account_code === "string");
-    assert.ok(Number.isInteger(line.debit));
-    assert.ok(Number.isInteger(line.credit));
-    // 行摘要は wire に乗らない (encrypted_blob 内のみ)。
+    // #338 item5 (Phase 5c): line の平文 account_code / debit / credit は wire に
+    // 乗らない (encrypted_blob 本体にのみ格納)。description も同様。
+    assert.equal(line.account_code, undefined);
+    assert.equal(line.debit, undefined);
+    assert.equal(line.credit, undefined);
     assert.equal(line.description, undefined);
   }
 });
@@ -327,7 +327,10 @@ test("encrypted: 暗号文 + AAD で復号すると元の body が戻る (round-
   assert.equal(entryBody.description, "テスト摘要");
   assert.equal(entryBody.source, "csv");
   assert.equal(entryBody.fiscal_period, 3);
-  // 各 line も復号
+  // 各 line も復号。#338 item5 (Phase 5c): wire には account_code/debit/credit が
+  // 乗らないため、復号 body の実値で round-trip 整合を検証する (expense なので
+  // categoryAccountCode=5010 を借方 1234・paymentAccountCode=1010 を貸方 1234)。
+  const bodies = [];
   for (const line of e.lines) {
     const lineBody = await decryptRecord(
       client,
@@ -336,10 +339,17 @@ test("encrypted: 暗号文 + AAD で復号すると元の body が戻る (round-
       buildAAD("jel", userId),
     );
     assert.equal(lineBody.v, 1);
-    assert.equal(lineBody.account_code, line.account_code);
-    assert.equal(lineBody.debit_amount, line.debit);
-    assert.equal(lineBody.credit_amount, line.credit);
+    bodies.push(lineBody);
   }
+  assert.deepEqual(
+    bodies.map((b) => b.account_code).sort(),
+    ["1010", "5010"],
+  );
+  assert.equal(bodies.reduce((s, b) => s + b.debit_amount, 0), 1234);
+  assert.equal(bodies.reduce((s, b) => s + b.credit_amount, 0), 1234);
+  const debitLine = bodies.find((b) => b.debit_amount > 0);
+  assert.equal(debitLine.account_code, "5010");
+  assert.equal(debitLine.credit_amount, 0);
 });
 
 

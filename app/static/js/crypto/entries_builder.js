@@ -10,28 +10,29 @@
 // (buildAAD("je"|"jel", userId), entry_id 等を含めない)。
 //
 // 戻り値: POST /api/v1/journals/batch の entries[] にそのまま push できる形
-// (E3-F PR-D-6-6: wire 平文除去後):
+// (#338 item5 Phase 5c: line の平文 account_code/debit/credit も wire 除去後):
 //   {
 //     fiscal_year, fiscal_month,   // 平文メタ (サーバの年度/期間フィルタ用)
 //     encrypted_blob, blob_iv,     // entry 本体 (date/description/source/
 //                                  //   fiscal_period の暗号化版)
 //     lines: [
-//       {account_code, debit, credit, encrypted_blob, blob_iv},
-//       {account_code, debit, credit, encrypted_blob, blob_iv},
+//       {encrypted_blob, blob_iv},   // line 本体 (account_code/debit/credit/
+//       {encrypted_blob, blob_iv},   //   description の暗号化版) のみ
 //     ]
 //   }
 //
 // 平文 date / description / source / fiscal_period は wire に乗せない (entry
-// 本体は encrypted_blob に格納済、列は 055 で DROP 済)。サーバが平文で必要と
+// 本体は encrypted_blob に格納済、列は 055 で DROP 済)。同様に line の平文
+// account_code / debit / credit も wire に乗せない (Phase 5b 以降サーバは
+// これらを書かず・要求せず・無視。item8/068 で物理 DROP)。サーバが平文で必要と
 // するメタは fiscal_year / fiscal_month のみ = ここで date / fiscal_period から
 // 算出して必ず付与する。
 //
 // batch_id は entry レベルでは持たず、batch API のリクエスト top-level で
 // 1 つだけ指定する。
 //
-// debit/credit は必ず int (Math.abs で正規化)。batch API は float/bool を
-// 拒否する仕様なので Math.round で integer 化はしない (呼出側が int で渡す
-// 責務、誤入力を黙って丸めない fail-loud 設計)。
+// debit/credit は呼出側が int (Math.abs で正規化) で渡す責務 (誤入力を黙って
+// 丸めない fail-loud 設計)。これらは encrypted_blob 本体に格納され wire には出ない。
 
 import { buildAAD, encryptRecord } from "./record.js";
 import { b64encode } from "./b64.js";
@@ -143,12 +144,11 @@ async function _encryptEntry(client, userId, entry) {
       description: line.description ?? "",
     };
     const lineEnc = await encryptRecord(client, lineBody, lineAAD);
-    // E3-F PR-D-6-6: wire に乗せる line の平文は account_code / debit / credit
-    // (集計用の保持メタ) のみ。description は encrypted_blob へ。
+    // #338 item5 (Phase 5c): wire に line の平文 account_code / debit / credit は
+    // 乗せない。サーバ (Phase 5b 以降) はこれらを書かず・要求せず・無視するため、
+    // 本体は encrypted_blob にのみ格納する (account_code/debit/credit/description は
+    // 上の lineBody に収録済)。item8 (068) で平文列が物理 DROP される。
     encryptedLines.push({
-      account_code: line.account_code,
-      debit: line.debit,
-      credit: line.credit,
       encrypted_blob: b64encode(lineEnc.blob),
       blob_iv: b64encode(lineEnc.iv),
     });
