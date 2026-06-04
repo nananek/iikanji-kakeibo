@@ -2542,10 +2542,7 @@ def upload_voucher_endpoint(voucher_id):
 @bp.route("/vouchers", methods=["GET"])
 @api_key_required(scope="journals:read")
 def list_vouchers():
-    """証憑一覧 API"""
-    from sqlalchemy import func
-    from app.models.journal import JournalEntryLine
-
+    """証憑一覧 API (Bearer 専用・deprecate 済)"""
     user_id = g.api_user_id
     page = request.args.get("page", 1, type=int)
     per_page = min(request.args.get("per_page", 20, type=int), 100)
@@ -2560,25 +2557,10 @@ def list_vouchers():
     # date_to / search) は撤去した (両列は D-6-5 で DROP)。電帳法の検索要件は
     # ブラウザの証憑一覧 (クライアント側で復号データを検索) が満たす。本 Bearer
     # API は外部クライアント専用で既に deprecate 済み。
-
-    amount_from = request.args.get("amount_from", type=int)
-    amount_to = request.args.get("amount_to", type=int)
-    if amount_from is not None or amount_to is not None:
-        amount_subq = (
-            db.session.query(
-                JournalEntryLine.journal_entry_id,
-                func.sum(JournalEntryLine.debit_amount).label("total"),
-            )
-            .group_by(JournalEntryLine.journal_entry_id)
-            .subquery()
-        )
-        query = query.outerjoin(
-            amount_subq, JournalEntry.id == amount_subq.c.journal_entry_id
-        )
-        if amount_from is not None:
-            query = query.filter(amount_subq.c.total >= amount_from)
-        if amount_to is not None:
-            query = query.filter(amount_subq.c.total <= amount_to)
+    # #338 item4: 借方合計 (debit_amount) による絞り込み (amount_from/amount_to) と
+    # journal.amount (total_debit) の返却を撤去した。サーバが平文金額を SUM する
+    # 唯一の証憑経路だったため。金額での絞り込みはクライアントが仕訳 API を復号して
+    # 行う。残る平文列は item8 で DROP する。
 
     total = query.count()
     # E3-F PR-D-6-3: 平文 date によるソートを撤去し uploaded_at (証憑の保存
@@ -2593,10 +2575,8 @@ def list_vouchers():
         .all()
     )
 
-    result = []
-    for v in vouchers:
-        entry = v.journal_entry
-        d = {
+    result = [
+        {
             "id": v.id,
             "journal_entry_id": v.journal_entry_id,
             # E5 PR-5 (#111): image_mime 列は DROP 済 (上記参照)。
@@ -2605,17 +2585,8 @@ def list_vouchers():
             "aad_id": str(v.aad_id) if v.aad_id is not None else None,
             "uploaded_at": v.uploaded_at.isoformat() if v.uploaded_at else None,
         }
-        if entry:
-            # E3-F PR-D-6-3: 平文 date / description の返却を撤去した
-            # (D-6-5 で DROP)。amount は line.debit_amount 由来で平文保持。
-            # 入力期限警告 (deadline_exceeded) は date 依存のため撤去 (電帳法
-            # の期限チェックはブラウザ証憑一覧が担う)。
-            d["journal"] = {
-                "amount": int(entry.total_debit),
-            }
-        else:
-            d["journal"] = None
-        result.append(d)
+        for v in vouchers
+    ]
 
     return jsonify({
         "ok": True,

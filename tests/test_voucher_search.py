@@ -106,9 +106,11 @@ class TestAPIVoucherList:
         assert data["total"] == 1
         assert len(data["vouchers"]) == 1
         v = data["vouchers"][0]
-        assert v["journal"]["amount"] == 1000
-        # E3-F PR-D-6-3: 平文 date / description は応答から撤去した。amount
-        # (line.debit_amount 由来・平文保持) のみ返す。
+        # #338 item4: journal.amount (total_debit = 平文金額 SUM) と amount_from/
+        # amount_to 絞り込みは撤去した。証憑メタ (id/journal_entry_id/aad_id/
+        # uploaded_at) のみ返す。
+        assert v["journal_entry_id"] == entry.id
+        assert "journal" not in v
 
     def test_api_list_empty(self, client, db, user, auth_header):
         resp = client.get("/api/v1/vouchers", headers=auth_header)
@@ -134,4 +136,5 @@ class TestAPIVoucherList:
         resp = client.get("/api/v1/vouchers", headers=auth_header)
         data = resp.get_json()
         assert data["total"] == 1
-        assert data["vouchers"][0]["journal"] is None
+        # 孤立証憑は journal_entry_id が None。
+        assert data["vouchers"][0]["journal_entry_id"] is None

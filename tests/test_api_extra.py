@@ -153,21 +153,25 @@ class TestVouchersList:
         body = resp.get_json()
         assert body["total"] == 1
         assert body["vouchers"][0]["id"] == v.id
-        assert body["vouchers"][0]["journal"] is not None
+        # #338 item4: journal.amount (total_debit 平文 SUM) は撤去。journal_entry_id のみ。
+        assert body["vouchers"][0]["journal_entry_id"] == entry.id
+        assert "journal" not in body["vouchers"][0]
 
     def test_orphaned_voucher(self, db, client, user, auth_header, accounts):
         v = make_voucher(db, user.id, journal_entry_id=None)
         resp = client.get("/api/v1/vouchers", headers=auth_header)
         body = resp.get_json()
         assert body["total"] == 1
-        assert body["vouchers"][0]["journal"] is None
+        assert body["vouchers"][0]["journal_entry_id"] is None
 
     # E3-F PR-D-6-3: Bearer 証憑 API の date_from / date_to / search 絞り込みは
-    # 撤去した (平文 date / description は D-6-5 で DROP)。関連テスト
-    # (test_date_from_filter / test_invalid_date_from / test_search_filter) を削除。
-    # amount 絞り込み (line.debit_amount 由来・平文保持) は test_amount_filter で継続。
+    # 撤去した (平文 date / description は D-6-5 で DROP)。
+    # #338 item4: amount 絞り込み (func.sum(debit_amount)) も撤去 (サーバが平文金額を
+    # SUM する唯一の証憑経路だったため)。amount_from/amount_to はサーバが無視する。
 
-    def test_amount_filter(self, db, client, user, auth_header, accounts):
+    def test_amount_filter_ignored(self, db, client, user, auth_header, accounts):
+        """#338 item4: amount_from/amount_to は撤去され、サーバは無視する
+        (絞り込まれず全件返る)。金額絞り込みはクライアントが仕訳 API を復号して行う。"""
         e1 = make_journal(db, user.id, "5010", "1010", 100,
                           entry_date=date(2026, 2, 15), source="ai_receipt")
         e2 = make_journal(db, user.id, "5010", "1010", 5000,
@@ -177,7 +181,7 @@ class TestVouchersList:
         resp = client.get("/api/v1/vouchers?amount_from=1000",
                           headers=auth_header)
         body = resp.get_json()
-        assert body["total"] == 1
+        assert body["total"] == 2  # フィルタ無視で全件
 
 
 class TestVoucherImage:
