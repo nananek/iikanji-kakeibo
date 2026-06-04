@@ -65,9 +65,10 @@ export async function decryptEntryMeta(client, userId, apiEntry) {
  */
 async function _normalizeEntry(client, userId, apiEntry) {
   const meta = await decryptEntryMeta(client, userId, apiEntry);
-  // _normalizeLine 内の throw (apiLine.id 欠落等) が Promise.all を突き抜け
-  // て fetchJournalsForYear 全体を reject させないよう、line 単位で catch して
-  // 平文フォールバックに局所化する (entry の try/catch と同じ方針)。
+  // _normalizeLine 内の予期せぬ throw が Promise.all を突き抜けて
+  // fetchJournalsForYear 全体を reject させないよう、line 単位で catch して局所化
+  // する (entry の try/catch と同じ方針)。#338 item4: サーバは line 平文を返さない
+  // ため fallback は null/0 (復号失敗は _normalizeLine 内でも null/0 になる)。
   const lines = await Promise.all(
     (apiEntry.lines || []).map((line) =>
       _normalizeLine(client, userId, apiEntry.id, line).catch((e) => {
@@ -75,12 +76,7 @@ async function _normalizeEntry(client, userId, apiEntry) {
           `journals_client: line normalization failed ` +
           `(entry=${apiEntry.id}): ${e?.message || e}`,
         );
-        return {
-          account_code: line.account_code ?? null,
-          debit: line.debit ?? 0,
-          credit: line.credit ?? 0,
-          description: line.description ?? "",
-        };
+        return { account_code: null, debit: 0, credit: 0, description: "" };
       }),
     ),
   );
@@ -125,16 +121,18 @@ async function _normalizeLine(client, userId, entryId, apiLine) {
     } catch (e) {
       console.warn(
         `journals_client: line ${apiLine.id} (entry=${entryId}) decrypt ` +
-        `failed, falling back to plaintext: ${e?.message || e}`,
+        `failed: ${e?.message || e}`,
       );
     }
   }
+  // #338 item4: サーバは line の平文 account_code / debit / credit / description を
+  // 返さない。すべて encrypted_blob の復号 body から取り出す。復号失敗 (MK ロック等)
+  // は account_code=null / 金額 0 / 摘要空にフォールバックする (旧 closing は移行済で
+  // 実 blob を持つ前提)。
   return {
-    account_code: body?.account_code ?? apiLine.account_code,
-    debit: body?.debit_amount ?? apiLine.debit ?? 0,
-    credit: body?.credit_amount ?? apiLine.credit ?? 0,
-    // E3-F PR-D-6-5-pre1: サーバは平文 description を返さない。復号 body のみ
-    // (復号失敗時は空文字)。account_code/debit/credit の平文メタは継続。
+    account_code: body?.account_code ?? null,
+    debit: body?.debit_amount ?? 0,
+    credit: body?.credit_amount ?? 0,
     description: body?.description ?? "",
   };
 }

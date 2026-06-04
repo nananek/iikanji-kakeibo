@@ -215,18 +215,18 @@ test("encrypted entry + lines を復号して正規化する", async () => {
   assert.equal(got.lines[1].credit, 1000);
 });
 
-test("blob/iv が null の非 closing entry は date=null/description=空 (平文フォールバック廃止)", async () => {
-  // E3-F PR-D-6-3b: API は平文 date/description/source/fiscal_period を返さない。
-  // 復号不能 (blob/iv null) かつ非 closing の entry は date=null/description=""。
-  // line.account_code 等の平文フォールバックは本 PR の対象外で継続する。
+test("blob/iv が null の非 closing entry は date=null/description=空・line も null/0 (平文フォールバック廃止)", async () => {
+  // E3-F PR-D-6-3b + #338 item4: API は平文 date/description/source/fiscal_period も
+  // line の account_code/debit/credit も返さない。復号不能 (blob/iv null) かつ非 closing
+  // の entry は entry メタが null/空、line も account_code=null/金額0 になる
+  // (line 平文フォールバックも撤去。旧 closing は移行済で実 blob を持つ前提)。
   const client = makeMockClient();
   const fetchImpl = makeFetch([{
     id: 1, fiscal_year: 2026,
     is_closing: false, fiscal_month: 1,
     encrypted_blob: null, blob_iv: null,
     lines: [
-      { account_code: "5010", debit: 500, credit: 0, description: "",
-        encrypted_blob: null, blob_iv: null },
+      { id: 11, encrypted_blob: null, blob_iv: null },
     ],
   }]);
   const result = await fetchJournalsForYear({
@@ -238,8 +238,9 @@ test("blob/iv が null の非 closing entry は date=null/description=空 (平�
   assert.equal(result[0].source, "");
   assert.equal(result[0].fiscal_period, null);
   assert.equal(result[0].fiscal_month, 1);
-  assert.equal(result[0].lines[0].account_code, "5010");
-  assert.equal(result[0].lines[0].debit, 500);
+  assert.equal(result[0].lines[0].account_code, null);
+  assert.equal(result[0].lines[0].debit, 0);
+  assert.equal(result[0].lines[0].credit, 0);
 });
 
 test("closing 仕訳 (空 blob) は保持列から date/description/source/fiscal_period を合成", async () => {
@@ -616,24 +617,24 @@ test("fetchEntryForDiff: GET /api/v1/journals/<id> を完全復号し明細科�
   assert.equal(out.lines[1].credit, 5000);
 });
 
-test("fetchEntryForDiff: line 復号失敗は平文メタへフォールバック", async () => {
+test("fetchEntryForDiff: line 復号失敗は null/0 (#338 item4 平文フォールバック廃止)", async () => {
   const client = makeMockClient();
   const userId = 8;
   const apiEntry = await makeEncryptedEntry(client, userId, 701, {
     v: 1, date: "2026-05-22", description: "x", source: "journal",
     fiscal_period: 5, fiscal_year: 2026,
   });
-  // 別 userId で暗号化した line → AAD 不一致で復号失敗 → 平文メタへ fallback。
+  // 別 userId で暗号化した line → AAD 不一致で復号失敗。サーバは line 平文を返さない
+  // ため fallback は無く account_code=null / 金額0 になる (全件 reject はしない)。
   const badLine = await makeEncryptedLine(client, 999, 701, 72, {
     account_code: "5010", debit_amount: 5000, credit_amount: 0, description: "",
   });
-  badLine.account_code = "5010";
-  badLine.debit = 5000;
   apiEntry.lines = [badLine];
   const fetchImpl = async () => ({ ok: true, json: async () => ({ ok: true, journal: apiEntry }) });
   const out = await fetchEntryForDiff({ client, userId, entryId: 701, fetchImpl });
-  assert.equal(out.lines[0].account_code, "5010");
-  assert.equal(out.lines[0].debit, 5000);
+  assert.equal(out.lines[0].account_code, null);
+  assert.equal(out.lines[0].debit, 0);
+  assert.equal(out.lines[0].credit, 0);
 });
 
 test("fetchEntryForDiff: client なしで throw", async () => {

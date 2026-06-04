@@ -343,21 +343,37 @@ class TestAPIJournalLineIDOR:
         assert own_entry.id in ids
         assert other_entry.id not in ids
 
-    def test_api_journal_detail_lines_scoped(self, client, db,
-                                               user, second_user,
-                                               accounts, second_user_accounts,
-                                               api_key_raw):
-        """API で仕訳詳細を取得した際、明細行が自分のデータであること"""
-        entry = make_journal(db, user.id, "5010", "1010", 2000,
-                             description="自分の仕訳")
+    def test_api_journal_detail_scoped_to_owner(self, client, db,
+                                                 user, second_user,
+                                                 accounts, second_user_accounts,
+                                                 api_key_raw):
+        """API 仕訳詳細は本人の仕訳のみ取得でき、他人の仕訳は 404。
+
+        #338 item4: 応答 line は平文 account_code/debit/credit を返さず id +
+        encrypted_blob のみ (科目・金額はクライアントが MK 復号して取得)。明細の
+        ユーザー分離は entry の user_id フィルタ (get_journal の filter_by) で担保され、
+        他人の仕訳 id を指定しても 404 で lines は一切漏れない。
+        """
+        own = make_journal(db, user.id, "5010", "1010", 2000, description="自分の仕訳")
+        other = make_journal(db, second_user.id, "5010", "1010", 9999,
+                             description="他人の仕訳")
         raw_key, _ = api_key_raw
-        resp = client.get(f"/api/v1/journals/{entry.id}",
-                          headers={"Authorization": f"Bearer {raw_key}"})
+        hdr = {"Authorization": f"Bearer {raw_key}"}
+
+        # 本人の仕訳: lines は id + encrypted_blob のみ。平文 account_code 等は無い。
+        resp = client.get(f"/api/v1/journals/{own.id}", headers=hdr)
         assert resp.status_code == 200
-        data = resp.get_json()
-        for line in data["journal"]["lines"]:
-            assert "account_code" in line
-            assert line["account_code"] in ("5010", "1010")
+        lines = resp.get_json()["journal"]["lines"]
+        assert len(lines) == 2
+        for line in lines:
+            assert "id" in line
+            assert "account_code" not in line
+            assert "debit" not in line
+            assert "credit" not in line
+
+        # 他人の仕訳は 404 (明細は一切返らない)。
+        resp2 = client.get(f"/api/v1/journals/{other.id}", headers=hdr)
+        assert resp2.status_code == 404
 
 
 class TestSettingsIDOR:
