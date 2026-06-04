@@ -145,54 +145,43 @@ class TestEdit:
         # 確定済みなのでリダイレクト
         assert resp.status_code in (302, 303)
 
-    def test_edit_get_prefill_transfer(self, db, logged_in_client, user, accounts):
-        """資金移動 (BS↔BS) の編集 GET でフォームに transfer プリフィル。"""
-        # 預金 (1010 / BS) → 現金 (1001 想定) も BS でないと transfer 判定にならない
-        # 標準科目には現金 1001 があるはず。なければ asset 同士を作る
-        from app.models.account import Account
-        # 既存の BS 科目を確認 — 1010 は既に asset。asset 同士の transfer を作る
-        cash = Account.query.filter_by(
-            user_id=user.id, account_type_id=1
-        ).first()  # asset
-        # 同じ asset 内で別の科目があれば使う、なければ create
-        bs_other = Account.query.filter(
-            Account.user_id == user.id,
-            Account.account_type_id == cash.account_type_id,
-            Account.code != cash.code,
-        ).first()
-        if not bs_other:
-            import pytest
-            pytest.skip("BS 科目が 1 個のみで transfer 設定不可")
+    def test_edit_get_no_plaintext_amount_in_body(self, db, logged_in_client, user, accounts):
+        """#338 PR2 (方針B): サーバは取引種類・金額の 3 方向検出 (平文 debit/credit/
+        account_code 読み) を撤去した。平文金額が HTML に焼き込まれず、クライアント
+        prefill スクリプト (cashbook_prefill.js) と accounts_meta が供給される。"""
         entry = make_journal(
-            db, user.id, cash.code, bs_other.code, 5000,
+            db, user.id, "5010", "1010", 7321,
             entry_date=date(2026, 2, 15), source="cashbook",
         )
         resp = logged_in_client.get(f"/cashbook/{entry.id}/edit")
         assert resp.status_code == 200
         body = resp.get_data(as_text=True)
-        # transaction_type=transfer のラジオが選択済になる (HTML 検証は緩く)
-        assert "transfer" in body
+        # 平文金額 (借方額) が value 属性等に焼き込まれない
+        assert 'value="7321"' not in body
+        assert "7321" not in body
+        # クライアント prefill スクリプトと code→type_code メタが供給される
+        assert "cashbook_prefill.js" in body
+        assert "_acctMeta" in body
 
-    def test_edit_get_prefill_income(self, db, logged_in_client, user, accounts):
-        """収入 (BS:debit, P/L:credit) の編集 GET でフォームに income プリフィル。"""
-        # 1010 (asset) を debit、4010 想定 (revenue) を credit
-        # 標準科目に売上 4010 等があるはず
-        from app.models.account import Account
-        revenue = Account.query.filter_by(
-            user_id=user.id, account_type_id=4
-        ).first()  # revenue
-        if not revenue:
-            import pytest
-            pytest.skip("revenue 科目が存在しない")
-        # debit=1010 asset, credit=revenue → income
+    def test_edit_accounts_meta_includes_type_code(self, db, logged_in_client, user, accounts):
+        """#338 PR2: クライアント側 3 方向検出 (BS=asset/liability 判定) のため
+        accounts_meta が code→{name, type_code} を含む。"""
         entry = make_journal(
-            db, user.id, "1010", revenue.code, 3000,
+            db, user.id, "1010", "4010", 3000,
             entry_date=date(2026, 2, 15), source="cashbook",
         )
         resp = logged_in_client.get(f"/cashbook/{entry.id}/edit")
         assert resp.status_code == 200
+        import json as _json
+        import re
         body = resp.get_data(as_text=True)
-        assert "income" in body
+        m = re.search(r"var _acctMeta = (\{.*?\});", body)
+        assert m, "_acctMeta JSON が埋め込まれていない"
+        meta = _json.loads(m.group(1))
+        # 1010 (現金) は asset、4010 (売上) は revenue
+        assert meta["1010"]["type_code"] == "asset"
+        assert meta["4010"]["type_code"] == "revenue"
+        assert "name" in meta["1010"]
 
 
 class TestDelete:

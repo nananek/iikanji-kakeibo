@@ -10,11 +10,14 @@
   var _userId = {{ current_user.id|tojson }};
   var _isEdit = {{ is_edit|tojson }};
   var _entryId = {{ (entry.id if is_edit else None)|tojson }};
+  // #338 PR2: 編集 prefill のクライアント 3 方向検出が使う code→{name,type_code}
+  // メタ (無効化済みを含む全科目)。account テーブルは非暗号化メタなので供給可。
+  var _acctMeta = {{ (accounts_meta or {})|tojson }};
 </script>
 
 <div class="card shadow-sm mt-4">
   <div class="card-body">
-    <form method="POST"
+    <form method="POST" id="cashbook-form"
       @submit.prevent="submitForm($event)"
       x-data="{
         tab: '{{ form.transaction_type.data or 'expense' }}',
@@ -190,8 +193,10 @@
 {% block scripts %}
 {% if is_edit %}
 {# E3-F PR-D-6-3b-3: date/description はサーバ平文を使わずクライアント復号で prefill #}
+{# #338 PR2: 取引種類・支払/科目・金額もサーバ平文を使わずクライアント復号で prefill #}
 <script type="module">
   import { hydrateEditForm } from "{{ url_for('static', filename='js/crypto/edit_form_prefill.js') }}";
+  import { hydrateCashbookEdit } from "{{ url_for('static', filename='js/crypto/cashbook_prefill.js') }}";
   var workerUrl = "{{ url_for('static', filename='js/crypto/shared-worker.js') }}";
   function _runPrefill() {
     hydrateEditForm({
@@ -203,6 +208,16 @@
       workerUrl: workerUrl,
       alpine: window.Alpine,
     }).catch(function (e) { console.warn('edit prefill failed:', e); });
+    hydrateCashbookEdit({
+      isEdit: window._isEdit,
+      entryId: window._entryId,
+      userId: window._userId,
+      acctMetaByCode: window._acctMeta,
+      formEl: document.getElementById('cashbook-form'),
+      amountInput: document.querySelector('input[name=amount]'),
+      workerUrl: workerUrl,
+      alpine: window.Alpine,
+    }).catch(function (e) { console.warn('cashbook prefill failed:', e); });
   }
   if (window.Alpine) _runPrefill();
   else document.addEventListener('alpine:initialized', _runPrefill, { once: true });
