@@ -162,17 +162,14 @@ def get_json(entry_id):
         id=entry_id, user_id=user_id
     ).first_or_404()
 
-    # E3-F PR-D-6-5-pre2: 行摘要 (description) は平文列を読まず空で返し、line の
-    # encrypted_blob / blob_iv / id を返す。元帳モーダル (reports/ledger.html
-    # openEditModal) が line blob を自分の MK で復号して line id で対応行へ埋める。
+    # #338 item4: line の平文 account_code / debit / credit / description は返さない。
+    # id + encrypted_blob / blob_iv のみ返し、元帳モーダル (reports/ledger.html
+    # openEditModal) は fetchEntryForDiff で各 line blob を MK 復号して科目・金額・摘要を
+    # 取得する。旧 closing は移行 (reencrypt-closing) 済みで実 blob を持つ前提。
     lines = []
     for line in entry.lines:
         lines.append({
             "id": line.id,
-            "account_code": line.account_code,
-            "debit_amount": int(line.debit_amount),
-            "credit_amount": int(line.credit_amount),
-            "description": "",
             "encrypted_blob": _b64_or_none(line.encrypted_blob),
             "blob_iv": _b64_or_none(line.blob_iv),
         })

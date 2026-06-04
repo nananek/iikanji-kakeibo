@@ -453,10 +453,12 @@ function modalUpdateTotals() {
 var PERIOD_NAMES = {'0':'期首振戻月','13':'決算月1','14':'決算月2','15':'決算月3','16':'損益振替'};
 var isCopyMode = false;
 
-// E3-F PR-D-6-3b-3: get_json は entry レベルの平文 date / description /
-// fiscal_period を返さなくなった。encrypted_blob を MK で復号して取り出す
-// (decryptEntryMeta)。MK ロック中は復号不可なので MK_LOCKED を投げる。
-async function decryptModalEntry(apiEntry) {
+// #338 item4: get_json は entry レベルの平文 (date/description/fiscal_period) も
+// line の平文 (account_code/debit/credit/description) も返さなくなった。
+// fetchEntryForDiff で entry メタ + 各 line を MK 復号して取り出す
+// ({date, description, fiscal_period, lines:[{id, account_code, debit, credit, description}]})。
+// MK ロック中は復号不可なので MK_LOCKED を投げる。
+async function decryptModalEntry(entryId) {
   var paramsEl = document.getElementById('ledger-server-params');
   var params = paramsEl ? JSON.parse(paramsEl.textContent) : {};
   var sharedClientMod = await import(
@@ -475,16 +477,10 @@ async function decryptModalEntry(apiEntry) {
       err.code = 'MK_LOCKED';
       throw err;
     }
-    // E3-F PR-D-6-5-pre2: entry メタに加え行摘要も blob 復号する。get_json は
-    // 平文 line description を返さないため line id → description の map を作って返す。
-    var meta = await jc.decryptEntryMeta(client, params.user_id, apiEntry);
-    var lineDescs = await jc.decryptLineDescriptions(
-      client, params.user_id, apiEntry.lines || []);
-    var lineDescriptions = {};
-    lineDescs.forEach(function(ld) {
-      if (ld.id !== null && ld.id !== undefined) lineDescriptions[ld.id] = ld.description;
+    // entry メタ + 各 line (科目・金額・摘要) を復号した完全な仕訳を返す。
+    return await jc.fetchEntryForDiff({
+      client: client, userId: params.user_id, entryId: entryId,
     });
-    return Object.assign({}, meta, { lineDescriptions: lineDescriptions });
   } finally {
     try { client.close(); } catch (_e) { /* ignore */ }
   }
@@ -498,13 +494,15 @@ async function openEditModal(entryId) {
   document.getElementById('modalLinesBody').innerHTML = '';
 
   try {
+    // get_json は is_readonly / vouchers / entry_number / has_voucher を返す
+    // (line の平文は #338 item4 で撤去済)。entry メタ + line の科目・金額・摘要は
+    // fetchEntryForDiff (decryptModalEntry) が blob を MK 復号して取得する。
     var data = await fetch('/journal/' + entryId + '/json')
       .then(function(r) { return r.json(); });
-    // entry レベルの date / description / fiscal_period は blob 復号で取得
-    var meta = await decryptModalEntry(data);
+    var meta = await decryptModalEntry(entryId);
     currentEntryMeta = meta;
-    // 借方合計 (平文・行レベル金額は E3 でも非暗号化) を AI プロンプト用に控える。
-    currentEntryDebitTotal = (data.lines || []).reduce(
+    // 借方合計 (復号した行金額) を AI プロンプト用に控える。
+    currentEntryDebitTotal = (meta.lines || []).reduce(
       function(s, l) { return s + (l.debit || 0); }, 0);
 
     currentHasVoucher = data.has_voucher || false;
@@ -545,13 +543,15 @@ async function openEditModal(entryId) {
     }
     modalUpdateDateForPeriod();
 
-    // E3-F PR-D-6-5-pre2: 行摘要は復号 blob 由来。line id で対応付けて反映する。
-    var lineDescMap = meta.lineDescriptions || {};
-    data.lines.forEach(function(l) {
-      if (l.id !== null && l.id !== undefined && (l.id in lineDescMap)) {
-        l.description = lineDescMap[l.id];
-      }
-      modalAddLine(l, ro);
+    // #338 item4: 明細 (科目・金額・摘要) は復号済み meta.lines を使う
+    // (fetchEntryForDiff 由来。debit/credit → modalAddLine の debit_amount/credit_amount)。
+    (meta.lines || []).forEach(function(l) {
+      modalAddLine({
+        account_code: l.account_code,
+        debit_amount: l.debit || 0,
+        credit_amount: l.credit || 0,
+        description: l.description || "",
+      }, ro);
     });
 
     // 保存・削除・行追加・証憑追加ボタンの表示制御
