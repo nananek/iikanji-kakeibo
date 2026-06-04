@@ -2547,11 +2547,9 @@ def list_vouchers():
     page = request.args.get("page", 1, type=int)
     per_page = min(request.args.get("per_page", 20, type=int), 100)
 
-    query = (
-        Voucher.active()
-        .outerjoin(JournalEntry, Voucher.journal_entry_id == JournalEntry.id)
-        .filter(Voucher.user_id == user_id)
-    )
+    # #338 item4: total_debit / amount フィルタ撤去で JournalEntry への JOIN は
+    # 不要になった。journal_entry_id は Voucher の直接カラム。
+    query = Voucher.active().filter(Voucher.user_id == user_id)
 
     # E3-F PR-D-6-3: 平文 date / description による絞り込み (date_from /
     # date_to / search) は撤去した (両列は D-6-5 で DROP)。電帳法の検索要件は

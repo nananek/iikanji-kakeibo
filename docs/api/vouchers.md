@@ -19,17 +19,14 @@ title: 証憑 API
   <div class="scope">スコープ: <code>journals:read</code></div>
 </div>
 
-証憑一覧を取得します。日付降順でソートされます。電帳法の検索要件（日付・金額・取引先）に対応しています。
+証憑一覧を取得します。`uploaded_at`（アップロード日時）の降順でソートされます。
+
+> **E2EE 化に伴う変更**: 仕訳の日付・摘要・金額はサーバーで暗号化されているため、本 API での日付・摘要・金額による絞り込み（`date_from`/`date_to`/`search`/`amount_from`/`amount_to`）とレスポンスの仕訳情報（`journal`）は撤去されました。電帳法の検索要件（日付・金額・取引先）はクライアント側で復号データを検索して満たします。本 Bearer API は証憑メタのみを返します。
 
 ### クエリパラメータ
 
 | パラメータ | 型 | デフォルト | 説明 |
 |-----------|-----|:---------:|------|
-| `date_from` | string | — | 日付の下限（`YYYY-MM-DD`、含む） |
-| `date_to` | string | — | 日付の上限（`YYYY-MM-DD`、含む） |
-| `amount_from` | integer | — | 金額の下限（含む） |
-| `amount_to` | integer | — | 金額の上限（含む） |
-| `search` | string | — | 摘要で部分一致検索 |
 | `page` | integer | 1 | ページ番号 |
 | `per_page` | integer | 20 | 1ページあたりの件数（上限: 100） |
 
@@ -44,14 +41,8 @@ title: 証憑 API
     {
       "id": 5,
       "journal_entry_id": 42,
-      "image_mime": "image/jpeg",
-      "uploaded_at": "2026-02-15T10:30:00",
-      "deadline_exceeded": false,
-      "journal": {
-        "date": "2026-02-15",
-        "description": "コンビニ購入",
-        "amount": 850
-      }
+      "aad_id": "9876543210",
+      "uploaded_at": "2026-02-15T10:30:00"
     }
   ],
   "total": 10,
@@ -66,18 +57,8 @@ title: 証憑 API
 |-----------|-----|------|
 | `id` | integer | 証憑 ID |
 | `journal_entry_id` | integer \| null | 紐づく仕訳 ID（孤立証憑は `null`） |
-| `image_mime` | string | 画像の MIME タイプ |
+| `aad_id` | string \| null | 画像/サムネ復号の AAD 束縛用安定識別子（63bit のため文字列。平文レガシー証憑は `null`） |
 | `uploaded_at` | string | アップロード日時（ISO 8601） |
-| `deadline_exceeded` | boolean | 入力期限（約2ヶ月+7日）を超過しているか |
-| `journal` | object \| null | 紐づく仕訳の情報（孤立証憑は `null`） |
-
-#### `journal`
-
-| フィールド | 型 | 説明 |
-|-----------|-----|------|
-| `date` | string | 仕訳日付（`YYYY-MM-DD`） |
-| `description` | string | 摘要 |
-| `amount` | integer | 借方合計金額 |
 
 ---
 
