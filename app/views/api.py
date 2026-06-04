@@ -235,11 +235,10 @@ def create_journal():
         return jsonify({"error": err}), 400
 
     # lines_data 変換
+    # #338 item5: 平文 account_code / debit / credit は受け取らない (送られても無視)。
+    # line 本体は encrypted_blob にのみ格納。科目存在・貸借はクライアント + 監査時検査へ。
     lines_data = []
     for i, line in enumerate(lines):
-        account_code = line.get("account_code")
-        if not account_code:
-            return jsonify({"error": f"lines[{i}].account_code は必須です。"}), 400
         line_blob, line_iv, err = _decode_record_crypto(
             line, f"lines[{i}]", "encrypted_blob", "blob_iv",
             required=True,
@@ -247,11 +246,6 @@ def create_journal():
         if err:
             return jsonify({"error": err}), 400
         lines_data.append({
-            "account_code": account_code,
-            "debit_amount": int(line.get("debit", 0) or 0),
-            "credit_amount": int(line.get("credit", 0) or 0),
-            # E3-F PR-D-6-6: 平文 line.description は受け取らない (line 本体は
-            # encrypted_blob に格納済。description 列は 055 で DROP 済)。
             "encrypted_blob": line_blob,
             "blob_iv": line_iv,
         })
@@ -302,17 +296,6 @@ def create_journal():
     }), 201
 
 
-def _parse_int_amount(raw, label):
-    """金額フィールドを安全に int 化する。float は小数切り捨てで貸借不一致を
-    隠してしまうので明示拒否する (bool は int サブクラスなので先に弾く)。
-    """
-    if raw is None:
-        return 0
-    if isinstance(raw, bool) or not isinstance(raw, int):
-        raise ValueError(f"{label} は整数で指定してください (小数不可)。")
-    return raw
-
-
 def _validate_fiscal_meta(data, label_prefix=""):
     """E3-F PR-D-6-6: 仕訳の平文メタ (fiscal_year / fiscal_month) を検証する。
 
@@ -356,11 +339,13 @@ def _parse_fiscal_meta(data):
     return fiscal_year, fiscal_month, None
 
 
-def _validate_and_parse_batch_entry(e, idx, user_account_codes):
+def _validate_and_parse_batch_entry(e, idx, user_account_codes=None):
     """batch API 用: 1 entry 分の入力を validate して create_journal_entry 引数に整形。
 
-    user_account_codes: そのユーザーの全 account.code を含む set。caller が
-    バッチ処理前に 1 回だけ取得して N+1 を避ける。
+    #338 item5: 平文 account_code / debit / credit は受け取らない (送られても無視)。
+    line 本体は encrypted_blob のみ。科目存在・貸借一致のサーバ検査は撤去し、
+    クライアント + 監査時検査の責務へ移行した (§12.11/§13)。user_account_codes は
+    後方互換のため引数に残すが未使用。
 
     エラーは ValueError を raise (caller が一括 rollback + 400 を返す)。
     """
@@ -382,40 +367,18 @@ def _validate_and_parse_batch_entry(e, idx, user_account_codes):
 
     lines_data = []
     for li, line in enumerate(lines):
-        account_code = line.get("account_code")
-        if not account_code:
-            raise ValueError(
-                f"entries[{idx}].lines[{li}].account_code は必須です"
-            )
+        # #338 item5: account_code / debit / credit は要求しない (送られても無視)。
+        # line 本体 (科目・金額・摘要) は encrypted_blob にのみ格納される。
         line_blob, line_iv, err = _decode_record_crypto(
             line, f"entries[{idx}].lines[{li}]",
             "encrypted_blob", "blob_iv", required=True,
         )
         if err:
             raise ValueError(err)
-        # E3-F PR-D-6-6: 平文 line.description は受け取らない (line 本体は
-        # encrypted_blob に格納済)。
         lines_data.append({
-            "account_code": account_code,
-            "debit_amount": _parse_int_amount(
-                line.get("debit"), f"entries[{idx}].lines[{li}].debit",
-            ),
-            "credit_amount": _parse_int_amount(
-                line.get("credit"), f"entries[{idx}].lines[{li}].credit",
-            ),
             "encrypted_blob": line_blob,
             "blob_iv": line_iv,
         })
-
-    # account_code がそのユーザーに存在するかチェック (FK 違反による 500 を 400 化)。
-    # 全 entry の lines で使う code を caller が事前に 1 クエリで取得した
-    # user_account_codes に対して set 差分で判定するため N+1 にならない。
-    codes_in_entry = {ld["account_code"] for ld in lines_data}
-    missing = codes_in_entry - user_account_codes
-    if missing:
-        raise ValueError(
-            f"entries[{idx}]: 科目コード {sorted(missing)} が存在しません。"
-        )
 
     fiscal_year, fiscal_month = _validate_fiscal_meta(
         e, label_prefix=f"entries[{idx}].",
@@ -464,8 +427,9 @@ def create_journals_batch():
 
     web/CSV/OFX クライアント完結 E2EE 取込で使う共通エンドポイント。
     1 リクエストの全 entry を 1 トランザクションで保存する: 1 件でも
-    schema validate / 確定済み期間 / 提出済みロック / 貸借不一致に
-    失敗すれば全 rollback して 400 を返す。
+    schema validate / 確定済み期間 / 提出済みロックに失敗すれば全 rollback して
+    400 を返す。#338 item5: 平文金額をサーバが持たなくなったため貸借一致の
+    サーバ検査は撤去 (クライアント + 監査時検査の責務へ §12.11/§13)。
 
     リクエスト:
         {
@@ -493,18 +457,13 @@ def create_journals_batch():
         return jsonify({"error": "batch_id は文字列 (max 64) です。"}), 400
 
     user_id = g.auth_user.id
-    # N+1 回避: ユーザーの全 account.code を一括取得して set 集合演算で
-    # _validate_and_parse_batch_entry の存在チェックに使い回す。
-    user_account_codes = {
-        a.code for a in Account.query.filter_by(user_id=user_id).all()
-    }
+    # #338 item5: 平文 account_code を受け取らなくなったため、科目存在チェック用の
+    # user_account_codes 取得は不要になった (科目存在はクライアント + 監査時検査へ)。
 
     created = []
     try:
         for idx, e in enumerate(entries_in):
-            parsed = _validate_and_parse_batch_entry(
-                e, idx, user_account_codes,
-            )
+            parsed = _validate_and_parse_batch_entry(e, idx)
 
             # 確定済み期間チェック (fiscal_year / fiscal_month ベース)
             err = check_period_open_for_new(
@@ -561,12 +520,13 @@ def create_journals_batch():
 # --- 損益振替 (closing) のクライアント暗号化生成 (#338 item1) ---
 
 
-def _parse_closing_lines(closing_entry, user_account_codes):
+def _parse_closing_lines(closing_entry):
     """close_closing 用: closing_entry payload を create_journal_entry 引数に整形。
 
     汎用 batch (_validate_and_parse_batch_entry) と異なり fiscal_year/fiscal_month は
     クライアントから受け取らない (サーバが fiscal_year=year / fiscal_month=16 /
-    is_closing=True を強制するため)。lines の account_code 存在・blob/iv 検証のみ行う。
+    is_closing=True を強制するため)。#338 item5: 平文 account_code/debit/credit は
+    受け取らず blob/iv のみ検証する。
 
     エラーは ValueError を raise (caller が rollback + 4xx)。
     戻り値: (entry_blob, entry_iv, lines_data)
@@ -584,11 +544,11 @@ def _parse_closing_lines(closing_entry, user_account_codes):
     if not lines or not isinstance(lines, list):
         raise ValueError("closing_entry.lines は必須です (非空配列)。")
 
+    # #338 item5: 平文 account_code / debit / credit は要求しない (送られても無視)。
+    # closing 本体 (科目・金額) は encrypted_blob にのみ格納。科目存在・貸借は
+    # クライアント + 監査時検査の責務 (§12.11/§13)。
     lines_data = []
     for li, line in enumerate(lines):
-        account_code = line.get("account_code")
-        if not account_code:
-            raise ValueError(f"closing_entry.lines[{li}].account_code は必須です。")
         line_blob, line_iv, err = _decode_record_crypto(
             line, f"closing_entry.lines[{li}]",
             "encrypted_blob", "blob_iv", required=True,
@@ -596,20 +556,9 @@ def _parse_closing_lines(closing_entry, user_account_codes):
         if err:
             raise ValueError(err)
         lines_data.append({
-            "account_code": account_code,
-            "debit_amount": _parse_int_amount(
-                line.get("debit"), f"closing_entry.lines[{li}].debit",
-            ),
-            "credit_amount": _parse_int_amount(
-                line.get("credit"), f"closing_entry.lines[{li}].credit",
-            ),
             "encrypted_blob": line_blob,
             "blob_iv": line_iv,
         })
-
-    missing = {ld["account_code"] for ld in lines_data} - user_account_codes
-    if missing:
-        raise ValueError(f"科目コード {sorted(missing)} が存在しません。")
 
     return entry_blob, entry_iv, lines_data
 
@@ -622,16 +571,12 @@ def _insert_closing_entry(user_id, year, closing_entry):
     (period15 確定) と reencrypt_closing (旧 closing 移行) で共有する。
 
     戻り値: 挿入した closing 仕訳の id (closing_entry=None なら None)。
-    ValueError を raise しうる (科目不存在 / 貸借不一致 / blob 不正)。
+    ValueError を raise しうる (blob 不正 / fiscal メタ不正)。#338 item5: 科目存在・
+    貸借はサーバ検査せずクライアント + 監査時検査の責務 (§12.11/§13)。
     """
     entry_blob = entry_iv = lines_data = None
     if closing_entry is not None:
-        user_account_codes = {
-            a.code for a in Account.query.filter_by(user_id=user_id).all()
-        }
-        entry_blob, entry_iv, lines_data = _parse_closing_lines(
-            closing_entry, user_account_codes,
-        )
+        entry_blob, entry_iv, lines_data = _parse_closing_lines(closing_entry)
     # 冪等性: 既存 (旧 or 新) closing を除去してから挿入する (reopen と同じ削除関数)。
     delete_closing_entries(user_id, year)
     if closing_entry is None:
@@ -1067,15 +1012,13 @@ def backup_export():
                 }
                 for e in entries
             ],
-            # debit_amount / credit_amount は集計用の平文メタ列 (DROP 対象外)。
-            # description 平文列は export しない (encrypted_blob に格納済)。
+            # #338 item5: 平文 account_code / debit / credit / description は export
+            # しない (line 本体は encrypted_blob。クライアントが復号して平文 JSON を
+            # 組み立てる)。restore も平文を書かず NULL になる。
             "journal_entry_lines": [
                 {
                     "id": l.id,
                     "journal_entry_id": l.journal_entry_id,
-                    "account_code": l.account_code,
-                    "debit_amount": int(l.debit_amount or 0),
-                    "credit_amount": int(l.credit_amount or 0),
                     "encrypted_blob": _b64_or_none(l.encrypted_blob),
                     "blob_iv": _b64_or_none(l.blob_iv),
                 }
@@ -1674,13 +1617,14 @@ def update_journal(entry_id):
         {
           fiscal_year, fiscal_month,  // 平文メタ (必須)
           encrypted_blob, blob_iv,    // entry 本体 (必須)
-          lines: [{account_code, debit, credit, encrypted_blob, blob_iv}, ...]
+          lines: [{encrypted_blob, blob_iv}, ...]   // line 本体は暗号化済のみ
         }
 
     レスポンス:
         200 {ok, id, entry_number}
 
-    確定済み期間 / 提出済みロック / 貸借不一致 / 科目不在 はいずれも 400。
+    確定済み期間 / 提出済みロックは 400。#338 item5: 貸借一致・科目存在のサーバ検査は
+    撤去 (クライアント + 監査時検査の責務 §12.11/§13)。
     代理閲覧中の encrypted_blob 付き更新は 403 (AAD 不一致防止)。
     """
     data = request.get_json(silent=True)
@@ -1699,30 +1643,16 @@ def update_journal(entry_id):
     if err:
         return jsonify({"error": err}), 400
 
-    user_account_codes = {
-        a.code for a in Account.query.filter_by(user_id=user_id).all()
-    }
-
+    # #338 item5: 平文 account_code / debit / credit を受け取らないため、科目存在・
+    # 貸借一致のサーバ検査は撤去 (クライアント + 監査時検査へ §12.11/§13)。
     try:
-        parsed = _validate_and_parse_batch_entry(
-            data, 0, user_account_codes,
-        )
+        parsed = _validate_and_parse_batch_entry(data, 0)
     except ValueError as ve:
         msg = str(ve)
         # entries[0]. プレフィックスは PUT では混乱を招くため除去する
         if msg.startswith("entries[0]"):
             msg = msg.replace("entries[0].", "").replace("entries[0]:", "").lstrip()
         return jsonify({"error": msg}), 400
-
-    # 貸借不一致チェック (create_journal_entry に倣う)
-    total_debit = sum(ld["debit_amount"] for ld in parsed["lines_data"])
-    total_credit = sum(ld["credit_amount"] for ld in parsed["lines_data"])
-    if total_debit != total_credit:
-        return jsonify({
-            "error": (
-                f"貸借が一致しません（借方: {total_debit}, 貸方: {total_credit}）"
-            ),
-        }), 400
 
     # 更新後の対象期間が確定済みでないか確認 (fiscal_year / fiscal_month ベース)
     err = check_period_open_for_new(
@@ -1749,9 +1679,10 @@ def update_journal(entry_id):
         line = JournalEntryLine(
             journal_entry_id=entry.id,
             account_user_id=user_id,
-            account_code=ld["account_code"],
-            debit_amount=ld["debit_amount"],
-            credit_amount=ld["credit_amount"],
+            # #338 item5: 平文 account_code / debit / credit は書き込まない (NULL)。
+            account_code=None,
+            debit_amount=None,
+            credit_amount=None,
             encrypted_blob=ld.get("encrypted_blob"),
             blob_iv=ld.get("blob_iv"),
         )

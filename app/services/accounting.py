@@ -20,9 +20,12 @@ def create_journal_entry(user_id, lines_data, *, fiscal_year, fiscal_month,
     """仕訳伝票を直接作成する
 
     Args:
-        lines_data: list of dict with keys: account_code, debit_amount,
-            credit_amount, optional encrypted_blob/blob_iv
-            (Phase E3: クライアント側で AES-GCM 暗号化済の line 本体)
+        lines_data: list of dict with key: encrypted_blob/blob_iv
+            (Phase E3: クライアント側で AES-GCM 暗号化済の line 本体)。
+            #338 item5: 平文 account_code / debit_amount / credit_amount は
+            DB に書かない (line 本体は encrypted_blob のみ。集計・科目存在・貸借は
+            クライアント + 監査時検査の責務へ §12.11/§13)。後方互換で lines_data に
+            これらが残っていても無視する。
         fiscal_year: 平文の年度フィルタ用メタ列 (date 暗号化後の代替)。
         fiscal_month: 平文の計上期間メタ列 (0=期首, 1-12=月, 13-15=決算整理,
             16=損益振替)。
@@ -40,13 +43,8 @@ def create_journal_entry(user_id, lines_data, *, fiscal_year, fiscal_month,
         commit: False を指定するとセッションを commit せず flush のみ行う。
             複数 entry をまとめて 1 トランザクションにする batch API 用。
     """
-    total_debit = sum(l["debit_amount"] for l in lines_data)
-    total_credit = sum(l["credit_amount"] for l in lines_data)
-    if total_debit != total_credit:
-        raise ValueError(
-            f"貸借が一致しません（借方: {total_debit}, 貸方: {total_credit}）"
-        )
-
+    # #338 item5: サーバは平文金額を持たなくなったため貸借一致をサーバ側で検査
+    # できない (§12.11/§13 でクライアント + 監査時検査の責務へ移行)。
     if (encrypted_blob is None) != (blob_iv is None):
         raise ValueError("encrypted_blob と blob_iv は同時に指定が必要です。")
     # 多層防御: API 以外の caller が短い IV で保存しないよう service 層でも検査。
@@ -85,10 +83,12 @@ def create_journal_entry(user_id, lines_data, *, fiscal_year, fiscal_month,
         line = JournalEntryLine(
             journal_entry_id=entry.id,
             account_user_id=user_id,
-            account_code=line_data["account_code"],
-            debit_amount=line_data["debit_amount"],
-            credit_amount=line_data["credit_amount"],
-            # E3-F PR-D-6-4: 平文 description 列は書き込まない (encrypted_blob のみ)。
+            # #338 item5: 平文 account_code / debit / credit / description は
+            # 書き込まない (NULL)。line 本体は encrypted_blob のみ。item8 (068) で
+            # これらの列を物理 DROP する。
+            account_code=None,
+            debit_amount=None,
+            credit_amount=None,
             encrypted_blob=line_blob,
             blob_iv=line_iv,
         )

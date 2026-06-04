@@ -490,13 +490,14 @@ def _restore_journal_entry_lines(
             raise BackupValidationError(
                 f"journal_entry_lines: unmapped journal_entry_id {old_eid}",
             )
-        # E3-F PR-D-6-4: 平文 description 列は書き込まない (encrypted_blob のみ)。
+        # #338 item5: 平文 account_code / debit / credit / description は書き込まない
+        # (NULL)。line 本体は encrypted_blob のみ。backup にこれらが残っていても無視する。
         db.session.add(JournalEntryLine(
             journal_entry_id=new_eid,
             account_user_id=user_id,
-            account_code=r.get("account_code"),
-            debit_amount=int(r.get("debit_amount") or 0),
-            credit_amount=int(r.get("credit_amount") or 0),
+            account_code=None,
+            debit_amount=None,
+            credit_amount=None,
             encrypted_blob=_b64_decode(r.get("encrypted_blob")),
             blob_iv=_b64_decode(r.get("blob_iv")),
         ))

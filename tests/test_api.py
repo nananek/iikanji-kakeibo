@@ -8,7 +8,8 @@ import pytest
 from app.models.api_key import APIKey
 from app.models.journal import JournalEntry
 from tests.conftest import (
-    _auth_header, encrypt_lines, encrypted_payload, make_journal,
+    _auth_header, _dummy_blob_b64, encrypt_lines, encrypted_payload,
+    make_journal,
 )
 
 
@@ -109,7 +110,11 @@ class TestCreateJournal:
         })
         assert resp.status_code == 400
 
-    def test_unbalanced_entry(self, client, db, user, accounts, auth_header):
+    def test_unbalanced_wire_accepted(self, client, db, user, accounts, auth_header):
+        """#338 item5: サーバは平文金額を持たなくなったため貸借一致をサーバ側で
+        検査しない (§12.11/§13 でクライアント + 監査時検査の責務へ移行)。wire 上の
+        debit/credit は無視されるため、不一致に見える payload でも 201 で受理する。
+        """
         resp = client.post("/api/v1/journals", headers=auth_header, json={
             "fiscal_year": 2026, "fiscal_month": 2,
             "lines": encrypt_lines([
@@ -118,8 +123,7 @@ class TestCreateJournal:
             ]),
             **encrypted_payload(),
         })
-        assert resp.status_code == 400
-        assert "一致" in resp.get_json()["error"]
+        assert resp.status_code == 201
 
     def test_invalid_draft_id(self, client, db, user, accounts, auth_header):
         resp = client.post("/api/v1/journals", headers=auth_header, json={
@@ -235,7 +239,10 @@ class TestCreateJournalsBatch:
 
     def test_atomicity_partial_failure_rolls_back(
             self, client, db, user, accounts, auth_header):
-        """1 entry でも貸借不一致なら、全 entry が rollback される。"""
+        """1 entry でも検証エラー (ここでは line の blob_iv 長不正) なら、全 entry が
+        rollback される。#338 item5 でサーバの貸借検査は撤去されたため、依然として
+        サーバ側で弾く検証 (IV 長) を失敗トリガとして atomicity を担保する。
+        """
         resp = client.post("/api/v1/journals/batch", headers=auth_header, json={
             "entries": [
                 {
@@ -247,12 +254,12 @@ class TestCreateJournalsBatch:
                     **encrypted_payload(),
                 },
                 {
-                    # 貸借不一致: create_journal_entry が ValueError
+                    # line の blob_iv が 12B でない → create_journal_entry が ValueError
                     "fiscal_year": 2026, "fiscal_month": 2,
-                    "lines": encrypt_lines([
-                        {"account_code": accounts["5010"].code, "debit": 100},
-                        {"account_code": accounts["1010"].code, "credit": 99},
-                    ]),
+                    "lines": [
+                        {"encrypted_blob": _dummy_blob_b64(),
+                         "blob_iv": _dummy_blob_b64(8)},  # 8B ≠ 12B
+                    ],
                     **encrypted_payload(),
                 },
             ],
@@ -338,8 +345,12 @@ class TestCreateJournalsBatch:
         entry = db.session.get(JournalEntry, created_id)
         assert entry.fiscal_month == 0
 
-    def test_invalid_account_code_rejected(self, client, db, user, accounts, auth_header):
-        """存在しない account_code は FK 違反 (500) ではなく 400 で返す。"""
+    def test_invalid_account_code_wire_ignored(self, client, db, user, accounts, auth_header):
+        """#338 item5: 平文 account_code はサーバが受け取らない (送られても無視)。
+        存在しない account_code を wire に乗せても科目存在検査は行わず 201 で受理する
+        (科目存在はクライアント + 監査時検査の責務 §12.11/§13)。保存される line の
+        account_code は NULL になる。
+        """
         resp = client.post("/api/v1/journals/batch", headers=auth_header, json={
             "entries": [{
                 "fiscal_year": 2026, "fiscal_month": 2,
@@ -350,11 +361,15 @@ class TestCreateJournalsBatch:
                 **encrypted_payload(),
             }],
         })
-        assert resp.status_code == 400
-        assert "9999" in resp.get_json()["error"]
+        assert resp.status_code == 201
+        from app.models.journal import JournalEntryLine
+        lines = JournalEntryLine.query.filter_by(account_user_id=user.id).all()
+        assert lines and all(l.account_code is None for l in lines)
 
-    def test_float_amount_rejected(self, client, db, user, accounts, auth_header):
-        """float の debit/credit は切り捨てで貸借不一致を隠すので拒否する。"""
+    def test_float_amount_wire_ignored(self, client, db, user, accounts, auth_header):
+        """#338 item5: 平文 debit/credit はサーバが受け取らない (送られても無視)。
+        float が混じっていても整数検査は行わず 201 で受理する (金額は encrypted_blob)。
+        """
         resp = client.post("/api/v1/journals/batch", headers=auth_header, json={
             "entries": [{
                 "fiscal_year": 2026, "fiscal_month": 2,
@@ -365,11 +380,12 @@ class TestCreateJournalsBatch:
                 **encrypted_payload(),
             }],
         })
-        assert resp.status_code == 400
-        assert "整数" in resp.get_json()["error"]
+        assert resp.status_code == 201
 
-    def test_bool_amount_rejected(self, client, db, user, accounts, auth_header):
-        """bool は int サブクラスなので明示的に弾く (True→1 の意図しない仕訳化防止)。"""
+    def test_bool_amount_wire_ignored(self, client, db, user, accounts, auth_header):
+        """#338 item5: 平文 debit/credit はサーバが受け取らない (送られても無視)。
+        bool が混じっていても 201 で受理する (金額は encrypted_blob のみ)。
+        """
         resp = client.post("/api/v1/journals/batch", headers=auth_header, json={
             "entries": [{
                 "fiscal_year": 2026, "fiscal_month": 2,
@@ -380,8 +396,7 @@ class TestCreateJournalsBatch:
                 **encrypted_payload(),
             }],
         })
-        assert resp.status_code == 400
-        assert "整数" in resp.get_json()["error"]
+        assert resp.status_code == 201
 
 
 class TestCreateJournalsBatchDraftId:
@@ -537,12 +552,13 @@ class TestCreateJournalsBatchDraftId:
                     **encrypted_payload(),
                 },
                 {
-                    # 貸借不一致で fail
+                    # line の blob_iv 長不正で fail (#338 item5 で貸借検査は撤去
+                    # されたためサーバが依然弾く検証を失敗トリガにする)
                     "fiscal_year": 2026, "fiscal_month": 2,
-                    "lines": encrypt_lines([
-                        {"account_code": accounts["5010"].code, "debit": 100},
-                        {"account_code": accounts["1010"].code, "credit": 99},
-                    ]),
+                    "lines": [
+                        {"encrypted_blob": _dummy_blob_b64(),
+                         "blob_iv": _dummy_blob_b64(8)},  # 8B ≠ 12B
+                    ],
                     **encrypted_payload(),
                 },
             ],
@@ -1742,10 +1758,17 @@ class TestBackupExport:
         assert e0["fiscal_year"] == 2026
         assert e0["fiscal_month"] == 2
         assert e0["is_closing"] is False
-        # ライン (借方=5010, 貸方=1010) が両方とも含まれる。description は出ない。
-        codes = {l["account_code"] for l in data["journal_entry_lines"]}
-        assert codes == {"5010", "1010"}
-        assert all("description" not in l for l in data["journal_entry_lines"])
+        # #338 item5: line の平文 account_code/debit/credit/description は export
+        # されない (本体は encrypted_blob)。line は 2 行とも含まれるが、平文メタは
+        # 一切持たず encrypted_blob/blob_iv のみ。
+        lines = data["journal_entry_lines"]
+        assert len(lines) == 2
+        for l in lines:
+            assert "account_code" not in l
+            assert "debit_amount" not in l
+            assert "credit_amount" not in l
+            assert "description" not in l
+            assert "encrypted_blob" in l and "blob_iv" in l
 
     def test_other_user_data_excluded(
         self, app, client, db, user, accounts, auth_header,
@@ -2188,7 +2211,10 @@ class TestUpdateJournal:
                           })
         assert resp.status_code == 404
 
-    def test_unbalanced_returns_400(self, client, db, user, accounts, auth_header):
+    def test_unbalanced_wire_accepted(self, client, db, user, accounts, auth_header):
+        """#338 item5: PUT もサーバ貸借検査を撤去。wire の debit/credit は無視され
+        本体は encrypted_blob のみ更新されるため、不一致に見える payload でも 200。
+        """
         entry = make_journal(
             db, user.id, accounts["5010"].code, accounts["1010"].code, 1000,
         )
@@ -2202,8 +2228,7 @@ class TestUpdateJournal:
                               ]),
                               **encrypted_payload(),
                           })
-        assert resp.status_code == 400
-        assert "一致" in resp.get_json()["error"]
+        assert resp.status_code == 200
 
     def test_locked_period_returns_400(self, client, db, user, accounts, auth_header):
         from app.models.fiscal import FiscalClose
