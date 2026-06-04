@@ -13,10 +13,21 @@ const { b64encode } = await import(B64.href);
 const TE = new TextEncoder();
 const b64json = (obj) => b64encode(TE.encode(JSON.stringify(obj)));
 
-// 平文行をそのまま使う (encrypted_blob なし) ので client.decrypt は呼ばれない。
-const plainClient = { decrypt: async () => ({ plaintext: new Uint8Array() }) };
-// Lv3 backup 用: client.decrypt は identity (plaintext = blob) → decryptRecord が JSON.parse。
+// client.decrypt は identity (plaintext = blob) → decryptRecord が JSON.parse。
+// #338 item4: API は line 平文 (account_code/debit/credit) を返さなくなったため、
+// line も encrypted_blob を持たせて _normalizeLine が復号する形に統一する。
 const identityClient = { decrypt: async (blob) => ({ plaintext: blob }) };
+
+const _iv = b64encode(new Uint8Array(12));
+// 復号 (identity) すると body になる line を作る。_normalizeLine が
+// encrypted_blob を b64decode → identity → JSON.parse して body.account_code 等を得る。
+function encLine(id, account_code, debit, credit) {
+  return {
+    id,
+    encrypted_blob: b64json({ account_code, debit_amount: debit, credit_amount: credit }),
+    blob_iv: _iv,
+  };
+}
 
 const ACCOUNTS_META = {
   "1010": { type: "asset", normal_balance: "debit", name: "現金", tax_category: null },
@@ -29,15 +40,15 @@ const ENTRIES = [
   {
     id: 1, fiscal_year: 2026, fiscal_month: 3, is_closing: false,
     lines: [
-      { account_code: "1010", debit: 1000, credit: 0 },
-      { account_code: "4010", debit: 0, credit: 1000 },
+      encLine(101, "1010", 1000, 0),
+      encLine(102, "4010", 0, 1000),
     ],
   },
   {
     id: 2, fiscal_year: 2026, fiscal_month: 5, is_closing: false,
     lines: [
-      { account_code: "5200", debit: 500, credit: 0 },
-      { account_code: "1010", debit: 0, credit: 500 },
+      encLine(201, "5200", 500, 0),
+      encLine(202, "1010", 0, 500),
     ],
   },
 ];
@@ -65,7 +76,7 @@ function reportFetch() {
 
 test("buildSnapshotLv1 returns aggregates only, no raw entries", async () => {
   const snap = await buildSnapshotLv1({
-    client: plainClient, userId: 7, fiscalYear: 2026,
+    client: identityClient, userId: 7, fiscalYear: 2026,
     accountsMeta: ACCOUNTS_META, fetchImpl: reportFetch(),
   });
   assert.equal(snap.v, 1);
@@ -85,7 +96,7 @@ test("buildSnapshotLv1 returns aggregates only, no raw entries", async () => {
 
 test("buildSnapshotLv2 includes only tax-category entries + tax_summary", async () => {
   const snap = await buildSnapshotLv2({
-    client: plainClient, userId: 7, fiscalYear: 2026,
+    client: identityClient, userId: 7, fiscalYear: 2026,
     accountsMeta: ACCOUNTS_META, fetchImpl: reportFetch(),
   });
   assert.equal(snap.level, 2);

@@ -1451,6 +1451,14 @@ def _entry_to_dict(entry):
     イアントが保持列 fiscal_month / is_closing から行い、closing 仕訳 (暗号化
     不能で encrypted_blob 空) の date / description は fiscal_year から合成する
     (journals_client.js _normalizeEntry 参照)。
+
+    #338 item4: line の平文 account_code / debit / credit の返却も撤去した。
+    クライアント (journals_client._normalizeLine) は line の encrypted_blob を
+    MK 復号して body.account_code / debit_amount / credit_amount を取り出す。
+    旧 closing (空 blob) は移行 (reencrypt-closing) 済みで実 blob を持つ前提
+    (移行未完の deploy では closing 行の金額が取得できないため、応答平文除去の
+    デプロイ前に旧 closing 移行を実行すること)。残る平文列 (集計用) は item8 で
+    DROP する。
     """
     return {
         "id": entry.id,
@@ -1469,12 +1477,8 @@ def _entry_to_dict(entry):
                 # 依存しないため、将来 lines の並び替え・削除があっても
                 # 既存暗号文の復号が破壊されない。
                 "id": line.id,
-                "account_code": line.account_code,
-                "debit": int(line.debit_amount or 0),
-                "credit": int(line.credit_amount or 0),
-                # E3-F PR-D-6-5-pre1: 平文 description は返さない (line 本体は
-                # encrypted_blob。一覧は journals_client._normalizeLine が復号
-                # body.description を使う。これらの列は D-6-5 で DROP)。
+                # #338 item4: account_code / debit / credit / description は
+                # 返さない。クライアントが encrypted_blob を MK 復号して取得する。
                 "encrypted_blob": _b64_or_none(line.encrypted_blob),
                 "blob_iv": _b64_or_none(line.blob_iv),
             }

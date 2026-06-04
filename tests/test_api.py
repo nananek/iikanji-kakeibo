@@ -841,9 +841,15 @@ class TestCreateJournalE2EE:
         assert b64decode(body["encrypted_blob"]) == b"\x42" * 48
         assert b64decode(body["blob_iv"]) == b"\x42" * 12
         assert body["fiscal_year"] == 2026
-        lines_by_code = {l["account_code"]: l for l in body["lines"]}
-        assert b64decode(lines_by_code["5010"]["encrypted_blob"]) == b"\x42" * 32
-        assert b64decode(lines_by_code["1010"]["encrypted_blob"]) == b"\x42" * 40
+        # #338 item4: line は平文 account_code/debit/credit を返さない。各 line の
+        # encrypted_blob (blob サイズで識別) と blob_iv が base64 で返ることを確認。
+        line_blob_sizes = {len(b64decode(l["encrypted_blob"])) for l in body["lines"]}
+        assert line_blob_sizes == {32, 40}
+        for l in body["lines"]:
+            assert b64decode(l["blob_iv"]) == b"\x42" * 12
+            assert "account_code" not in l
+            assert "debit" not in l
+            assert "credit" not in l
 
 
 # --- 仕訳一覧 ---
@@ -867,17 +873,20 @@ class TestListJournals:
         assert data["total"] == 2
         assert len(data["journals"]) == 2
 
-    def test_amounts_returned_as_int(self, client, db, user, accounts, auth_header):
-        """debit/credit は文字列ではなく整数で返す（クライアント互換性）"""
+    def test_lines_omit_plaintext_amounts(self, client, db, user, accounts, auth_header):
+        """#338 item4: 一覧応答の line は平文 account_code/debit/credit を返さず、
+        id + encrypted_blob + blob_iv のみ。金額・科目はクライアントが encrypted_blob
+        を MK 復号して取得する。"""
         make_journal(db, user.id, "5010", "1010",
                      1500, entry_date=date(2026, 2, 15))
         resp = client.get("/api/v1/journals", headers=auth_header)
         data = resp.get_json()
         line = data["journals"][0]["lines"][0]
-        assert isinstance(line["debit"], int), \
-            f"debit should be int, got {type(line['debit']).__name__}"
-        assert isinstance(line["credit"], int), \
-            f"credit should be int, got {type(line['credit']).__name__}"
+        assert "account_code" not in line
+        assert "debit" not in line
+        assert "credit" not in line
+        assert "id" in line
+        assert "encrypted_blob" in line and "blob_iv" in line
 
     # E3-F PR-D-6-3: date_from / date_to による絞り込みは撤去したため
     # 関連テスト (test_date_filter / test_date_*_invalid_format) を削除した。
