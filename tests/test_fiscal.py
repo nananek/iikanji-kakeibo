@@ -12,7 +12,6 @@ from app.services.fiscal import (
     check_period_open_for_new,
     close_period,
     delete_closing_entries,
-    generate_closing_entries,
     get_capital_account_code,
     get_closed_period,
     get_effective_period,
@@ -159,6 +158,18 @@ class TestClosePeriod:
         result = close_period(user.id, 2026, 3)
         assert result is not None  # エラーメッセージ
 
+    def test_period15_rejected(self, db, user, accounts):
+        """#338 item1: 決算月3 (period15) は専用エンドポイント close-closing 経由のみ。
+        close_period は period14 確定済みでも 15 を拒否し FiscalClose を進めない
+        (view を経由しない caller への多層防御)。"""
+        db.session.add(FiscalClose(user_id=user.id, year=2026, closed_period=14))
+        db.session.commit()
+        result = close_period(user.id, 2026, 15)
+        assert result is not None
+        assert "close-closing" in result
+        fc = FiscalClose.query.filter_by(user_id=user.id, year=2026).first()
+        assert fc.closed_period == 14
+
 
 class TestReopenPeriod:
     def test_reopen_last_closed(self, db, user, accounts):
@@ -192,39 +203,33 @@ class TestGetEffectivePeriod:
         assert get_effective_period(entry) == 13
 
 
-class TestGenerateClosingEntries:
-    def test_creates_closing_entry(self, db, user, accounts):
-        # 収入 300,000 / 費用 200,000 → 純利益 100,000
-        make_journal(db, user.id, "1020", "4010",
-                     300000, entry_date=date(2026, 6, 25), description="給与")
-        make_journal(db, user.id, "5010", "1010",
-                     200000, entry_date=date(2026, 6, 15), description="食費合計")
-        result = generate_closing_entries(user.id, 2026)
-        assert result is None
+class TestDeleteClosingEntries:
+    """#338 item1: サーバ側 generate_closing_entries は撤去 (closing 生成・暗号化は
+    クライアント closing.js → POST /api/v1/fiscal/close-closing に移譲)。
+    delete_closing_entries は reopen と専用エンドポイントの冪等削除で引き続き使う。
+    closing 集計ロジックの単体テストは tests/static/js/test_closing.mjs にある。"""
 
-        # 損益振替仕訳が作成されたことを確認。E3-F PR-D-6-4 で平文 source/
-        # fiscal_period は書かなくなったため is_closing / fiscal_month で識別する。
-        closing = JournalEntry.query.filter_by(
-            user_id=user.id, is_closing=True
-        ).first()
-        assert closing is not None
-        assert closing.fiscal_month == 16
-        assert closing.is_balanced
-        # E3-F: 新カラムと encrypted_blob センチネルを確認。
-        assert closing.is_closing is True
-        assert closing.fiscal_month == 16
-        assert closing.fiscal_year == 2026
-        # サーバは MK を持たないため空 blob + ゼロ IV のセンチネル。
-        assert closing.encrypted_blob == b""
-        assert closing.blob_iv == bytes(12)
-        for line in closing.lines:
-            assert line.encrypted_blob == b""
-            assert line.blob_iv == bytes(12)
+    def _make_closing(self, db, user_id, year=2026):
+        from app.models.journal import JournalEntryLine
+        e = JournalEntry(user_id=user_id, entry_number=1, is_closing=True,
+                         fiscal_month=16, fiscal_year=year,
+                         encrypted_blob=b"x", blob_iv=bytes(12))
+        e.lines = [
+            JournalEntryLine(account_user_id=user_id, account_code="4010",
+                             debit_amount=100, credit_amount=0),
+            JournalEntryLine(account_user_id=user_id, account_code="3020",
+                             debit_amount=0, credit_amount=100),
+        ]
+        db.session.add(e)
+        db.session.commit()
+        return e
 
-    def test_delete_closing_entries(self, db, user, accounts):
-        make_journal(db, user.id, "1020", "4010",
-                     100000, entry_date=date(2026, 6, 25))
-        generate_closing_entries(user.id, 2026)
-        assert JournalEntry.query.filter_by(user_id=user.id, is_closing=True).count() > 0
+    def test_deletes_closing_entry(self, db, user, accounts):
+        self._make_closing(db, user.id)
+        assert JournalEntry.query.filter_by(user_id=user.id, is_closing=True).count() == 1
         delete_closing_entries(user.id, 2026)
+        db.session.commit()
         assert JournalEntry.query.filter_by(user_id=user.id, is_closing=True).count() == 0
+
+    def test_delete_no_closing_is_noop(self, db, user, accounts):
+        delete_closing_entries(user.id, 2026)  # 例外を投げない

@@ -18,7 +18,6 @@ from app.services.fiscal import (
     check_period_open_for_new,
     close_period,
     delete_closing_entries,
-    generate_closing_entries,
     get_capital_account_code,
     get_closed_periods_for_dates,
     get_closed_periods_map,
@@ -265,36 +264,6 @@ class TestReopenPeriodEdgeCases:
         result = reopen_period(user.id, 2025, 15)
         assert result is not None
         assert "解除できません" in result
-
-
-class TestGenerateClosingEntries:
-    def test_no_revenue_or_expense(self, db, user, accounts):
-        # 収益・費用の仕訳が無い
-        result = generate_closing_entries(user.id, 2026)
-        assert result is None
-
-    def test_missing_required_accounts(self, db, account_types):
-        # retained_earnings が無いユーザー
-        from app.models.user import User as UserModel
-        u = UserModel(username="noret", email="x@y.com", user_type="personal")
-        u.set_password("p")
-        db.session.add(u)
-        db.session.commit()
-        result = generate_closing_entries(u.id, 2026)
-        assert result is not None
-        assert "見つかりません" in result
-
-    def test_with_revenue(self, db, user, accounts):
-        # 給与収入 (4010) がある状態
-        make_journal(db, user.id, "1010", "4010", 250000,
-                     entry_date=date(2026, 5, 15))
-        result = generate_closing_entries(user.id, 2026)
-        # 振替仕訳が生成されるか None が返る (生成されたら closing source の entry が増える)
-        if result is None:
-            from app.models.journal import JournalEntry as JE
-            # E3-F PR-D-6-4: closing は is_closing で識別 (平文 source は書かない)。
-            count = JE.query.filter_by(user_id=user.id, is_closing=True).count()
-            assert count >= 1
 
 
 class TestDeleteClosingEntries:

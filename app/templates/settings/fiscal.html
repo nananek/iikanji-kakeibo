@@ -73,12 +73,20 @@
           </td>
           <td class="text-end">
             {% if p.can_close and not p.closed %}
+            {% if p.number == 15 %}
+            {# #338 item1: 決算月3 の確定はクライアントが損益振替を暗号化生成して
+               専用エンドポイントへ送る (closing_hook.mjs)。MK 解錠が必須。 #}
             <button type="button" class="btn btn-primary btn-sm"
-                    hx-post="{{ url_for('settings.fiscal_close') }}"
-                    hx-vals='{"year": {{ year }}, "period": {{ p.number }}}'
-                    {% if p.number == 15 %}hx-confirm="決算月3を確定すると損益振替仕訳が自動生成されます。よろしいですか？"{% endif %}>
+                    id="closing-confirm-btn" data-year="{{ year }}">
               <i class="bi bi-lock"></i> 確定
             </button>
+            {% else %}
+            <button type="button" class="btn btn-primary btn-sm"
+                    hx-post="{{ url_for('settings.fiscal_close') }}"
+                    hx-vals='{"year": {{ year }}, "period": {{ p.number }}}'>
+              <i class="bi bi-lock"></i> 確定
+            </button>
+            {% endif %}
             {% endif %}
             {% if p.can_reopen and p.closed %}
             <button type="button" class="btn btn-outline-warning btn-sm"
@@ -103,5 +111,11 @@
   "user_id": current_user.id,
 } | tojson }}
 </script>
+{# #338 item1: closing 生成のクライアント集計が科目を分類する code→{type, system_role}
+   メタ (繰越利益=system_role retained_earnings、収益/費用=type で振替対象判定)。 #}
+<script id="closing-accounts-meta" type="application/json">
+{{ closing_accounts_meta | tojson }}
+</script>
 <script type="module" src="{{ url_for('static', filename='js/reports/bcb_sync_hook.mjs') }}"></script>
+<script type="module" src="{{ url_for('static', filename='js/settings/closing_hook.mjs') }}"></script>
 {% endblock %}

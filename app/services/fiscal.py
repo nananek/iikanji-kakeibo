@@ -1,21 +1,15 @@
 """月次確定・決算期間管理サービス"""
 
-import uuid
 from datetime import date
-from decimal import Decimal
 
-from sqlalchemy import and_, func, or_
+from sqlalchemy import and_, or_
 
 from app.extensions import db
-from app.models.account import Account, AccountType
+from app.models.account import Account
 from app.models.fiscal import FiscalClose
-from app.models.journal import JournalEntry, JournalEntryLine
+from app.models.journal import JournalEntry
 from app.models.user import User
-from app.services.accounting import get_next_entry_number
 
-
-# closing 仕訳のセンチネル blob_iv 長 (AES-GCM IV と同じ 12B)。
-_CLOSING_IV_LEN = 12
 
 # 期間番号 → 表示名
 PERIOD_LABELS = {
@@ -172,13 +166,22 @@ def get_capital_account_code(user_id):
 
 
 def close_period(user_id, year, period):
-    """月次確定を実行。成功時はNone、エラー時はメッセージを返す。
+    """月次確定を実行 (period 0-14)。成功時はNone、エラー時はメッセージを返す。
 
     Phase E3-F-6 で旧 balance_caches テーブル更新は撤去 (BCB に統合)。
     BCB の sync はクライアント側 `bcb_sync_hook.mjs` が月次確定 UI から
-    自動起動するので、サーバ側でやることは FiscalClose の更新と
-    closing 仕訳生成のみ。
+    自動起動するので、サーバ側でやることは FiscalClose の更新のみ。
+
+    #338 item1: 決算月3 (period15) の確定 + 損益振替 (closing) 生成は専用
+    エンドポイント POST /api/v1/fiscal/close-closing が担う (サーバは MK を
+    持たず closing を暗号化生成できないため、クライアントが集計・暗号化して送る)。
+    この関数は period15 を受け付けない (caller の fiscal_close view が 422 で弾くが、
+    view を経由しない caller が FiscalClose を closing 仕訳なしで 15 へ進めるのを防ぐ
+    多層防御として本関数でも明示的に拒否する)。
     """
+    if period == 15:
+        return "決算月3は決算画面の確定ボタン (close-closing) から確定してください。"
+
     fc = FiscalClose.query.filter_by(user_id=user_id, year=year).first()
     current = fc.closed_period if fc else -1
 
@@ -193,13 +196,6 @@ def close_period(user_id, year, period):
         db.session.add(fc)
     else:
         fc.closed_period = period
-
-    # 決算月3確定 → 損益振替仕訳を自動生成
-    if period == 15:
-        err = generate_closing_entries(user_id, year)
-        if err:
-            db.session.rollback()
-            return err
 
     db.session.commit()
     return None
@@ -239,151 +235,11 @@ def reopen_period(user_id, year, period):
     return None
 
 
-def generate_closing_entries(user_id, year):
-    """損益振替仕訳を生成"""
-    revenue_type = AccountType.query.filter_by(code="revenue").first()
-    expense_type = AccountType.query.filter_by(code="expense").first()
-    retained = Account.query.filter_by(user_id=user_id, system_role="retained_earnings").first()
-
-    if not revenue_type or not expense_type or not retained:
-        return "勘定科目（収益・費用・繰越利益）が見つかりません。"
-
-    batch = f"closing-{year}-{uuid.uuid4().hex[:8]}"
-
-    # 収益科目ごとの貸方合計（= 収益残高）
-    revenue_balances = (
-        db.session.query(
-            Account.code,
-            Account.name,
-            (func.coalesce(func.sum(JournalEntryLine.credit_amount), 0)
-             - func.coalesce(func.sum(JournalEntryLine.debit_amount), 0)).label("balance"),
-        )
-        .join(JournalEntryLine, db.and_(
-            JournalEntryLine.account_user_id == Account.user_id,
-            JournalEntryLine.account_code == Account.code,
-        ))
-        .join(JournalEntry, JournalEntry.id == JournalEntryLine.journal_entry_id)
-        .filter(
-            Account.user_id == user_id,
-            Account.account_type_id == revenue_type.id,
-            JournalEntry.fiscal_year == year,
-        )
-        .group_by(Account.code, Account.name)
-        .having(
-            func.coalesce(func.sum(JournalEntryLine.credit_amount), 0)
-            - func.coalesce(func.sum(JournalEntryLine.debit_amount), 0) != 0
-        )
-        .all()
-    )
-
-    # 費用科目ごとの借方合計（= 費用残高）
-    expense_balances = (
-        db.session.query(
-            Account.code,
-            Account.name,
-            (func.coalesce(func.sum(JournalEntryLine.debit_amount), 0)
-             - func.coalesce(func.sum(JournalEntryLine.credit_amount), 0)).label("balance"),
-        )
-        .join(JournalEntryLine, db.and_(
-            JournalEntryLine.account_user_id == Account.user_id,
-            JournalEntryLine.account_code == Account.code,
-        ))
-        .join(JournalEntry, JournalEntry.id == JournalEntryLine.journal_entry_id)
-        .filter(
-            Account.user_id == user_id,
-            Account.account_type_id == expense_type.id,
-            JournalEntry.fiscal_year == year,
-        )
-        .group_by(Account.code, Account.name)
-        .having(
-            func.coalesce(func.sum(JournalEntryLine.debit_amount), 0)
-            - func.coalesce(func.sum(JournalEntryLine.credit_amount), 0) != 0
-        )
-        .all()
-    )
-
-    if not revenue_balances and not expense_balances:
-        return None  # 振替不要
-
-    lines_data = []
-
-    # 収益振替: 借方=収益科目（ゼロに）/ 貸方=繰越利益
-    total_revenue = Decimal(0)
-    for acct_code, acct_name, balance in revenue_balances:
-        amt = int(balance)
-        if amt > 0:
-            lines_data.append({
-                "account_code": acct_code, "debit_amount": amt, "credit_amount": 0,
-            })
-            total_revenue += amt
-        elif amt < 0:
-            lines_data.append({
-                "account_code": acct_code, "debit_amount": 0, "credit_amount": -amt,
-            })
-            total_revenue += amt
-
-    # 費用振替: 貸方=費用科目（ゼロに）/ 借方=繰越利益
-    total_expense = Decimal(0)
-    for acct_code, acct_name, balance in expense_balances:
-        amt = int(balance)
-        if amt > 0:
-            lines_data.append({
-                "account_code": acct_code, "debit_amount": 0, "credit_amount": amt,
-            })
-            total_expense += amt
-        elif amt < 0:
-            lines_data.append({
-                "account_code": acct_code, "debit_amount": -amt, "credit_amount": 0,
-            })
-            total_expense += amt
-
-    # 繰越利益への振替
-    net = int(total_revenue - total_expense)
-    if net > 0:
-        lines_data.append({
-            "account_code": retained.code, "debit_amount": 0, "credit_amount": net,
-        })
-    elif net < 0:
-        lines_data.append({
-            "account_code": retained.code, "debit_amount": -net, "credit_amount": 0,
-        })
-
-    if not lines_data:
-        return None
-
-    # E3-F: サーバは MK を持たないため closing 仕訳の encrypted_blob を生成できない。
-    # 暫定的に空 blob (b"") + ゼロ IV のセンチネル値を入れ、クライアント側
-    # (journals_client.js) が `is_closing && encrypted_blob.length === 0` を
-    # 「自動生成された損益振替仕訳」と認識して date / description / source を
-    # is_closing / fiscal_year から合成・ハードコード表示する。
-    # closing 仕訳生成のクライアント完全移譲は follow-up (#221) で対応する。
-    # E3-F PR-D-6-4: 平文 date / description / source / fiscal_period 列は書き込まない
-    # (クライアントが is_closing / fiscal_month=16 / fiscal_year から合成する)。
-    entry = JournalEntry(
-        user_id=user_id,
-        entry_number=get_next_entry_number(user_id),
-        batch_id=batch,
-        is_closing=True,
-        fiscal_month=16,
-        fiscal_year=year,
-        encrypted_blob=b"",
-        blob_iv=bytes(_CLOSING_IV_LEN),
-    )
-    db.session.add(entry)
-    db.session.flush()
-
-    for ld in lines_data:
-        db.session.add(JournalEntryLine(
-            journal_entry_id=entry.id,
-            account_user_id=user_id,
-            account_code=ld["account_code"],
-            debit_amount=ld["debit_amount"],
-            credit_amount=ld["credit_amount"],
-            encrypted_blob=b"",
-            blob_iv=bytes(_CLOSING_IV_LEN),
-        ))
-
-    return None
+# #338 item1: 旧 generate_closing_entries (サーバ側で平文 debit_amount/credit_amount を
+# SQL SUM して損益振替を生成し encrypted_blob=b"" センチネルで保存していた) は撤去した。
+# closing 仕訳の集計・暗号化生成はクライアントへ移譲し (closing.js)、専用エンドポイント
+# POST /api/v1/fiscal/close-closing が受け取って保存する。これにより closing 仕訳も
+# 実 encrypted_blob を持ち、平文 account_code/debit/credit 列の DROP (item8) が解放される。
 
 
 def delete_closing_entries(user_id, year):

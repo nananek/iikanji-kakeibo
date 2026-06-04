@@ -153,6 +153,7 @@
 - `cashbook`: 出納帳から自動生成
 - `ai_receipt`: AI証憑仕訳
 - `csv` / `ofx` / `web`: 各種取込
+- `closing`: 損益振替（決算振替）。決算月3確定時にクライアントが暗号化生成 (#338 item1)
 - batch_id (UUID) で一括取込の単位を管理
 
 ### 勘定科目の system_role
