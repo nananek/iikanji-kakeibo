@@ -631,7 +631,28 @@ def fiscal():
         closed_period=closed,
         year_open=year_open,
         closing_accounts_meta=_closing_accounts_meta(user_id),
+        old_closing_years=_old_closing_years(user_id),
     )
+
+
+def _old_closing_years(user_id):
+    """#338 旧 closing 移行: item1 以前にサーバ生成された旧 closing
+    (is_closing=True かつ encrypted_blob が空センチネル) を持つ年度を列挙する。
+    クライアントが再計算・暗号化して reencrypt-closing で置換する対象。新 closing
+    (実 blob) のみの年度は含めない。"""
+    from app.models.journal import JournalEntry
+    rows = (
+        db.session.query(JournalEntry.fiscal_year)
+        .filter(
+            JournalEntry.user_id == user_id,
+            JournalEntry.is_closing.is_(True),
+            JournalEntry.encrypted_blob == b"",
+        )
+        .distinct()
+        .order_by(JournalEntry.fiscal_year)
+        .all()
+    )
+    return [r[0] for r in rows]
 
 
 def _closing_accounts_meta(user_id):
