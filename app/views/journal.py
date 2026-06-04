@@ -112,15 +112,18 @@ def edit(entry_id):
     # (両者は書込時に同期されており等価)。
     form.fiscal_period.data = str(entry.fiscal_month) if entry.fiscal_month is not None else ""
 
-    # 行摘要 (description) は平文列を読まず空で返し、編集フォームのクライアント
-    # hydration (edit_form_prefill.js) が line の encrypted_blob を復号して line id
-    # で対応行へ埋める。
+    # #338 PR3 (方針B): 行の account_code / debit_amount / credit_amount / description
+    # を平文で返さず、line id のみのプレースホルダ行を返す。クライアント
+    # (journal_lines_prefill.js) が line の encrypted_blob を MK 復号し、line id で
+    # 対応行へ科目コード・金額・摘要を埋める。closing 仕訳は edit 不可
+    # (check_entry_modifiable が弾く) ため、ここに到達する行は必ず blob を持つ。
+    # 行数と DB line id だけは保持して journalLines が正しい行数を描画できるようにする。
     existing_lines = [
         {
             "id": line.id,
-            "account_code": line.account_code,
-            "debit_amount": int(line.debit_amount),
-            "credit_amount": int(line.credit_amount),
+            "account_code": "",
+            "debit_amount": 0,
+            "credit_amount": 0,
             "description": "",
         }
         for line in entry.lines
