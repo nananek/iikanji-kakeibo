@@ -1,11 +1,8 @@
 """青色申告決算書の欄定義・マッピング管理"""
 
-from sqlalchemy import func
-
 from app.extensions import db
 from app.models.tax_form import TaxFormField, TaxFormMapping
 from app.models.account import Account, AccountType
-from app.models.journal import JournalEntry, JournalEntryLine
 
 
 def get_form_fields(form_type="general"):
@@ -165,60 +162,11 @@ def get_business_account_codes(user_id):
     return {c[0] for c in codes}
 
 
-def get_business_income(user_id, year, month=None):
-    """事業所得を計算（事業収益 - 事業費用）。
-    Returns: dict with revenue, expense, income, has_mappings
-    """
-    biz_codes = get_business_account_codes(user_id)
-    if not biz_codes:
-        return {"revenue": 0, "expense": 0, "income": 0, "has_mappings": False}
-
-    # E3-F (PR-D-6-2): 平文 date 範囲ではなく fiscal_year / fiscal_month で
-    # 期間を絞る (date 列は D-6-5 で DROP 予定)。年間は fiscal_year のみ、
-    # 月次指定時は fiscal_month も一致させる。
-    revenue_type = AccountType.query.filter_by(code="revenue").first()
-    expense_type = AccountType.query.filter_by(code="expense").first()
-
-    def _sum(type_id, amount_col):
-        period_filters = [JournalEntry.fiscal_year == year]
-        if month:
-            period_filters.append(JournalEntry.fiscal_month == month)
-        return (
-            db.session.query(
-                func.coalesce(func.sum(amount_col), 0)
-            )
-            .join(JournalEntry, JournalEntry.id == JournalEntryLine.journal_entry_id)
-            .join(Account, db.and_(
-                Account.user_id == JournalEntryLine.account_user_id,
-                Account.code == JournalEntryLine.account_code,
-            ))
-            .filter(
-                JournalEntry.user_id == user_id,
-                *period_filters,
-                JournalEntry.is_closing.is_(False),
-                Account.account_type_id == type_id,
-                Account.code.in_(biz_codes),
-            )
-            .scalar()
-        ) or 0
-
-    biz_revenue = 0
-    biz_expense = 0
-    if revenue_type:
-        cr = _sum(revenue_type.id, JournalEntryLine.credit_amount)
-        dr = _sum(revenue_type.id, JournalEntryLine.debit_amount)
-        biz_revenue = int(cr - dr)
-    if expense_type:
-        dr = _sum(expense_type.id, JournalEntryLine.debit_amount)
-        cr = _sum(expense_type.id, JournalEntryLine.credit_amount)
-        biz_expense = int(dr - cr)
-
-    return {
-        "revenue": biz_revenue,
-        "expense": biz_expense,
-        "income": biz_revenue - biz_expense,
-        "has_mappings": True,
-    }
+# #338 Phase R-1: get_business_income (事業科目の平文 debit/credit を SQL SUM して
+# 事業所得を計算していた) を撤去した。サーバが平文金額を読む経路だったため。事業所得は
+# クライアントが accounts_meta の is_business 科目に computeProfitLoss を流用して算出する
+# (profit_loss_renderer.mjs)。get_business_account_codes (accounts/TaxFormMapping のみ
+# 参照、平文 line 非依存) は is_business 判定用に維持。
 
 
 

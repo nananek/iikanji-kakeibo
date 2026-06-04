@@ -15,7 +15,6 @@ from app.services.tax_form import (
     bulk_create_accounts,
     save_mappings,
     get_business_account_codes,
-    get_business_income,
 )
 
 
@@ -280,97 +279,10 @@ class TestBusinessAccountCodes:
         assert result == {"4010", "5010"}
 
 
-class TestBusinessIncome:
-    def test_no_mappings(self, db, user, accounts):
-        result = get_business_income(user.id, 2026)
-        assert result["has_mappings"] is False
-        assert result["income"] == 0
-
-    def test_calculates_income(self, db, user, accounts, account_types, tax_fields):
-        # 事業用科目を作成してマッピング
-        biz_rev = Account(
-            user_id=user.id, code="9010", name="売上",
-            account_type_id=account_types["revenue"].id,
-            is_active=True, display_order=100,
-        )
-        biz_exp = Account(
-            user_id=user.id, code="9210", name="租税公課",
-            account_type_id=account_types["expense"].id,
-            is_active=True, display_order=110,
-        )
-        db.session.add_all([biz_rev, biz_exp])
-        db.session.commit()
-
-        set_mapping(user.id, "9010", tax_fields["1"].id)
-        set_mapping(user.id, "9210", tax_fields["8"].id)
-        db.session.commit()
-
-        # 仕訳: 売上 100,000
-        entry1 = JournalEntry(
-            user_id=user.id,
-            entry_number=1,
-            fiscal_year=2026, fiscal_month=3,
-        )
-        entry1.lines = [
-            JournalEntryLine(account_user_id=user.id, account_code="1010",
-                             debit_amount=100000, credit_amount=0),
-            JournalEntryLine(account_user_id=user.id, account_code="9010",
-                             debit_amount=0, credit_amount=100000),
-        ]
-        db.session.add(entry1)
-
-        # 仕訳: 租税公課 30,000
-        entry2 = JournalEntry(
-            user_id=user.id,
-            entry_number=2,
-            fiscal_year=2026, fiscal_month=3,
-        )
-        entry2.lines = [
-            JournalEntryLine(account_user_id=user.id, account_code="9210",
-                             debit_amount=30000, credit_amount=0),
-            JournalEntryLine(account_user_id=user.id, account_code="1010",
-                             debit_amount=0, credit_amount=30000),
-        ]
-        db.session.add(entry2)
-        db.session.commit()
-
-        result = get_business_income(user.id, 2026)
-        assert result["has_mappings"] is True
-        assert result["revenue"] == 100000
-        assert result["expense"] == 30000
-        assert result["income"] == 70000
-
-    def test_monthly_filter(self, db, user, accounts, account_types, tax_fields):
-        biz_rev = Account(
-            user_id=user.id, code="9010", name="売上",
-            account_type_id=account_types["revenue"].id,
-            is_active=True, display_order=100,
-        )
-        db.session.add(biz_rev)
-        db.session.commit()
-        set_mapping(user.id, "9010", tax_fields["1"].id)
-        db.session.commit()
-
-        for m in (1, 2, 3):
-            entry = JournalEntry(
-                user_id=user.id,
-                entry_number=m,
-                fiscal_year=2026, fiscal_month=m,
-            )
-            entry.lines = [
-                JournalEntryLine(account_user_id=user.id, account_code="1010",
-                                 debit_amount=10000, credit_amount=0),
-                JournalEntryLine(account_user_id=user.id, account_code="9010",
-                                 debit_amount=0, credit_amount=10000),
-            ]
-            db.session.add(entry)
-        db.session.commit()
-
-        result_year = get_business_income(user.id, 2026)
-        assert result_year["revenue"] == 30000
-
-        result_jan = get_business_income(user.id, 2026, 1)
-        assert result_jan["revenue"] == 10000
+# #338 Phase R-1: TestBusinessIncome (get_business_income のサーバ集計テスト) は
+# 撤去。事業所得はクライアントが is_business 科目に computeProfitLoss を流用して算出する
+# (profit_loss_renderer.mjs)。集計ロジック (closing 除外・月次フィルタ・損益) は
+# computeProfitLoss の node テスト (tests/static/js/test_profit_loss.mjs) が担保する。
 
 
 class TestPLBusinessCollapse:
@@ -423,11 +335,10 @@ class TestPLBusinessCollapse:
         resp = logged_in_client.get("/reports/pl?year=2026")
         assert resp.status_code == 200
         meta, params = self._parse_pl(resp.data.decode())
-        # 9010 は事業科目フラグ付き
+        # 9010 は事業科目フラグ付き (クライアントが is_business で事業所得集計)
         assert meta["9010"]["is_business"] is True
-        # biz_income に集計が反映されている
-        assert params["biz_income"]["has_mappings"] is True
-        assert params["biz_income"]["income"] == 200000
+        # #338 Phase R-1: biz_income はサーバ集計を撤去しクライアント算出 → params に無い
+        assert "biz_income" not in params
 
     def test_pl_without_mappings_shows_all(self, logged_in_client, db, user, accounts, account_types):
         """マッピングなし時は biz_income.has_mappings=False で
@@ -452,8 +363,10 @@ class TestPLBusinessCollapse:
         # 給与収入 (4010) は通常科目
         assert "4010" in meta
         assert meta["4010"]["is_business"] is False
-        # 事業マッピングなし → biz_income.has_mappings=False
-        assert params["biz_income"]["has_mappings"] is False
+        # #338 Phase R-1: 事業マッピングなし。biz_income は params に無く、is_business=True
+        # の科目も存在しない (クライアントは事業所得行を出さない)。
+        assert "biz_income" not in params
+        assert not any(m.get("is_business") for m in meta.values())
 
     def test_pl_household_expense_not_hidden(self, logged_in_client, db, user, accounts, account_types, tax_fields):
         """事業科目をマッピングしても、家計科目は accounts_meta に残り、
@@ -504,73 +417,8 @@ class TestPLBusinessCollapse:
         assert meta["9210"]["is_business"] is True
 
 
-class TestBusinessIncomeEdgeCases:
-    def test_closing_entries_excluded(self, db, user, accounts, account_types, tax_fields):
-        """source=closing の仕訳は事業所得計算から除外"""
-        biz_rev = Account(
-            user_id=user.id, code="9010", name="売上",
-            account_type_id=account_types["revenue"].id,
-            is_active=True, display_order=100,
-        )
-        db.session.add(biz_rev)
-        db.session.commit()
-        set_mapping(user.id, "9010", tax_fields["1"].id)
-        db.session.commit()
-
-        # 通常仕訳
-        e1 = JournalEntry(user_id=user.id,
-                          entry_number=1,
-            fiscal_year=2026, fiscal_month=6,
-        )
-        e1.lines = [
-            JournalEntryLine(account_user_id=user.id, account_code="1010",
-                             debit_amount=100000, credit_amount=0),
-            JournalEntryLine(account_user_id=user.id, account_code="9010",
-                             debit_amount=0, credit_amount=100000),
-        ]
-        # closing 仕訳（除外されるべき）— E3-F: is_closing で識別する
-        e2 = JournalEntry(user_id=user.id,
-                          entry_number=2,
-                          is_closing=True, fiscal_month=16, fiscal_year=2026)
-        e2.lines = [
-            JournalEntryLine(account_user_id=user.id, account_code="9010",
-                             debit_amount=100000, credit_amount=0),
-            JournalEntryLine(account_user_id=user.id, account_code="3020",
-                             debit_amount=0, credit_amount=100000),
-        ]
-        db.session.add_all([e1, e2])
-        db.session.commit()
-
-        result = get_business_income(user.id, 2026)
-        assert result["revenue"] == 100000  # closing は除外
-
-    def test_business_loss(self, db, user, accounts, account_types, tax_fields):
-        """事業損失（費用 > 収益）のケース"""
-        biz_exp = Account(
-            user_id=user.id, code="9210", name="租税公課",
-            account_type_id=account_types["expense"].id,
-            is_active=True, display_order=110,
-        )
-        db.session.add(biz_exp)
-        db.session.commit()
-        set_mapping(user.id, "9210", tax_fields["8"].id)
-        db.session.commit()
-
-        e1 = JournalEntry(user_id=user.id,
-                          entry_number=1,
-            fiscal_year=2026, fiscal_month=3,
-        )
-        e1.lines = [
-            JournalEntryLine(account_user_id=user.id, account_code="9210",
-                             debit_amount=50000, credit_amount=0),
-            JournalEntryLine(account_user_id=user.id, account_code="1010",
-                             debit_amount=0, credit_amount=50000),
-        ]
-        db.session.add(e1)
-        db.session.commit()
-
-        result = get_business_income(user.id, 2026)
-        assert result["income"] == -50000  # マイナス = 事業損失
+# #338 Phase R-1: TestBusinessIncomeEdgeCases (closing 除外・事業損失) も撤去。
+# closing 除外・損益は computeProfitLoss (test_profit_loss.mjs) が担保する。
 
 
 class TestSaveMappingsEdgeCases:

@@ -124,10 +124,13 @@ def bs():
 def pl():
     """損益計算書 (クライアント描画)。サーバ集計は撤去済 (Phase E3-F-3b)。
     クライアントが /api/v1/journals から自分の MK で復号して集計する。
-    事業所得 (biz_income) は現時点ではサーバ計算結果を JSON で渡す
-    (BCB / tax_form クライアント完結化は後続 PR)。
+
+    #338 Phase R-1: 事業所得 (biz_income) のサーバ集計 (get_business_income =
+    平文 debit/credit の SQL SUM) を撤去した。クライアントが accounts_meta の
+    is_business 科目に computeProfitLoss を流用して事業収益-費用を算出する
+    (profit_loss_renderer.mjs)。サーバは平文金額を読まない。
     """
-    from app.services.tax_form import get_business_account_codes, get_business_income
+    from app.services.tax_form import get_business_account_codes
 
     year = request.args.get("year", date.today().year, type=int)
     month = request.args.get("month", 0, type=int)
@@ -140,10 +143,12 @@ def pl():
         .all()
     )
 
-    # 事業科目セット (TaxFormMapping 経由) — P/L はこれらを除外して集計する
+    # 事業科目セット (TaxFormMapping 経由) — P/L はこれらを除外し、別途「事業所得」
+    # として is_business でクライアントが集計する。accounts/TaxFormMapping のみ参照で
+    # 平文 line 非依存。
     biz_codes = get_business_account_codes(user_id)
 
-    # is_business は P/L 側で除外用フラグ。
+    # is_business は P/L 側で除外 + 事業所得集計用フラグ。
     accounts_meta = {
         a.code: {
             "type": a.account_type.code,
@@ -153,14 +158,11 @@ def pl():
         for a in accounts
     }
 
-    biz_income = get_business_income(user_id, year, month or None)
-
     return render_template(
         "reports/pl.html",
         year=year,
         month=month,
         accounts_meta=accounts_meta,
-        biz_income=biz_income,
         effective_user_id=user_id,
     )
 
