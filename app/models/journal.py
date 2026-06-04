@@ -70,17 +70,10 @@ class JournalEntry(db.Model):
         lazy="select",
     )
 
-    @property
-    def total_debit(self):
-        return sum(line.debit_amount for line in self.lines)
-
-    @property
-    def total_credit(self):
-        return sum(line.credit_amount for line in self.lines)
-
-    @property
-    def is_balanced(self):
-        return self.total_debit == self.total_credit
+    # #338 item5 (Phase 5b): total_debit / total_credit / is_balanced は削除した。
+    # 平文 debit_amount / credit_amount は新規行で NULL になり sum() が TypeError に
+    # なるうえ、サーバは平文金額を保持しない設計 (集計・貸借はクライアント + 監査時
+    # 検査の責務 §12.11/§13)。残高表示はクライアントが encrypted_blob を復号して算出。
 
     def __repr__(self):
         # E3-F PR-D-6-5-pre1: 平文 date は参照しない (D-6-5 で DROP)。
@@ -100,13 +93,15 @@ class JournalEntryLine(db.Model):
         db.Integer, db.ForeignKey("journal_entries.id"), nullable=False
     )
     account_user_id = db.Column(db.Integer, nullable=False)
-    # #338 item5 (Phase 5a, migration 067): account_code / debit_amount /
+    # #338 item5 (Phase 5a-b, migration 067): account_code / debit_amount /
     # credit_amount は read 側を全て client 化済 (item4 応答平文除去 + Phase R
-    # レポート集計)。write 停止 (後続 PR) に向けて nullable に緩和した。write 停止後は
-    # 新規行で NULL になる。item8 (068) で FK 撤去のうえ物理 DROP する。
+    # レポート集計)。Phase 5b で write を停止し、新規行はこれらを NULL で書く
+    # (本体は encrypted_blob のみ)。default=0 を外したのは None を明示的に NULL の
+    # まま保存するため (default があると None→0 に化けてしまう)。item8 (068) で
+    # FK 撤去のうえ物理 DROP する。
     account_code = db.Column(db.String(10), nullable=True)
-    debit_amount = db.Column(db.Numeric(12, 0), nullable=True, default=0)
-    credit_amount = db.Column(db.Numeric(12, 0), nullable=True, default=0)
+    debit_amount = db.Column(db.Numeric(12, 0), nullable=True)
+    credit_amount = db.Column(db.Numeric(12, 0), nullable=True)
     # E3-F PR-D-6-5 (055): 平文 description は DROP 済。本体は encrypted_blob のみ。
     # Phase E3: クライアント暗号化された account_code / debit / credit / description
     # の本体。AAD には user_id のみを含む (Option B)。closing 仕訳行は空 blob

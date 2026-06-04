@@ -56,8 +56,11 @@ class TestCloseClosingSuccess:
         assert entry.encrypted_blob  # 非空 (旧サーバ生成の b"" センチネルでない)
         lines = JournalEntryLine.query.filter_by(journal_entry_id=entry.id).all()
         assert len(lines) == 2
+        # #338 item5: line 本体は encrypted_blob のみ。平文 account_code/debit/credit
+        # は書かれない (NULL)。貸借一致はクライアント + 監査時検査の責務。
         assert all(l.encrypted_blob for l in lines)
-        assert sum(int(l.debit_amount) for l in lines) == sum(int(l.credit_amount) for l in lines)
+        assert all(l.debit_amount is None and l.credit_amount is None for l in lines)
+        assert all(l.account_code is None for l in lines)
 
     def test_null_closing_entry_closes_period_only(self, client, db, user, accounts, auth_header):
         """振替不要 (closing_entry=null) なら period15 確定のみ。closing 仕訳 0 件。"""
@@ -117,7 +120,11 @@ class TestCloseClosingValidation:
         assert resp.status_code == 409
         assert "既に確定" in resp.get_json()["error"]
 
-    def test_nonexistent_account_rejected(self, client, db, user, accounts, auth_header):
+    def test_nonexistent_account_wire_ignored(self, client, db, user, accounts, auth_header):
+        """#338 item5: closing 経路もサーバの科目存在検査を撤去 (クライアント +
+        監査時検査の責務 §12.11/§13)。wire 上の存在しない account_code は無視され、
+        closing 仕訳は 200 で受理される (line の account_code は NULL)。
+        """
         _set_closed(db, user.id, 14)
         entry = {
             **encrypted_payload(),
@@ -129,13 +136,16 @@ class TestCloseClosingValidation:
         resp = client.post(URL, headers=auth_header, json={
             "year": 2026, "closing_entry": entry,
         })
-        assert resp.status_code == 400
-        # rollback: FiscalClose は 14 のまま
+        assert resp.status_code == 200
+        # closing 仕訳が作られ、決算月 15 へ進む
         fc = FiscalClose.query.filter_by(user_id=user.id, year=2026).first()
-        assert fc.closed_period == 14
-        assert JournalEntry.query.filter_by(user_id=user.id, is_closing=True).count() == 0
+        assert fc.closed_period == 15
+        assert JournalEntry.query.filter_by(user_id=user.id, is_closing=True).count() == 1
 
-    def test_unbalanced_closing_rejected(self, client, db, user, accounts, auth_header):
+    def test_unbalanced_closing_wire_accepted(self, client, db, user, accounts, auth_header):
+        """#338 item5: closing 経路もサーバ貸借検査を撤去。不一致に見える wire でも
+        200 で受理される (金額は encrypted_blob、貸借はクライアント + 監査時検査)。
+        """
         _set_closed(db, user.id, 14)
         entry = {
             **encrypted_payload(),
@@ -147,10 +157,9 @@ class TestCloseClosingValidation:
         resp = client.post(URL, headers=auth_header, json={
             "year": 2026, "closing_entry": entry,
         })
-        assert resp.status_code == 400
-        assert "貸借" in resp.get_json()["error"]
+        assert resp.status_code == 200
         fc = FiscalClose.query.filter_by(user_id=user.id, year=2026).first()
-        assert fc.closed_period == 14
+        assert fc.closed_period == 15
 
     def test_bad_blob_iv_length_rejected(self, client, db, user, accounts, auth_header):
         _set_closed(db, user.id, 14)

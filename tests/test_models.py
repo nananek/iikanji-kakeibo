@@ -67,24 +67,9 @@ class TestAPIKey:
 
 
 class TestJournalEntry:
-    def test_is_balanced(self, db, user, accounts):
-        entry = JournalEntry(
-            user_id=user.id,
-            entry_number=1,
-        )
-        entry.lines = [
-            JournalEntryLine(account_user_id=user.id,
-                             account_code="5010",
-                             debit_amount=1000, credit_amount=0),
-            JournalEntryLine(account_user_id=user.id,
-                             account_code="1010",
-                             debit_amount=0, credit_amount=1000),
-        ]
-        db.session.add(entry)
-        db.session.commit()
-        assert entry.is_balanced is True
-        assert entry.total_debit == 1000
-        assert entry.total_credit == 1000
+    # #338 item5 (Phase 5b): total_debit / total_credit / is_balanced プロパティは
+    # 削除済 (平文金額をサーバが持たなくなったため。集計・貸借はクライアント +
+    # 監査時検査の責務 §12.11/§13)。よって旧 test_is_balanced は撤去した。
 
     def test_cascade_delete(self, db, user, accounts):
         from tests.conftest import make_journal

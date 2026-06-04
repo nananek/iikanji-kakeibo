@@ -42,8 +42,15 @@ def upgrade():
 
 
 def downgrade():
-    # NOT NULL へ戻す前に NULL を埋める (account_code は空文字、金額は 0)。
-    # write 停止後は NULL 行が存在しうるため安全網として実施する。
+    # #338 Phase 5 (write 停止) 後は account_code が NULL の行が存在しうる。これを
+    # NOT NULL へ戻すために空文字 '' を埋めるが、'' は複合 FK fk_jel_account
+    # (account_user_id, account_code) → accounts(user_id, code) を満たさないため、
+    # 先に FK を drop してから fill + NOT NULL 復元する (FK 違反で downgrade が
+    # 落ちるのを防ぐ — #351 review 指摘)。downgrade は write 停止前の状態へ完全に
+    # 戻せない (NULL 行に妥当な account_code が存在しない) ため best-effort で、FK は
+    # 再作成しない。item8 (068) で 3 列ごと物理 DROP され FK も恒久撤去される。
+    with op.batch_alter_table("journal_entry_lines") as b:
+        b.drop_constraint("fk_jel_account", type_="foreignkey")
     op.execute(
         sa.text(
             "UPDATE journal_entry_lines SET account_code = '' "

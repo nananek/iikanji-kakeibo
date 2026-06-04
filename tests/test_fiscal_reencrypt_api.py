@@ -74,8 +74,10 @@ class TestReencryptSuccess:
         fc = FiscalClose.query.filter_by(user_id=user.id, year=2026).first()
         assert fc.closed_period == 15
 
-    def test_amount_unchanged_after_reencrypt(self, client, db, user, accounts, auth_header):
-        """確定済みなので再計算 closing は元と同額 (faithful re-encryption)。"""
+    def test_reencrypted_lines_store_blob_not_plaintext(self, client, db, user, accounts, auth_header):
+        """#338 item5: 再暗号化 closing の line は encrypted_blob のみを持ち、平文
+        debit/credit は書かれない (NULL)。金額の faithful 性はクライアントが
+        encrypted_blob 内で担保する (サーバは平文を持たない)。"""
         _set_closed(db, user.id, 15)
         _make_old_closing(db, user.id, amount=7777)
         resp = client.post(URL, headers=auth_header, json={
@@ -83,8 +85,12 @@ class TestReencryptSuccess:
         })
         assert resp.status_code == 200
         new = JournalEntry.query.get(resp.get_json()["closing_entry_id"])
-        assert sum(int(l.debit_amount) for l in new.lines) == 7777
-        assert sum(int(l.credit_amount) for l in new.lines) == 7777
+        assert new.lines
+        for l in new.lines:
+            assert l.debit_amount is None
+            assert l.credit_amount is None
+            assert l.account_code is None
+            assert l.encrypted_blob  # 非空 (クライアント暗号化済 line 本体)
 
     def test_idempotent(self, client, db, user, accounts, auth_header):
         _set_closed(db, user.id, 15)
@@ -128,7 +134,10 @@ class TestReencryptValidation:
         })
         assert resp.status_code == 409
 
-    def test_nonexistent_account_rollback(self, client, db, user, accounts, auth_header):
+    def test_nonexistent_account_wire_ignored(self, client, db, user, accounts, auth_header):
+        """#338 item5: reencrypt 経路もサーバ科目存在検査を撤去。存在しない
+        account_code を wire に乗せても 200 で受理され、旧 closing は新 closing
+        (実 blob) に置換される (科目存在はクライアント + 監査時検査)。"""
         _set_closed(db, user.id, 15)
         _make_old_closing(db, user.id)
         entry = {
@@ -141,13 +150,14 @@ class TestReencryptValidation:
         resp = client.post(URL, headers=auth_header, json={
             "year": 2026, "closing_entry": entry,
         })
-        assert resp.status_code == 400
-        # rollback: 旧 closing は残り、FiscalClose 不変
+        assert resp.status_code == 200
         closings = JournalEntry.query.filter_by(user_id=user.id, is_closing=True, fiscal_year=2026).all()
         assert len(closings) == 1
-        assert closings[0].encrypted_blob == b""  # 旧 closing のまま
+        assert closings[0].encrypted_blob  # 新 closing (旧 b"" センチネルでない)
 
-    def test_unbalanced_rollback(self, client, db, user, accounts, auth_header):
+    def test_unbalanced_wire_accepted(self, client, db, user, accounts, auth_header):
+        """#338 item5: reencrypt 経路もサーバ貸借検査を撤去。不一致に見える wire でも
+        200 で受理される (金額は encrypted_blob、貸借はクライアント + 監査時検査)。"""
         _set_closed(db, user.id, 15)
         _make_old_closing(db, user.id)
         entry = {
@@ -160,7 +170,7 @@ class TestReencryptValidation:
         resp = client.post(URL, headers=auth_header, json={
             "year": 2026, "closing_entry": entry,
         })
-        assert resp.status_code == 400
+        assert resp.status_code == 200
 
     def test_invalid_year(self, client, db, user, accounts, auth_header):
         resp = client.post(URL, headers=auth_header, json={"year": "x", "closing_entry": None})
