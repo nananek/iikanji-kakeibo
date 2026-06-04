@@ -3,7 +3,7 @@
 
 {% block content %}
 <script id="pl-server-params" type="application/json">
-{{ {"year": year, "month": month, "user_id": effective_user_id, "biz_income": biz_income, "tax_form_url": url_for('reports.tax_form_report', year=year)} | tojson }}
+{{ {"year": year, "month": month, "user_id": effective_user_id, "tax_form_url": url_for('reports.tax_form_report', year=year)} | tojson }}
 </script>
 <script id="pl-accounts-meta" type="application/json">
 {{ accounts_meta | tojson }}

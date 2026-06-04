@@ -183,11 +183,22 @@ async function _run() {
     }
     _clearStatus();
 
-    // 事業科目は P/L から除外。accountTypeByCode の生成時に biz_codes を skip
+    // 事業科目 (is_business) は通常 P/L から除外し、別途「事業所得」として集計する。
+    // #338 Phase R-1: 旧サーバ集計 (get_business_income = 平文 debit/credit の SQL SUM)
+    // を撤去し、ここで is_business 科目だけに computeProfitLoss を流用して事業収益-費用を
+    // 算出する。
     const accountTypeByCode = {};
     const accountNameByCode = {};
+    const bizTypeByCode = {};
+    const bizNameByCode = {};
+    let hasBiz = false;
     for (const [code, meta] of Object.entries(accountsMeta)) {
-      if (meta.is_business) continue;
+      if (meta.is_business) {
+        bizTypeByCode[code] = meta.type;
+        bizNameByCode[code] = meta.name;
+        hasBiz = true;
+        continue;
+      }
       accountTypeByCode[code] = meta.type;
       accountNameByCode[code] = meta.name;
     }
@@ -200,9 +211,20 @@ async function _run() {
       accountNameByCode,
       month: params.month || undefined,
     });
-    const view = composeProfitLossView(jsResult, {
-      bizIncome: params.biz_income || null,
-    });
+
+    // 事業所得 = 事業科目の (収益 - 費用) = computeProfitLoss の net_income。
+    // 旧サーバ get_business_income の income と等価。事業科目が無ければ null。
+    let bizIncome = null;
+    if (hasBiz) {
+      const bizResult = computeProfitLoss(entries, {
+        accountTypeByCode: bizTypeByCode,
+        accountNameByCode: bizNameByCode,
+        month: params.month || undefined,
+      });
+      bizIncome = { has_mappings: true, income: bizResult.net_income };
+    }
+
+    const view = composeProfitLossView(jsResult, { bizIncome });
     _renderView(view, params);
   } catch (e) {
     _setStatus("損益計算書の取得に失敗しました: " + (e.message || e), "danger");
