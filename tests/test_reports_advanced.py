@@ -163,6 +163,27 @@ class TestLedgerAdvanced:
         resp = logged_in_client.get("/reports/ledger?account_code=9999")
         assert resp.status_code == 200  # 結果は空
 
+    def test_ledger_entries_meta_is_all_year_entries(self, db, logged_in_client, user, accounts):
+        """#338 Phase R-2: entries_meta はサーバが平文 account_code で絞り込まず、
+        年度内の全 entry のメタを返す (クライアントが復号して account_code で絞る)。
+        選択科目 (5010) を含まない別仕訳 (1010↔4010) も entries_meta に含まれる。"""
+        import json
+        import re
+        e_sel = make_journal(db, user.id, "5010", "1010", 1000,
+                             entry_date=date(2026, 2, 15), source="cashbook")
+        e_other = make_journal(db, user.id, "1010", "4010", 2000,
+                               entry_date=date(2026, 3, 1), source="cashbook")
+        resp = logged_in_client.get("/reports/ledger?account_code=5010&year=2026")
+        assert resp.status_code == 200
+        m = re.search(
+            r'<script id="ledger-entries-meta"[^>]*>(.*?)</script>',
+            resp.data.decode(), flags=re.DOTALL,
+        )
+        meta = json.loads(m.group(1).strip())
+        # 選択科目 5010 を含む仕訳も、含まない仕訳も両方メタに入る (account_code 非依存)
+        assert str(e_sel.id) in meta
+        assert str(e_other.id) in meta
+
 
 class TestMonthlyAdvanced:
     def test_with_data_and_projection(self, db, logged_in_client, user, accounts):

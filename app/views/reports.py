@@ -7,7 +7,7 @@ from sqlalchemy import func
 
 from app.extensions import db
 from app.models.account import Account, AccountType
-from app.models.journal import JournalEntry, JournalEntryLine
+from app.models.journal import JournalEntry
 # app.services.tax のサーバ集計関数は Phase E3-F-4a/c/d/e で撤去済
 from app.services.fiscal import check_entry_modifiable, period_range_filter, get_closed_period
 from app.views.helpers import get_grouped_accounts
@@ -284,27 +284,18 @@ def ledger():
         ).first()
 
         if selected_account:
-            # 該当科目を含む journal_entries の id を取得
-            entry_ids = [
-                eid for (eid,) in (
-                    db.session.query(JournalEntryLine.journal_entry_id)
-                    .filter(
-                        JournalEntryLine.account_user_id == user_id,
-                        JournalEntryLine.account_code == account_code,
-                    )
-                    .distinct()
-                    .all()
-                )
-            ]
-            # defence-in-depth: entry_ids は account_user_id でフィルタ済だが
-                # JournalEntry にも user_id 制約を重ねる
+            # #338 Phase R-2: 平文 account_code で entry を絞り込まず、年度内の全 entry の
+            # メタ (is_readonly / voucher_id / entry_number、いずれも非暗号化カラム由来) を
+            # 返す。クライアント (computeLedger) が /api/v1/journals を MK 復号して
+            # account_code で絞り込むため、サーバは平文 line (account_code) を読まない。
             entry_objs = {
                 eo.id: eo
                 for eo in JournalEntry.query.filter(
-                    JournalEntry.id.in_(entry_ids),
                     JournalEntry.user_id == user_id,
+                    JournalEntry.fiscal_year == year,
                 ).all()
             }
+            entry_ids = list(entry_objs.keys())
             from app.models.voucher import Voucher
             voucher_map = {}
             voucher_rows = Voucher.active().filter(
