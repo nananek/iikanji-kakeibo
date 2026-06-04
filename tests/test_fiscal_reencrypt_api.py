@@ -224,3 +224,26 @@ class TestOldClosingYearsHelper:
     def test_empty_when_no_old_closing(self, db, user, accounts):
         from app.views.settings import _old_closing_years
         assert _old_closing_years(user.id) == []
+
+
+class TestMigrationBanner:
+    def test_banner_shown_with_old_closing(self, db, logged_in_client, user, accounts):
+        """旧 closing があると fiscal ページに移行バナー + closing-migration-params が出る。"""
+        _set_closed(db, user.id, 15, year=2025)
+        _make_old_closing(db, user.id, year=2025)
+        resp = logged_in_client.get("/settings/fiscal?year=2025")
+        assert resp.status_code == 200
+        body = resp.get_data(as_text=True)
+        assert "closing-migrate-btn" in body
+        assert "closing_migration_hook.mjs" in body
+        import re, json as _json
+        m = re.search(r'id="closing-migration-params"[^>]*>\s*(\{.*?\})\s*<', body, re.DOTALL)
+        assert m, "closing-migration-params が埋め込まれていない"
+        assert _json.loads(m.group(1))["years"] == [2025]
+
+    def test_no_banner_without_old_closing(self, db, logged_in_client, user, accounts):
+        resp = logged_in_client.get("/settings/fiscal?year=2026")
+        assert resp.status_code == 200
+        body = resp.get_data(as_text=True)
+        assert "closing-migrate-btn" not in body
+        assert "closing_migration_hook.mjs" not in body
