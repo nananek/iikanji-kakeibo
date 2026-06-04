@@ -5,6 +5,24 @@
 <h2><i class="bi bi-lock"></i> 月次確定</h2>
 <p class="text-muted">確定した期間の仕訳は編集・削除できなくなります。</p>
 
+{# #338 旧 closing 移行: 旧形式 (サーバ生成・未暗号化) の損益振替がある場合のみ表示。
+   クライアントが再計算・暗号化して reencrypt-closing で置換する。 #}
+{% if old_closing_years %}
+<div class="alert alert-warning d-flex justify-content-between align-items-center" id="closing-migration-banner">
+  <div>
+    <i class="bi bi-shield-exclamation"></i>
+    <strong>{{ old_closing_years | length }} 件の損益振替が旧形式（未暗号化）です。</strong>
+    （{{ old_closing_years | join("・") }} 年度）暗号化のため再計算が必要です。金額は変わりません。
+  </div>
+  <button type="button" class="btn btn-warning btn-sm flex-shrink-0" id="closing-migrate-btn">
+    <i class="bi bi-shield-lock"></i> すべて再暗号化
+  </button>
+</div>
+<script id="closing-migration-params" type="application/json">
+{{ {"years": old_closing_years, "user_id": current_user.id} | tojson }}
+</script>
+{% endif %}
+
 <form class="row g-3 mb-4 mt-2" method="GET" id="yearForm">
   <div class="col-auto">
     <select name="year" class="form-select" onchange="document.getElementById('yearForm').submit()">
@@ -118,4 +136,7 @@
 </script>
 <script type="module" src="{{ url_for('static', filename='js/reports/bcb_sync_hook.mjs') }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/settings/closing_hook.mjs') }}"></script>
+{% if old_closing_years %}
+<script type="module" src="{{ url_for('static', filename='js/settings/closing_migration_hook.mjs') }}"></script>
+{% endif %}
 {% endblock %}

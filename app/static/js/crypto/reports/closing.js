@@ -89,14 +89,17 @@ export function buildClosingLines(balanceCache, accountsMeta) {
  * @param {Object} args.accountsMeta    {code: {type, system_role, ...}}
  * @param {Function} [args.fetchImpl]      テスト DI (fetchJournalsForYear へ渡す HTTP)
  * @param {Function} [args.fetchJournals]  テスト DI (default fetchJournalsForYear)
+ * @param {string} [args.endpoint]        POST 先。決算月3 確定は close-closing
+ *   (default)、旧 closing 移行は reencrypt-closing を渡す。
  * @param {Function} [args.buildImpl]      テスト DI (default buildJournalEntry)
  * @param {Function} [args.postImpl]       テスト DI (default globalThis.fetch)
- * @returns {Promise<Object>}  サーバ応答 {ok, closed_period, closing_entry_id}
+ * @returns {Promise<Object>}  サーバ応答 {ok, closing_entry_id, ...}
  */
 export async function buildAndPostClosingEntry({
   client, userId, year, accountsMeta,
   fetchImpl, fetchJournals = fetchJournalsForYear,
   buildImpl = buildJournalEntry, postImpl,
+  endpoint = "/api/v1/fiscal/close-closing",
 }) {
   const entries = await fetchJournals({
     client, userId, fiscalYear: year, fetchImpl,
@@ -123,7 +126,7 @@ export async function buildAndPostClosingEntry({
 
   const post = postImpl ?? globalThis.fetch;
   // /api/v1 は CSRF 免除。session cookie は credentials:include で送る。
-  const r = await post("/api/v1/fiscal/close-closing", {
+  const r = await post(endpoint, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     credentials: "include",
@@ -131,7 +134,45 @@ export async function buildAndPostClosingEntry({
   });
   if (!r.ok) {
     const e = await r.json().catch(() => ({}));
-    throw new Error(e.error || `close-closing に失敗しました (HTTP ${r.status})`);
+    throw new Error(e.error || `closing の登録に失敗しました (HTTP ${r.status})`);
   }
   return r.json();
+}
+
+
+/**
+ * 旧 closing (item1 以前のサーバ生成・空 blob) を持つ複数年度を順に再計算・暗号化し、
+ * reencrypt-closing エンドポイントへ送って暗号化版へ置換する (#338 旧 closing 移行)。
+ *
+ * 確定済み年度はロックされ revenue/expense を編集できないため、再計算 closing は元と
+ * 同額 (faithful re-encryption)。1 年度でも失敗したらそこで停止しエラーを投げる
+ * (部分移行を許容、再実行で残りを継続)。
+ *
+ * @param {Object} args
+ * @param {Object} args.client
+ * @param {number|bigint} args.userId
+ * @param {Array<number>} args.years      旧 closing を持つ年度 (server 供給)
+ * @param {Object} args.accountsMeta
+ * @param {Function} [args.fetchImpl]
+ * @param {Function} [args.fetchJournals]
+ * @param {Function} [args.buildImpl]
+ * @param {Function} [args.postImpl]
+ * @param {Function} [args.postOne]       テスト DI (default buildAndPostClosingEntry)
+ * @returns {Promise<number>}  置換した年度数
+ */
+export async function reencryptOldClosings({
+  client, userId, years, accountsMeta,
+  fetchImpl, fetchJournals, buildImpl, postImpl,
+  postOne = buildAndPostClosingEntry,
+}) {
+  let migrated = 0;
+  for (const year of years || []) {
+    await postOne({
+      client, userId, year, accountsMeta,
+      fetchImpl, fetchJournals, buildImpl, postImpl,
+      endpoint: "/api/v1/fiscal/reencrypt-closing",
+    });
+    migrated += 1;
+  }
+  return migrated;
 }

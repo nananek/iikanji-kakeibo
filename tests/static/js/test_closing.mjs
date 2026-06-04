@@ -11,7 +11,8 @@ const CLOSING = new URL(
   "../../../app/static/js/crypto/reports/closing.js",
   import.meta.url,
 );
-const { buildClosingLines, buildAndPostClosingEntry } = await import(CLOSING.href);
+const { buildClosingLines, buildAndPostClosingEntry, reencryptOldClosings } =
+  await import(CLOSING.href);
 
 const BUILDER = new URL(
   "../../../app/static/js/crypto/entries_builder.js",
@@ -220,6 +221,20 @@ test("buildAndPostClosingEntry: 収益費用ゼロなら closing_entry=null で 
   assert.equal(postedBody.closing_entry, null);
 });
 
+test("buildAndPostClosingEntry: endpoint オプションで POST 先を切替", async () => {
+  let postedUrl = null;
+  await buildAndPostClosingEntry({
+    client: {}, userId: 1, year: 2026, accountsMeta: META,
+    endpoint: "/api/v1/fiscal/reencrypt-closing",
+    fetchJournals: async () => [],  // 収益費用なし → closing_entry=null
+    postImpl: async (url) => {
+      postedUrl = url;
+      return { ok: true, json: async () => ({ ok: true }) };
+    },
+  });
+  assert.equal(postedUrl, "/api/v1/fiscal/reencrypt-closing");
+});
+
 test("buildAndPostClosingEntry: サーバ 4xx は error message を throw", async () => {
   await assert.rejects(
     buildAndPostClosingEntry({
@@ -232,6 +247,48 @@ test("buildAndPostClosingEntry: サーバ 4xx は error message を throw", asyn
     }),
     /決算月2/,
   );
+});
+
+
+// --- reencryptOldClosings (旧 closing 移行) ---
+
+test("reencryptOldClosings: 各年度を reencrypt エンドポイントで順に処理", async () => {
+  const calls = [];
+  const migrated = await reencryptOldClosings({
+    client: {}, userId: 9, years: [2023, 2024, 2025], accountsMeta: META,
+    postOne: async ({ year, endpoint }) => {
+      calls.push({ year, endpoint });
+      return { ok: true };
+    },
+  });
+  assert.equal(migrated, 3);
+  assert.deepEqual(calls.map((c) => c.year), [2023, 2024, 2025]);
+  assert.ok(calls.every((c) => c.endpoint === "/api/v1/fiscal/reencrypt-closing"));
+});
+
+test("reencryptOldClosings: 1 年度失敗でそこで停止し throw (部分移行)", async () => {
+  const done = [];
+  await assert.rejects(
+    reencryptOldClosings({
+      client: {}, userId: 9, years: [2023, 2024, 2025], accountsMeta: META,
+      postOne: async ({ year }) => {
+        if (year === 2024) throw new Error("2024 失敗");
+        done.push(year);
+        return { ok: true };
+      },
+    }),
+    /2024 失敗/,
+  );
+  // 2023 までは処理済み、2025 には到達しない
+  assert.deepEqual(done, [2023]);
+});
+
+test("reencryptOldClosings: 空 years → 0 件・例外なし", async () => {
+  const migrated = await reencryptOldClosings({
+    client: {}, userId: 1, years: [], accountsMeta: META,
+    postOne: async () => { throw new Error("呼ばれないはず"); },
+  });
+  assert.equal(migrated, 0);
 });
 
 
