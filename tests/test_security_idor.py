@@ -131,14 +131,9 @@ class TestAccountIDOR:
                            json={"name": "ハッキング", "code": "9999"})
         assert resp.status_code == 404
 
-    def test_cannot_get_other_users_account_balance(self, app, client, db,
-                                                     user, second_user,
-                                                     accounts, account_types):
-        target = self._create_unique_account(db, second_user, account_types)
-        with client.session_transaction() as sess:
-            sess["_user_id"] = str(user.id)
-        resp = client.get(f"/accounts/api/{target.code}/balance")
-        assert resp.status_code == 404
+    # 旧 GET /accounts/api/<code>/balance (残高エンドポイント) の IDOR テストは
+    # 削除。E2EE 化 (#338 B) でサーバ側残高集計を撤去し、残高はクライアントが
+    # 暗号文を復号して算出するためエンドポイント自体が存在しない。
 
 
 class TestAccountListIDOR:

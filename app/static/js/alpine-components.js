@@ -214,6 +214,7 @@ document.addEventListener('alpine:init', function() {
               self.codeReadOnly = false;
               self.name = data.name;
               self.accountTypeId = String(data.account_type_id);
+              self.normalBalance = data.normal_balance || '';
               self.typeDisabled = false;
               self.description = data.description;
               self.taxCategory = data.tax_category;
@@ -234,53 +235,16 @@ document.addEventListener('alpine:init', function() {
         }
       },
 
-      onActiveChange: function() {
-        if (!this.isActive && this.editingCode && this.wasActive) {
-          this.showDeactivate = true;
-          this.deactivateLoading = true;
-          this.hasBalance = false;
-          var self = this;
-          fetch('/accounts/api/' + this.editingCode + '/balance')
-            .then(function(r) { return r.json(); })
-            .then(function(data) {
-              self.deactivateLoading = false;
-              self.balanceValue = data.balance;
-              self.normalBalance = data.normal_balance || '';
-              if (data.balance !== 0) {
-                self.hasBalance = true;
-                self.balanceLabel = '\u00a5' + Math.abs(data.balance).toLocaleString() +
-                  (data.balance < 0 ? '（貸方残）' : '（借方残）');
-                var candidates = self.accountsByType[self.editingTypeId] || [];
-                self.transferCandidates = candidates.filter(function(a) {
-                  return a.code !== self.editingCode;
-                });
-              }
-            });
-        } else {
-          this.showDeactivate = false;
-        }
-      },
-
-      // 無効化対象科目の残高を全年度の仕訳から復号して算出し、暗号化した
-      // 振替仕訳を batch API に登録する。サーバ api_update は残高がある科目の
-      // 無効化を 400 で弾くため、先にこの振替で残高を 0 にしておく。
-      // 残高計算は _get_account_balance と等価:
-      //   全年度・全期間 (closing 含む) を集計し normal_balance で d-c / c-d。
-      submitDeactivateTransfer: async function() {
-        var self = this;
-        var transferTo = this.transferCandidates.find(function(a) {
-          return a.code === self.transferToCode;
-        });
-        if (!transferTo) {
-          throw new Error('振替先の科目が見つかりません。');
-        }
+      // 編集中科目の符号付き残高を全年度の仕訳から復号して算出する。
+      // E2EE 化 (#338 B) によりサーバは金額を平文で持たないため、残高はクライアント
+      // が旧 _get_account_balance と等価に計算する (全年度・全期間・closing 込みを
+      // 集計し normal_balance で d-c / c-d)。MK ロック時は例外を投げる。
+      computeEditingBalance: async function() {
         if (typeof this.userId !== 'number' || !Number.isSafeInteger(this.userId)) {
           throw new Error('userId が未設定です (テンプレート修正が必要)');
         }
-        var builderMod = await import('/static/js/crypto/entries_builder.js');
         var journalsMod = await import('/static/js/crypto/journals_client.js');
         var balanceMod = await import('/static/js/crypto/reports/balance_cache.js');
-        var deactivateMod = await import('/static/js/crypto/deactivate_transfer.js');
         var sharedClientMod = await import('/static/js/crypto/shared-client.js');
         var client = new sharedClientMod.SharedCryptoClient(
           '/static/js/crypto/shared-worker.js',
@@ -297,17 +261,81 @@ document.addEventListener('alpine:init', function() {
             });
             entries = entries.concat(yearEntries);
           }
-          // period=16 / includeClosing=true で全期間・closing 込みを集計する
-          // (_get_account_balance は年度・期間フィルタなしの全件集計)。
+          // period=16 / includeClosing=true で全期間・closing 込みを集計する。
           var cache = balanceMod.computeBalanceCache(entries, {
             period: 16, includeClosing: true,
           });
           var dc = cache[this.editingCode] || [0, 0];
-          var balance = this.normalBalance === 'debit'
-            ? dc[0] - dc[1] : dc[1] - dc[0];
-          if (balance === 0) {
-            // 残高ゼロなら振替不要 (api_update は残高ゼロの無効化を許可する)。
-            return;
+          return this.normalBalance === 'debit' ? dc[0] - dc[1] : dc[1] - dc[0];
+        } finally {
+          try { client.close(); } catch (_e) { /* ignore */ }
+        }
+      },
+
+      onActiveChange: async function() {
+        if (!(!this.isActive && this.editingCode && this.wasActive)) {
+          this.showDeactivate = false;
+          return;
+        }
+        this.showDeactivate = true;
+        this.deactivateLoading = true;
+        this.hasBalance = false;
+        this.errorMessage = '';
+        try {
+          var balance = await this.computeEditingBalance();
+          this.balanceValue = balance;
+          if (balance !== 0) {
+            this.hasBalance = true;
+            this.balanceLabel = '¥' + Math.abs(balance).toLocaleString() +
+              (balance < 0 ? '（貸方残）' : '（借方残）');
+            var self = this;
+            var candidates = this.accountsByType[this.editingTypeId] || [];
+            this.transferCandidates = candidates.filter(function(a) {
+              return a.code !== self.editingCode;
+            });
+          }
+        } catch (e) {
+          // MK ロック等で残高を算出できない場合は無効化を中断しチェックを戻す。
+          this.errorMessage = (e && e.message) || '残高の確認に失敗しました。';
+          this.isActive = true;
+          this.showDeactivate = false;
+        } finally {
+          this.deactivateLoading = false;
+        }
+      },
+
+      // 無効化対象科目の残高を復号集計し、残高があれば暗号化した振替仕訳を
+      // batch API に登録して残高を 0 にする。E2EE 化 (#338 B) でサーバは残高を
+      // 計算できないため、無効化の可否はクライアント側で担保する。残高計算は
+      // computeEditingBalance に集約 (旧 _get_account_balance と等価)。
+      submitDeactivateTransfer: async function() {
+        var self = this;
+        var transferTo = this.transferCandidates.find(function(a) {
+          return a.code === self.transferToCode;
+        });
+        if (!transferTo) {
+          throw new Error('振替先の科目が見つかりません。');
+        }
+        if (typeof this.userId !== 'number' || !Number.isSafeInteger(this.userId)) {
+          throw new Error('userId が未設定です (テンプレート修正が必要)');
+        }
+        var builderMod = await import('/static/js/crypto/entries_builder.js');
+        var deactivateMod = await import('/static/js/crypto/deactivate_transfer.js');
+        var sharedClientMod = await import('/static/js/crypto/shared-client.js');
+
+        // 残高はクライアントで復号集計する (computeEditingBalance と共有)。
+        var balance = await this.computeEditingBalance();
+        if (balance === 0) {
+          // 残高ゼロなら振替不要 (api_update は残高ゼロの無効化を許可する)。
+          return;
+        }
+        var client = new sharedClientMod.SharedCryptoClient(
+          '/static/js/crypto/shared-worker.js',
+        );
+        try {
+          var status = await client.status();
+          if (!status.hasKey) {
+            throw new Error('MK ロック中です (設定 → 暗号鍵管理 で解除)');
           }
           var t = deactivateMod.computeDeactivateTransfer(
             { code: this.editingCode, normalBalance: this.normalBalance },
