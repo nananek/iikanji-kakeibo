@@ -1675,13 +1675,11 @@ def update_journal(entry_id):
     db.session.flush()
 
     for ld in parsed["lines_data"]:
+        # #338 item8: 平文 account_code / debit / credit 列は物理 DROP 済。
+        # 行本体は encrypted_blob のみ。
         line = JournalEntryLine(
             journal_entry_id=entry.id,
             account_user_id=user_id,
-            # #338 item5: 平文 account_code / debit / credit は書き込まない (NULL)。
-            account_code=None,
-            debit_amount=None,
-            credit_amount=None,
             encrypted_blob=ld.get("encrypted_blob"),
             blob_iv=ld.get("blob_iv"),
         )

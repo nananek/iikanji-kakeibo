@@ -112,11 +112,11 @@ class TestDelete:
         )
         je.lines = [
             JournalEntryLine(account_user_id=second_user.id,
-                             account_code="5010", debit_amount=100,
-                             credit_amount=0),
+                             encrypted_blob=bytes([0x42]) * 48,
+                             blob_iv=bytes([0x42]) * 12),
             JournalEntryLine(account_user_id=second_user.id,
-                             account_code="1010", debit_amount=0,
-                             credit_amount=100),
+                             encrypted_blob=bytes([0x42]) * 48,
+                             blob_iv=bytes([0x42]) * 12),
         ]
         db.session.add(je)
         db.session.commit()

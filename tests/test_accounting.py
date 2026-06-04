@@ -42,12 +42,9 @@ class TestCreateJournalEntry:
         assert entry.entry_number == 1
         assert entry.fiscal_year == 2026
         assert entry.fiscal_month == 2
-        # 平文メタは書かれず暗号化本体のみ保持
+        # 平文メタ列は DROP 済み、暗号化本体のみ保持
         assert len(entry.lines) == 2
         for line in entry.lines:
-            assert line.account_code is None
-            assert line.debit_amount is None
-            assert line.credit_amount is None
             assert line.encrypted_blob == b"\x42" * 48
             assert line.blob_iv == b"\x42" * 12
 
@@ -68,7 +65,7 @@ class TestCreateJournalEntry:
             fiscal_year=2026, fiscal_month=2,
         )
         assert len(entry.lines) == 3
-        assert all(l.debit_amount is None for l in entry.lines)
+        assert all(l.encrypted_blob for l in entry.lines)
 
     def test_batch_id(self, db, user, accounts):
         entry = create_journal_entry(

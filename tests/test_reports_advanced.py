@@ -53,10 +53,10 @@ class TestBalanceWithPref:
             entry_number=1,
         )
         e.lines = [
-            JournalEntryLine(account_user_id=user.id, account_code="5010",
-                             debit_amount=0, credit_amount=100),
-            JournalEntryLine(account_user_id=user.id, account_code="3020",
-                             debit_amount=100, credit_amount=0),
+            JournalEntryLine(account_user_id=user.id,
+                             encrypted_blob=bytes([0x42]) * 48, blob_iv=bytes([0x42]) * 12),
+            JournalEntryLine(account_user_id=user.id,
+                             encrypted_blob=bytes([0x42]) * 48, blob_iv=bytes([0x42]) * 12),
         ]
         db.session.add(e)
         db.session.commit()
@@ -89,10 +89,10 @@ class TestBsAdvanced:
             entry_number=1,
         )
         e.lines = [
-            JournalEntryLine(account_user_id=user.id, account_code="3020",
-                             debit_amount=10000, credit_amount=0),
-            JournalEntryLine(account_user_id=user.id, account_code="4010",
-                             debit_amount=0, credit_amount=10000),
+            JournalEntryLine(account_user_id=user.id,
+                             encrypted_blob=bytes([0x42]) * 48, blob_iv=bytes([0x42]) * 12),
+            JournalEntryLine(account_user_id=user.id,
+                             encrypted_blob=bytes([0x42]) * 48, blob_iv=bytes([0x42]) * 12),
         ]
         db.session.add(e)
         db.session.commit()

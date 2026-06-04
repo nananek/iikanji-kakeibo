@@ -59,8 +59,6 @@ class TestCloseClosingSuccess:
         # #338 item5: line 本体は encrypted_blob のみ。平文 account_code/debit/credit
         # は書かれない (NULL)。貸借一致はクライアント + 監査時検査の責務。
         assert all(l.encrypted_blob for l in lines)
-        assert all(l.debit_amount is None and l.credit_amount is None for l in lines)
-        assert all(l.account_code is None for l in lines)
 
     def test_null_closing_entry_closes_period_only(self, client, db, user, accounts, auth_header):
         """振替不要 (closing_entry=null) なら period15 確定のみ。closing 仕訳 0 件。"""

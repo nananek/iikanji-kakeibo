@@ -93,15 +93,11 @@ class JournalEntryLine(db.Model):
         db.Integer, db.ForeignKey("journal_entries.id"), nullable=False
     )
     account_user_id = db.Column(db.Integer, nullable=False)
-    # #338 item5 (Phase 5a-b, migration 067): account_code / debit_amount /
-    # credit_amount は read 側を全て client 化済 (item4 応答平文除去 + Phase R
-    # レポート集計)。Phase 5b で write を停止し、新規行はこれらを NULL で書く
-    # (本体は encrypted_blob のみ)。default=0 を外したのは None を明示的に NULL の
-    # まま保存するため (default があると None→0 に化けてしまう)。item8 (068) で
-    # FK 撤去のうえ物理 DROP する。
-    account_code = db.Column(db.String(10), nullable=True)
-    debit_amount = db.Column(db.Numeric(12, 0), nullable=True)
-    credit_amount = db.Column(db.Numeric(12, 0), nullable=True)
+    # #338 item8 (Phase 8, migration 068): 平文メタ列 account_code / debit_amount /
+    # credit_amount と複合 FK fk_jel_account は物理 DROP 済。行の科目・金額は全て
+    # encrypted_blob に収録され、集計・貸借一致・科目存在の検査はクライアント
+    # (復号時) + 監査時検査の責務 (§13)。サーバはこれらを一切保持・参照しない
+    # = 真の「DB 平文ゼロ」。account_user_id はテナント識別のため平文継続。
     # E3-F PR-D-6-5 (055): 平文 description は DROP 済。本体は encrypted_blob のみ。
     # Phase E3: クライアント暗号化された account_code / debit / credit / description
     # の本体。AAD には user_id のみを含む (Option B)。closing 仕訳行は空 blob
@@ -109,13 +105,5 @@ class JournalEntryLine(db.Model):
     encrypted_blob = db.Column(db.LargeBinary, nullable=False, default=b"")
     blob_iv = db.Column(db.LargeBinary, nullable=False, default=b"")  # AES-GCM IV (12B)
 
-    __table_args__ = (
-        db.ForeignKeyConstraint(
-            ["account_user_id", "account_code"],
-            ["accounts.user_id", "accounts.code"],
-            name="fk_jel_account",
-        ),
-    )
-
     def __repr__(self):
-        return f"<JournalEntryLine {self.account_code} D:{self.debit_amount} C:{self.credit_amount}>"
+        return f"<JournalEntryLine entry={self.journal_entry_id} user={self.account_user_id}>"

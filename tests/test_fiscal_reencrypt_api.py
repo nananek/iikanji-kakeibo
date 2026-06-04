@@ -30,11 +30,9 @@ def _make_old_closing(db, user_id, year=2026, amount=1000, codes=("4010", "3020"
                      fiscal_month=16, fiscal_year=year,
                      encrypted_blob=b"", blob_iv=bytes(12))
     e.lines = [
-        JournalEntryLine(account_user_id=user_id, account_code=codes[0],
-                         debit_amount=amount, credit_amount=0,
+        JournalEntryLine(account_user_id=user_id,
                          encrypted_blob=b"", blob_iv=bytes(12)),
-        JournalEntryLine(account_user_id=user_id, account_code=codes[1],
-                         debit_amount=0, credit_amount=amount,
+        JournalEntryLine(account_user_id=user_id,
                          encrypted_blob=b"", blob_iv=bytes(12)),
     ]
     db.session.add(e)
@@ -75,9 +73,9 @@ class TestReencryptSuccess:
         assert fc.closed_period == 15
 
     def test_reencrypted_lines_store_blob_not_plaintext(self, client, db, user, accounts, auth_header):
-        """#338 item5: 再暗号化 closing の line は encrypted_blob のみを持ち、平文
-        debit/credit は書かれない (NULL)。金額の faithful 性はクライアントが
-        encrypted_blob 内で担保する (サーバは平文を持たない)。"""
+        """#338 item5/Phase8: 再暗号化 closing の line は encrypted_blob のみを持つ。
+        平文 debit/credit/account_code 列は物理削除済みでサーバは平文を保持しない。
+        金額の faithful 性はクライアントが encrypted_blob 内で担保する。"""
         _set_closed(db, user.id, 15)
         _make_old_closing(db, user.id, amount=7777)
         resp = client.post(URL, headers=auth_header, json={
@@ -87,9 +85,6 @@ class TestReencryptSuccess:
         new = JournalEntry.query.get(resp.get_json()["closing_entry_id"])
         assert new.lines
         for l in new.lines:
-            assert l.debit_amount is None
-            assert l.credit_amount is None
-            assert l.account_code is None
             assert l.encrypted_blob  # 非空 (クライアント暗号化済 line 本体)
 
     def test_idempotent(self, client, db, user, accounts, auth_header):
@@ -221,11 +216,9 @@ class TestOldClosingYearsHelper:
         e = JournalEntry(user_id=user.id, entry_number=950, is_closing=True,
                          fiscal_month=16, fiscal_year=2024,
                          encrypted_blob=b"realblob", blob_iv=bytes(12))
-        e.lines = [JournalEntryLine(account_user_id=user.id, account_code="4010",
-                                    debit_amount=1, credit_amount=0,
+        e.lines = [JournalEntryLine(account_user_id=user.id,
                                     encrypted_blob=b"x", blob_iv=bytes(12)),
-                   JournalEntryLine(account_user_id=user.id, account_code="3020",
-                                    debit_amount=0, credit_amount=1,
+                   JournalEntryLine(account_user_id=user.id,
                                     encrypted_blob=b"x", blob_iv=bytes(12))]
         db.session.add(e)
         db.session.commit()

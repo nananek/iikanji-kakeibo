@@ -80,15 +80,11 @@ def create_journal_entry(user_id, lines_data, *, fiscal_year, fiscal_month,
             raise ValueError(
                 "line の blob_iv は 12B (AES-GCM IV) である必要があります。",
             )
+        # #338 item8 (068): 平文 account_code / debit / credit 列は物理 DROP 済。
+        # line 本体は encrypted_blob のみ。
         line = JournalEntryLine(
             journal_entry_id=entry.id,
             account_user_id=user_id,
-            # #338 item5: 平文 account_code / debit / credit / description は
-            # 書き込まない (NULL)。line 本体は encrypted_blob のみ。item8 (068) で
-            # これらの列を物理 DROP する。
-            account_code=None,
-            debit_amount=None,
-            credit_amount=None,
             encrypted_blob=line_blob,
             blob_iv=line_iv,
         )

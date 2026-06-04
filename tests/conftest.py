@@ -346,13 +346,18 @@ def make_journal(db, user_id, acct_debit_code, acct_credit_code, amount,
         is_closing=is_closing,
         fiscal_month=fiscal_month,
     )
+    # #338 item8 (068): 平文 account_code / debit / credit 列は物理 DROP 済。
+    # 行本体は encrypted_blob のみ (テストではダミー blob)。実値は本番では
+    # クライアント暗号化された encrypted_blob に収録される。acct_debit_code /
+    # acct_credit_code / amount 引数は呼び出し側 API 互換のため受け取るが、
+    # サーバはこれらを平文では保持しない。
+    _blob = bytes([0x42]) * 48
+    _iv = bytes([0x42]) * 12
     entry.lines = [
         JournalEntryLine(account_user_id=user_id,
-                         account_code=acct_debit_code,
-                         debit_amount=amount, credit_amount=0),
+                         encrypted_blob=_blob, blob_iv=_iv),
         JournalEntryLine(account_user_id=user_id,
-                         account_code=acct_credit_code,
-                         debit_amount=0, credit_amount=amount),
+                         encrypted_blob=_blob, blob_iv=_iv),
     ]
     db.session.add(entry)
     db.session.commit()
