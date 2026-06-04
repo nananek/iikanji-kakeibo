@@ -614,6 +614,42 @@ def _parse_closing_lines(closing_entry, user_account_codes):
     return entry_blob, entry_iv, lines_data
 
 
+def _insert_closing_entry(user_id, year, closing_entry):
+    """クライアントが暗号化生成した closing 仕訳で year の closing を置換する。
+
+    既存 closing を削除してから挿入する冪等操作。`commit` はしない (caller が
+    トランザクションを閉じる)。`closing_entry=None` なら既存削除のみ。close_closing
+    (period15 確定) と reencrypt_closing (旧 closing 移行) で共有する。
+
+    戻り値: 挿入した closing 仕訳の id (closing_entry=None なら None)。
+    ValueError を raise しうる (科目不存在 / 貸借不一致 / blob 不正)。
+    """
+    entry_blob = entry_iv = lines_data = None
+    if closing_entry is not None:
+        user_account_codes = {
+            a.code for a in Account.query.filter_by(user_id=user_id).all()
+        }
+        entry_blob, entry_iv, lines_data = _parse_closing_lines(
+            closing_entry, user_account_codes,
+        )
+    # 冪等性: 既存 (旧 or 新) closing を除去してから挿入する (reopen と同じ削除関数)。
+    delete_closing_entries(user_id, year)
+    if closing_entry is None:
+        return None
+    entry = create_journal_entry(
+        user_id=user_id,
+        lines_data=lines_data,
+        batch_id=f"closing-{year}-{uuid.uuid4().hex[:8]}",
+        encrypted_blob=entry_blob,
+        blob_iv=entry_iv,
+        fiscal_year=year,
+        fiscal_month=16,
+        is_closing=True,
+        commit=False,
+    )
+    return entry.id
+
+
 @bp.route("/fiscal/close-closing", methods=["POST"])
 @auth_required(write=True, scope="journals:create", allow_session=True)
 @limiter.limit("30 per minute", key_func=rate_limit_key)
@@ -668,31 +704,7 @@ def close_closing():
     closing_entry = data.get("closing_entry")
 
     try:
-        if closing_entry is not None:
-            user_account_codes = {
-                a.code for a in Account.query.filter_by(user_id=user_id).all()
-            }
-            entry_blob, entry_iv, lines_data = _parse_closing_lines(
-                closing_entry, user_account_codes,
-            )
-        # 冪等性: 再確定時の残骸を除去してから挿入する (reopen と同じ削除関数)。
-        delete_closing_entries(user_id, year)
-
-        closing_id = None
-        if closing_entry is not None:
-            entry = create_journal_entry(
-                user_id=user_id,
-                lines_data=lines_data,
-                batch_id=f"closing-{year}-{uuid.uuid4().hex[:8]}",
-                encrypted_blob=entry_blob,
-                blob_iv=entry_iv,
-                fiscal_year=year,
-                fiscal_month=16,
-                is_closing=True,
-                commit=False,
-            )
-            closing_id = entry.id
-
+        closing_id = _insert_closing_entry(user_id, year, closing_entry)
         fc.closed_period = 15
         db.session.commit()
     except ValueError as ve:
@@ -708,6 +720,60 @@ def close_closing():
         "closed_period": 15,
         "closing_entry_id": closing_id,
     })
+
+
+@bp.route("/fiscal/reencrypt-closing", methods=["POST"])
+@auth_required(write=True, scope="journals:create", allow_session=True)
+@limiter.limit("30 per minute", key_func=rate_limit_key)
+def reencrypt_closing():
+    """旧 closing (item1 以前のサーバ生成・空 encrypted_blob センチネル) を、クライアントが
+    再計算・暗号化した closing で in-place 置換する (#338 旧 closing 移行)。
+
+    対象年度は既に決算月3 (period15) 確定済みなので FiscalClose は変更しない
+    (close_closing と異なり period 前進はしない)。確定済み期間はロックされ
+    revenue/expense を編集できないため、クライアントの再計算 closing は元と数値的に
+    同一になる (faithful re-encryption、金額は変わらない)。旧 closing が残ると
+    item4 (応答からの平文除去) / item8 (平文列 DROP) / backup restore (空 blob は
+    必須バリデーションで拒否) がブロックされるため、その解消が目的。
+
+    リクエスト: {year, closing_entry: {encrypted_blob, blob_iv, lines:[...]} | null}
+    レスポンス: 200 {ok, closing_entry_id: int|null}
+    """
+    from app.models.fiscal import FiscalClose
+
+    data = request.get_json(silent=True)
+    if not data:
+        return jsonify({"error": "JSON ボディが必要です。"}), 400
+
+    year = data.get("year")
+    try:
+        _validate_year(year)
+    except ValueError as ve:
+        return jsonify({"error": safe_user_error(ve)}), 400
+
+    user_id = g.auth_user.id
+
+    # 決算月3 確定済みの年度のみ対象 (旧 closing は period15 確定時に生成された)。
+    fc = FiscalClose.query.filter_by(user_id=user_id, year=year).first()
+    if not fc or fc.closed_period < 15:
+        return jsonify({
+            "error": "決算月3が確定されていない年度です。",
+        }), 409
+
+    closing_entry = data.get("closing_entry")
+
+    try:
+        closing_id = _insert_closing_entry(user_id, year, closing_entry)
+        db.session.commit()
+    except ValueError as ve:
+        db.session.rollback()
+        return jsonify({"error": safe_user_error(ve)}), 400
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception("reencrypt_closing failed")
+        return jsonify({"error": "損益振替の再暗号化に失敗しました。"}), 500
+
+    return jsonify({"ok": True, "closing_entry_id": closing_id})
 
 
 # --- 残高キャッシュ blob (E3-E-1) ---
