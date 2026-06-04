@@ -364,7 +364,11 @@ class TestCreateJournalsBatch:
         assert resp.status_code == 201
         from app.models.journal import JournalEntryLine
         lines = JournalEntryLine.query.filter_by(account_user_id=user.id).all()
-        assert lines and all(l.account_code is None for l in lines)
+        # #338 Phase 8: 平文 account_code 列は物理削除済み。サーバは平文を
+        # 一切保持せず encrypted_blob のみ。行が 2 行とも保存され各行に
+        # encrypted_blob が存在することのみを確認する。
+        assert len(lines) == 2
+        assert all(l.encrypted_blob for l in lines)
 
     def test_float_amount_wire_ignored(self, client, db, user, accounts, auth_header):
         """#338 item5: 平文 debit/credit はサーバが受け取らない (送られても無視)。
@@ -1809,8 +1813,8 @@ class TestBackupExport:
         db.session.flush()
         db.session.add(JournalEntryLine(
             journal_entry_id=je.id,
-            account_user_id=other.id, account_code="9999",
-            debit_amount=999, credit_amount=0,
+            account_user_id=other.id,
+            encrypted_blob=bytes([0x42]) * 48, blob_iv=bytes([0x42]) * 12,
         ))
         db.session.add(MedicalExpense(
             user_id=other.id,

@@ -55,15 +55,15 @@ def mixed_journal(db, user, accounts):
         # (check_entry_modifiable は fiscal_year/fiscal_month を読む)。
         fiscal_year=2026, fiscal_month=2,
     )
+    # #338 Phase 8: 平文列 (account_code/debit_amount/credit_amount) は物理削除済み。
+    # 各行は暗号化 blob のみを保持する (借方/貸方・科目は平文では表現できない)。
     e.lines = [
-        # 公開: 食費 800 (debit) + 住居費 200 (debit) = 1000
-        JournalEntryLine(account_user_id=user.id, account_code="5010",
-                         debit_amount=800, credit_amount=0),
-        JournalEntryLine(account_user_id=user.id, account_code="5020",
-                         debit_amount=200, credit_amount=0),  # 非公開
-        # 公開: 現金 1000 (credit)
-        JournalEntryLine(account_user_id=user.id, account_code="1010",
-                         debit_amount=0, credit_amount=1000),
+        JournalEntryLine(account_user_id=user.id,
+                         encrypted_blob=bytes([0x42]) * 48, blob_iv=bytes([0x42]) * 12),
+        JournalEntryLine(account_user_id=user.id,
+                         encrypted_blob=bytes([0x42]) * 48, blob_iv=bytes([0x42]) * 12),
+        JournalEntryLine(account_user_id=user.id,
+                         encrypted_blob=bytes([0x42]) * 48, blob_iv=bytes([0x42]) * 12),
     ]
     db.session.add(e)
     db.session.commit()

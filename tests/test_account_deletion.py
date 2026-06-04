@@ -367,8 +367,8 @@ class TestJournalEntryDeletionOrder:
         db.session.add(JournalEntryLine(
             journal_entry_id=entry.id,
             account_user_id=user.id,
-            account_code="9999",
-            debit_amount=100, credit_amount=0,
+            encrypted_blob=bytes([0x42]) * 48,
+            blob_iv=bytes([0x42]) * 12,
         ))
         db.session.commit()
         assert JournalEntryLine.query.filter_by(

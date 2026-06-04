@@ -324,10 +324,12 @@ class TestPLBusinessCollapse:
             fiscal_year=2026, fiscal_month=1,
         )
         entry.lines = [
-            JournalEntryLine(account_user_id=user.id, account_code="1010",
-                             debit_amount=200000, credit_amount=0),
-            JournalEntryLine(account_user_id=user.id, account_code="9010",
-                             debit_amount=0, credit_amount=200000),
+            JournalEntryLine(account_user_id=user.id,
+                             encrypted_blob=bytes([0x42]) * 48,
+                             blob_iv=bytes([0x42]) * 12),
+            JournalEntryLine(account_user_id=user.id,
+                             encrypted_blob=bytes([0x42]) * 48,
+                             blob_iv=bytes([0x42]) * 12),
         ]
         db.session.add(entry)
         db.session.commit()
@@ -349,10 +351,12 @@ class TestPLBusinessCollapse:
             fiscal_year=2026, fiscal_month=1,
         )
         entry.lines = [
-            JournalEntryLine(account_user_id=user.id, account_code="1010",
-                             debit_amount=300000, credit_amount=0),
-            JournalEntryLine(account_user_id=user.id, account_code="4010",
-                             debit_amount=0, credit_amount=300000),
+            JournalEntryLine(account_user_id=user.id,
+                             encrypted_blob=bytes([0x42]) * 48,
+                             blob_iv=bytes([0x42]) * 12),
+            JournalEntryLine(account_user_id=user.id,
+                             encrypted_blob=bytes([0x42]) * 48,
+                             blob_iv=bytes([0x42]) * 12),
         ]
         db.session.add(entry)
         db.session.commit()
@@ -387,10 +391,12 @@ class TestPLBusinessCollapse:
             fiscal_year=2026, fiscal_month=1,
         )
         e1.lines = [
-            JournalEntryLine(account_user_id=user.id, account_code="5010",
-                             debit_amount=5000, credit_amount=0),
-            JournalEntryLine(account_user_id=user.id, account_code="1010",
-                             debit_amount=0, credit_amount=5000),
+            JournalEntryLine(account_user_id=user.id,
+                             encrypted_blob=bytes([0x42]) * 48,
+                             blob_iv=bytes([0x42]) * 12),
+            JournalEntryLine(account_user_id=user.id,
+                             encrypted_blob=bytes([0x42]) * 48,
+                             blob_iv=bytes([0x42]) * 12),
         ]
         e2 = JournalEntry(
             user_id=user.id,
@@ -398,10 +404,12 @@ class TestPLBusinessCollapse:
             fiscal_year=2026, fiscal_month=1,
         )
         e2.lines = [
-            JournalEntryLine(account_user_id=user.id, account_code="9210",
-                             debit_amount=20000, credit_amount=0),
-            JournalEntryLine(account_user_id=user.id, account_code="1010",
-                             debit_amount=0, credit_amount=20000),
+            JournalEntryLine(account_user_id=user.id,
+                             encrypted_blob=bytes([0x42]) * 48,
+                             blob_iv=bytes([0x42]) * 12),
+            JournalEntryLine(account_user_id=user.id,
+                             encrypted_blob=bytes([0x42]) * 48,
+                             blob_iv=bytes([0x42]) * 12),
         ]
         db.session.add_all([e1, e2])
         db.session.commit()

@@ -215,10 +215,10 @@ class TestDeleteClosingEntries:
                          fiscal_month=16, fiscal_year=year,
                          encrypted_blob=b"x", blob_iv=bytes(12))
         e.lines = [
-            JournalEntryLine(account_user_id=user_id, account_code="4010",
-                             debit_amount=100, credit_amount=0),
-            JournalEntryLine(account_user_id=user_id, account_code="3020",
-                             debit_amount=0, credit_amount=100),
+            JournalEntryLine(account_user_id=user_id, encrypted_blob=b"",
+                             blob_iv=bytes(12)),
+            JournalEntryLine(account_user_id=user_id, encrypted_blob=b"",
+                             blob_iv=bytes(12)),
         ]
         db.session.add(e)
         db.session.commit()

@@ -71,11 +71,15 @@ with app.app_context():
             entry_number=get_next_entry_number(u.id),
             fiscal_year=2026, fiscal_month=1,
         )
+        # #338 item8 (068): 平文 account_code/debit/credit 列は DROP 済。本体は
+        # encrypted_blob のみ (E2E seed ではダミー blob)。
         entry.lines = [
-            JournalEntryLine(account_user_id=u.id, account_code=food.code,
-                             debit_amount=1000, credit_amount=0),
-            JournalEntryLine(account_user_id=u.id, account_code=cash.code,
-                             debit_amount=0, credit_amount=1000),
+            JournalEntryLine(account_user_id=u.id,
+                             encrypted_blob=bytes([0x42]) * 48,
+                             blob_iv=bytes([0x42]) * 12),
+            JournalEntryLine(account_user_id=u.id,
+                             encrypted_blob=bytes([0x42]) * 48,
+                             blob_iv=bytes([0x42]) * 12),
         ]
         db.session.add(entry)
         db.session.commit()

@@ -38,9 +38,9 @@ class Account(db.Model):
     deactivated_year = db.Column(db.Integer, nullable=True)
     display_order = db.Column(db.Integer, nullable=False, default=0)
 
-    journal_lines = db.relationship(
-        "JournalEntryLine", backref="account", lazy="dynamic"
-    )
+    # #338 item8 (Phase 8): JournalEntryLine の複合 FK fk_jel_account が DROP され
+    # 科目・金額は encrypted_blob に収録されたため、Account.journal_lines /
+    # JournalEntryLine.account の relationship/backref は撤去 (join 条件不成立)。
 
     def __repr__(self):
         return f"<Account {self.code} {self.name}>"
