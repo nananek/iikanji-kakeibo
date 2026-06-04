@@ -491,7 +491,9 @@ def _restore_journal_entry_lines(
                 f"journal_entry_lines: unmapped journal_entry_id {old_eid}",
             )
         # #338 item5: 平文 account_code / debit / credit / description は書き込まない
-        # (NULL)。line 本体は encrypted_blob のみ。backup にこれらが残っていても無視する。
+        # (NULL)。line 本体は encrypted_blob のみ。旧バックアップにこれらの平文が
+        # 残っていても無視するが、E3 以降のバックアップは line の実値を encrypted_blob
+        # に必ず保持しているため実害はない (平文列は冗長コピーだった)。
         db.session.add(JournalEntryLine(
             journal_entry_id=new_eid,
             account_user_id=user_id,

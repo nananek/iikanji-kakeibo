@@ -339,13 +339,12 @@ def _parse_fiscal_meta(data):
     return fiscal_year, fiscal_month, None
 
 
-def _validate_and_parse_batch_entry(e, idx, user_account_codes=None):
+def _validate_and_parse_batch_entry(e, idx):
     """batch API 用: 1 entry 分の入力を validate して create_journal_entry 引数に整形。
 
     #338 item5: 平文 account_code / debit / credit は受け取らない (送られても無視)。
     line 本体は encrypted_blob のみ。科目存在・貸借一致のサーバ検査は撤去し、
-    クライアント + 監査時検査の責務へ移行した (§12.11/§13)。user_account_codes は
-    後方互換のため引数に残すが未使用。
+    クライアント + 監査時検査の責務へ移行した (§12.11/§13)。
 
     エラーは ValueError を raise (caller が一括 rollback + 400 を返す)。
     """

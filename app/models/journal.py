@@ -70,17 +70,10 @@ class JournalEntry(db.Model):
         lazy="select",
     )
 
-    @property
-    def total_debit(self):
-        return sum(line.debit_amount for line in self.lines)
-
-    @property
-    def total_credit(self):
-        return sum(line.credit_amount for line in self.lines)
-
-    @property
-    def is_balanced(self):
-        return self.total_debit == self.total_credit
+    # #338 item5 (Phase 5b): total_debit / total_credit / is_balanced は削除した。
+    # 平文 debit_amount / credit_amount は新規行で NULL になり sum() が TypeError に
+    # なるうえ、サーバは平文金額を保持しない設計 (集計・貸借はクライアント + 監査時
+    # 検査の責務 §12.11/§13)。残高表示はクライアントが encrypted_blob を復号して算出。
 
     def __repr__(self):
         # E3-F PR-D-6-5-pre1: 平文 date は参照しない (D-6-5 で DROP)。
