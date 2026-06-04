@@ -98,11 +98,14 @@ def _validate_backup(user_id: int, backup: Any) -> None:
     if cfg is not None and not isinstance(cfg, dict):
         raise BackupValidationError("user_ai_config must be an object or null")
 
-    # FK 事前検算: account_code 参照
+    # FK 事前検算: account_code 参照。
+    # #338 Phase 5-backup: journal_entry_lines は平文 account_code を export/restore
+    # しなくなった (本体は encrypted_blob、平文列は NULL 書き込み) ため、この事前検算
+    # の対象から外す。line の非 dict 検査は下の journal_entry_id ループが担う。
     account_codes = {
         a.get("code") for a in (data.get("accounts") or []) if isinstance(a, dict)
     }
-    for tbl in ("journal_entry_lines", "csv_column_profiles", "tax_form_mappings"):
+    for tbl in ("csv_column_profiles", "tax_form_mappings"):
         for row in data.get(tbl) or []:
             if not isinstance(row, dict):
                 raise BackupValidationError(f"{tbl}[*] must be an object")
@@ -235,27 +238,10 @@ def _validate_backup(user_id: int, backup: Any) -> None:
                     "(クライアント側暗号化が必要)"
                 )
 
-    # journal_entry の貸借合計一致チェック (改ざんされた backup から不整合な
-    # 仕訳を DB に書き込ませないため)
-    entry_balance: dict[int, list[int]] = {}
-    for row in data.get("journal_entry_lines") or []:
-        eid = row.get("journal_entry_id")
-        if eid is None:
-            continue
-        bal = entry_balance.setdefault(eid, [0, 0])
-        try:
-            bal[0] += int(row.get("debit_amount") or 0)
-            bal[1] += int(row.get("credit_amount") or 0)
-        except (TypeError, ValueError) as e:
-            raise BackupValidationError(
-                f"journal_entry_lines: invalid amount: {e}",
-            ) from e
-    for eid, (dr, cr) in entry_balance.items():
-        if dr != cr:
-            raise BackupValidationError(
-                f"journal_entry {eid}: debit {dr} != credit {cr}"
-                " (貸借不一致)",
-            )
+    # #338 Phase 5-backup: 旧来ここで journal_entry の貸借合計一致を平文
+    # debit_amount/credit_amount から検算していたが、平文金額は export/restore から
+    # 除去済 (本体は encrypted_blob のみ) のため、サーバはもはや貸借を検査できない。
+    # §13 のとおり貸借一致の検査はクライアント (復号時) + 監査時検査へ全面委譲する。
 
 
 # --- delete (User と鍵類は残す) ---

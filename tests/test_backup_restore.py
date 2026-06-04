@@ -159,17 +159,20 @@ class TestBackupRestoreValidation:
     def test_invalid_account_code_rejected(
         self, client, db, user, auth_header, reset_limiter, backup_skeleton,
     ):
+        """account_code を平文で持つテーブル (csv_column_profiles / tax_form_mappings)
+        が accounts に存在しない科目を参照していたら FK 事前検算で拒否。
+
+        #338 Phase 5-backup: journal_entry_lines は平文 account_code を持たなく
+        なったため、この事前検算の対象から外れた。
+        """
         backup_skeleton["data"]["accounts"] = [
             {"code": "1010", "name": "現金", "account_type_id": 1},
         ]
-        backup_skeleton["data"]["journal_entries"] = [
-            {"id": 1, "date": "2026-01-01", "entry_number": 1, "description": "x"},
-        ]
-        backup_skeleton["data"]["journal_entry_lines"] = [
+        backup_skeleton["data"]["csv_column_profiles"] = [
             {
-                "id": 1, "journal_entry_id": 1,
                 "account_code": "9999",  # accounts に含まれない
-                "debit_amount": 100, "credit_amount": 0,
+                "name": "x", "encoding": "utf-8", "date_col": 0,
+                "amount_col": 1, "description_col": 2,
             },
         ]
         resp = client.post(
@@ -177,6 +180,7 @@ class TestBackupRestoreValidation:
             headers=auth_header, json=backup_skeleton,
         )
         assert resp.status_code == 400
+        assert "unknown account_code" in resp.get_json().get("error", "")
 
     def test_fiscal_period_16_rejected(
         self, client, db, user, accounts, auth_header, reset_limiter,
@@ -199,11 +203,15 @@ class TestBackupRestoreValidation:
         # E3-F: closing 判定メッセージは is_closing ベースに変更。
         assert "損益振替" in resp.get_json().get("error", "")
 
-    def test_unbalanced_entry_rejected(
+    def test_unbalanced_entry_no_longer_validated_server_side(
         self, client, db, user, accounts, auth_header, reset_limiter,
         backup_skeleton,
     ):
-        """貸借不一致の仕訳は復元拒否 (改ざん検知)。"""
+        """#338 Phase 5-backup: 平文金額を export/restore しなくなったため、サーバは
+        貸借一致を検査しない (§13: クライアント復号 + 監査時検査へ委譲)。
+
+        encrypted_blob さえ揃っていれば、平文金額の有無/整合に関わらず受理される。
+        """
         eb = base64.b64encode(b"\x42" * 48).decode("ascii")
         iv = base64.b64encode(b"\x42" * 12).decode("ascii")
         backup_skeleton["data"]["accounts"] = [
@@ -216,21 +224,18 @@ class TestBackupRestoreValidation:
             {"id": 1, "date": "2026-01-01", "entry_number": 1, "description": "x",
              "encrypted_blob": eb, "blob_iv": iv},
         ]
+        # 平文 debit/credit を含めない E3+ バックアップ形式 (本体は encrypted_blob)。
         backup_skeleton["data"]["journal_entry_lines"] = [
-            {"id": 1, "journal_entry_id": 1, "account_code": "5010",
-             "debit_amount": 1000, "credit_amount": 0,
+            {"id": 1, "journal_entry_id": 1,
              "encrypted_blob": eb, "blob_iv": iv},
-            # 借方 1000 vs 貸方 999 → 不一致
-            {"id": 2, "journal_entry_id": 1, "account_code": "1010",
-             "debit_amount": 0, "credit_amount": 999,
+            {"id": 2, "journal_entry_id": 1,
              "encrypted_blob": eb, "blob_iv": iv},
         ]
         resp = client.post(
             "/api/v1/backup/restore",
             headers=auth_header, json=backup_skeleton,
         )
-        assert resp.status_code == 400
-        assert "貸借" in resp.get_json().get("error", "")
+        assert resp.status_code == 200
 
     def test_restore_rejects_journal_entry_without_encrypted_blob(
         self, client, db, user, accounts, auth_header, reset_limiter,
@@ -987,10 +992,14 @@ class TestBackupRestoreHelpers:
         with pytest.raises(BackupValidationError, match="object"):
             _validate_backup(1, b)
 
-    def test_validate_invalid_amount(self):
-        from app.services.backup_restore import (
-            _validate_backup, BackupValidationError,
-        )
+    def test_validate_ignores_plaintext_amount(self):
+        """#338 Phase 5-backup: 平文 debit_amount/credit_amount は検査しない。
+
+        旧バックアップに不正な平文金額 ("abc" 等) が残っていても、サーバは
+        encrypted_blob のみを見るため検証は通る (貸借/金額の正当性はクライアント
+        復号時 + 監査時検査へ委譲)。
+        """
+        from app.services.backup_restore import _validate_backup
         eb = base64.b64encode(b"\x42" * 48).decode("ascii")
         iv = base64.b64encode(b"\x42" * 12).decode("ascii")
         b = {
@@ -1001,14 +1010,14 @@ class TestBackupRestoreHelpers:
                     {"id": 1, "encrypted_blob": eb, "blob_iv": iv},
                 ],
                 "journal_entry_lines": [
-                    {"journal_entry_id": 1, "account_code": "1010",
+                    {"journal_entry_id": 1,
                      "debit_amount": "abc", "credit_amount": 0,
                      "encrypted_blob": eb, "blob_iv": iv},
                 ],
             },
         }
-        with pytest.raises(BackupValidationError, match="invalid amount"):
-            _validate_backup(1, b)
+        # raise しない (平文金額は無視される)
+        _validate_backup(1, b)
 
     def _e2ee_voucher_backup(self, **overrides):
         """encrypted_meta_blob を持つ最小の E2EE 証憑入り backup を組む。"""
