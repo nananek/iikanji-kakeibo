@@ -71,7 +71,7 @@
 | AccountType | account_types | name, code (asset/liability/equity/revenue/expense), normal_balance |
 | Account | accounts | PK(user_id, code), name, tax_category, cost_type, system_role, is_active, deactivated_year |
 | JournalEntry | journal_entries | user_id, date, entry_number, description, source, batch_id, fiscal_period |
-| JournalEntryLine | journal_entry_lines | journal_entry_id, account_user_id, account_code, debit_amount, credit_amount |
+| JournalEntryLine | journal_entry_lines | journal_entry_id, account_user_id, encrypted_blob, blob_iv（科目・金額は #338 で平文列を物理DROP済、blob内に暗号化収録） |
 | FiscalClose | fiscal_closes | user_id, year, closed_period |
 | MedicalExpense | medical_expenses | patient_name, hospital_name, amount_paid, insurance_reimbursement, provider_type |
 | AuditGrant | audit_grants | owner_user_id, auditor_user_id, permission_level (1/2/3), revoked_at |
