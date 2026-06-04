@@ -128,6 +128,30 @@ class TestEdit:
         resp = logged_in_client.get(f"/journal/{entry.id}/edit")
         assert resp.status_code == 200
 
+    def test_edit_no_plaintext_line_data_in_body(self, db, logged_in_client, user, accounts):
+        """#338 PR3 (方針B): 編集フォームの明細行はサーバ平文 (account_code /
+        debit_amount / credit_amount) を焼き込まず、line id のみのプレースホルダで
+        返す。科目コード・金額はクライアント (journal_lines_prefill.js) が
+        encrypted_blob を MK 復号して埋める。"""
+        import re
+        import json as _json
+        entry = self._make_entry(db, user.id)
+        resp = logged_in_client.get(f"/journal/{entry.id}/edit")
+        assert resp.status_code == 200
+        body = resp.get_data(as_text=True)
+        # クライアント prefill スクリプトが読み込まれる
+        assert "journal_lines_prefill.js" in body
+        # _existingLines は line id を保持しつつ account_code/金額は空 (平文非焼込み)
+        m = re.search(r"var _existingLines = (\[.*?\]);", body)
+        assert m, "_existingLines JSON が埋め込まれていない"
+        existing = _json.loads(m.group(1))
+        assert len(existing) == len(entry.lines)
+        for ln in existing:
+            assert ln["id"] is not None
+            assert ln["account_code"] == ""
+            assert ln["debit_amount"] == 0
+            assert ln["credit_amount"] == 0
+
     def test_post_returns_405(self, db, logged_in_client, user, accounts):
         """E3-F PR-B2: journal.edit は GET 専用。POST は 405 を返し、
         平文 POST 経路で既存仕訳が書き換えられないことを保証する。"""

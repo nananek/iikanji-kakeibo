@@ -161,20 +161,32 @@ renderVoucherPreview(
 {% endif %}
 {% if is_edit %}
 {# E3-F PR-D-6-3b-3: date/description はサーバ平文を使わずクライアント復号で prefill #}
+{# #338 PR3: 明細行の科目コード・金額・摘要もサーバ平文を使わずクライアント復号で prefill #}
 <script type="module">
   import { hydrateEditForm } from "{{ url_for('static', filename='js/crypto/edit_form_prefill.js') }}";
+  import { hydrateJournalLines } from "{{ url_for('static', filename='js/crypto/journal_lines_prefill.js') }}";
   var workerUrl = "{{ url_for('static', filename='js/crypto/shared-worker.js') }}";
   function _runPrefill() {
+    // 明細行 (科目/金額/行摘要) は hydrateJournalLines が担当するため、entry レベルの
+    // date / description のみ hydrateEditForm に任せる (formEl は渡さない)。
     hydrateEditForm({
       isEdit: window._isEdit,
       entryId: window._entryId,
       userId: window._userId,
       dateInput: document.querySelector('#journalForm input[name=date]'),
       descInput: document.querySelector('#journalForm input[name=description], #journalForm textarea[name=description]'),
-      formEl: document.getElementById('journalForm'),
       workerUrl: workerUrl,
       alpine: window.Alpine,
     }).catch(function (e) { console.warn('edit prefill failed:', e); });
+    hydrateJournalLines({
+      isEdit: window._isEdit,
+      entryId: window._entryId,
+      userId: window._userId,
+      formEl: document.getElementById('journalForm'),
+      nameResolver: window._acctNameByCode,
+      workerUrl: workerUrl,
+      alpine: window.Alpine,
+    }).catch(function (e) { console.warn('journal lines prefill failed:', e); });
   }
   if (window.Alpine) _runPrefill();
   else document.addEventListener('alpine:initialized', _runPrefill, { once: true });
