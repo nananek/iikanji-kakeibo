@@ -54,13 +54,16 @@ function _assertNonEmptyString(value, label) {
 }
 
 
-function _assertFiscalPeriod(fiscalPeriod) {
+function _assertFiscalPeriod(fiscalPeriod, { allowClosing = false } = {}) {
   if (fiscalPeriod === null || fiscalPeriod === undefined) return;
-  // 16 (損益振替) は自動生成専用 (CLAUDE.md)、batch API も拒否する。
-  // クライアント側でも fail-loud で早期に弾く。
-  if (!Number.isInteger(fiscalPeriod) || fiscalPeriod < 0 || fiscalPeriod > 15) {
+  // 16 (損益振替) は自動生成専用 (CLAUDE.md)、汎用 batch API も拒否する。
+  // クライアント側でも通常経路では fail-loud で早期に弾く。closing 仕訳の
+  // クライアント暗号化生成 (closing.js, #338 item1) のみ allowClosing で 16 を
+  // 許可する (専用エンドポイント close-closing 経由でのみ保存される)。
+  const upper = allowClosing ? 16 : 15;
+  if (!Number.isInteger(fiscalPeriod) || fiscalPeriod < 0 || fiscalPeriod > upper) {
     throw new TypeError(
-      `fiscalPeriod must be an integer 0-15 or null (got ${fiscalPeriod})`,
+      `fiscalPeriod must be an integer 0-${upper} or null (got ${fiscalPeriod})`,
     );
   }
 }
@@ -286,9 +289,12 @@ export function buildJournalEntry({
   lines,
   source = "journal",
   fiscalPeriod = null,
+  // 損益振替 (closing) のクライアント暗号化生成時のみ fiscalPeriod=16 を許可する
+  // 内部オプション (#338 item1, closing.js から渡る)。通常の仕訳経路は 16 禁止。
+  _allowClosing = false,
 }) {
   _assertNonEmptyString(date, "date");
-  _assertFiscalPeriod(fiscalPeriod);
+  _assertFiscalPeriod(fiscalPeriod, { allowClosing: _allowClosing });
   if (!Array.isArray(lines) || lines.length < 2) {
     throw new TypeError("lines must be an array of length >= 2");
   }

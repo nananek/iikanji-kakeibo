@@ -4,6 +4,8 @@ from datetime import date, datetime, timezone
 from flask import Blueprint, render_template, redirect, url_for, flash, request, jsonify, make_response, current_app, session as flask_session
 from flask_login import login_required, logout_user, current_user
 
+from sqlalchemy.orm import joinedload
+
 from app.extensions import db, limiter
 from app.models.user import User
 from app.models.account import Account, AccountType
@@ -628,7 +630,28 @@ def fiscal():
         periods=periods,
         closed_period=closed,
         year_open=year_open,
+        closing_accounts_meta=_closing_accounts_meta(user_id),
     )
+
+
+def _closing_accounts_meta(user_id):
+    """#338 item1: 決算月3 確定時のクライアント closing 生成が科目を分類するための
+    code → {type, system_role} メタ。type で収益/費用の振替対象を判定し、
+    system_role=retained_earnings で繰越利益科目を引く。account テーブルは
+    非暗号化メタなのでサーバで構築してよい。closing は当年度の全科目を対象に
+    するため is_active で絞らず全科目を含める。"""
+    accounts = (
+        Account.query.filter_by(user_id=user_id)
+        .options(joinedload(Account.account_type))
+        .all()
+    )
+    return {
+        a.code: {
+            "type": a.account_type.code,
+            "system_role": a.system_role,
+        }
+        for a in accounts
+    }
 
 
 @bp.route("/fiscal/open-year", methods=["POST"])
@@ -675,6 +698,22 @@ def fiscal_close():
     is_ajax = is_htmx or request.headers.get("X-Requested-With") == "XMLHttpRequest"
     year = request.form.get("year", type=int)
     period = request.form.get("period", type=int)
+
+    # #338 item1: 決算月3 (period15) の確定はクライアントが損益振替を暗号化生成して
+    # POST /api/v1/fiscal/close-closing 経由で行う (closing_hook.mjs)。サーバは MK を
+    # 持たず closing を生成できないため、この htmx 経路では period15 を受け付けない。
+    if period == 15:
+        msg = "決算月3は決算画面の確定ボタンから確定してください。"
+        if is_htmx:
+            resp = make_response("", 422)
+            resp.headers["HX-Trigger"] = json.dumps(
+                {"showToast": {"message": msg, "type": "danger"}}
+            )
+            return resp
+        if is_ajax:
+            return jsonify({"ok": False, "message": msg}), 400
+        flash(msg, "danger")
+        return redirect(url_for("settings.fiscal", year=year))
 
     err = close_period(current_user.id, year, period)
     label = PERIOD_LABELS.get(period, f"{period}月")

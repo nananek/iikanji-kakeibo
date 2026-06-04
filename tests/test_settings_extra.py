@@ -261,6 +261,25 @@ class TestFiscal:
         })
         assert resp.status_code in (302, 303)
 
+    def test_close_period_15_rejected(self, db, logged_in_client, user, accounts):
+        """#338 item1: 決算月3 (period15) の確定は htmx 経路では受け付けない
+        (クライアントが closing を暗号化生成して close-closing エンドポイントへ送る)。
+        period14 まで確定済みでも fiscal_close は 422/400 で弾き、FiscalClose は不変。"""
+        db.session.add(FiscalClose(user_id=user.id, year=2026, closed_period=14))
+        db.session.commit()
+        resp = logged_in_client.post(
+            "/settings/fiscal/close",
+            data={"year": "2026", "period": "15"},
+            headers={"HX-Request": "true"},
+        )
+        assert resp.status_code == 422
+        assert "HX-Trigger" in resp.headers
+        # FiscalClose は 14 のまま (closing も生成されない)
+        fc = FiscalClose.query.filter_by(user_id=user.id, year=2026).first()
+        assert fc.closed_period == 14
+        from app.models.journal import JournalEntry
+        assert JournalEntry.query.filter_by(user_id=user.id, is_closing=True).count() == 0
+
 
 class TestAuditSettings:
     def test_get(self, logged_in_client, accounts):
