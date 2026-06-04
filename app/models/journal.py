@@ -100,9 +100,13 @@ class JournalEntryLine(db.Model):
         db.Integer, db.ForeignKey("journal_entries.id"), nullable=False
     )
     account_user_id = db.Column(db.Integer, nullable=False)
-    account_code = db.Column(db.String(10), nullable=False)
-    debit_amount = db.Column(db.Numeric(12, 0), nullable=False, default=0)
-    credit_amount = db.Column(db.Numeric(12, 0), nullable=False, default=0)
+    # #338 item5 (Phase 5a, migration 067): account_code / debit_amount /
+    # credit_amount は read 側を全て client 化済 (item4 応答平文除去 + Phase R
+    # レポート集計)。write 停止 (後続 PR) に向けて nullable に緩和した。write 停止後は
+    # 新規行で NULL になる。item8 (068) で FK 撤去のうえ物理 DROP する。
+    account_code = db.Column(db.String(10), nullable=True)
+    debit_amount = db.Column(db.Numeric(12, 0), nullable=True, default=0)
+    credit_amount = db.Column(db.Numeric(12, 0), nullable=True, default=0)
     # E3-F PR-D-6-5 (055): 平文 description は DROP 済。本体は encrypted_blob のみ。
     # Phase E3: クライアント暗号化された account_code / debit / credit / description
     # の本体。AAD には user_id のみを含む (Option B)。closing 仕訳行は空 blob
