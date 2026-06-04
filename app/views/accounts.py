@@ -7,22 +7,7 @@ from sqlalchemy import func
 
 from app.extensions import db
 from app.models.account import Account, AccountType
-from app.models.journal import JournalEntry, JournalEntryLine
-
-
-def _get_account_balance(account):
-    """科目の全期間残高を計算"""
-    result = db.session.query(
-        func.coalesce(func.sum(JournalEntryLine.debit_amount), 0),
-        func.coalesce(func.sum(JournalEntryLine.credit_amount), 0),
-    ).filter(
-        JournalEntryLine.account_user_id == account.user_id,
-        JournalEntryLine.account_code == account.code,
-    ).first()
-    d, c = int(result[0]), int(result[1])
-    if account.account_type.normal_balance == "debit":
-        return d - c
-    return c - d
+from app.models.journal import JournalEntry
 
 
 def _next_code(code: str, user_id: int) -> str:
@@ -130,6 +115,9 @@ def api_get(account_code):
         "code": account.code,
         "name": account.name,
         "account_type_id": account.account_type_id,
+        # normal_balance は科目区分のメタ (非機密)。クライアントが残高を復号集計
+        # する際の符号判定 (借方科目=d-c / 貸方科目=c-d) に使う (#338 B)。
+        "normal_balance": account.account_type.normal_balance,
         "description": account.description or "",
         "tax_category": account.tax_category or "",
         "cost_type": account.cost_type or "",
@@ -143,21 +131,6 @@ def api_get(account_code):
         data["system_role"] = ""
 
     return jsonify(data)
-
-
-@bp.route("/api/<account_code>/balance")
-@login_required
-def api_balance(account_code):
-    """科目の残高を返す"""
-    account = Account.query.filter_by(
-        user_id=current_user.id, code=account_code
-    ).first_or_404()
-    balance = _get_account_balance(account)
-    return jsonify({
-        "balance": balance,
-        "normal_balance": account.account_type.normal_balance,
-        "name": account.name,
-    })
 
 
 @bp.route("/api/new", methods=["POST"])
@@ -231,16 +204,12 @@ def api_update(account_code):
     if account.system_role and not new_is_active:
         return jsonify({"error": "この科目はシステムで使用されるため無効化できません。"}), 400
 
-    # 有効→無効 の場合: 残高が残っていれば無効化を拒否する。
-    # 残高振替仕訳はクライアントが暗号化して batch API に登録する経路へ移行した
-    # ため、ここでは平文の振替仕訳を生成しない。残高がある科目を直接無効化する
-    # 事故を防ぐため、残高 != 0 なら 400 を返す安全弁のみ残す (クライアントが
-    # 先に振替を登録していれば到達時点で残高は 0 になっている)。
+    # 有効→無効 の場合: deactivated_year を記録する。
+    # E2EE 化 (#338 B) によりサーバは仕訳金額を平文で持たず残高を計算できない
+    # ため、「残高がある科目を弾く」安全弁はクライアント側 (accountEditor) に
+    # 移行した。クライアントが全年度の仕訳を復号して残高を算出し、残高があれば
+    # 先に暗号化振替を batch 登録して残高を 0 にしてから本 POST を行う。
     if account.is_active and not new_is_active:
-        balance = _get_account_balance(account)
-        if balance != 0:
-            return jsonify({"error": "残高がある科目を無効化するには振替先を指定してください。",
-                            "needs_transfer": True, "balance": balance}), 400
         account.deactivated_year = date.today().year
 
     # 無効→有効 の場合: deactivated_year クリア

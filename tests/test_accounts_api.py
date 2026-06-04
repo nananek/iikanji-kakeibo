@@ -18,41 +18,6 @@ class TestIndex:
         assert resp.status_code == 200
 
 
-class TestApiBalance:
-    """GET /accounts/api/<code>/balance — 残高API"""
-
-    def test_balance_zero(self, db, logged_in_client, user, accounts):
-        resp = logged_in_client.get("/accounts/api/1010/balance")
-        assert resp.status_code == 200
-        assert resp.get_json()["balance"] == 0
-
-    def test_balance_positive_debit(self, db, logged_in_client, user, accounts):
-        make_journal(db, user.id, "1010", "4010", 5000)
-        resp = logged_in_client.get("/accounts/api/1010/balance")
-        assert resp.get_json()["balance"] == 5000
-
-    def test_balance_negative_debit(self, db, logged_in_client, user, accounts):
-        make_journal(db, user.id, "4010", "1010", 3000)
-        resp = logged_in_client.get("/accounts/api/1010/balance")
-        assert resp.get_json()["balance"] == -3000
-
-    def test_balance_credit_account(self, db, logged_in_client, user, accounts):
-        make_journal(db, user.id, "1010", "4010", 8000)
-        resp = logged_in_client.get("/accounts/api/4010/balance")
-        assert resp.get_json()["balance"] == 8000
-
-    def test_balance_nonexistent(self, db, logged_in_client, accounts):
-        resp = logged_in_client.get("/accounts/api/9999/balance")
-        assert resp.status_code == 404
-
-    def test_balance_includes_normal_balance_and_name(self, db, logged_in_client, accounts):
-        """残高 API は normal_balance / name も返す (クライアント残高振替計算用)。"""
-        resp = logged_in_client.get("/accounts/api/5010/balance")
-        body = resp.get_json()
-        assert body["normal_balance"] == "debit"
-        assert body["name"] == "食費"
-
-
 class TestApiGet:
     """GET /accounts/api/<code> — 編集・コピー用データ取得"""
 
@@ -62,6 +27,8 @@ class TestApiGet:
         data = resp.get_json()
         assert data["code"] == "5010"
         assert data["name"] == "食費"
+        # normal_balance はクライアントの残高復号集計 (符号判定) 用に返す (#338 B)。
+        assert data["normal_balance"] == "debit"
 
     def test_get_account_copy(self, db, logged_in_client, accounts):
         """コピーモードではコードがインクリメントされ、system フラグがクリアされる"""
@@ -226,26 +193,31 @@ class TestApiUpdate:
         assert resp.status_code == 400
         assert "100文字以内" in resp.get_json()["error"]
 
-    def test_deactivate_with_balance_needs_transfer(self, db, logged_in_client, user, accounts):
-        """残高があると 400 + needs_transfer を返し、無効化しない。"""
+    def test_deactivate_with_balance_succeeds_server_side(self, db, logged_in_client, user, accounts):
+        """E2EE 化 (#338 B): サーバは残高を計算できないため、残高有無に関わらず
+        無効化を許可する。残高がある科目を弾くのはクライアント側 (accountEditor が
+        先に暗号化振替で残高を 0 にしてから本 POST する) の責務。サーバは平文の
+        振替仕訳を作らない。
+        """
         make_journal(db, user.id, "5010", "1010", 3000)
+        before = JournalEntry.query.filter_by(user_id=user.id).count()
         resp = logged_in_client.post(
             "/accounts/api/5010",
             data=json.dumps({"code": "5010", "name": "食費", "is_active": False}),
             content_type="application/json",
         )
-        assert resp.status_code == 400
-        data = resp.get_json()
-        assert data["needs_transfer"] is True
-        assert data["balance"] == 3000
-        assert Account.query.filter_by(code="5010").first().is_active is True
+        assert resp.status_code == 200
+        acct = Account.query.filter_by(code="5010").first()
+        assert acct.is_active is False
+        assert acct.deactivated_year == date.today().year
+        # サーバは振替仕訳を作らない (件数 before==after で判定)。
+        assert JournalEntry.query.filter_by(user_id=user.id).count() == before
 
-    def test_deactivate_with_balance_ignores_transfer_code(
+    def test_deactivate_ignores_transfer_code(
         self, db, logged_in_client, user, accounts
     ):
         """残高振替はクライアントの暗号化経路へ移行したため、サーバは
         transfer_to_account_code を無視し、平文の振替仕訳を作らない。
-        残高が残っている限り 400 で弾く (安全弁)。
         """
         make_journal(db, user.id, "5010", "1010", 3000)
         before = JournalEntry.query.filter_by(user_id=user.id).count()
@@ -257,22 +229,17 @@ class TestApiUpdate:
             }),
             content_type="application/json",
         )
-        assert resp.status_code == 400
-        assert resp.get_json()["needs_transfer"] is True
-        # 振替仕訳は作られない (E3-F PR-D-6-5: description 列 DROP 済のため
-        # 件数 before==after のみで判定する)。
+        assert resp.status_code == 200
+        # 振替仕訳は作られない (件数 before==after で判定)。
         after = JournalEntry.query.filter_by(user_id=user.id).count()
         assert after == before
-        assert Account.query.filter_by(code="5010").first().is_active is True
+        assert Account.query.filter_by(code="5010").first().is_active is False
 
     def test_deactivate_zero_balance_ok(self, db, logged_in_client, user, accounts):
-        """残高 0 (クライアント振替後の状態) なら無効化でき、サーバは仕訳を追加しない。"""
+        """残高 0 (クライアント振替後の状態) でも無効化でき、サーバは仕訳を追加しない。"""
         # 借方 3000 / 貸方 3000 を計上して 5010 の残高を 0 にする
         make_journal(db, user.id, "5010", "1010", 3000)
         make_journal(db, user.id, "1010", "5010", 3000)
-        assert logged_in_client.get(
-            "/accounts/api/5010/balance"
-        ).get_json()["balance"] == 0
         before = JournalEntry.query.filter_by(user_id=user.id).count()
         resp = logged_in_client.post(
             "/accounts/api/5010",
