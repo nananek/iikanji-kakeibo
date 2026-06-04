@@ -4,6 +4,7 @@ import json
 
 from flask import Blueprint, render_template, redirect, url_for, flash, request, make_response
 from flask_login import login_required, current_user
+from sqlalchemy.orm import joinedload
 
 from app.extensions import db
 from app.models.account import Account
@@ -23,18 +24,23 @@ def _account_name(account_code, user_id):
 
 
 def _cashbook_accounts_meta(user_id):
-    """出納帳一覧 (cashbook/index.html) のクライアント描画が科目名解決に使う
-    code → {name} メタ。account テーブルは非暗号化メタデータなのでサーバ側で
-    構築してよい。出納帳仕訳は無効化済み科目も参照しうるため is_active で絞らず
-    全科目を含める。
+    """出納帳のクライアント描画 / 編集 prefill が科目解決に使う
+    code → {name, type_code} メタ。account テーブルは非暗号化メタデータなので
+    サーバ側で構築してよい。出納帳仕訳は無効化済み科目も参照しうるため
+    is_active で絞らず全科目を含める (編集 prefill の取引種類判定は無効化済み
+    BS 科目も BS と判定する必要があり、旧サーバ実装の全科目検索と等価にする)。
+
+    `type_code` は取引種類 (expense/income/transfer) のクライアント側 3 方向
+    検出に使う (BS = asset / liability)。一覧描画は name のみ読むため後方互換。
     """
     accounts = (
         Account.query.filter_by(user_id=user_id)
+        .options(joinedload(Account.account_type))
         .order_by(Account.code)
         .all()
     )
     return {
-        a.code: {"name": a.name}
+        a.code: {"name": a.name, "type_code": a.account_type.code}
         for a in accounts
     }
 
@@ -115,42 +121,19 @@ def edit(entry_id):
     # E3-F PR-D-6-3: fiscal_period prefill は保持列 fiscal_month から行う
     # (両者は書込時に同期されており等価)。
     form.fiscal_period.data = str(entry.fiscal_month) if entry.fiscal_month is not None else ""
-    # 仕訳明細から元のデータを復元（3方向検出）
-    lines = entry.lines
-    if len(lines) == 2:
-        debit_line = [l for l in lines if l.debit_amount > 0][0]
-        credit_line = [l for l in lines if l.credit_amount > 0][0]
-
-        bs_types = {"asset", "liability"}
-        debit_account = Account.query.filter_by(user_id=user_id, code=debit_line.account_code).first()
-        credit_account = Account.query.filter_by(user_id=user_id, code=credit_line.account_code).first()
-        debit_is_bs = debit_account and debit_account.account_type.code in bs_types
-        credit_is_bs = credit_account and credit_account.account_type.code in bs_types
-
-        if debit_is_bs and credit_is_bs:
-            form.transaction_type.data = "transfer"
-            form.payment_account_code.data = credit_line.account_code
-            form.category_account_code.data = debit_line.account_code
-            form.amount.data = int(debit_line.debit_amount)
-        elif debit_is_bs:
-            form.transaction_type.data = "income"
-            form.payment_account_code.data = debit_line.account_code
-            form.category_account_code.data = credit_line.account_code
-            form.amount.data = int(debit_line.debit_amount)
-        else:
-            form.transaction_type.data = "expense"
-            form.payment_account_code.data = credit_line.account_code
-            form.category_account_code.data = debit_line.account_code
-            form.amount.data = int(debit_line.debit_amount)
-
+    # #338 PR2 (方針B): 取引種類・支払/科目・金額の prefill は平文金額・科目コード
+    # (debit_amount / credit_amount / account_code) を読む「3 方向検出」をサーバから
+    # 撤去し、クライアント (cashbook_prefill.js) が encrypted_blob を MK 復号して
+    # 行を取得し同じ検出ロジックで埋める。サーバは accounts_meta (非暗号化の
+    # code→name/type_code) のみ供給する。MK ロック中は date/description 同様に
+    # 空欄のまま (submit もロック中はブロックされる)。
     grouped_accounts = get_grouped_accounts(user_id)
-    payment_account_name = _account_name(form.payment_account_code.data, user_id)
-    category_account_name = _account_name(form.category_account_code.data, user_id)
     return render_template(
         "cashbook/form.html", form=form, is_edit=True, entry=entry,
         grouped_accounts=grouped_accounts,
-        payment_account_name=payment_account_name,
-        category_account_name=category_account_name,
+        accounts_meta=_cashbook_accounts_meta(user_id),
+        payment_account_name=None,
+        category_account_name=None,
         closed_periods=closed_periods,
         restricted_before_year=restricted_before,
     )
