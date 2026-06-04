@@ -16,7 +16,7 @@ def get_next_entry_number(user_id):
 
 def create_journal_entry(user_id, lines_data, *, fiscal_year, fiscal_month,
                          batch_id=None, encrypted_blob=None, blob_iv=None,
-                         commit=True):
+                         is_closing=False, commit=True):
     """仕訳伝票を直接作成する
 
     Args:
@@ -24,10 +24,14 @@ def create_journal_entry(user_id, lines_data, *, fiscal_year, fiscal_month,
             credit_amount, optional encrypted_blob/blob_iv
             (Phase E3: クライアント側で AES-GCM 暗号化済の line 本体)
         fiscal_year: 平文の年度フィルタ用メタ列 (date 暗号化後の代替)。
-        fiscal_month: 平文の計上期間メタ列 (0=期首, 1-12=月, 13-15=決算整理)。
+        fiscal_month: 平文の計上期間メタ列 (0=期首, 1-12=月, 13-15=決算整理,
+            16=損益振替)。
         encrypted_blob/blob_iv: Phase E3 - クライアント側で AES-GCM 暗号化された
             entry 本体 (date / description / source / batch_id / fiscal_period の
             暗号化版)。両方セット or 両方 None。
+        is_closing: 損益振替 (決算振替) 仕訳なら True (#338 item1)。クライアントが
+            暗号化生成した closing 仕訳を fiscal_month=16 / is_closing=True で保存
+            する専用エンドポイント (close_closing) から渡される。
 
     E3-F PR-D-6-6: wire 平文除去。date / description / source / fiscal_period は
         request からも引数からも撤去した。entry の平文メタは fiscal_year /
@@ -62,6 +66,7 @@ def create_journal_entry(user_id, lines_data, *, fiscal_year, fiscal_month,
         # (クライアント算出値をそのまま populate する)。
         fiscal_year=fiscal_year,
         fiscal_month=fiscal_month,
+        is_closing=is_closing,
     )
     db.session.add(entry)
     db.session.flush()

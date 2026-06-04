@@ -20,7 +20,9 @@ from app.models.account import Account
 from app.models.balance_cache import BalanceCacheBlob
 from app.models.journal import JournalEntry, JournalEntryLine
 from app.services.accounting import create_journal_entry
-from app.services.fiscal import check_period_open_for_new, check_entry_modifiable
+from app.services.fiscal import (
+    check_period_open_for_new, check_entry_modifiable, delete_closing_entries,
+)
 from app.services.image import serve_voucher_image
 from app.services.storage import (
     get_storage_backend, make_storage_key, make_thumbnail_key,
@@ -554,6 +556,158 @@ def create_journals_batch():
             {"id": e.id, "entry_number": e.entry_number} for e in created
         ],
     }), 201
+
+
+# --- 損益振替 (closing) のクライアント暗号化生成 (#338 item1) ---
+
+
+def _parse_closing_lines(closing_entry, user_account_codes):
+    """close_closing 用: closing_entry payload を create_journal_entry 引数に整形。
+
+    汎用 batch (_validate_and_parse_batch_entry) と異なり fiscal_year/fiscal_month は
+    クライアントから受け取らない (サーバが fiscal_year=year / fiscal_month=16 /
+    is_closing=True を強制するため)。lines の account_code 存在・blob/iv 検証のみ行う。
+
+    エラーは ValueError を raise (caller が rollback + 4xx)。
+    戻り値: (entry_blob, entry_iv, lines_data)
+    """
+    if not isinstance(closing_entry, dict):
+        raise ValueError("closing_entry は dict である必要があります。")
+
+    entry_blob, entry_iv, err = _decode_record_crypto(
+        closing_entry, "closing_entry", "encrypted_blob", "blob_iv", required=True,
+    )
+    if err:
+        raise ValueError(err)
+
+    lines = closing_entry.get("lines")
+    if not lines or not isinstance(lines, list):
+        raise ValueError("closing_entry.lines は必須です (非空配列)。")
+
+    lines_data = []
+    for li, line in enumerate(lines):
+        account_code = line.get("account_code")
+        if not account_code:
+            raise ValueError(f"closing_entry.lines[{li}].account_code は必須です。")
+        line_blob, line_iv, err = _decode_record_crypto(
+            line, f"closing_entry.lines[{li}]",
+            "encrypted_blob", "blob_iv", required=True,
+        )
+        if err:
+            raise ValueError(err)
+        lines_data.append({
+            "account_code": account_code,
+            "debit_amount": _parse_int_amount(
+                line.get("debit"), f"closing_entry.lines[{li}].debit",
+            ),
+            "credit_amount": _parse_int_amount(
+                line.get("credit"), f"closing_entry.lines[{li}].credit",
+            ),
+            "encrypted_blob": line_blob,
+            "blob_iv": line_iv,
+        })
+
+    missing = {ld["account_code"] for ld in lines_data} - user_account_codes
+    if missing:
+        raise ValueError(f"科目コード {sorted(missing)} が存在しません。")
+
+    return entry_blob, entry_iv, lines_data
+
+
+@bp.route("/fiscal/close-closing", methods=["POST"])
+@auth_required(write=True, scope="journals:create", allow_session=True)
+@limiter.limit("30 per minute", key_func=rate_limit_key)
+def close_closing():
+    """決算月3 (period 15) の確定 + 損益振替 (closing) 仕訳の登録を 1 トランザクション
+    で実行する (#338 item1)。
+
+    サーバは MK を持たないため closing 仕訳の金額集計・暗号化はクライアントが行う
+    (fetchJournalsForYear → computeBalanceCache → buildClosingLines → buildJournalEntry)。
+    本エンドポイントはクライアントが暗号化生成した closing 仕訳を受け取り、
+    「period14 確定済みの検証 → 既存 closing 削除 → closing 挿入 → FiscalClose=15」
+    をアトミックに行い「period15 確定 ⟺ closing 整合」の不変条件を 1 コミットで保つ。
+
+    汎用 batch API は fiscal_month=16 を拒否する (損益振替は手動入力禁止)。closing は
+    本専用経路でのみ is_closing=True / fiscal_month=16 を許可する。
+
+    リクエスト:
+        {
+          "year": int,
+          "closing_entry": {encrypted_blob, blob_iv, lines:[...]} | null
+            // null = 振替不要 (当年度の収益費用残高が全てゼロ。クライアント判定)。
+            //   period15 の確定のみ行う。null の正当性はサーバから検証できない
+            //   (金額は暗号化済) ため監査時整合性検査の責務 (設計書 §12.11)。
+        }
+    レスポンス: 200 {ok, closed_period: 15, closing_entry_id: int|null}
+    """
+    from app.models.fiscal import FiscalClose
+
+    data = request.get_json(silent=True)
+    if not data:
+        return jsonify({"error": "JSON ボディが必要です。"}), 400
+
+    year = data.get("year")
+    try:
+        _validate_year(year)
+    except ValueError as ve:
+        return jsonify({"error": safe_user_error(ve)}), 400
+
+    user_id = g.auth_user.id
+
+    # period15 の確定は period14 が確定済み (= 次が15) のときのみ許可する。
+    # close_period の順序検証と等価で、closing と FiscalClose の乖離を防ぐ。
+    fc = FiscalClose.query.filter_by(user_id=user_id, year=year).first()
+    current = fc.closed_period if fc else -1
+    if current == 15:
+        return jsonify({"error": "決算月3は既に確定済みです。"}), 409
+    if current != 14:
+        return jsonify({
+            "error": "決算月3を確定する前に決算月2までを確定してください。",
+        }), 409
+
+    closing_entry = data.get("closing_entry")
+
+    try:
+        if closing_entry is not None:
+            user_account_codes = {
+                a.code for a in Account.query.filter_by(user_id=user_id).all()
+            }
+            entry_blob, entry_iv, lines_data = _parse_closing_lines(
+                closing_entry, user_account_codes,
+            )
+        # 冪等性: 再確定時の残骸を除去してから挿入する (reopen と同じ削除関数)。
+        delete_closing_entries(user_id, year)
+
+        closing_id = None
+        if closing_entry is not None:
+            entry = create_journal_entry(
+                user_id=user_id,
+                lines_data=lines_data,
+                batch_id=f"closing-{year}-{uuid.uuid4().hex[:8]}",
+                encrypted_blob=entry_blob,
+                blob_iv=entry_iv,
+                fiscal_year=year,
+                fiscal_month=16,
+                is_closing=True,
+                commit=False,
+            )
+            closing_id = entry.id
+
+        fc.closed_period = 15
+        db.session.commit()
+    except ValueError as ve:
+        db.session.rollback()
+        return jsonify({"error": safe_user_error(ve)}), 400
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception("close_closing failed")
+        return jsonify({"error": "決算月3の確定に失敗しました。"}), 500
+
+    return jsonify({
+        "ok": True,
+        "closed_period": 15,
+        "closing_entry_id": closing_id,
+    })
 
 
 # --- 残高キャッシュ blob (E3-E-1) ---
