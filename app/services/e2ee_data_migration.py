@@ -67,6 +67,15 @@ def me_record(date, patient_name, hospital_name, treatment_description,
     }
 
 
+def vmeta_record(original_filename, image_mime) -> dict:
+    """vouchers の平文メタから vmeta record を構築 (voucher_upload.js と同形状)。"""
+    return {
+        "v": 1,
+        "original_filename": original_filename or "",
+        "image_mime": image_mime or "application/octet-stream",
+    }
+
+
 # --- DB グルー (PostgreSQL 専用。カバレッジ除外、実 PG で往復検証) ---
 
 def _column_exists(conn, table, column):  # pragma: no cover
@@ -183,26 +192,22 @@ def _migrate_medical_expenses(conn, user_id, mk):  # pragma: no cover
 
 
 def migrate_all_to_e2ee(db, *, user_id=None):  # pragma: no cover
-    """全 (または指定) 利用者の平文台帳データを temp-MK で暗号化する。
+    """全 (または指定) 利用者の平文台帳データを temp-MK で暗号化する (冪等)。
+
+    リビジョン対応: 平文列が残っているテーブル群のみ暗号化する。
+    - 仕訳/医療費は revision 054 (平文残存) で暗号化 → 055 で平文 DROP。
+    - 証憑は revision 056 (encrypted_meta_blob/aad_id 追加・original_filename 残存) で
+      暗号化 → 057/060 で平文 DROP。
+    2 パス (054 で本コマンド → 055/056 へ upgrade → 056 で再度本コマンド) を runbook
+    が定める。既に暗号化済 (blob 非空) の行はスキップするので再実行は安全。
 
     Returns: 暗号化件数の集計 dict。
-    Raises: RuntimeError — 平文列が既に DROP 済 (revision >= 055) で実行不可。
+    Raises: RuntimeError — 暗号化対象が一切無い (誤ったタイミング/列なし) 場合。
     """
     from sqlalchemy import text
-    conn = db.session.connection()
 
-    required = [
-        ("journal_entries", "date"),
-        ("journal_entry_lines", "account_code"),
-        ("medical_expenses", "patient_name"),
-    ]
-    missing = [f"{t}.{c}" for t, c in required if not _column_exists(conn, t, c)]
-    if missing:
-        raise RuntimeError(
-            "平文列が見つかりません (" + ", ".join(missing) + ")。E7 データ暗号化は "
-            "alembic revision 054 (平文列 DROP 前) の状態で実行してください。"
-            "既に 055 以降へ進んでいる場合、平文は失われています。"
-        )
+    from app.services.storage import get_storage_backend
+    conn = db.session.connection()
 
     if user_id is not None:
         user_ids = [user_id]
@@ -211,14 +216,147 @@ def migrate_all_to_e2ee(db, *, user_id=None):  # pragma: no cover
             r[0] for r in conn.execute(text("SELECT id FROM users ORDER BY id"))
         ]
 
+    # どのテーブル群が暗号化可能か (平文列 + 暗号文列が共存するか) を判定。
+    ledger_ready = _column_exists(conn, "journal_entries", "date")
+    voucher_ready = (
+        _column_exists(conn, "vouchers", "original_filename")
+        and _column_exists(conn, "vouchers", "encrypted_meta_blob")
+        and _column_exists(conn, "vouchers", "aad_id")
+    )
+    if not ledger_ready and not voucher_ready:
+        raise RuntimeError(
+            "暗号化可能な平文列がありません。仕訳/医療費は revision 054、証憑は "
+            "revision 056 の状態で実行してください (docs/v5-e2ee/e7-migration-runbook.md)。"
+        )
+
+    storage = get_storage_backend() if voucher_ready else None
     totals = {"users": 0, "journal_entries": 0, "journal_entry_lines": 0,
-              "medical_expenses": 0}
+              "medical_expenses": 0, "vouchers": 0, "voucher_audit_logs": 0}
     for uid in user_ids:
         mk = _ensure_temp_mk(conn, uid)
-        totals["journal_entries"] += _migrate_journal_entries(conn, uid, mk)
-        totals["journal_entry_lines"] += _migrate_journal_entry_lines(conn, uid, mk)
-        totals["medical_expenses"] += _migrate_medical_expenses(conn, uid, mk)
+        if ledger_ready:
+            totals["journal_entries"] += _migrate_journal_entries(conn, uid, mk)
+            totals["journal_entry_lines"] += _migrate_journal_entry_lines(conn, uid, mk)
+            totals["medical_expenses"] += _migrate_medical_expenses(conn, uid, mk)
+        if voucher_ready:
+            totals["vouchers"] += _migrate_vouchers(conn, uid, mk, storage)
+            totals["voucher_audit_logs"] += _migrate_voucher_audit_logs(conn, uid, mk)
         totals["users"] += 1
 
     db.session.commit()
     return totals
+
+
+# --- 証憑 (画像/サムネ/メタ/監査ログ) の暗号化 (PostgreSQL + ストレージ専用) ---
+
+def _random_aad_id():  # pragma: no cover
+    import secrets
+    # voucher.py:_random_aad_id と同じく 1..2^63-1 の 63bit ランダム。
+    return secrets.randbelow((1 << 63) - 1) + 1
+
+
+def _migrate_vouchers(conn, user_id, mk, storage):  # pragma: no cover
+    import hashlib
+
+    from sqlalchemy import text
+
+    from app.services.migration_crypto import build_aad, encrypt_blob, encrypt_record
+    from app.services.storage import (
+        ENCRYPTED_CONTENT_TYPE,
+        generate_thumbnail,
+        make_encrypted_thumbnail_key,
+        make_storage_key,
+        make_thumbnail_key,
+    )
+
+    rows = conn.execute(
+        text(
+            "SELECT id, image_key, image_mime, original_filename, aad_id "
+            "FROM vouchers WHERE user_id=:uid AND image_key<>'' "
+            "AND (encrypted_meta_blob IS NULL OR octet_length(encrypted_meta_blob)=0)"
+        ),
+        {"uid": user_id},
+    ).fetchall()
+    n = 0
+    for r in rows:
+        plain = storage.get(r.image_key)
+        aad_id = r.aad_id
+        if not aad_id:
+            aad_id = _random_aad_id()
+            conn.execute(
+                text("UPDATE vouchers SET aad_id=:a WHERE id=:id"),
+                {"a": aad_id, "id": r.id},
+            )
+        img_blob = encrypt_blob(mk, plain, build_aad("vimg", user_id, aad_id))
+        thumb = generate_thumbnail(plain, max_size=200)
+        thumb_blob = encrypt_blob(mk, thumb, build_aad("vthumb", user_id, aad_id))
+        meta_blob, meta_iv = encrypt_record(
+            mk, vmeta_record(r.original_filename, r.image_mime),
+            build_aad("vmeta", user_id, aad_id),
+        )
+        new_key = make_storage_key(user_id, r.id, ENCRYPTED_CONTENT_TYPE)
+        thumb_key = make_encrypted_thumbnail_key(new_key)
+        storage.put(new_key, img_blob, ENCRYPTED_CONTENT_TYPE)
+        storage.put(thumb_key, thumb_blob, ENCRYPTED_CONTENT_TYPE)
+        file_hash_cipher = hashlib.sha256(img_blob).hexdigest()
+        file_hash_plain = hashlib.sha256(plain).hexdigest()
+        conn.execute(
+            text(
+                "UPDATE vouchers SET encrypted_meta_blob=:mb, meta_iv=:mi, "
+                "file_hash_plain=:fhp, file_hash=:fhc, thumbnail_key=:tk, "
+                "image_key=:ik WHERE id=:id"
+            ),
+            {"mb": meta_blob, "mi": meta_iv, "fhp": file_hash_plain,
+             "fhc": file_hash_cipher, "tk": thumb_key, "ik": new_key, "id": r.id},
+        )
+        # 旧平文の本体画像と旧サーバ生成サムネ (_thumb.jpg) を削除する。
+        # プライバシー上、平文画像を残さない (E7 の目的)。
+        for old in (r.image_key, make_thumbnail_key(r.image_key)):
+            if old and old != new_key and old != thumb_key:
+                try:
+                    storage.delete(old)
+                except Exception:
+                    pass  # 削除失敗は移行を止めない (容量のみの問題)
+        n += 1
+    return n
+
+
+def _migrate_voucher_audit_logs(conn, user_id, mk):  # pragma: no cover
+    import json
+
+    from sqlalchemy import text
+
+    from app.services.migration_crypto import build_aad, encrypt_record
+
+    # 監査ログ detail (主にサーバ生成の orphaned/hash イベント JSON)。voucher の
+    # aad_id を AAD id に使う (vmeta 等と同ドメイン)。detail 平文を parse して record 化。
+    rows = conn.execute(
+        text(
+            "SELECT val.id AS id, val.detail AS detail, v.aad_id AS aad_id "
+            "FROM voucher_audit_logs val JOIN vouchers v ON v.id=val.voucher_id "
+            "WHERE val.user_id=:uid AND val.detail IS NOT NULL AND val.detail<>'' "
+            "AND (val.encrypted_detail_blob IS NULL "
+            "OR octet_length(val.encrypted_detail_blob)=0)"
+        ),
+        {"uid": user_id},
+    ).fetchall()
+    n = 0
+    for r in rows:
+        if not r.aad_id:
+            continue  # 親 voucher が未移行 (aad_id なし) の場合はスキップ
+        try:
+            detail_obj = json.loads(r.detail)
+        except (ValueError, TypeError):
+            detail_obj = {"raw": r.detail}
+        blob, iv = encrypt_record(
+            mk, detail_obj, build_aad("valog", user_id, r.aad_id)
+        )
+        conn.execute(
+            text(
+                "UPDATE voucher_audit_logs SET encrypted_detail_blob=:b, "
+                "detail_iv=:iv WHERE id=:id"
+            ),
+            {"b": blob, "iv": iv, "id": r.id},
+        )
+        n += 1
+    return n

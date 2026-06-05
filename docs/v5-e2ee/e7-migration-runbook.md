@@ -19,28 +19,42 @@ alembic 046→068 は**スキーマ操作のみ**で、平文→暗号文の**�
 
 ## 移行手順 (メンテナンスウィンドウ)
 
+`migrate-e2ee-data` は冪等・リビジョン対応で、**平文列が残っているテーブル群だけ**を
+暗号化する。仕訳/医療費は revision 054 (平文残存) で、証憑は revision 056
+(encrypted_meta_blob/aad_id 追加・original_filename/image_mime 残存) で暗号化できる。
+このため移行は **2 パス**で行う:
+
 ```bash
-# 0. 必ず DB の完全バックアップを取得 (DROP は不可逆)
+# 0. 必ず DB の完全バックアップを取得 (DROP・平文画像削除は不可逆)
 pg_dump ... > backup_before_e2ee.sql
 
-# 1. スキーマを revision 054 まで上げる (暗号文列・is_closing 追加、平文はまだ残る)
+# 1. revision 054 まで上げる (仕訳/医療費の暗号文列・is_closing 追加、平文残存)
 flask db upgrade 054_e3f_add_closing_month
 
-# 2. 平文台帳データを temp-MK でサーバ側暗号化する (冪等)
-#    仕訳 / 仕訳明細 / 医療費を encrypted_blob へ。users.migration_temp_mk に
-#    利用者ごとの一時鍵を生成・保管。
+# 2. パス1: 仕訳/仕訳明細/医療費を temp-MK 暗号化 (encrypted_blob へ)
 flask migrate-e2ee-data
 
-# 3. 残りの破壊的ドロップを含めて head まで上げる
-#    (暗号化済みなので 055 等のガードを通過し、平文列が安全に DROP される)
+# 3. revision 056 まで上げる (055 が仕訳/医療費平文を DROP、056 が証憑の暗号文列 +
+#    aad_id を追加。original_filename / image_mime はまだ残る)
+flask db upgrade 056_e4_voucher_encrypted_columns
+
+# 4. パス2: 証憑 (画像本体/サムネ/メタ/監査ログ) を temp-MK 暗号化。
+#    平文画像はストレージで暗号文 (.bin) に置換し、旧平文 (本体 + 旧サムネ) を削除。
+flask migrate-e2ee-data
+
+# 5. 残りの破壊的ドロップを含めて head まで上げる (057 original_filename DROP /
+#    060 image_mime DROP / 068 仕訳明細列 DROP。暗号化済なのでガードを通過する)
 flask db upgrade
 ```
 
-`migrate-e2ee-data` を飛ばして手順 3 を実行した場合、055 のガードが中断し平文は
-保護される (ロールバックで revision 054 以前へ戻る)。
+各パスを飛ばすと、対応する DROP migration のガードが中断し平文は保護される
+(トランザクション巻き戻し)。`migrate-e2ee-data` は暗号化済の行をスキップするので
+再実行は安全。
 
-> ⚠️ 手順 2 は **revision 054 の状態でのみ**実行できる (平文列を raw SQL で読むため)。
-> 055 以降へ進んだ後は平文が失われており実行不可 (コマンドが precheck で検出して停止)。
+> ⚠️ パス1 (仕訳/医療費) は revision 054、パス2 (証憑) は revision 056 でのみ有効
+> (平文列を raw SQL で読むため)。対応する DROP が済んだ後は平文が失われており実行不可。
+> ⚠️ AI 下書き画像 (ai_drafts) の移行は本コマンド未対応 (follow-up)。ただし ai_drafts に
+> 平文画像が残るデプロイでは、別途暗号化が必要 (現状ガード対象外)。
 
 ## temp-MK と E2EE 完成 (移行後)
 
@@ -74,14 +88,16 @@ v4.0.0 データ (使い捨て DB) で「暗号化 → temp-MK 復号 → 平文
 | 項目 | 状態 |
 |---|---|
 | 破壊的ドロップのガード (055/057/060/068) | ✅ #362 |
-| `migration_crypto` (互換暗号プリミティブ) | ✅ |
+| `migration_crypto` (互換暗号プリミティブ・blob/record) | ✅ |
 | `migrate-e2ee-data` (仕訳/明細/医療費) | ✅ |
-| 証憑画像・サムネ・メタ (vmeta/vimg/vthumb) の暗号化 | ⬜ 未 (057/060 ガードが通るには必要) |
-| voucher_audit_logs.detail (valog) の暗号化 | ⬜ 未 |
-| AI 下書き画像の暗号化 | ⬜ 未 |
-| クライアント側 temp-MK 再ラップフロー (E2EE 完成) | ⬜ 未 |
+| 証憑画像・サムネ・メタ (vmeta/vimg/vthumb) の暗号化 + 旧平文画像削除 | ✅ |
+| voucher_audit_logs.detail (valog) の暗号化 | ✅ |
+| 移行手術: 056 に aad_id 前倒し・058 冪等化 (original_filename と aad_id 共存) | ✅ |
+| AI 下書き画像 (ai_drafts) の暗号化 | ⬜ 未 (follow-up。ガード対象外) |
+| クライアント側 temp-MK 再ラップフロー (E2EE 完成) | ⬜ 未 (E7 仕上げ) |
 | balance_cache_blobs の移行 (旧 balance_caches は 053 で DROP) | 要確認 |
 
-証憑・AI 画像の暗号化が未実装のため、現時点で手順 3 を head まで通すと 057 (voucher
-平文 DROP) のガードで停止する。証憑系の暗号化実装までは、検証は revision 056 までで
-確認する (仕訳・医療費の移行は完全に機能する)。
+実 v4.0.0 データ (使い捨て PG18 + 証憑 332 枚) で **head(068) までの完全移行を検証済**:
+仕訳842/明細1758/医療費3/証憑332 を暗号化 → 057/060/068 ガード通過 → 平文列 DROP +
+平文画像/旧サムネ全削除 (0 残) → client-py 独立実装で画像/メタを復号して元データ一致
+(file_hash_plain 一致・JPEG マジック確認)。

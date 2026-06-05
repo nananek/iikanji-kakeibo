@@ -36,6 +36,18 @@ depends_on = None
 
 
 def upgrade():
+    # #114 (E7): aad_id は 056 へ前倒しした (E7 のサーバ側証憑暗号化が original_filename
+    # と aad_id の共存を要するため)。既存 DB との互換のため本マイグレは残すが、既に
+    # aad_id 列がある場合 (056 が新版で追加済) は冪等にスキップする。
+    conn = op.get_bind()
+    exists = conn.execute(
+        sa.text(
+            "SELECT 1 FROM information_schema.columns "
+            "WHERE table_name='vouchers' AND column_name='aad_id'"
+        )
+    ).first()
+    if exists:
+        return
     with op.batch_alter_table("vouchers") as batch_op:
         batch_op.add_column(
             sa.Column("aad_id", sa.BigInteger(), nullable=True),

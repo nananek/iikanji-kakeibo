@@ -11,7 +11,9 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from app.services.migration_crypto import (
     build_aad,
+    decrypt_blob,
     decrypt_record,
+    encrypt_blob,
     encrypt_record,
     uint64_be,
 )
@@ -124,6 +126,7 @@ from app.services.e2ee_data_migration import (  # noqa: E402
     je_record,
     jel_record,
     me_record,
+    vmeta_record,
 )
 
 
@@ -172,3 +175,44 @@ def test_record_builder_roundtrip_via_crypto():
     aad = build_aad("je", 99)
     blob, iv = encrypt_record(mk, rec, aad)
     assert decrypt_record(mk, blob, iv, aad) == rec
+
+
+# --- 証憑メタ record / 画像 blob (E7 続き) ---
+
+def test_vmeta_record_shape():
+    assert vmeta_record("領収書.jpg", "image/jpeg") == {
+        "v": 1, "original_filename": "領収書.jpg", "image_mime": "image/jpeg",
+    }
+    # NULL は空文字 / octet-stream デフォルトへ
+    assert vmeta_record(None, None) == {
+        "v": 1, "original_filename": "", "image_mime": "application/octet-stream",
+    }
+
+
+def test_encrypt_blob_roundtrip_and_format():
+    # 画像 blob は iv(12B) || ciphertext || tag(16B)。AAD は vimg + user_id + aad_id。
+    mk = bytes(range(32))
+    aad = build_aad("vimg", 2, 1234567890123)
+    data = b"\xff\xd8\xff" + bytes(range(256)) * 4  # 擬似画像
+    blob = encrypt_blob(mk, data, aad)
+    assert len(blob) == 12 + len(data) + 16  # iv + ct + tag
+    assert decrypt_blob(mk, blob, aad) == data
+
+
+def test_decrypt_blob_wrong_aad_fails():
+    mk = bytes(range(32))
+    blob = encrypt_blob(mk, b"img", build_aad("vimg", 2, 1))
+    with pytest.raises(Exception):
+        decrypt_blob(mk, blob, build_aad("vthumb", 2, 1))  # tableType 不一致
+    with pytest.raises(Exception):
+        decrypt_blob(mk, blob, build_aad("vimg", 2, 2))  # aad_id 不一致
+
+
+def test_encrypt_blob_requires_32b_key():
+    with pytest.raises(ValueError):
+        encrypt_blob(b"short", b"x", build_aad("vimg", 1, 1))
+
+
+def test_decrypt_blob_requires_32b_key():
+    with pytest.raises(ValueError):
+        decrypt_blob(b"short", b"x" * 30, build_aad("vimg", 1, 1))

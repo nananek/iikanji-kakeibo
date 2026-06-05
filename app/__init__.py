@@ -226,7 +226,9 @@ def register_cli(app):
             f"users={totals['users']}, "
             f"journal_entries={totals['journal_entries']}, "
             f"journal_entry_lines={totals['journal_entry_lines']}, "
-            f"medical_expenses={totals['medical_expenses']}"
+            f"medical_expenses={totals['medical_expenses']}, "
+            f"vouchers={totals['vouchers']}, "
+            f"voucher_audit_logs={totals['voucher_audit_logs']}"
         )
 
     @app.cli.command("notify-terms-update")
