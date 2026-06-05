@@ -1,13 +1,16 @@
 """E7 (#114): temp-MK 再ラップ移行 API のテスト。
 
-GET  /api/v1/migration/temp-mk      — temp-MK 配布 (owner セッション限定)
-POST /api/v1/migration/rewrap       — blob/iv の in-place 差し替え
-PUT  /api/v1/migration/rewrap-image — 証憑画像の暗号文上書き
-POST /api/v1/migration/finalize     — temp-MK 破棄
+GET  /api/v1/migration/temp-mk             — temp-MK 配布 (owner セッション限定)
+POST /api/v1/migration/rewrap              — blob/iv の in-place 差し替え
+PUT  /api/v1/migration/rewrap-image        — 証憑画像の暗号文上書き
+POST /api/v1/migration/finalize            — temp-MK 破棄
+GET  /api/v1/migration/voucher-blobs       — 証憑メタ/監査ログ blob 一括読み取り
+GET  /api/v1/migration/voucher-image/<id>  — 証憑画像/サムネ配信 (論理削除込み)
 """
 
 import hashlib
 from base64 import b64decode, b64encode
+from datetime import datetime, timezone
 
 import pytest
 
@@ -618,4 +621,155 @@ class TestFinalize:
     def test_auditor_rejected(self, db, client, auditor):
         _login(client, auditor)
         r = client.post("/api/v1/migration/finalize")
+        assert r.status_code == 403
+
+
+# ─────────────────────── GET /migration/voucher-blobs ─────────────────────────
+
+
+def _seed_voucher_with_meta(db, user_id, aad_id=123, deleted=False,
+                            with_log=True):
+    v = make_voucher(db, user_id, image_key=f"vouchers/{user_id}/v.bin")
+    v.aad_id = aad_id
+    v.encrypted_meta_blob = b"metablob"
+    v.meta_iv = bytes(12)
+    v.thumbnail_key = f"vouchers/{user_id}/v_thumb.bin"
+    if deleted:
+        v.deleted_at = datetime.now(timezone.utc)
+    db.session.add(v)
+    db.session.commit()
+    if with_log:
+        log = VoucherAuditLog(
+            voucher_id=v.id, user_id=user_id, action="attached",
+            encrypted_detail_blob=b"logblob", detail_iv=bytes(12),
+        )
+        db.session.add(log)
+        db.session.commit()
+    return v
+
+
+class TestVoucherBlobs:
+    def test_returns_meta_and_logs(self, db, client, migrating_user):
+        v = _seed_voucher_with_meta(db, migrating_user.id, aad_id=777)
+        _login(client, migrating_user)
+        r = client.get("/api/v1/migration/voucher-blobs")
+        assert r.status_code == 200
+        body = r.get_json()
+        assert body["total"] == 1
+        item = body["vouchers"][0]
+        assert item["id"] == v.id
+        assert item["aad_id"] == "777"
+        assert b64decode(item["encrypted_meta_blob"]) == b"metablob"
+        assert item["has_image"] is True
+        assert item["has_thumbnail"] is True
+        assert len(item["logs"]) == 1
+        assert b64decode(item["logs"][0]["encrypted_detail_blob"]) == b"logblob"
+
+    def test_includes_soft_deleted(self, db, client, migrating_user):
+        _seed_voucher_with_meta(db, migrating_user.id, aad_id=1, deleted=True,
+                                with_log=False)
+        _login(client, migrating_user)
+        r = client.get("/api/v1/migration/voucher-blobs")
+        assert r.status_code == 200
+        # 論理削除済みも再ラップ対象として返る
+        assert r.get_json()["total"] == 1
+
+    def test_idor_only_own_vouchers(self, db, client, migrating_user, second_user):
+        _seed_voucher_with_meta(db, second_user.id, aad_id=9, with_log=False)
+        _login(client, migrating_user)
+        r = client.get("/api/v1/migration/voucher-blobs")
+        assert r.status_code == 200
+        assert r.get_json()["total"] == 0
+
+    def test_pagination(self, db, client, migrating_user):
+        for i in range(3):
+            _seed_voucher_with_meta(db, migrating_user.id, aad_id=100 + i,
+                                    with_log=False)
+        _login(client, migrating_user)
+        r = client.get("/api/v1/migration/voucher-blobs?page=1&per_page=2")
+        body = r.get_json()
+        assert body["total"] == 3
+        assert len(body["vouchers"]) == 2
+        r2 = client.get("/api/v1/migration/voucher-blobs?page=2&per_page=2")
+        assert len(r2.get_json()["vouchers"]) == 1
+
+    def test_invalid_page_params_default(self, db, client, migrating_user):
+        _seed_voucher_with_meta(db, migrating_user.id, aad_id=1, with_log=False)
+        _login(client, migrating_user)
+        r = client.get("/api/v1/migration/voucher-blobs?page=abc&per_page=xyz")
+        assert r.status_code == 200
+        body = r.get_json()
+        assert body["page"] == 1
+        assert body["per_page"] == 200
+
+    def test_bearer_rejected(self, db, client, migrating_user, api_key_raw):
+        raw_key, _ = api_key_raw
+        r = client.get("/api/v1/migration/voucher-blobs",
+                       headers=_auth_header(raw_key))
+        assert r.status_code == 403
+
+    def test_auditor_rejected(self, db, client, auditor):
+        _login(client, auditor)
+        r = client.get("/api/v1/migration/voucher-blobs")
+        assert r.status_code == 403
+
+
+# ─────────────────── GET /migration/voucher-image/<id> ────────────────────────
+
+
+class TestVoucherImage:
+    def _seed(self, db, user_id, image_ct=b"\x01" * 48, deleted=False):
+        from app.services.storage import get_storage_backend
+        v = make_voucher(db, user_id, image_key=f"vouchers/{user_id}/img.bin")
+        if deleted:
+            v.deleted_at = datetime.now(timezone.utc)
+        get_storage_backend().put(v.image_key, image_ct, "application/octet-stream")
+        db.session.commit()
+        return v
+
+    def test_serves_image_bytes(self, db, client, migrating_user):
+        ct = b"\x05" * 60
+        v = self._seed(db, migrating_user.id, image_ct=ct)
+        _login(client, migrating_user)
+        r = client.get(f"/api/v1/migration/voucher-image/{v.id}")
+        assert r.status_code == 200
+        assert r.data == ct
+
+    def test_serves_soft_deleted_image(self, db, client, migrating_user):
+        ct = b"\x06" * 60
+        v = self._seed(db, migrating_user.id, image_ct=ct, deleted=True)
+        _login(client, migrating_user)
+        r = client.get(f"/api/v1/migration/voucher-image/{v.id}")
+        assert r.status_code == 200
+        assert r.data == ct
+
+    def test_404_missing(self, db, client, migrating_user):
+        _login(client, migrating_user)
+        r = client.get("/api/v1/migration/voucher-image/999999")
+        assert r.status_code == 404
+
+    def test_404_when_file_absent(self, db, client, migrating_user):
+        # image_key はあるがストレージに実体がない → FileNotFoundError → 404
+        v = make_voucher(db, migrating_user.id,
+                         image_key=f"vouchers/{migrating_user.id}/missing.bin")
+        _login(client, migrating_user)
+        r = client.get(f"/api/v1/migration/voucher-image/{v.id}")
+        assert r.status_code == 404
+
+    def test_idor_other_user_404(self, db, client, migrating_user, second_user):
+        v = self._seed(db, second_user.id)
+        _login(client, migrating_user)
+        r = client.get(f"/api/v1/migration/voucher-image/{v.id}")
+        assert r.status_code == 404
+
+    def test_bearer_rejected(self, db, client, migrating_user, api_key_raw):
+        v = self._seed(db, migrating_user.id)
+        raw_key, _ = api_key_raw
+        r = client.get(f"/api/v1/migration/voucher-image/{v.id}",
+                       headers=_auth_header(raw_key))
+        assert r.status_code == 403
+
+    def test_auditor_rejected(self, db, client, auditor):
+        _login(client, auditor)
+        r = client.get("/api/v1/migration/voucher-image/1")
         assert r.status_code == 403

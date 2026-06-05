@@ -1025,6 +1025,121 @@ def migration_finalize():
     return jsonify({"ok": True, "finalized": was_active})
 
 
+# --- E7 (#114): 証憑再ラップ用のセッション読み取り面 -------------------
+#
+# 証憑のメタ blob (vmeta) / 監査ログ blob (valog) / 画像 (vimg/vthumb) は既存の
+# /api/v1/vouchers* が Bearer 専用かつ blob を返さない、画像配信 (ai_journal や
+# /vouchers) が active() で論理削除済みを除外する、という理由で「セッション認証で
+# 全証憑 (論理削除込み) の暗号文を読み出す」用途に使えない。finalize 前に
+# temp-MK 暗号の全証憑データ (電帳法で論理削除後も保持) を再ラップする必要がある
+# ため、移行専用のセッション限定 read エンドポイントをここに用意する。
+
+_MAX_VOUCHER_BLOBS_PER_PAGE = 200
+
+
+@bp.route("/migration/voucher-blobs", methods=["GET"])
+@auth_required(allow_session=True)
+@limiter.limit("120 per hour", key_func=rate_limit_key)
+def migration_voucher_blobs():
+    """再ラップ対象の証憑メタ (vmeta) と監査ログ (valog) の暗号文を一括返却する。
+
+    論理削除済み (deleted_at) も含む全証憑を対象 (電帳法保持データも再ラップ要)。
+    画像本体/サムネは大きいので別途 voucher-image で取得する (ここでは has_image /
+    has_thumbnail フラグのみ)。valog の AAD は親 voucher の aad_id を使うため、
+    クライアントは voucher.aad_id を logs の再ラップにも流用する。
+
+    クエリ: page (1-), per_page (<=200)
+    レスポンス: {ok, total, page, per_page, vouchers: [{id, aad_id,
+      encrypted_meta_blob, meta_iv, has_image, has_thumbnail,
+      logs: [{id, encrypted_detail_blob, detail_iv}]}]}
+    """
+    gate = _require_migration_owner()
+    if gate is not None:
+        return gate
+
+    uid = g.auth_user.id
+    try:
+        page = max(1, int(request.args.get("page", 1)))
+    except (ValueError, TypeError):
+        page = 1
+    try:
+        per_page = int(request.args.get("per_page", _MAX_VOUCHER_BLOBS_PER_PAGE))
+    except (ValueError, TypeError):
+        per_page = _MAX_VOUCHER_BLOBS_PER_PAGE
+    per_page = max(1, min(per_page, _MAX_VOUCHER_BLOBS_PER_PAGE))
+
+    q = Voucher.query.filter_by(user_id=uid).order_by(Voucher.id)
+    total = q.count()
+    vouchers = q.offset((page - 1) * per_page).limit(per_page).all()
+
+    logs_by_voucher = {}
+    vids = [v.id for v in vouchers]
+    if vids:
+        logs = (
+            VoucherAuditLog.query
+            .filter(
+                VoucherAuditLog.user_id == uid,
+                VoucherAuditLog.voucher_id.in_(vids),
+            )
+            .order_by(VoucherAuditLog.id)
+            .all()
+        )
+        for lg in logs:
+            logs_by_voucher.setdefault(lg.voucher_id, []).append(lg)
+
+    return jsonify({
+        "ok": True,
+        "total": total,
+        "page": page,
+        "per_page": per_page,
+        "vouchers": [
+            {
+                "id": v.id,
+                "aad_id": str(v.aad_id) if v.aad_id is not None else None,
+                "encrypted_meta_blob": _b64_or_none(v.encrypted_meta_blob),
+                "meta_iv": _b64_or_none(v.meta_iv),
+                "has_image": bool(v.image_key),
+                "has_thumbnail": bool(v.thumbnail_key),
+                "logs": [
+                    {
+                        "id": lg.id,
+                        "encrypted_detail_blob": _b64_or_none(
+                            lg.encrypted_detail_blob,
+                        ),
+                        "detail_iv": _b64_or_none(lg.detail_iv),
+                    }
+                    for lg in logs_by_voucher.get(v.id, [])
+                ],
+            }
+            for v in vouchers
+        ],
+    })
+
+
+@bp.route("/migration/voucher-image/<int:voucher_id>", methods=["GET"])
+@auth_required(allow_session=True)
+@limiter.limit("3000 per hour", key_func=rate_limit_key)
+def migration_voucher_image(voucher_id):
+    """再ラップ対象の証憑画像/サムネ (iv‖ct‖tag) をそのまま配信する。
+
+    ai_journal / vouchers の画像配信と異なり active() で絞らない (論理削除済みも
+    再ラップ対象)。?size=thumb でサムネ。所有者スコープ。
+    """
+    gate = _require_migration_owner()
+    if gate is not None:
+        return gate
+
+    voucher = Voucher.query.filter_by(
+        id=voucher_id, user_id=g.auth_user.id,
+    ).first()
+    if voucher is None or not voucher.image_key:
+        return jsonify({"error": "証憑が見つかりません。"}), 404
+    try:
+        return serve_voucher_image(voucher)
+    except FileNotFoundError:
+        return jsonify({"error": "画像ファイルが見つかりません。"}), 404
+
+
 # --- 残高キャッシュ blob (E3-E-1) ---
 
 
