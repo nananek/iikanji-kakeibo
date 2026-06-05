@@ -442,6 +442,78 @@ def register_cli(app):
                 "executed": True,
             }, ensure_ascii=False))
 
+    @app.cli.command("migration-purge-locked")
+    @click.option("--execute", is_flag=True,
+                  help="実際に退会(削除)する (既定は dry-run で対象一覧のみ)")
+    @click.option("--json", "as_json", is_flag=True,
+                  help="JSON で出力 (機械処理用)")
+    @click.option("--limit", type=int, default=None,
+                  help="処理件数の上限 (段階適用・検証用)")
+    def migration_purge_locked_command(execute, as_json, limit):
+        """E7 (#114) §16.5: ロック後 60 日経過した鍵未設定ユーザーを自動退会する。
+
+        `migration-lock-stale` でロック (is_active=False) されてから
+        MIGRATION_PURGE_GRACE_DAYS (既定 60) 日を過ぎても鍵設定も退会も
+        しなかったユーザー (public_key 未設定・locked_at が閾値より前) を
+        `delete_user_account` で物理削除する (電帳法対象の VoucherAuditLog は
+        匿名化保持)。**不可逆**。
+
+        既定は **dry-run** (対象一覧のみ)。削除は `--execute` 明示時のみ実行する。
+        JSON スキーマは全モード共通: matched / purged / failed / executed。
+        """
+        import json as _json
+        from datetime import datetime, timedelta, timezone
+        from app.models.user import User
+        from app.services.account_deletion import delete_user_account
+
+        grace = app.config.get("MIGRATION_PURGE_GRACE_DAYS", 60)
+        now = datetime.now(timezone.utc)
+        threshold = now - timedelta(days=grace)
+
+        query = User.query.filter(
+            User.user_type == "personal",
+            User.is_active.is_(False),
+            User.public_key.is_(None),
+            User.locked_at.isnot(None),
+            User.locked_at < threshold,
+        ).order_by(User.id)
+        if limit:
+            query = query.limit(limit)
+        # 削除でオブジェクトが detach されるため、必要情報を先に確定する。
+        targets = [(u.id, u.username, u.email) for u in query.all()]
+
+        def _emit(purged, failed):
+            print(f"対象 {len(targets)} 件 / 退会 {purged} 件 / 失敗 {failed} 件 "
+                  f"(ロックから {grace} 日経過・{threshold.date()} 以前)")
+            if as_json:
+                print(_json.dumps({
+                    "matched": len(targets),
+                    "purged": int(purged),
+                    "failed": int(failed),
+                    "executed": bool(execute),
+                }, ensure_ascii=False))
+
+        if not execute:
+            for uid, uname, email in targets:
+                print(f"  [dry-run] {uid}: {uname} <{email}>")
+            _emit(0, 0)
+            return
+
+        purged = 0
+        failed = 0
+        for uid, uname, email in targets:
+            try:
+                delete_user_account(uid)
+                purged += 1
+                print(f"  退会: {uid}: {uname}")
+            except Exception as e:
+                # 1 件の失敗で全体を止めない (delete_user_account は内部で
+                # commit するため、成功分は確定済み)。
+                db.session.rollback()
+                print(f"  [warn] 退会失敗 {uid}: {uname}: {e}")
+                failed += 1
+        _emit(purged, failed)
+
     @app.cli.command("notify-terms-update")
     @click.option("--dry-run", is_flag=True, help="送信せず対象一覧のみ表示")
     @click.option("--limit", type=int, default=None, help="送信件数の上限")
