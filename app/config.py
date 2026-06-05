@@ -53,6 +53,12 @@ class Config:
     MIGRATION_PURGE_GRACE_DAYS = int(
         os.environ.get("MIGRATION_PURGE_GRACE_DAYS", "60")
     )
+    # 運用者向け管理画面 (/admin/migration-progress, §16.6) の Basic 認証。
+    # 現行の user_type (personal/auditor) では admin を表現できないため、
+    # 暫定で環境変数の Basic 認証を採用 (設計書 §16.5 選択肢 c)。両方が設定
+    # されている場合のみ /admin/* を有効化し、未設定なら 503 で機能無効。
+    OPS_BASIC_AUTH_USER = os.environ.get("OPS_BASIC_AUTH_USER", "")
+    OPS_BASIC_AUTH_PASS = os.environ.get("OPS_BASIC_AUTH_PASS", "")
 
     # エンタイトルメント基盤の動作モード。
     # - "unlimited" (default): セルフホスト前提で全有償機能を解放。

@@ -21,6 +21,7 @@ from app.views.keypair import bp as keypair_bp
 from app.views.audit_packages import bp as audit_packages_bp
 from app.views.ai_config_api import bp as ai_config_api_bp
 from app.views.migration_lock import bp as migration_lock_bp
+from app.views.admin import bp as admin_bp
 
 
 def register_blueprints(app):
@@ -47,3 +48,4 @@ def register_blueprints(app):
     app.register_blueprint(audit_packages_bp)
     app.register_blueprint(ai_config_api_bp)
     app.register_blueprint(migration_lock_bp)
+    app.register_blueprint(admin_bp)
