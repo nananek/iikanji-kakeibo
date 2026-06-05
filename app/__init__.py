@@ -231,6 +231,59 @@ def register_cli(app):
         )
         print("E2EE データ暗号化 完了: " + summary)
 
+    @app.cli.command("migration-status")
+    @click.option("--json", "as_json", is_flag=True,
+                  help="JSON で出力 (機械処理用)")
+    def migration_status_command(as_json):
+        """E7 (#114) temp-MK 再ラップ移行の進捗を集計表示する (§16.6)。
+
+        personal ユーザーについて、鍵設定状況と temp-MK 保持状況を件数で表示する。
+        全員が temp-MK を保持しなくなれば (temp_mk_active=0)、運用者は移行が完遂した
+        と判断し temp-MK 材料を破棄できる。read のみ・破壊操作なし。
+
+        出力件数は全て整数で、temp-MK バイト列等の機密値は一切出力しない。
+        """
+        import json as _json
+        from app.models.user import User
+
+        base = User.query.filter_by(user_type="personal")
+        total = base.count()
+        key_set = base.filter(User.public_key.isnot(None)).count()
+        temp_mk_active = base.filter(
+            User.migration_temp_mk.isnot(None)
+        ).count()
+        locked = base.filter(User.is_active.is_(False)).count()
+        # 全件 int 化 (CodeQL py/clear-text-logging 誤検知回避・機密非出力の明示)。
+        stats = {
+            "total": int(total),
+            "key_set": int(key_set),
+            "key_unset": int(total - key_set),
+            "temp_mk_active": int(temp_mk_active),
+            "locked": int(locked),
+            "safe_to_discard_temp_mk": int(temp_mk_active) == 0,
+        }
+
+        if as_json:
+            print(_json.dumps(stats, ensure_ascii=False))
+            return
+
+        print("E2EE 移行進捗 (personal ユーザー)")
+        print(f"  総ユーザー数            : {stats['total']}")
+        print(f"  鍵設定済み              : {stats['key_set']}")
+        print(f"  鍵未設定                : {stats['key_unset']}")
+        print(f"  temp-MK 保持中(移行待ち) : {stats['temp_mk_active']}")
+        print(f"  ロック中(is_active=False): {stats['locked']}")
+        if stats["safe_to_discard_temp_mk"]:
+            print(
+                "\n[移行完遂] temp-MK を保持するユーザーはいません。"
+                "temp-MK 材料を破棄できます。"
+            )
+        else:
+            print(
+                f"\n[移行待ち] {stats['temp_mk_active']} 名が temp-MK を保持中です。"
+                "temp-MK 材料は破棄しないでください。"
+            )
+
     @app.cli.command("notify-terms-update")
     @click.option("--dry-run", is_flag=True, help="送信せず対象一覧のみ表示")
     @click.option("--limit", type=int, default=None, help="送信件数の上限")
