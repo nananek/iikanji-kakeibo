@@ -964,13 +964,16 @@ def migration_rewrap_image():
 
     backend = get_storage_backend()
     try:
-        backend.put(voucher.image_key, image_ct, ENCRYPTED_CONTENT_TYPE)
+        # サムネを先に書き、hash を持つ本体画像を最後に書く。こうすると本体
+        # put が失敗した場合でもストレージの本体画像と DB の file_hash は共に
+        # 旧値のまま整合する (サムネには hash 記録がないため不整合は生じない)。
         if thumb_ct is not None:
             thumb_key = voucher.thumbnail_key or make_encrypted_thumbnail_key(
                 voucher.image_key,
             )
             backend.put(thumb_key, thumb_ct, ENCRYPTED_CONTENT_TYPE)
             voucher.thumbnail_key = thumb_key
+        backend.put(voucher.image_key, image_ct, ENCRYPTED_CONTENT_TYPE)
         voucher.file_hash = hashlib.sha256(image_ct).hexdigest()  # cipher hash
         db.session.commit()
     except Exception:
@@ -1000,7 +1003,12 @@ def migration_finalize():
     was_active = user.migration_temp_mk is not None
     if was_active:
         user.migration_temp_mk = None
-        db.session.commit()
+        try:
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            current_app.logger.exception("migration_finalize failed")
+            return jsonify({"error": "finalize に失敗しました。"}), 500
     return jsonify({"ok": True, "finalized": was_active})
 
 

@@ -545,6 +545,16 @@ class TestFinalize:
         assert r.status_code == 200
         assert r.get_json() == {"ok": True, "finalized": False}
 
+    def test_commit_error_returns_500(self, db, client, migrating_user, monkeypatch):
+        _login(client, migrating_user)
+
+        def boom():
+            raise RuntimeError("db down")
+
+        monkeypatch.setattr(_db.session, "commit", boom)
+        r = client.post("/api/v1/migration/finalize")
+        assert r.status_code == 500
+
     def test_auditor_rejected(self, db, client, auditor):
         _login(client, auditor)
         r = client.post("/api/v1/migration/finalize")
