@@ -100,6 +100,51 @@ def create_app(config_class=Config):
             return
         return redirect(url_for("settings.passkeys"))
 
+    # 鍵未設定ロックゲート (§16.5 / E7 #114 PR-4b)
+    @app.before_request
+    def migration_lock_gate():
+        """`is_active=False` (鍵未設定ロック) のユーザーを、鍵設定または
+        退会に必要なエンドポイント以外からブロックしてロック解決ページへ送る。
+
+        ログイン時に `auth.login` が `force=True` で限定セッションを張るため、
+        ロック中でも `current_user.is_authenticated` は True。ここで行動を
+        ロック解決フローに限定する (`pending_recovery_gate` と同型)。
+
+        自己回復: 鍵設定ウィザード完了で `users.public_key` が立つと、ここで
+        `is_active=True` / `locked_at=NULL` に戻してロックを解く。鍵設定済み
+        判定は migration-status CLI の `key_set` (public_key IS NOT NULL) と
+        一致させている。前提: `is_active` は §16.5 の鍵未設定ロック専用
+        (CLAUDE.md / 056 コメント)。将来 admin 停止等の別用途が増えたら、
+        public_key 有無による自己回復の前提を見直すこと。
+        """
+        from flask import request, redirect, url_for
+        from flask_login import current_user as cu
+        if not cu.is_authenticated or cu.is_active:
+            return
+        if cu.public_key is not None:
+            cu.is_active = True
+            cu.locked_at = None
+            db.session.commit()
+            return
+        endpoint = request.endpoint or ""
+        # ロック解決の遂行に必要なエンドポイントだけ許可する。
+        allowed_endpoints = {
+            "migration_lock.locked",
+            "settings.delete_account",
+            "auth.logout",
+        }
+        if endpoint in allowed_endpoints or endpoint.startswith("static"):
+            return
+        # 鍵設定/解錠に必要な JSON API・Passkey 認証フロー・法的文書/問い合わせ。
+        if (
+            endpoint.startswith("wrapped_keys.")
+            or endpoint.startswith("keypair.")
+            or endpoint.startswith("webauthn.")
+            or endpoint.startswith("legal.")
+        ):
+            return
+        return redirect(url_for("migration_lock.locked"))
+
     # Before-request hook for terms acceptance check
     @app.before_request
     def terms_acceptance_check():
@@ -113,6 +158,11 @@ def create_app(config_class=Config):
         from flask import request, redirect, url_for
         from flask_login import current_user as cu
         if not cu.is_authenticated:
+            return
+        # 鍵未設定ロック中 (§16.5) は migration_lock_gate が制御する。ここで
+        # accept-terms へ誘導すると lock gate と相互リダイレクトで無限ループに
+        # なるため、ロック中はスキップ (鍵設定 or 退会の後に規約再同意へ進む)。
+        if not cu.is_active:
             return
         current_version = app.config.get("CURRENT_TERMS_VERSION", "")
         if not current_version:

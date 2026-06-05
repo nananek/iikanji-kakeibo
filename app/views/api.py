@@ -750,8 +750,10 @@ def _require_migration_owner():
     if user.user_type == "auditor":
         return jsonify({"error": "監査アカウントは利用できません。"}), 403
     if not user.is_active:  # pragma: no cover - 多重防御
-        # §16.5 鍵未設定ロック。Bearer は上で遮断済、セッション認証は
-        # user_loader が非アクティブを 401 で弾くため通常ここには到達しない。
+        # §16.5 鍵未設定ロック。Bearer は上で遮断済。is_authenticated を
+        # is_active から切り離した (E7 #114 PR-4b) ためセッション認証では
+        # ロック中でもここに到達し得るが、この明示チェックで 403 にする
+        # (web 経路は migration_lock_gate がロック解決ページへ誘導)。
         return jsonify({"error": "このアカウントはロックされています。"}), 403
     return None
 

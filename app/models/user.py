@@ -43,10 +43,16 @@ class User(UserMixin, db.Model):
     recovery_code_used_at = db.Column(db.DateTime(timezone=True), nullable=True)
 
     # E2EE Phase E1 (#108): 鍵管理基盤関連カラム。設計書 §10 / §16 参照。
-    # is_active: 鍵未設定ユーザーのロック用。Flask-Login の UserMixin は
-    # is_active=True を返すプロパティを持つが、SQLAlchemy ディスクリプタ
-    # で正しく上書きされ、login_user() は DB 値を参照する (False で拒否)。
+    # is_active: 鍵未設定ユーザーのロック用 (§16.5)。SQLAlchemy ディスクリプタ
+    # が UserMixin の is_active プロパティを上書きし、login_user() は DB 値を
+    # 参照する (False で通常ログインを拒否)。鍵未設定ロックの解決フロー
+    # (鍵設定 or 退会) では auth.login が force=True で限定セッションを張り、
+    # migration_lock_gate が行動を制限する (E7 #114 PR-4b)。
     is_active = db.Column(db.Boolean, nullable=False, default=True)
+    # 鍵未設定ロック (§16.5 / E7 #114 PR-4b) を付与した時刻。is_active=False に
+    # した瞬間を記録し、ロック後 60 日経過で自動退会する判定 (migration-purge-locked)
+    # の起点に使う。再開 (鍵設定完了) 時に NULL へ戻す。ロック中でなければ NULL。
+    locked_at = db.Column(db.DateTime(timezone=True), nullable=True)
     # 一斉移行 (§16) 中の一時 MK 保管。移行完了後に NULL クリア。
     # TODO (E7 #114 実装時): このカラムへの書き込みは KMS / HSM 経由で
     # 暗号化済みバイト列のみ受け付けるバリデーションを追加する。設計書 §13.9
@@ -65,6 +71,21 @@ class User(UserMixin, db.Model):
     accounts = db.relationship("Account", backref="user", lazy="dynamic")
     journal_entries = db.relationship("JournalEntry", backref="user", lazy="dynamic")
     medical_expenses = db.relationship("MedicalExpense", backref="user", lazy="dynamic")
+
+    @property
+    def is_authenticated(self):
+        """ログイン済みかどうかを is_active から切り離す (E7 #114 PR-4b)。
+
+        Flask-Login の UserMixin は `is_authenticated` が `self.is_active` を
+        返すため、鍵未設定ロック (is_active=False) のユーザーは force-login して
+        もセッションが未認証扱いになり、鍵設定 API すら使えなくなる。§16.5 の
+        「ロック中ユーザーがログインして鍵設定 or 退会する」フローを成立させる
+        ため、認証済み判定 (= 有効なセッションを持つ) を is_active から独立させる。
+
+        ロック中ユーザーの行動制限は migration_lock_gate (web) と各 API の
+        明示的な `is_active` チェック (例: api.py の Bearer ガード) が担う。
+        """
+        return True
 
     def set_password(self, password):
         self.password_hash = generate_password_hash(password)

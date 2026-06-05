@@ -96,14 +96,20 @@ class TestTempMk:
         r = client.get("/api/v1/migration/temp-mk")
         assert r.status_code == 403
 
-    def test_inactive_user_blocked_at_session_load(self, db, client, migrating_user):
-        # §16.5 ロック: is_active=False は user_loader 段階で弾かれ、セッション
-        # 認証自体が成立しない (401)。temp-MK は当然渡らない。
-        migrating_user.is_active = False
+    def test_locked_user_blocked_by_gate(self, db, client, user):
+        # §16.5 鍵未設定ロック: is_active=False かつ public_key 未設定 (= 真の
+        # 鍵未設定ロック) のユーザーは migration_lock_gate がロック解決ページへ
+        # リダイレクトするため、temp-MK エンドポイントには到達しない。
+        # (E7 #114 PR-4b: is_authenticated を is_active から切り離したため、
+        #  ブロックは user_loader ではなく gate が担う。)
+        user.public_key = None
+        user.is_active = False
+        user.migration_temp_mk = bytes(range(32))
         db.session.commit()
-        _login(client, migrating_user)
+        _login(client, user)
         r = client.get("/api/v1/migration/temp-mk")
-        assert r.status_code == 401
+        assert r.status_code == 302
+        assert "/migration/locked" in r.headers["Location"]
 
 
 # ─────────────────────────── POST /migration/rewrap ───────────────────────────
