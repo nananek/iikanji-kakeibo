@@ -62,6 +62,7 @@ async function _onMigrate(btn) {
   const client = new SharedCryptoClient(getSharedWorkerUrl());
   const progressWrap = document.getElementById("migration-rewrap-progress");
   const progressBar = document.getElementById("migration-rewrap-bar");
+  const statusEl = document.getElementById("migration-rewrap-status");
   btn.disabled = true;
   try {
     const status = await client.status();
@@ -75,9 +76,11 @@ async function _onMigrate(btn) {
     }
 
     if (progressWrap) progressWrap.classList.remove("d-none");
+    if (statusEl) statusEl.classList.remove("d-none");
     const result = await runRewrapMigration({
       client, userId, years,
       onProgress: (done, total) => _setProgress(progressBar, done, total),
+      onStatus: (text) => { if (statusEl) statusEl.textContent = text; },
     });
 
     if (result.active === false) {
@@ -98,6 +101,7 @@ async function _onMigrate(btn) {
     );
     btn.disabled = false;
     if (progressWrap) progressWrap.classList.add("d-none");
+    if (statusEl) { statusEl.textContent = ""; statusEl.classList.add("d-none"); }
   } finally {
     try { client.close(); } catch (_e) { /* ignore */ }
   }
