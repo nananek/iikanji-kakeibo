@@ -49,6 +49,14 @@ def login():
                     "warning",
                 )
                 return render_template("auth/login.html", form=form)
+            if not user.is_active:
+                # §16.5 鍵未設定ロック (E7 #114): 通常の login_user は
+                # is_active=False を拒否する。force=True で限定セッションを
+                # 張り、migration_lock_gate がロック解決ページ (鍵設定 or
+                # 退会) 以外をブロックする。鍵設定が完了すると gate が自己
+                # 回復して is_active=True に戻る。
+                login_user(user, remember=True, force=True)
+                return redirect(url_for("migration_lock.locked"))
             login_user(user, remember=True)
             return redirect(_safe_next_url(url_for("dashboard.index")))
         flash("ユーザー名またはパスワードが正しくありません。", "danger")

@@ -1,0 +1,286 @@
+{% extends "base.html" %}
+{% block title %}暗号鍵の設定が必要です - いいかんじ™家計簿{% endblock %}
+
+{% block content %}
+<h2 class="mb-3"><i class="bi bi-shield-exclamation"></i> 暗号鍵の設定が必要です</h2>
+
+<div class="alert alert-warning">
+  <p class="mb-1">
+    <strong>このアカウントはロックされています。</strong>
+    エンドツーエンド暗号化 (E2EE) への移行猶予期間が過ぎても暗号鍵が設定されて
+    いないため、家計簿データにアクセスできない状態です。
+  </p>
+  <p class="mb-0 small">
+    暗号鍵を設定すると自動的にロックが解除され、これまで通りご利用いただけます。
+    暗号鍵はあなたしか知らない情報から生成され、サーバーは鍵を保管しません。
+  </p>
+</div>
+
+<!-- 選択肢 1: 鍵を設定して続行 (既存ウィザードを再利用) -->
+<h5 class="mt-4 mb-2"><i class="bi bi-1-circle"></i> 暗号鍵を設定して続ける</h5>
+<div x-data="encryptionKeyWizard({ userId: {{ current_user.id|tojson }} })" x-init="init()" class="card shadow-sm">
+  <div class="card-body">
+
+    <div class="alert alert-danger small" x-show="error" x-text="error" x-cloak></div>
+
+    <!-- ステップ 1: 開始画面 -->
+    <template x-if="step === 'start'">
+      <div>
+        <template x-if="existingKeys.length === 0">
+          <p class="text-muted small">まだ暗号鍵が登録されていません。下のボタンから初回設定を開始してください。</p>
+        </template>
+
+        <template x-if="existingKeys.length > 0">
+          <div>
+            <p class="text-muted small mb-2" x-show="!hasKey" x-cloak>
+              鍵は登録済みです。下のいずれかの鍵を選んで解除すると、ロックが解けます。
+            </p>
+            <p class="text-muted small mb-2" x-show="hasKey" x-cloak>
+              暗号鍵を解除しました。ページを再読み込みするとロックが解除されます。
+            </p>
+            <ul class="list-group mb-3">
+              <template x-for="k in existingKeys" :key="k.id">
+                <li class="list-group-item d-flex justify-content-between align-items-center flex-wrap gap-2">
+                  <div>
+                    <span class="badge bg-secondary me-2" x-text="k.method"></span>
+                    <span x-text="k.label || '(ラベルなし)'"></span>
+                  </div>
+                  <template x-if="!hasKey">
+                    <button class="btn btn-sm btn-outline-primary" @click="goToUnlock(k)">
+                      <i class="bi bi-unlock"></i> この鍵で解除
+                    </button>
+                  </template>
+                </li>
+              </template>
+            </ul>
+          </div>
+        </template>
+
+        <div class="d-flex gap-2 mt-3 flex-wrap">
+          <template x-if="existingKeys.length === 0">
+            <button class="btn btn-primary" @click="proceedChoose()">
+              <i class="bi bi-key"></i> 初回設定を開始
+            </button>
+          </template>
+          <template x-if="hasKey">
+            <a href="{{ url_for('dashboard.index') }}" class="btn btn-success">
+              <i class="bi bi-arrow-right-circle"></i> ダッシュボードへ進む
+            </a>
+          </template>
+        </div>
+      </div>
+    </template>
+
+    <!-- ステップ 1.5: ロック解除画面 -->
+    <template x-if="step === 'unlock'">
+      <div>
+        <h5 class="mb-3"><i class="bi bi-unlock"></i> ロック解除</h5>
+        <p class="text-muted small">
+          選択した鍵: <span class="badge bg-secondary" x-text="unlockingKey?.method"></span>
+          <span x-text="unlockingKey?.label || '(ラベルなし)'"></span>
+        </p>
+
+        <template x-if="unlockingKey?.method === 'passphrase'">
+          <div>
+            <div class="mb-3">
+              <label class="form-label">パスフレーズ</label>
+              <input type="password" class="form-control" x-model="unlockPassphrase"
+                     :disabled="loading" autocomplete="current-password"
+                     @keydown.enter.prevent="unlockWithPassphrase()">
+            </div>
+            <div class="d-flex gap-2">
+              <button class="btn btn-primary" @click="unlockWithPassphrase()" :disabled="loading">
+                <span x-show="loading" class="spinner-border spinner-border-sm me-2"></span>
+                <span x-text="loading ? '派生中...' : '解除する'"></span>
+              </button>
+              <button class="btn btn-outline-secondary" @click="step = 'start'" :disabled="loading">戻る</button>
+            </div>
+          </div>
+        </template>
+
+        <template x-if="unlockingKey?.method === 'recovery_seed'">
+          <div>
+            <div class="mb-3">
+              <label class="form-label">24 単語のリカバリシード (半角スペース区切り)</label>
+              <textarea class="form-control font-monospace" rows="3" x-model="unlockMnemonic"
+                        :disabled="loading" autocomplete="off" spellcheck="false"
+                        placeholder="abandon abandon ... art"></textarea>
+            </div>
+            <div class="d-flex gap-2">
+              <button class="btn btn-primary" @click="unlockWithRecovery()" :disabled="loading">
+                <span x-show="loading" class="spinner-border spinner-border-sm me-2"></span>
+                <span x-text="loading ? '検証中...' : '解除する'"></span>
+              </button>
+              <button class="btn btn-outline-secondary" @click="step = 'start'" :disabled="loading">戻る</button>
+            </div>
+          </div>
+        </template>
+
+        <template x-if="unlockingKey?.method === 'passkey_prf'">
+          <div>
+            <p class="text-muted small">
+              ボタンを押すと Passkey 認証 (指紋・Face ID 等) が起動します。
+            </p>
+            <div class="d-flex gap-2">
+              <button class="btn btn-primary" @click="unlockWithPasskey()" :disabled="loading">
+                <span x-show="loading" class="spinner-border spinner-border-sm me-2"></span>
+                <i class="bi bi-fingerprint me-1"></i>
+                <span x-text="loading ? '認証中...' : 'Passkey で解除する'"></span>
+              </button>
+              <button class="btn btn-outline-secondary" @click="step = 'start'" :disabled="loading">戻る</button>
+            </div>
+          </div>
+        </template>
+      </div>
+    </template>
+
+    <!-- ステップ 2: 方式選択 -->
+    <template x-if="step === 'choose'">
+      <div>
+        <h5 class="mb-3"><i class="bi bi-2-square"></i> 派生方式を選択</h5>
+        <p class="text-muted small">
+          マスター鍵 (MK) を保護する派生方式を選んでください。<strong>1 つ目</strong>の方式は初回必須です。
+        </p>
+        <div class="row row-cols-1 row-cols-md-3 g-3">
+          <div class="col">
+            <button class="btn btn-outline-primary w-100 text-start p-3 h-100"
+                    @click="selectPasskey()" :disabled="loading">
+              <h6 class="mb-1"><i class="bi bi-fingerprint"></i> Passkey</h6>
+              <small class="text-muted">指紋・Face ID 等。最速で安全 (PRF 拡張対応端末)。<br>
+                登録済み Passkey が必要です。</small>
+            </button>
+            <small class="d-block text-muted text-center mt-1">
+              Passkey 未登録の場合は
+              <a href="{{ url_for('settings.passkeys') }}">Passkey 管理</a>
+              で先に登録してください。
+            </small>
+          </div>
+          <div class="col">
+            <button class="btn btn-outline-primary w-100 text-start p-3 h-100"
+                    @click="selectPassphrase()" :disabled="loading">
+              <h6 class="mb-1"><i class="bi bi-key"></i> パスフレーズ</h6>
+              <small class="text-muted">8 文字以上の文字列で MK を保護。ログイン時に入力。</small>
+            </button>
+          </div>
+          <div class="col">
+            <button class="btn btn-outline-primary w-100 text-start p-3 h-100"
+                    @click="selectRecovery()" :disabled="loading">
+              <h6 class="mb-1"><i class="bi bi-card-list"></i> リカバリシード (24 単語)</h6>
+              <small class="text-muted">BIP-39 形式の 24 単語フレーズ。緊急復旧用、紙にメモして保管。</small>
+            </button>
+          </div>
+        </div>
+        <div class="mt-3">
+          <button class="btn btn-link btn-sm" @click="backToStart()">
+            <i class="bi bi-arrow-left"></i> 戻る
+          </button>
+        </div>
+      </div>
+    </template>
+
+    <!-- ステップ 3a: パスフレーズ入力 -->
+    <template x-if="step === 'passphrase'">
+      <div>
+        <h5 class="mb-3"><i class="bi bi-key"></i> パスフレーズ設定</h5>
+        <p class="text-muted small">
+          8 文字以上のパスフレーズを設定します。Argon2id (64 MiB / 3 iter) で派生します。
+          <strong>このパスフレーズを忘れると MK 復元不能になります。</strong>
+        </p>
+        <div class="mb-3">
+          <label class="form-label">パスフレーズ</label>
+          <input type="password" class="form-control" x-model="passphrase"
+                 :disabled="loading" autocomplete="new-password">
+        </div>
+        <div class="mb-3">
+          <label class="form-label">パスフレーズ (確認)</label>
+          <input type="password" class="form-control" x-model="passphraseConfirm"
+                 :disabled="loading" autocomplete="new-password">
+        </div>
+        <div class="d-flex gap-2">
+          <button class="btn btn-primary" @click="submitPassphrase()" :disabled="loading">
+            <span x-show="loading" class="spinner-border spinner-border-sm me-2"></span>
+            <span x-text="loading ? '派生中...' : '登録する'"></span>
+          </button>
+          <button class="btn btn-outline-secondary" @click="goToChoose()" :disabled="loading">戻る</button>
+        </div>
+      </div>
+    </template>
+
+    <!-- ステップ 3b: リカバリシード生成 -->
+    <template x-if="step === 'recovery'">
+      <div>
+        <h5 class="mb-3"><i class="bi bi-card-list"></i> リカバリシード (24 単語)</h5>
+        <div class="alert alert-danger small">
+          <strong><i class="bi bi-exclamation-triangle"></i> この 24 単語が表示されるのは 1 回のみ</strong>。
+          紙にメモして安全に保管してください (スクリーンショットや写真は推奨しません — クラウド同期で漏洩リスク)。
+          紛失すると MK 復元不可能、再生成は MK アンラップ済の状態でのみ可能です。
+        </div>
+        <div class="card bg-light mb-3">
+          <div class="card-body">
+            <div class="row row-cols-3 row-cols-md-4 row-cols-lg-6 g-2 small font-monospace">
+              <template x-for="(word, idx) in mnemonic.split(' ')" :key="idx">
+                <div class="col">
+                  <span class="text-muted" x-text="(idx + 1) + '.'"></span>
+                  <span x-text="word"></span>
+                </div>
+              </template>
+            </div>
+          </div>
+        </div>
+        <div class="form-check mb-3">
+          <input class="form-check-input" type="checkbox" id="mnemonic-acked"
+                 x-model="mnemonicAcked" :disabled="loading">
+          <label class="form-check-label" for="mnemonic-acked">
+            24 単語を紙にメモしました。紛失すると復元不可能であることを理解しました。
+          </label>
+        </div>
+        <div class="d-flex gap-2">
+          <button class="btn btn-primary" @click="submitRecovery()"
+                  :disabled="loading || !mnemonicAcked">
+            <span x-show="loading" class="spinner-border spinner-border-sm me-2"></span>
+            <span x-text="loading ? '登録中...' : '登録する'"></span>
+          </button>
+          <button class="btn btn-outline-secondary" @click="goToChoose()" :disabled="loading">戻る</button>
+        </div>
+      </div>
+    </template>
+
+    <!-- ステップ 4: 完了 -->
+    <template x-if="step === 'done'">
+      <div class="text-center py-4">
+        <i class="bi bi-check-circle-fill text-success display-1"></i>
+        <h4 class="mt-3">鍵を登録しました</h4>
+        <p class="text-muted">
+          方式: <code x-text="doneMethod"></code><br>
+          ロックが解除されました。下のボタンからダッシュボードへお進みください。
+        </p>
+        <a href="{{ url_for('dashboard.index') }}" class="btn btn-success">
+          <i class="bi bi-arrow-right-circle"></i> ダッシュボードへ進む
+        </a>
+      </div>
+    </template>
+
+  </div>
+</div>
+
+<!-- 選択肢 2: 退会する -->
+<h5 class="mt-4 mb-2"><i class="bi bi-2-circle"></i> 退会する</h5>
+<div class="card border-danger-subtle">
+  <div class="card-body">
+    <p class="text-muted small mb-2">
+      暗号鍵を設定せず退会する場合は、こちらから手続きできます。退会するとすべての
+      家計簿データが完全に削除され、元に戻すことはできません。
+    </p>
+    <a href="{{ url_for('settings.delete_account') }}" class="btn btn-outline-danger btn-sm">
+      <i class="bi bi-person-x"></i> 退会手続きへ進む
+    </a>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script type="module">
+  // wizard.js が globalThis.encryptionKeyWizard を登録する (encryption_keys.html と同じ)。
+  import "{{ url_for('static', filename='js/crypto/wizard.js') }}";
+</script>
+{% endblock %}
