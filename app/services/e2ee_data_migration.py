@@ -13,20 +13,64 @@ v4.0.0 (alembic 045) の平文を E2EE 化するため、サーバが利用者�
 
 移行完了後は各利用者がクライアントで自分の MK へ再ラップし temp_mk をクリアする
 (別フェーズ)。本モジュールは冪等: encrypted_blob が既に埋まっている行はスキップする。
+
+テスト方針: record 構築 (je_record / jel_record / me_record) は純粋関数として
+ユニットテスト。DB グルー (information_schema / octet_length / raw SQL) は PostgreSQL
+専用で SQLite フィクスチャでは動かないため、実 PG での往復検証
+(docs/v5-e2ee/e7-migration-runbook.md) で担保し、カバレッジ上は除外する。
 """
 
 from __future__ import annotations
 
-import os
-
-from sqlalchemy import text
-
 from app.services.migration_crypto import build_aad, encrypt_record
 
-_EMPTY = "(encrypted_blob IS NULL OR octet_length(encrypted_blob)=0)"
+# 暗号文が未設定 (NULL or 空) の行 = 未暗号化。冪等フィルタ兼ガード条件。
+_UNENCRYPTED = "(encrypted_blob IS NULL OR octet_length(encrypted_blob)=0)"
 
 
-def _column_exists(conn, table: str, column: str) -> bool:
+# --- 平文行 → record dict (純粋関数。クライアントの暗号化前 record と同形状) ---
+
+def je_record(date, description, source, fiscal_period) -> dict:
+    """journal_entries の平文列から je record を構築 (entries_builder.js と同形状)。"""
+    return {
+        "v": 1,
+        "date": date.isoformat() if date else None,
+        "description": description or "",
+        "source": source or "journal",
+        "fiscal_period": fiscal_period,
+    }
+
+
+def jel_record(account_code, debit_amount, credit_amount, description) -> dict:
+    """journal_entry_lines の平文列から jel record を構築。"""
+    return {
+        "v": 1,
+        "account_code": account_code or "",
+        "debit_amount": int(debit_amount or 0),
+        "credit_amount": int(credit_amount or 0),
+        "description": description or "",
+    }
+
+
+def me_record(date, patient_name, hospital_name, treatment_description,
+              provider_type, amount_paid, insurance_reimbursement) -> dict:
+    """medical_expenses の平文列から me record を構築。"""
+    return {
+        "v": 1,
+        "date": date.isoformat() if date else None,
+        "patient_name": patient_name or "",
+        "hospital_name": hospital_name or "",
+        "treatment_description": treatment_description or "",
+        "provider_type": provider_type or None,
+        "amount_paid": int(amount_paid or 0),
+        "insurance_reimbursement": int(insurance_reimbursement or 0),
+    }
+
+
+# --- DB グルー (PostgreSQL 専用。カバレッジ除外、実 PG で往復検証) ---
+
+def _column_exists(conn, table, column):  # pragma: no cover
+    from sqlalchemy import text
     return bool(
         conn.execute(
             text(
@@ -38,8 +82,10 @@ def _column_exists(conn, table: str, column: str) -> bool:
     )
 
 
-def _ensure_temp_mk(conn, user_id: int) -> bytes:
-    """user の temp-MK を取得。未設定なら 32B 乱数を生成して保存 (冪等)。"""
+def _ensure_temp_mk(conn, user_id):  # pragma: no cover
+    import os
+
+    from sqlalchemy import text
     row = conn.execute(
         text("SELECT migration_temp_mk FROM users WHERE id=:uid"),
         {"uid": user_id},
@@ -56,23 +102,19 @@ def _ensure_temp_mk(conn, user_id: int) -> bytes:
     return mk
 
 
-def _migrate_journal_entries(conn, user_id: int, mk: bytes) -> int:
+def _migrate_journal_entries(conn, user_id, mk):  # pragma: no cover
+    from sqlalchemy import text
     aad = build_aad("je", user_id)
     rows = conn.execute(
         text(
             "SELECT id, date, description, source, fiscal_period "
-            "FROM journal_entries WHERE user_id=:uid AND " + _EMPTY
+            "FROM journal_entries WHERE user_id=:uid AND "
+            "(encrypted_blob IS NULL OR octet_length(encrypted_blob)=0)"
         ),
         {"uid": user_id},
     ).fetchall()
     for r in rows:
-        record = {
-            "v": 1,
-            "date": r.date.isoformat() if r.date else None,
-            "description": r.description or "",
-            "source": r.source or "journal",
-            "fiscal_period": r.fiscal_period,
-        }
+        record = je_record(r.date, r.description, r.source, r.fiscal_period)
         blob, iv = encrypt_record(mk, record, aad)
         conn.execute(
             text(
@@ -83,7 +125,8 @@ def _migrate_journal_entries(conn, user_id: int, mk: bytes) -> int:
     return len(rows)
 
 
-def _migrate_journal_entry_lines(conn, user_id: int, mk: bytes) -> int:
+def _migrate_journal_entry_lines(conn, user_id, mk):  # pragma: no cover
+    from sqlalchemy import text
     aad = build_aad("jel", user_id)
     rows = conn.execute(
         text(
@@ -98,13 +141,9 @@ def _migrate_journal_entry_lines(conn, user_id: int, mk: bytes) -> int:
         {"uid": user_id},
     ).fetchall()
     for r in rows:
-        record = {
-            "v": 1,
-            "account_code": r.account_code or "",
-            "debit_amount": int(r.debit_amount or 0),
-            "credit_amount": int(r.credit_amount or 0),
-            "description": r.description or "",
-        }
+        record = jel_record(
+            r.account_code, r.debit_amount, r.credit_amount, r.description
+        )
         blob, iv = encrypt_record(mk, record, aad)
         conn.execute(
             text(
@@ -116,27 +155,23 @@ def _migrate_journal_entry_lines(conn, user_id: int, mk: bytes) -> int:
     return len(rows)
 
 
-def _migrate_medical_expenses(conn, user_id: int, mk: bytes) -> int:
+def _migrate_medical_expenses(conn, user_id, mk):  # pragma: no cover
+    from sqlalchemy import text
     aad = build_aad("me", user_id)
     rows = conn.execute(
         text(
             "SELECT id, date, patient_name, hospital_name, treatment_description, "
             "provider_type, amount_paid, insurance_reimbursement "
-            "FROM medical_expenses WHERE user_id=:uid AND " + _EMPTY
+            "FROM medical_expenses WHERE user_id=:uid AND "
+            "(encrypted_blob IS NULL OR octet_length(encrypted_blob)=0)"
         ),
         {"uid": user_id},
     ).fetchall()
     for r in rows:
-        record = {
-            "v": 1,
-            "date": r.date.isoformat() if r.date else None,
-            "patient_name": r.patient_name or "",
-            "hospital_name": r.hospital_name or "",
-            "treatment_description": r.treatment_description or "",
-            "provider_type": r.provider_type or None,
-            "amount_paid": int(r.amount_paid or 0),
-            "insurance_reimbursement": int(r.insurance_reimbursement or 0),
-        }
+        record = me_record(
+            r.date, r.patient_name, r.hospital_name, r.treatment_description,
+            r.provider_type, r.amount_paid, r.insurance_reimbursement,
+        )
         blob, iv = encrypt_record(mk, record, aad)
         conn.execute(
             text(
@@ -147,15 +182,15 @@ def _migrate_medical_expenses(conn, user_id: int, mk: bytes) -> int:
     return len(rows)
 
 
-def migrate_all_to_e2ee(db, *, user_id: int | None = None) -> dict:
+def migrate_all_to_e2ee(db, *, user_id=None):  # pragma: no cover
     """全 (または指定) 利用者の平文台帳データを temp-MK で暗号化する。
 
     Returns: 暗号化件数の集計 dict。
     Raises: RuntimeError — 平文列が既に DROP 済 (revision >= 055) で実行不可。
     """
+    from sqlalchemy import text
     conn = db.session.connection()
 
-    # precheck: 平文列が残っているか (revision 054 でのみ実行可能)。
     required = [
         ("journal_entries", "date"),
         ("journal_entry_lines", "account_code"),

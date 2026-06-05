@@ -49,6 +49,15 @@ def test_build_aad_je_me_golden():
     assert build_aad("jel", GOLDEN_USER_ID).hex() == "6a656c00000000000000002a"
 
 
+def test_build_aad_with_extra_id():
+    # voucher 系 / bcb は追加 id を 1 個取り、AAD 末尾に NUL+uint64be(id) が付く。
+    aad = build_aad("vmeta", 1, 7)
+    assert aad == (b"vmeta\x00" + uint64_be(1) + b"\x00" + uint64_be(7))
+    assert build_aad("bcb", 42, 202601) == (
+        b"bcb\x00" + uint64_be(42) + b"\x00" + uint64_be(202601)
+    )
+
+
 def test_build_aad_id_count_validation():
     with pytest.raises(ValueError):
         build_aad("je", 1, 999)  # je は追加 id を取らない
@@ -94,3 +103,72 @@ def test_decrypt_wrong_aad_fails():
 def test_encrypt_requires_32b_key():
     with pytest.raises(ValueError):
         encrypt_record(b"short", {"v": 1}, build_aad("je", 1))
+
+
+def test_uint64_be_type_error():
+    with pytest.raises(TypeError):
+        uint64_be("42")
+
+
+def test_decrypt_requires_32b_key():
+    with pytest.raises(ValueError):
+        decrypt_record(b"short", b"x", b"y", build_aad("je", 1))
+
+
+# --- record ビルダー (e2ee_data_migration の純粋関数) ---
+
+from datetime import date  # noqa: E402
+from decimal import Decimal  # noqa: E402
+
+from app.services.e2ee_data_migration import (  # noqa: E402
+    je_record,
+    jel_record,
+    me_record,
+)
+
+
+def test_je_record_shape_and_nulls():
+    assert je_record(date(2026, 2, 15), "摘要", "cashbook", 5) == {
+        "v": 1, "date": "2026-02-15", "description": "摘要",
+        "source": "cashbook", "fiscal_period": 5,
+    }
+    # NULL/欠落のデフォルト: date None / description None / source None / fp None
+    assert je_record(None, None, None, None) == {
+        "v": 1, "date": None, "description": "", "source": "journal",
+        "fiscal_period": None,
+    }
+
+
+def test_jel_record_numeric_coercion():
+    # Numeric(Decimal) → int、account_code None → ""、None 金額 → 0
+    assert jel_record("5010", Decimal("100"), Decimal("0"), "メモ") == {
+        "v": 1, "account_code": "5010", "debit_amount": 100,
+        "credit_amount": 0, "description": "メモ",
+    }
+    assert jel_record(None, None, None, None) == {
+        "v": 1, "account_code": "", "debit_amount": 0,
+        "credit_amount": 0, "description": "",
+    }
+
+
+def test_me_record_provider_type_and_nulls():
+    assert me_record(date(2026, 3, 20), "山田", "○○病院", "歯科",
+                     "hospital", Decimal("12000"), Decimal("4000")) == {
+        "v": 1, "date": "2026-03-20", "patient_name": "山田",
+        "hospital_name": "○○病院", "treatment_description": "歯科",
+        "provider_type": "hospital", "amount_paid": 12000,
+        "insurance_reimbursement": 4000,
+    }
+    # provider_type の空文字は None へ正規化 (DB nullable)
+    me = me_record(None, "", "", "", "", None, 0)
+    assert me["provider_type"] is None
+    assert me["date"] is None and me["amount_paid"] == 0
+
+
+def test_record_builder_roundtrip_via_crypto():
+    # 実運用と同じ経路: 平文行 → record → encrypt → decrypt が一致する。
+    mk = bytes(range(32))
+    rec = je_record(date(2026, 1, 2), "テスト", "journal", None)
+    aad = build_aad("je", 99)
+    blob, iv = encrypt_record(mk, rec, aad)
+    assert decrypt_record(mk, blob, iv, aad) == rec
