@@ -720,6 +720,311 @@ def reencrypt_closing():
     return jsonify({"ok": True, "closing_entry_id": closing_id})
 
 
+# --- E7 (#114): temp-MK 再ラップ移行 API -------------------------------
+#
+# サーバが移行時に利用者ごとの temp-MK (users.migration_temp_mk, 平文保管) で
+# 全データを暗号化した暫定状態を、クライアントが「temp-MK で復号 → 本物 MK で
+# 再暗号化 → blob 差し替え」して真の E2EE に移行するための API。再ラップは
+# AAD と平文を不変に保ち、鍵 (temp-MK→本物 MK) と IV のみを変える。内容不変の
+# ため確定期間チェックは通さない (close 済み年度の blob も差し替え可)。
+# 冪等性はクライアント側で「temp-MK 復号に失敗した blob = 再ラップ済」と判定して
+# skip することで担保する (サーバは blob を検証しない)。
+
+_MAX_REWRAP_ITEMS = 500
+
+
+def _require_migration_owner():
+    """移行 API の共通ゲート。owner (personal) 本人のブラウザセッション限定。
+
+    戻り値: 拒否時は (response, status)、許可時は None。
+    """
+    # 移行フローは temp-MK 配布を伴う対話的なブラウザ操作。長命な Bearer
+    # トークン (APIキー/OAuth) 経由の呼び出しは全エンドポイントで禁止する。
+    # 特に finalize を Bearer で誤って叩くと temp_mk が消え、未再ラップの blob が
+    # 復号不能になり恒久的なデータ不整合を招くため、書き込み系も含めて遮断する。
+    # auth_required は Bearer → session の順に解決するので、Authorization ヘッダが
+    # 存在する限り Bearer が優先解決される → ここで弾けばセッション認証のみ通る。
+    if request.headers.get("Authorization"):
+        return jsonify({"error": "セッション認証が必要です。"}), 403
+    user = g.auth_user
+    if user.user_type == "auditor":
+        return jsonify({"error": "監査アカウントは利用できません。"}), 403
+    if not user.is_active:  # pragma: no cover - 多重防御
+        # §16.5 鍵未設定ロック。Bearer は上で遮断済、セッション認証は
+        # user_loader が非アクティブを 401 で弾くため通常ここには到達しない。
+        return jsonify({"error": "このアカウントはロックされています。"}), 403
+    return None
+
+
+@bp.route("/migration/temp-mk", methods=["GET"])
+@auth_required(allow_session=True)
+@limiter.limit("60 per hour", key_func=rate_limit_key)
+def migration_temp_mk():
+    """移行用 temp-MK を base64 で返す (owner のブラウザセッション認証限定)。
+
+    ⚠️ サーバ→クライアントへ平文 temp-MK を渡す = 設計書 §16.4 の暫定的な
+    E2EE 弱化。HTTPS 前提・移行期間限定・finalize で即無効化することで受容する。
+    長命な API トークン (Bearer) 経由の取得は禁止し、対話的なブラウザセッション
+    (本人) のみに露出範囲を限定する。
+
+    レスポンス:
+      - {active: true,  temp_mk: "<base64>"} 移行待ち
+      - {active: false, temp_mk: null}       移行不要 / finalize 済
+    """
+    # Bearer 拒否 (セッション限定)・監査アカウント拒否は共通ゲートで実施。
+    gate = _require_migration_owner()
+    if gate is not None:
+        return gate
+
+    user = g.auth_user
+    if user.public_key is None:
+        return jsonify({
+            "error": "暗号鍵が未設定です。先に鍵を設定してください。",
+        }), 409
+
+    if user.migration_temp_mk is None:
+        return jsonify({"active": False, "temp_mk": None})
+
+    return jsonify({
+        "active": True,
+        "temp_mk": b64encode(user.migration_temp_mk).decode("ascii"),
+    })
+
+
+@bp.route("/migration/rewrap", methods=["POST"])
+@auth_required(write=True, allow_session=True)
+@limiter.limit("120 per minute", key_func=rate_limit_key)
+def migration_rewrap():
+    """temp-MK→本物 MK で再ラップ済の blob/iv を in-place 差し替えする。
+
+    リクエスト: {table, items: [...]}
+      - table ∈ {je, jel, me, vmeta, valog, bcb}
+      - items (je/jel/me/vmeta/valog): [{id, encrypted_blob, blob_iv}]
+      - items (bcb): [{year, period, encrypted_blob, blob_iv}]
+    内容不変 (鍵と IV のみ変更) のため確定期間チェックは通さない。所有者スコープ
+    で本人の行のみ更新。存在しない id は skip。
+    レスポンス: {ok, updated, skipped}
+    """
+    gate = _require_migration_owner()
+    if gate is not None:
+        return gate
+
+    from app.models.medical import MedicalExpense
+
+    # table → (model, blob_attr, iv_attr, owner_attr, max_blob)。
+    # jel は user_id 列を持たず account_user_id がテナント (= 本人 id)。
+    tables = {
+        "je": (
+            JournalEntry, "encrypted_blob", "blob_iv",
+            "user_id", _MAX_RECORD_BLOB_BYTES,
+        ),
+        "jel": (
+            JournalEntryLine, "encrypted_blob", "blob_iv",
+            "account_user_id", _MAX_RECORD_BLOB_BYTES,
+        ),
+        "me": (
+            MedicalExpense, "encrypted_blob", "blob_iv",
+            "user_id", _MAX_RECORD_BLOB_BYTES,
+        ),
+        "vmeta": (
+            Voucher, "encrypted_meta_blob", "meta_iv",
+            "user_id", _MAX_RECORD_BLOB_BYTES,
+        ),
+        # valog.user_id は退会後に SET NULL されうるが、移行中の本人は退会して
+        # いないため自分の監査ログの user_id は常に設定済 = 再ラップ漏れはない。
+        "valog": (
+            VoucherAuditLog, "encrypted_detail_blob", "detail_iv",
+            "user_id", _MAX_RECORD_BLOB_BYTES,
+        ),
+        "bcb": (
+            BalanceCacheBlob, "encrypted_blob", "blob_iv",
+            "user_id", _MAX_BCB_BLOB_BYTES,
+        ),
+    }
+
+    data = request.get_json(silent=True)
+    if not data:
+        return jsonify({"error": "JSON ボディが必要です。"}), 400
+    table = data.get("table")
+    if table not in tables:
+        return jsonify({"error": "table が不正です。"}), 400
+    items = data.get("items")
+    if not isinstance(items, list):
+        return jsonify({"error": "items は配列である必要があります。"}), 400
+    if len(items) > _MAX_REWRAP_ITEMS:
+        return jsonify({
+            "error": f"items は最大 {_MAX_REWRAP_ITEMS} 件です。",
+        }), 400
+
+    model, blob_attr, iv_attr, owner_attr, max_blob = tables[table]
+    uid = g.auth_user.id
+
+    # まず全件を decode (1 件でも不正なら 400・部分適用しない)。
+    decoded = []
+    for idx, it in enumerate(items):
+        if not isinstance(it, dict):
+            return jsonify({"error": f"items[{idx}] が不正です。"}), 400
+        blob, iv, err = _decode_record_crypto(
+            it, f"items[{idx}]", "encrypted_blob", "blob_iv",
+            max_blob_bytes=max_blob, required=True,
+        )
+        if err is not None:
+            return jsonify({"error": err}), 400
+        if table == "bcb":
+            year = it.get("year")
+            period = it.get("period")
+            if not isinstance(year, int) or not isinstance(period, int):
+                return jsonify({
+                    "error": f"items[{idx}]: year/period は整数が必要です。",
+                }), 400
+            decoded.append(((year, period), blob, iv))
+        else:
+            rid = it.get("id")
+            if not isinstance(rid, int):
+                return jsonify({
+                    "error": f"items[{idx}]: id は整数が必要です。",
+                }), 400
+            decoded.append((rid, blob, iv))
+
+    updated = 0
+    skipped = 0
+    try:
+        for key, blob, iv in decoded:
+            if table == "bcb":
+                year, period = key
+                row = BalanceCacheBlob.query.filter_by(
+                    user_id=uid, year=year, period=period,
+                ).first()
+            else:
+                row = model.query.filter(
+                    getattr(model, owner_attr) == uid, model.id == key,
+                ).first()
+            if row is None:
+                skipped += 1
+                continue
+            setattr(row, blob_attr, blob)
+            setattr(row, iv_attr, iv)
+            updated += 1
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception("migration_rewrap failed")
+        return jsonify({"error": "再ラップに失敗しました。"}), 500
+
+    return jsonify({"ok": True, "updated": updated, "skipped": skipped})
+
+
+@bp.route("/migration/rewrap-image", methods=["PUT"])
+@auth_required(write=True, allow_session=True)
+@limiter.limit("120 per minute", key_func=rate_limit_key)
+def migration_rewrap_image():
+    """証憑画像 (および任意でサムネ) の暗号文を再ラップ後の暗号文で上書きする。
+
+    リクエスト: {voucher_id, image_ct: "<base64>", thumb_ct: "<base64>"|null}
+      image_ct/thumb_ct は iv‖ciphertext‖tag の inline 形式。
+    画像 file_hash (cipher) を再計算。平文は不変なので file_hash_plain /
+    file_size は据え置き。所有者スコープ (論理削除済みも対象 = 全 temp-MK
+    データを移行するため deleted_at で絞らない)。
+    レスポンス: {ok}
+    """
+    gate = _require_migration_owner()
+    if gate is not None:
+        return gate
+
+    from app.services.storage import (
+        ENCRYPTED_CONTENT_TYPE, make_encrypted_thumbnail_key,
+    )
+
+    data = request.get_json(silent=True)
+    if not data:
+        return jsonify({"error": "JSON ボディが必要です。"}), 400
+    voucher_id = data.get("voucher_id")
+    if not isinstance(voucher_id, int):
+        return jsonify({"error": "voucher_id は整数が必要です。"}), 400
+
+    image_b64 = data.get("image_ct")
+    if not isinstance(image_b64, str):
+        return jsonify({"error": "image_ct が必要です。"}), 400
+    try:
+        image_ct = b64decode(image_b64, validate=True)
+    except (BinasciiError, ValueError, TypeError):
+        return jsonify({"error": "image_ct の base64 が不正です。"}), 400
+    # 下限 (GCM iv+tag) と上限 (証憑アップロードと同じ平文 10MB + GCM オーバヘッド)。
+    # Flask の MAX_CONTENT_LENGTH に加え、ここでも明示的に DoS 上限を設ける。
+    if len(image_ct) < _GCM_MIN_BLOB_BYTES:
+        return jsonify({"error": "image_ct が短すぎます。"}), 400
+    if len(image_ct) > _MAX_VOUCHER_IMAGE_CT_BYTES:
+        return jsonify({"error": "image_ct が大きすぎます。"}), 400
+
+    thumb_b64 = data.get("thumb_ct")
+    thumb_ct = None
+    if thumb_b64 is not None:
+        if not isinstance(thumb_b64, str):
+            return jsonify({"error": "thumb_ct が不正です。"}), 400
+        try:
+            thumb_ct = b64decode(thumb_b64, validate=True)
+        except (BinasciiError, ValueError, TypeError):
+            return jsonify({"error": "thumb_ct の base64 が不正です。"}), 400
+        if len(thumb_ct) < _GCM_MIN_BLOB_BYTES:
+            return jsonify({"error": "thumb_ct が短すぎます。"}), 400
+        if len(thumb_ct) > _MAX_VOUCHER_THUMB_CT_BYTES:
+            return jsonify({"error": "thumb_ct が大きすぎます。"}), 400
+
+    uid = g.auth_user.id
+    voucher = Voucher.query.filter_by(id=voucher_id, user_id=uid).first()
+    if voucher is None or not voucher.image_key:
+        return jsonify({"error": "証憑が見つかりません。"}), 404
+
+    backend = get_storage_backend()
+    try:
+        # サムネを先に書き、hash を持つ本体画像を最後に書く。こうすると本体
+        # put が失敗した場合でもストレージの本体画像と DB の file_hash は共に
+        # 旧値のまま整合する (サムネには hash 記録がないため不整合は生じない)。
+        if thumb_ct is not None:
+            thumb_key = voucher.thumbnail_key or make_encrypted_thumbnail_key(
+                voucher.image_key,
+            )
+            backend.put(thumb_key, thumb_ct, ENCRYPTED_CONTENT_TYPE)
+            voucher.thumbnail_key = thumb_key
+        backend.put(voucher.image_key, image_ct, ENCRYPTED_CONTENT_TYPE)
+        voucher.file_hash = hashlib.sha256(image_ct).hexdigest()  # cipher hash
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception("migration_rewrap_image failed")
+        return jsonify({"error": "証憑画像の再ラップに失敗しました。"}), 500
+
+    return jsonify({"ok": True})
+
+
+@bp.route("/migration/finalize", methods=["POST"])
+@auth_required(write=True, allow_session=True)
+@limiter.limit("10 per hour", key_func=rate_limit_key)
+def migration_finalize():
+    """全データの再ラップ完了をクライアントが宣言し、temp-MK を破棄する。
+
+    サーバは本物 MK 化を検証できない (E2EE) ため、クライアント宣言ベース。
+    temp_mk を NULL にすると以後 temp-MK は取得不可 = 真の E2EE 確立。
+    冪等 (既に NULL でも 200)。
+    レスポンス: {ok, finalized}
+    """
+    gate = _require_migration_owner()
+    if gate is not None:
+        return gate
+
+    user = g.auth_user
+    was_active = user.migration_temp_mk is not None
+    if was_active:
+        user.migration_temp_mk = None
+        try:
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            current_app.logger.exception("migration_finalize failed")
+            return jsonify({"error": "finalize に失敗しました。"}), 500
+    return jsonify({"ok": True, "finalized": was_active})
+
+
 # --- 残高キャッシュ blob (E3-E-1) ---
 
 
