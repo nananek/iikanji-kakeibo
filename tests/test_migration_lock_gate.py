@@ -10,7 +10,9 @@ CLAUDE.md `feedback_flask_login_test_context` に従い 1 テスト 1 ログイ�
 (セッションは session_transaction で直接張る) で書く。
 """
 
+import base64
 from datetime import datetime, timezone
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -85,6 +87,67 @@ def test_recovery_login_locked_user_redirects_to_locked(client, db, locked_user)
         assert sess.get("_user_id") == str(locked_user.id)
         # pending_recovery を立てない (lock gate とのループ回避)。
         assert sess.get("pending_recovery_action") is None
+
+
+def test_passkey_login_locked_user_redirects_to_locked(client, db, locked_user):
+    """passkey-only ロック済ユーザーの WebAuthn 認証は force-login + locked 誘導。
+
+    passkey 専用ユーザーがロックされるとパスワードログインを使えないため、
+    WebAuthn の force=True 対応がデッドロック防止の生命線になる。
+    """
+    from app.models.webauthn import WebAuthnCredential
+    cred = WebAuthnCredential(
+        user_id=locked_user.id,
+        credential_id=b"\x11\x22\x33",
+        credential_public_key=b"pub",
+        current_sign_count=0,
+        name="locked-passkey",
+    )
+    db.session.add(cred)
+    db.session.commit()
+
+    with client.session_transaction() as sess:
+        sess["webauthn_auth_challenge"] = b"challenge"
+
+    with patch("app.views.webauthn.verify_authentication_response") as mock_verify:
+        v = MagicMock()
+        v.new_sign_count = 1
+        mock_verify.return_value = v
+        raw_id = base64.urlsafe_b64encode(b"\x11\x22\x33").decode().rstrip("=")
+        resp = client.post("/webauthn/authenticate/verify", json={"rawId": raw_id})
+
+    assert resp.status_code == 200
+    body = resp.get_json()
+    assert body["ok"] is True
+    assert "/migration/locked" in body["redirect"]
+    # force-login で限定セッションが張られている。
+    with client.session_transaction() as sess:
+        assert sess.get("_user_id") == str(locked_user.id)
+
+
+# --- Bearer 認証のロック遮断 ---
+
+
+def test_bearer_blocked_for_locked_user(client, db, locked_user):
+    """ロック中ユーザーの API キーは Bearer 認証段階で 403 (§16.5)。"""
+    from app.models.api_key import APIKey
+    raw_key, key_hash, key_prefix = APIKey.generate()
+    key = APIKey(
+        user_id=locked_user.id,
+        name="locked-key",
+        key_hash=key_hash,
+        key_prefix=key_prefix,
+        scopes="journals:read",
+        is_active=True,
+    )
+    db.session.add(key)
+    db.session.commit()
+
+    resp = client.get(
+        "/api/v1/journals?year=2026",
+        headers={"Authorization": f"Bearer {raw_key}"},
+    )
+    assert resp.status_code == 403
 
 
 # --- ゲートのブロック ---

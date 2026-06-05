@@ -57,6 +57,8 @@ def resolve_bearer_or_session(
             user = db.session.get(User, token.user_id)
             if user is None:
                 return None, (jsonify(error="User not found"), 401)
+            if not user.is_active:  # §16.5 鍵未設定ロック (E7 #114 PR-4b)
+                return None, (jsonify(error="アカウントがロックされています。"), 403)
             return user, None
         # 従来の APIKey
         key_hash = APIKey.hash_key(raw)
@@ -74,6 +76,8 @@ def resolve_bearer_or_session(
         user = db.session.get(User, api_key.user_id)
         if user is None:
             return None, (jsonify(error="User not found"), 401)
+        if not user.is_active:  # §16.5 鍵未設定ロック (E7 #114 PR-4b)
+            return None, (jsonify(error="アカウントがロックされています。"), 403)
         return user, None
 
     # Web セッション
