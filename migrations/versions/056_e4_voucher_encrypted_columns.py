@@ -54,6 +54,15 @@ def upgrade():
         batch_op.add_column(
             sa.Column("thumbnail_key", sa.String(255), nullable=True),
         )
+        # #114 (E7): aad_id を 056 で追加する (元は 058)。E7 のサーバ側証憑暗号化は
+        # original_filename (057 で DROP) と aad_id の両方が必要なため、057 より前に
+        # aad_id を用意しておく。058 は冪等化して二重追加を避ける。
+        batch_op.add_column(
+            sa.Column("aad_id", sa.BigInteger(), nullable=True),
+        )
+        batch_op.create_unique_constraint(
+            "uq_vouchers_user_aad_id", ["user_id", "aad_id"],
+        )
 
     with op.batch_alter_table("voucher_audit_logs") as batch_op:
         batch_op.add_column(
@@ -70,6 +79,8 @@ def downgrade():
         batch_op.drop_column("encrypted_detail_blob")
 
     with op.batch_alter_table("vouchers") as batch_op:
+        batch_op.drop_constraint("uq_vouchers_user_aad_id", type_="unique")
+        batch_op.drop_column("aad_id")
         batch_op.drop_column("thumbnail_key")
         batch_op.drop_column("file_hash_plain")
         batch_op.drop_column("meta_iv")

@@ -221,13 +221,15 @@ def register_cli(app):
         """
         from app.services.e2ee_data_migration import migrate_all_to_e2ee
         totals = migrate_all_to_e2ee(db, user_id=user_id)
-        print(
-            "E2EE データ暗号化 完了: "
-            f"users={totals['users']}, "
-            f"journal_entries={totals['journal_entries']}, "
-            f"journal_entry_lines={totals['journal_entry_lines']}, "
-            f"medical_expenses={totals['medical_expenses']}"
+        # totals は暗号化件数 (整数) のみ。int() で明示キャストして件数だけを出力する
+        # (CodeQL py/clear-text-logging の誤検知回避: mk を扱う関数の戻り値を CodeQL が
+        # 機密と誤判定するため、整数化でサニタイズしてから表示)。
+        summary = ", ".join(
+            f"{k}={int(totals[k])}"
+            for k in ("users", "journal_entries", "journal_entry_lines",
+                      "medical_expenses", "vouchers", "voucher_audit_logs")
         )
+        print("E2EE データ暗号化 完了: " + summary)
 
     @app.cli.command("notify-terms-update")
     @click.option("--dry-run", is_flag=True, help="送信せず対象一覧のみ表示")

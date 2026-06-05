@@ -36,6 +36,18 @@ depends_on = None
 
 
 def upgrade():
+    # #114 (E7): aad_id は 056 へ前倒しした (E7 のサーバ側証憑暗号化が original_filename
+    # と aad_id の共存を要するため)。既存 DB との互換のため本マイグレは残すが、既に
+    # aad_id 列がある場合 (056 が新版で追加済) は冪等にスキップする。
+    conn = op.get_bind()
+    exists = conn.execute(
+        sa.text(
+            "SELECT 1 FROM information_schema.columns "
+            "WHERE table_name='vouchers' AND column_name='aad_id'"
+        )
+    ).first()
+    if exists:
+        return
     with op.batch_alter_table("vouchers") as batch_op:
         batch_op.add_column(
             sa.Column("aad_id", sa.BigInteger(), nullable=True),
@@ -46,6 +58,7 @@ def upgrade():
 
 
 def downgrade():
-    with op.batch_alter_table("vouchers") as batch_op:
-        batch_op.drop_constraint("uq_vouchers_user_aad_id", type_="unique")
-        batch_op.drop_column("aad_id")
+    # #114 (E7): aad_id 列/制約の所有は 056 へ移譲した (前倒し追加)。本マイグレの
+    # downgrade で drop すると、続く 056.downgrade が同じ列を二重 drop してエラーに
+    # なる (WARN-1)。よって no-op とし、aad_id の drop は 056.downgrade に一任する。
+    pass

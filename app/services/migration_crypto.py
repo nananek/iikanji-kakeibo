@@ -87,3 +87,22 @@ def decrypt_record(mk: bytes, blob: bytes, iv: bytes, aad: bytes) -> dict:
         raise ValueError("mk must be 32 bytes")
     plaintext = AESGCM(mk).decrypt(iv, blob, aad)
     return json.loads(plaintext.decode("utf-8"))
+
+
+def encrypt_blob(mk: bytes, data: bytes, aad: bytes) -> bytes:
+    """生バイト列 (画像/サムネ) を AES-GCM 暗号化し ``iv(12B) || ciphertext || tag``
+    を返す (証憑画像のストレージ保存形式。voucher_upload.js _encryptBlob と一致)。
+
+    record (JSON) と異なり IV を別カラムに持たず blob 先頭に inline する。
+    """
+    if len(mk) != 32:
+        raise ValueError("mk must be 32 bytes")
+    iv = os.urandom(12)
+    return iv + AESGCM(mk).encrypt(iv, data, aad)
+
+
+def decrypt_blob(mk: bytes, blob: bytes, aad: bytes) -> bytes:
+    """``iv(12B) || ciphertext || tag`` を復号して生バイト列を返す (検証用)。"""
+    if len(mk) != 32:
+        raise ValueError("mk must be 32 bytes")
+    return AESGCM(mk).decrypt(blob[:12], blob[12:], aad)
