@@ -64,6 +64,24 @@ def upgrade():
             "損益振替金額が復元不能になります)。"
         )
 
+    # ガード (#338 / E7): 非 closing の通常仕訳明細で encrypted_blob が空の行が
+    # あれば、E2EE データ移行が未完了 (line が暗号化されていない) なので中断する。
+    # この状態で account_code/debit/credit を DROP すると金額・科目が復元不能になる
+    # (055 で先に止まる想定の defense-in-depth。空テーブル・E2EE 済みは発火しない)。
+    unenc_lines = conn.execute(
+        sa.text(
+            "SELECT COUNT(*) FROM journal_entry_lines jel "
+            "JOIN journal_entries je ON je.id = jel.journal_entry_id "
+            "WHERE NOT je.is_closing AND octet_length(jel.encrypted_blob)=0"
+        )
+    ).scalar()
+    if unenc_lines:
+        raise RuntimeError(
+            f"未暗号化の仕訳明細が {unenc_lines} 件あります (encrypted_blob 空)。"
+            "account_code/debit/credit を DROP する前に E7 のデータ暗号化を"
+            "完了させてください (未暗号化のまま DROP すると金額・科目が復元不能)。"
+        )
+
     # 複合 FK を先に drop してから平文 3 列を物理 DROP する。
     with op.batch_alter_table("journal_entry_lines") as b:
         b.drop_constraint("fk_jel_account", type_="foreignkey")

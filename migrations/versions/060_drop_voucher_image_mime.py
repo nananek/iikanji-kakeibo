@@ -33,6 +33,23 @@ depends_on = None
 
 
 def upgrade():
+    # ガード (#338 / E7): 未暗号化の証憑が残るうちに image_mime を DROP しない。
+    # E2EE 証憑では実 MIME は encrypted_meta_blob 内にあり image_mime はプレース
+    # ホルダだが、v4.0.0 など未移行の証憑は image_mime に実 MIME を持ち
+    # encrypted_meta_blob が空。その状態で DROP すると MIME が失われるため中断する
+    # (空テーブル・E2EE 済みは発火しない。055 で先に止まる想定の defense-in-depth)。
+    conn = op.get_bind()
+    unenc = conn.execute(sa.text(
+        "SELECT COUNT(*) FROM vouchers "
+        "WHERE image_mime IS NOT NULL "
+        "AND (encrypted_meta_blob IS NULL OR octet_length(encrypted_meta_blob)=0)"
+    )).scalar() or 0
+    if unenc:
+        raise RuntimeError(
+            f"未暗号化の証憑が {unenc} 件あります (image_mime あり / encrypted_meta_blob 空)。"
+            " image_mime を DROP する前に E4/E7 の証憑暗号化を完了させてください。"
+        )
+
     with op.batch_alter_table("vouchers") as batch_op:
         batch_op.drop_column("image_mime")
 
