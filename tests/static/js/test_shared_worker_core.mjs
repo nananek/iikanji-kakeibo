@@ -250,3 +250,120 @@ test("定数値: IDLE_LIMIT_MS=60min, IDLE_CHECK_INTERVAL_MS=1min", () => {
   assert.equal(IDLE_LIMIT_MS, 60 * 60 * 1000);
   assert.equal(IDLE_CHECK_INTERVAL_MS, 60 * 1000);
 });
+
+
+// ── E7 dual-key 再ラップ (#114) ──────────────────────────────────────
+//
+// temp-MK で暗号化されたデータを Worker 内で本物 MK に再ラップする。
+// shared-client.js (SharedCryptoClient) の setRewrapKey/rewrap/clearRewrapKey
+// が経由する handle() のケースを検証する。
+//
+// テストでは temp-MK 暗号文を生成する必要があるため、別 state に temp-MK を
+// setKey して encrypt したものを「サーバが temp-MK で暗号化したデータ」として
+// 扱う (実フローではサーバ側 migration_crypto.py が生成)。
+
+async function tempCiphertext(tempRaw, plaintext, aad) {
+  // temp-MK で暗号化した {ciphertext, iv} を作る (サーバ側暗号化のシミュレート)。
+  const s = new MasterKeyState();
+  await s.handle(msg("setKey", { rawKey: new Uint8Array(tempRaw) }));
+  const enc = await s.handle(msg("encrypt", { plaintext, aad }));
+  return { ciphertext: enc.result.ciphertext, iv: enc.result.iv };
+}
+
+test("setRewrapKey は raw 32B 以外を弾く", async () => {
+  const state = new MasterKeyState();
+  await assert.rejects(
+    () => state.handle(msg("setRewrapKey", { rawKey: randomBytes(16) })),
+    /must be Uint8Array of 32 bytes/,
+  );
+  assert.equal(state.rewrapKey, null);
+});
+
+test("rewrap: temp-MK 暗号文を本物 MK へ再ラップ → 本物 MK で復号一致", async () => {
+  const tempRaw = randomBytes(32);
+  const realRaw = randomBytes(32);
+  const aad = utf8("je\x00ctx");
+  const pt = utf8("secret record");
+  const { ciphertext, iv } = await tempCiphertext(tempRaw, pt, aad);
+
+  const state = new MasterKeyState();
+  await state.handle(msg("setKey", { rawKey: new Uint8Array(realRaw) }));
+  await state.handle(msg("setRewrapKey", { rawKey: new Uint8Array(tempRaw) }));
+
+  const re = await state.handle(msg("rewrap", { ciphertext, iv, aad }));
+  assert.equal(re.result.ok, true);
+  assert.equal(re.result.iv.byteLength, 12);
+  // 再暗号化で新 IV が振られる
+  assert.notDeepEqual([...re.result.iv], [...iv]);
+
+  // 本物 MK で復号すると元の平文に一致する
+  const dec = await state.handle(msg("decrypt", {
+    ciphertext: re.result.ciphertext, iv: re.result.iv, aad,
+  }));
+  assert.deepEqual([...dec.result.plaintext], [...pt]);
+});
+
+test("rewrap は AAD 不一致 (改ざん) で失敗する", async () => {
+  const tempRaw = randomBytes(32);
+  const realRaw = randomBytes(32);
+  const { ciphertext, iv } = await tempCiphertext(
+    tempRaw, utf8("x"), utf8("je\x00a"),
+  );
+  const state = new MasterKeyState();
+  await state.handle(msg("setKey", { rawKey: new Uint8Array(realRaw) }));
+  await state.handle(msg("setRewrapKey", { rawKey: new Uint8Array(tempRaw) }));
+  await assert.rejects(() =>
+    state.handle(msg("rewrap", { ciphertext, iv, aad: utf8("je\x00b") })),
+  );
+});
+
+test("rewrap は本物 MK 未設定で失敗", async () => {
+  const tempRaw = randomBytes(32);
+  const { ciphertext, iv } = await tempCiphertext(tempRaw, utf8("x"), undefined);
+  const state = new MasterKeyState();
+  await state.handle(msg("setRewrapKey", { rawKey: new Uint8Array(tempRaw) }));
+  await assert.rejects(
+    () => state.handle(msg("rewrap", { ciphertext, iv })),
+    /master key not set/,
+  );
+});
+
+test("rewrap は副鍵 (temp-MK) 未設定で失敗", async () => {
+  const state = new MasterKeyState();
+  await state.handle(msg("setKey", { rawKey: randomBytes(32) }));
+  await assert.rejects(
+    () => state.handle(msg("rewrap", {
+      ciphertext: randomBytes(20), iv: randomBytes(12),
+    })),
+    /rewrap key not set/,
+  );
+});
+
+test("clearRewrapKey で副鍵だけ破棄 (本物 MK は維持)", async () => {
+  const state = new MasterKeyState();
+  await state.handle(msg("setKey", { rawKey: randomBytes(32) }));
+  await state.handle(msg("setRewrapKey", { rawKey: randomBytes(32) }));
+  const r = await state.handle(msg("clearRewrapKey"));
+  assert.equal(r.result.ok, true);
+  assert.equal(r.broadcast, null);
+  assert.equal(state.rewrapKey, null);
+  assert.equal(state.hasKey, true); // 本物 MK は残る
+});
+
+test("clearKey は副鍵 (temp-MK) も同時に破棄する", async () => {
+  const state = new MasterKeyState();
+  await state.handle(msg("setKey", { rawKey: randomBytes(32) }));
+  await state.handle(msg("setRewrapKey", { rawKey: randomBytes(32) }));
+  await state.handle(msg("clearKey"));
+  assert.equal(state.rewrapKey, null);
+  assert.equal(state.hasKey, false);
+});
+
+test("idle 自動ロックは副鍵 (temp-MK) も破棄する", async () => {
+  const state = new MasterKeyState();
+  await state.handle(msg("setKey", { rawKey: randomBytes(32) }), 0);
+  await state.handle(msg("setRewrapKey", { rawKey: randomBytes(32) }));
+  const cleared = state.checkIdle(IDLE_LIMIT_MS + 1, IDLE_LIMIT_MS);
+  assert.equal(cleared, true);
+  assert.equal(state.rewrapKey, null);
+});

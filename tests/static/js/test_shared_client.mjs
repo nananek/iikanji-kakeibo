@@ -255,6 +255,31 @@ test("setKey は Transferable に rawKey を含める (wrap / unwrap も同パ�
 });
 
 
+test("E7: setRewrapKey / rewrap / clearRewrapKey が正しい type を送る (#114)", () => {
+  createdPorts.length = 0;
+  const client = newClient();
+  const port = createdPorts[0];
+  const swallow = (p) => p.catch(() => {});
+  swallow(client.setRewrapKey(new Uint8Array(32)));
+  swallow(client.rewrap(new Uint8Array([1, 2]), new Uint8Array(12), new Uint8Array(3)));
+  swallow(client.clearRewrapKey());
+  const types = port.posted.map((p) => p.data.type);
+  assert.deepEqual(types, ["setRewrapKey", "rewrap", "clearRewrapKey"]);
+  client.close();
+});
+
+
+test("E7: setRewrapKey は Transferable に rawKey を含める (#114)", () => {
+  createdPorts.length = 0;
+  const client = newClient();
+  const port = createdPorts[0];
+  client.setRewrapKey(new Uint8Array(32)).catch(() => {});
+  const last = port.posted[port.posted.length - 1];
+  assert.equal(last.transferables?.length, 1);
+  client.close();
+});
+
+
 test("旧 string 引数 (name) の後方互換: SharedCryptoClient(url, 'my-name')", () => {
   createdPorts.length = 0;
   // string をそのまま name として扱う
