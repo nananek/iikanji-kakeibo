@@ -254,6 +254,7 @@ export async function rewrapVoucherImage({
 export async function rewrapVouchers({ client, userId, fetchImpl, onProgress }) {
   let page = 1;
   let total = 0;
+  let done = 0;  // 画像処理済み枚数 (進捗表示用、ページを跨いで累積)
   const counts = { vmeta: 0, valog: 0, vimg: 0, vmetaSkipped: 0, valogSkipped: 0 };
   for (;;) {
     const body = await _getJson(
@@ -292,12 +293,14 @@ export async function rewrapVouchers({ client, userId, fetchImpl, onProgress }) 
     counts.vmetaSkipped += meta.skipped;
     counts.valogSkipped += log.skipped;
 
-    // 画像は 1 件ずつ (大きいので一括 POST にしない)。
+    // 画像は 1 件ずつ (大きいので一括 POST にしない)。証憑再ラップは移行で最も
+    // 時間がかかるため、1 枚ごとに (done, total) を報告して進捗を見せる。
     for (const v of vouchers) {
       if (v.aad_id == null || !v.has_image) continue;
       const sent = await rewrapVoucherImage({ client, userId, voucher: v, fetchImpl });
       if (sent) counts.vimg++;
-      if (onProgress) onProgress();
+      done++;
+      if (onProgress) onProgress(done, total);
     }
 
     if (vouchers.length === 0 || page * VOUCHER_PAGE >= total) break;
@@ -320,9 +323,10 @@ export async function rewrapVouchers({ client, userId, fetchImpl, onProgress }) 
  * @returns {Promise<Object>} 再ラップ件数サマリ
  */
 export async function runRewrapMigration({
-  client, userId, years, fetchImpl, onProgress,
+  client, userId, years, fetchImpl, onProgress, onStatus,
 }) {
   const f = fetchImpl ?? globalThis.fetch;
+  const status = (t) => { if (onStatus) onStatus(t); };
 
   // 1) temp-MK を取得 (セッション限定)。active でなければ移行不要。
   const tm = await _getJson(f, "/api/v1/migration/temp-mk");
@@ -345,6 +349,7 @@ export async function runRewrapMigration({
 
   try {
     for (const year of years) {
+      status(`仕訳を再暗号化しています…（${year}年）`);
       const j = await rewrapJournalsForYear({ client, userId, year, fetchImpl: f });
       summary.je += j.je;
       summary.jel += j.jel;
@@ -356,17 +361,27 @@ export async function runRewrapMigration({
       tick();
     }
 
+    status("医療費を再暗号化しています…");
     const m = await rewrapMedicalExpenses({ client, userId, fetchImpl: f });
     summary.me += m.me;
     tick();
 
-    const v = await rewrapVouchers({ client, userId, fetchImpl: f });
+    // 証憑画像は枚数が多いと時間がかかる。1 枚ごとに枚数を表示し「固まった」
+    // ように見えないようにする。
+    status("証憑画像を暗号化しています…");
+    const v = await rewrapVouchers({
+      client, userId, fetchImpl: f,
+      onProgress: (cur, tot) => {
+        status(`証憑画像を暗号化しています… ${cur}/${tot} 枚`);
+      },
+    });
     summary.vmeta += v.vmeta;
     summary.valog += v.valog;
     summary.vimg += v.vimg;
     tick();
 
     // 3) 全再ラップ完了 → finalize で temp_mk を破棄 (真の E2EE 確立)。
+    status("移行を完了しています…");
     const fin = await _postJson(f, "/api/v1/migration/finalize", {});
     summary.finalized = !!fin.finalized;
     tick();
