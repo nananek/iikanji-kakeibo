@@ -297,6 +297,48 @@ class TestRewrap:
         })
         assert r.status_code == 403
 
+    def test_no_json_body_400(self, db, client, migrating_user):
+        _login(client, migrating_user)
+        r = client.post("/api/v1/migration/rewrap")
+        assert r.status_code == 400
+
+    def test_items_not_list_400(self, db, client, migrating_user):
+        _login(client, migrating_user)
+        r = client.post("/api/v1/migration/rewrap", json={
+            "table": "je", "items": "nope",
+        })
+        assert r.status_code == 400
+
+    def test_item_not_dict_400(self, db, client, migrating_user):
+        _login(client, migrating_user)
+        r = client.post("/api/v1/migration/rewrap", json={
+            "table": "je", "items": ["nope"],
+        })
+        assert r.status_code == 400
+
+    def test_id_not_int_400(self, db, client, migrating_user):
+        _login(client, migrating_user)
+        r = client.post("/api/v1/migration/rewrap", json={
+            "table": "je",
+            "items": [{
+                "id": "abc",
+                "encrypted_blob": _b64(NEW_BLOB),
+                "blob_iv": _b64(NEW_IV),
+            }],
+        })
+        assert r.status_code == 400
+
+    def test_bcb_missing_year_period_400(self, db, client, migrating_user):
+        _login(client, migrating_user)
+        r = client.post("/api/v1/migration/rewrap", json={
+            "table": "bcb",
+            "items": [{
+                "encrypted_blob": _b64(NEW_BLOB),
+                "blob_iv": _b64(NEW_IV),
+            }],
+        })
+        assert r.status_code == 400
+
     def test_inactive_user_rejected_via_bearer(
         self, db, client, migrating_user, api_key_raw,
     ):
@@ -311,6 +353,24 @@ class TestRewrap:
             headers=_auth_header(raw_key),
         )
         assert r.status_code == 403
+
+    def test_commit_error_returns_500(self, db, client, migrating_user, monkeypatch):
+        entry = make_journal(db, migrating_user.id, "1010", "5010", 1000)
+        _login(client, migrating_user)
+
+        def boom():
+            raise RuntimeError("db down")
+
+        monkeypatch.setattr(_db.session, "commit", boom)
+        r = client.post("/api/v1/migration/rewrap", json={
+            "table": "je",
+            "items": [{
+                "id": entry.id,
+                "encrypted_blob": _b64(NEW_BLOB),
+                "blob_iv": _b64(NEW_IV),
+            }],
+        })
+        assert r.status_code == 500
 
 
 # ─────────────────────────── PUT /migration/rewrap-image ──────────────────────
@@ -384,6 +444,78 @@ class TestRewrapImage:
             "image_ct": _b64(b"\x02" * 10),  # < 12+16
         })
         assert r.status_code == 400
+
+    def test_no_json_body_400(self, db, client, migrating_user):
+        _login(client, migrating_user)
+        r = client.put("/api/v1/migration/rewrap-image")
+        assert r.status_code == 400
+
+    def test_voucher_id_not_int_400(self, db, client, migrating_user):
+        _login(client, migrating_user)
+        r = client.put("/api/v1/migration/rewrap-image", json={
+            "voucher_id": "x", "image_ct": _b64(b"\x02" * 48),
+        })
+        assert r.status_code == 400
+
+    def test_missing_image_ct_400(self, db, client, migrating_user):
+        _login(client, migrating_user)
+        r = client.put("/api/v1/migration/rewrap-image", json={
+            "voucher_id": 1,
+        })
+        assert r.status_code == 400
+
+    def test_invalid_image_base64_400(self, db, client, migrating_user):
+        _login(client, migrating_user)
+        r = client.put("/api/v1/migration/rewrap-image", json={
+            "voucher_id": 1, "image_ct": "!!!bad!!!",
+        })
+        assert r.status_code == 400
+
+    def test_invalid_thumb_base64_400(self, db, client, migrating_user):
+        v = self._seed_image(db, migrating_user.id)
+        _login(client, migrating_user)
+        r = client.put("/api/v1/migration/rewrap-image", json={
+            "voucher_id": v.id,
+            "image_ct": _b64(b"\x02" * 48),
+            "thumb_ct": "!!!bad!!!",
+        })
+        assert r.status_code == 400
+
+    def test_short_thumb_ct_400(self, db, client, migrating_user):
+        v = self._seed_image(db, migrating_user.id)
+        _login(client, migrating_user)
+        r = client.put("/api/v1/migration/rewrap-image", json={
+            "voucher_id": v.id,
+            "image_ct": _b64(b"\x02" * 48),
+            "thumb_ct": _b64(b"\x03" * 10),
+        })
+        assert r.status_code == 400
+
+    def test_non_str_thumb_400(self, db, client, migrating_user):
+        v = self._seed_image(db, migrating_user.id)
+        _login(client, migrating_user)
+        r = client.put("/api/v1/migration/rewrap-image", json={
+            "voucher_id": v.id,
+            "image_ct": _b64(b"\x02" * 48),
+            "thumb_ct": 123,
+        })
+        assert r.status_code == 400
+
+    def test_storage_error_returns_500(self, db, client, migrating_user, monkeypatch):
+        import app.views.api as api_mod
+        v = self._seed_image(db, migrating_user.id)
+        _login(client, migrating_user)
+
+        class _BoomBackend:
+            def put(self, *a, **k):
+                raise RuntimeError("storage down")
+
+        monkeypatch.setattr(api_mod, "get_storage_backend", lambda: _BoomBackend())
+        r = client.put("/api/v1/migration/rewrap-image", json={
+            "voucher_id": v.id,
+            "image_ct": _b64(b"\x02" * 48),
+        })
+        assert r.status_code == 500
 
     def test_auditor_rejected(self, db, client, auditor):
         _login(client, auditor)
