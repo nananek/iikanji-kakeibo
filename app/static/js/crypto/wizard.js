@@ -58,6 +58,12 @@ function getSharedWorkerUrl() {
  *   doneMethod    : 完了直後の方式表示用
  */
 export function encryptionKeyWizard(config = {}) {
+  // SharedCryptoClient は private フィールド (#port 等) を持つ。Alpine の
+  // reactive Proxy にプロパティとして載せると、メソッド内の private フィールド
+  // アクセスが "can't access private field or method: object is not the right
+  // class" で全滅する (Proxy が brand check を満たさない)。CLAUDE.md の規約
+  // どおり**非リアクティブな閉包変数**として保持する。
+  let client = null;
   return {
     step: "start",
     loading: false,
@@ -73,23 +79,21 @@ export function encryptionKeyWizard(config = {}) {
     unlockingKey: null,        // 解除対象の wrapped_key オブジェクト
     unlockPassphrase: "",      // パスフレーズ方式の入力
     unlockMnemonic: "",        // リカバリシード方式の入力
-    // 内部ハンドル (非リアクティブ)
-    _client: null,
     // X25519 鍵ペア backfill 用ユーザー ID (テンプレートから注入、§14 / E5 PR-A)
     _userId: config.userId ?? null,
 
     async init() {
       try {
-        this._client = new SharedCryptoClient(getSharedWorkerUrl());
+        client = new SharedCryptoClient(getSharedWorkerUrl());
         // MK 状態変化を購読 (他タブの解除 / 60 分 idle ロック等)
-        this._client.on("mkChanged", () => { this.hasKey = true; });
-        this._client.on("mkCleared", () => {
+        client.on("mkChanged", () => { this.hasKey = true; });
+        client.on("mkCleared", () => {
           this.hasKey = false;
           // 解除フォーム表示中に他タブで unlock されたら閉じる
           if (this.step === "unlock") this.step = "start";
         });
         const [status, keys] = await Promise.all([
-          this._client.status(),
+          client.status(),
           listWrappedKeys(),
         ]);
         this.hasKey = !!status.hasKey;
@@ -114,7 +118,7 @@ export function encryptionKeyWizard(config = {}) {
     async lockKey() {
       this.error = "";
       try {
-        await this._client.clearKey();
+        await client.clearKey();
         // mkCleared event ハンドラが hasKey=false を反映する
       } catch (e) {
         this.error = `ロック失敗: ${e?.message || e}`;
@@ -153,7 +157,7 @@ export function encryptionKeyWizard(config = {}) {
     async _backfillKeyPair() {
       if (this._userId === null || this._userId === undefined) return;
       try {
-        await ensureKeyPair(this._client, this._userId);
+        await ensureKeyPair(client, this._userId);
       } catch (e) {
         // 監査連携 (E5) 未利用なら実害なし。次回 MK 解錠時に再試行される。
         console.warn("X25519 鍵ペアの生成/保管に失敗しました:", e?.message || e);
@@ -181,7 +185,7 @@ export function encryptionKeyWizard(config = {}) {
           wk.salt,
           { params: wk.kdf_params ?? undefined },
         );
-        await this._client.unwrap(derived, wk.wrapped_master_key, wk.wrap_iv);
+        await client.unwrap(derived, wk.wrapped_master_key, wk.wrap_iv);
         await this._onUnlockSuccess();
       } catch (e) {
         // unwrap 失敗 = パスフレーズ誤り (タグ検証 NG) が大半
@@ -210,7 +214,7 @@ export function encryptionKeyWizard(config = {}) {
       try {
         const wk = this.unlockingKey;
         derived = await deriveKeyFromMnemonic(this.unlockMnemonic);
-        await this._client.unwrap(derived, wk.wrapped_master_key, wk.wrap_iv);
+        await client.unwrap(derived, wk.wrapped_master_key, wk.wrap_iv);
         await this._onUnlockSuccess();
       } catch (e) {
         // mnemonic checksum 不一致 or unwrap タグ NG
@@ -238,7 +242,7 @@ export function encryptionKeyWizard(config = {}) {
           credentialId: wk.webauthn_credential_id,
         });
         derived = result.derivedKey;
-        await this._client.unwrap(derived, wk.wrapped_master_key, wk.wrap_iv);
+        await client.unwrap(derived, wk.wrapped_master_key, wk.wrap_iv);
         await this._onUnlockSuccess();
       } catch (e) {
         // 情報漏洩防止: 内部メッセージ (Worker タイムアウト・AES-GCM タグ NG
@@ -268,7 +272,7 @@ export function encryptionKeyWizard(config = {}) {
      */
     async _ensureNewKeySafe() {
       const [s, freshKeys] = await Promise.all([
-        this._client.status(),
+        client.status(),
         listWrappedKeys(),
       ]);
       if (s.hasKey) {
@@ -292,7 +296,7 @@ export function encryptionKeyWizard(config = {}) {
      */
     async _rollbackWorkerKey() {
       try {
-        await this._client.clearKey();
+        await client.clearKey();
       } catch (_e) {
         // clearKey 自体の失敗は致命的でないが、UI に通知する手段がないので無視
       }
@@ -328,10 +332,10 @@ export function encryptionKeyWizard(config = {}) {
         derivedKey = result.derivedKey;
         const credentialDbId = result.credentialDbId;
         // 2. SharedWorker で新規 MK 生成
-        await this._client.generateKey();
+        await client.generateKey();
         workerKeyGenerated = true;
         // 3. derived_key で MK を wrap (Transferable で detach される)
-        const { wrapped, iv } = await this._client.wrap(derivedKey);
+        const { wrapped, iv } = await client.wrap(derivedKey);
         // 4. wrapped_keys に登録 (method=passkey_prf + webauthn_credential_id)
         await createWrappedKey({
           method: "passkey_prf",
@@ -395,20 +399,27 @@ export function encryptionKeyWizard(config = {}) {
         await this._ensureNewKeySafe();
         // hash-wasm を CDN からロード (初回のみ実体取得)
         await loadHashWasm();
-        await this._client.generateKey();
+        await client.generateKey();
         workerKeyGenerated = true;
         const salt = generateSalt();
         let derived;
         try {
           derived = await deriveKeyFromPassphrase(this.passphrase, salt);
           // Transferable: derived は wrap 後に detach される
-          const { wrapped, iv } = await this._client.wrap(derived);
+          const { wrapped, iv } = await client.wrap(derived);
           await createWrappedKey({
             method: "passphrase",
             wrapped_master_key: wrapped,
             wrap_iv: iv,
             salt,
-            kdf_params: { ...ARGON2ID_DEFAULTS },
+            // サーバ検証 (wrapped_keys._validate_kdf_params) は memory/iterations/
+            // parallelism (memory は KiB) を要求する。hash-wasm の memorySize を
+            // memory にマップして送る (argon2.js は逆に memory を honor する)。
+            kdf_params: {
+              memory: ARGON2ID_DEFAULTS.memorySize,
+              iterations: ARGON2ID_DEFAULTS.iterations,
+              parallelism: ARGON2ID_DEFAULTS.parallelism,
+            },
             webauthn_credential_id: null,
             label: "パスフレーズ (初回)",
           });
@@ -449,12 +460,12 @@ export function encryptionKeyWizard(config = {}) {
       let workerKeyGenerated = false;
       try {
         await this._ensureNewKeySafe();
-        await this._client.generateKey();
+        await client.generateKey();
         workerKeyGenerated = true;
         let derived;
         try {
           derived = await deriveKeyFromMnemonic(this.mnemonic);
-          const { wrapped, iv } = await this._client.wrap(derived);
+          const { wrapped, iv } = await client.wrap(derived);
           await createWrappedKey({
             method: "recovery_seed",
             wrapped_master_key: wrapped,
