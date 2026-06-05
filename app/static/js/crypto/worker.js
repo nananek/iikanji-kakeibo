@@ -25,6 +25,9 @@ import {
 
 let masterKey = null;      // CryptoKey (encrypt/decrypt 用)
 let rawMasterKey = null;   // Uint8Array 32B (wrap 用)。Worker 内のみに保持
+// E7 (#114) 再ラップ移行専用の副鍵 (temp-MK, decrypt のみ)。temp-MK で復号 → 本物
+// MK で再暗号化する rewrap で使用。平文は Worker 内に留まる。finalize 後に破棄。
+let rewrapKey = null;      // CryptoKey (temp-MK, decrypt 用)
 
 async function setMkFromRaw(rawBytes) {
   if (!isUint8(rawBytes) || rawBytes.byteLength !== 32) {
@@ -66,7 +69,43 @@ async function handle(msg) {
       masterKey = null;
       if (rawMasterKey) rawMasterKey.fill(0);
       rawMasterKey = null;
+      rewrapKey = null;  // 副鍵も同時に破棄
       return { ok: true };
+    }
+    case "setRewrapKey": {
+      // E7 再ラップ: temp-MK を decrypt 専用 CryptoKey として副鍵に保持。
+      const raw = msg.rawKey;
+      try {
+        if (!isUint8(raw) || raw.byteLength !== 32) {
+          throw new Error("rewrap key must be Uint8Array of 32 bytes");
+        }
+        rewrapKey = await importAesKey(raw, ["decrypt"]);
+      } finally {
+        if (isUint8(raw)) raw.fill(0);
+      }
+      return { ok: true };
+    }
+    case "clearRewrapKey": {
+      rewrapKey = null;
+      return { ok: true };
+    }
+    case "rewrap": {
+      // E7 再ラップ: temp-MK (rewrapKey) で復号 → 本物 MK (masterKey) で再暗号化。
+      // 平文は Worker 内のみ。temp-MK で復号失敗 (= 既に再ラップ済) は呼び出し側が
+      // skip 判定に使う (GCM tag 検証失敗で throw → { ok:false })。
+      if (masterKey === null) throw new Error("master key not set");
+      if (rewrapKey === null) throw new Error("rewrap key not set");
+      // await 中に clearKey が masterKey を null 化しても再暗号化を完遂できる
+      // よう、開始時に参照スナップショットを取る (shared-worker-core.js と同じ
+      // 意図。専用 Worker では割り込みは実質ないが両 Worker の一貫性のため)。
+      const mk = masterKey;
+      const pt = await aesGcmDecrypt(rewrapKey, msg.ciphertext, msg.iv, msg.aad);
+      try {
+        const r = await aesGcmEncrypt(mk, pt, msg.aad);
+        return { ok: true, iv: r.iv, ciphertext: r.ciphertext };
+      } finally {
+        if (isUint8(pt)) pt.fill(0);
+      }
     }
     case "encrypt": {
       if (masterKey === null) throw new Error("master key not set");

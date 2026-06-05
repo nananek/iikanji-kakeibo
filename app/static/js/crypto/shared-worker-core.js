@@ -50,6 +50,7 @@ export class MasterKeyState {
     this.rawMasterKey = null;    // Uint8Array 32B (wrap 用、Worker 内のみ)
     this.lastActivity = 0;       // ms timestamp、touch/encrypt 等で更新
     this.hasKey = false;         // 状態通知用フラグ (rawMasterKey 公開を避けるため)
+    this.rewrapKey = null;       // CryptoKey (temp-MK, decrypt 専用、E7 再ラップ用)
   }
 
   async _setRaw(rawBytes) {
@@ -76,6 +77,7 @@ export class MasterKeyState {
     if (this.rawMasterKey) this.rawMasterKey.fill(0);
     this.rawMasterKey = null;
     this.hasKey = false;
+    this.rewrapKey = null;       // MK 消去時は副鍵 (temp-MK) も同時に破棄
   }
 
   async handle(msg, now = Date.now()) {
@@ -212,6 +214,50 @@ export class MasterKeyState {
           },
           broadcast: null,
         };
+      }
+      case "setRewrapKey": {
+        // E7 再ラップ: temp-MK を decrypt 専用 CryptoKey として副鍵に保持。
+        // これで temp-MK による暗号化は Worker 内で不可能 (本物 MK への
+        // 一方向再ラップのみ許可) になる。
+        const raw = msg.rawKey;
+        try {
+          if (!isUint8(raw) || raw.byteLength !== 32) {
+            throw new Error("rewrap key must be Uint8Array of 32 bytes");
+          }
+          this.rewrapKey = await importAesKey(raw, ["decrypt"]);
+        } finally {
+          if (isUint8(raw)) raw.fill(0);
+        }
+        return { result: { ok: true }, broadcast: null };
+      }
+      case "clearRewrapKey": {
+        this.rewrapKey = null;
+        return { result: { ok: true }, broadcast: null };
+      }
+      case "rewrap": {
+        // E7 再ラップ: temp-MK (rewrapKey) で復号 → 本物 MK (cryptoKey) で
+        // 再暗号化。AAD は同一を両方に渡し不変を保証。平文は Worker 内のみで
+        // ゼロ埋めする。temp-MK で復号失敗 (= 既に再ラップ済) は GCM tag 検証
+        // 失敗で throw → 呼び出し側が skip 判定に使う (冪等)。
+        if (this.cryptoKey === null) throw new Error("master key not set");
+        if (this.rewrapKey === null) throw new Error("rewrap key not set");
+        // await 中に clearKey が cryptoKey を null 化しても再暗号化を完遂できる
+        // よう、開始時に参照スナップショットを取る (CryptoKey は opaque なので
+        // 参照保持で安全)。wrap ハンドラの snapshot と同じ意図。
+        const mk = this.cryptoKey;
+        const pt = await aesGcmDecrypt(
+          this.rewrapKey, msg.ciphertext, msg.iv, msg.aad,
+        );
+        try {
+          const r = await aesGcmEncrypt(mk, pt, msg.aad);
+          this.lastActivity = now;
+          return {
+            result: { ok: true, iv: r.iv, ciphertext: r.ciphertext },
+            broadcast: null,
+          };
+        } finally {
+          if (isUint8(pt)) pt.fill(0);
+        }
       }
       default:
         throw new Error(`unknown type: ${msg.type}`);
