@@ -66,6 +66,27 @@ def test_login_active_user_goes_to_dashboard(client, user):
     assert "/migration/locked" not in resp.headers["Location"]
 
 
+def test_recovery_login_locked_user_redirects_to_locked(client, db, locked_user):
+    """ロック中ユーザーのリカバリログインは force-login で /migration/locked へ。
+
+    passkey 専用ユーザーがロックされるとパスワードログインを使えないため、
+    リカバリログインの force=True 対応が解除手段の生命線になる (デッドロック
+    防止)。pending_recovery は設定しない (gate 相互リダイレクト回避)。
+    """
+    raw = locked_user.set_recovery_code()
+    db.session.commit()
+    resp = client.post(
+        "/recovery",
+        data={"username": "lockeduser", "recovery_code": raw},
+    )
+    assert resp.status_code == 302
+    assert "/migration/locked" in resp.headers["Location"]
+    with client.session_transaction() as sess:
+        assert sess.get("_user_id") == str(locked_user.id)
+        # pending_recovery を立てない (lock gate とのループ回避)。
+        assert sess.get("pending_recovery_action") is None
+
+
 # --- ゲートのブロック ---
 
 
@@ -87,9 +108,13 @@ def test_gate_allows_key_setup_apis(client, locked_user):
     _session_login(client, locked_user.id)
     for url in ("/api/v1/wrapped-keys", "/api/v1/keypair"):
         resp = client.get(url)
-        # ロック解決ページへのリダイレクトでないこと (= ゲートが許可)。
-        if resp.status_code == 302:
-            assert "/migration/locked" not in resp.headers["Location"]
+        # ゲートによるロック解決ページへのリダイレクトでないこと (= 許可)。
+        # 200 等で素通しされた場合もアサーションが評価されるよう、302 かつ
+        # ロックページ宛て、という条件そのものを否定する。
+        assert not (
+            resp.status_code == 302
+            and "/migration/locked" in resp.headers.get("Location", "")
+        )
 
 
 def test_gate_allows_delete_account(client, locked_user):

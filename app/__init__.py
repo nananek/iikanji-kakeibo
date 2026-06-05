@@ -132,16 +132,15 @@ def create_app(config_class=Config):
             "migration_lock.locked",
             "settings.delete_account",
             "auth.logout",
-            "legal.show",
-            "legal.contact",
         }
         if endpoint in allowed_endpoints or endpoint.startswith("static"):
             return
-        # 鍵設定/解錠に必要な JSON API・Passkey 認証フロー。
+        # 鍵設定/解錠に必要な JSON API・Passkey 認証フロー・法的文書/問い合わせ。
         if (
             endpoint.startswith("wrapped_keys.")
             or endpoint.startswith("keypair.")
             or endpoint.startswith("webauthn.")
+            or endpoint.startswith("legal.")
         ):
             return
         return redirect(url_for("migration_lock.locked"))

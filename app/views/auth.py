@@ -54,8 +54,9 @@ def login():
                 # is_active=False を拒否する。force=True で限定セッションを
                 # 張り、migration_lock_gate がロック解決ページ (鍵設定 or
                 # 退会) 以外をブロックする。鍵設定が完了すると gate が自己
-                # 回復して is_active=True に戻る。
-                login_user(user, remember=True, force=True)
+                # 回復して is_active=True に戻る。ロック中は長期 Cookie が不要
+                # なので remember=False。
+                login_user(user, remember=False, force=True)
                 return redirect(url_for("migration_lock.locked"))
             login_user(user, remember=True)
             return redirect(_safe_next_url(url_for("dashboard.index")))
@@ -113,6 +114,18 @@ def recovery_login():
         if ok:
             user.consume_recovery_code()
             db.session.commit()
+            if not user.is_active:
+                # §16.5 鍵未設定ロック (E7 #114 PR-4b): ロック中は force=True で
+                # 限定セッションを張りロック解決ページへ。pending_recovery は
+                # 設定しない (pending_recovery_gate と migration_lock_gate が
+                # 相互リダイレクトでループするため)。鍵設定で解除後、パスキー/
+                # リカバリの再設定は設定画面から行う。
+                login_user(user, remember=False, force=True)
+                flash(
+                    "リカバリコードでログインしました。続けて暗号鍵を設定してロックを解除してください。",
+                    "warning",
+                )
+                return redirect(url_for("migration_lock.locked"))
             login_user(user, remember=False)
             # 強制復旧フロー: パスキー再登録 + リカバリ再生成まで他操作をブロック
             session["pending_recovery_action"] = True

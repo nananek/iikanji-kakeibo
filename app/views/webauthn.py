@@ -3,7 +3,7 @@ import logging
 from datetime import datetime, timezone
 from urllib.parse import urlparse
 
-from flask import Blueprint, current_app, jsonify, request, session
+from flask import Blueprint, current_app, jsonify, request, session, url_for
 from flask_login import current_user, login_required, login_user
 
 from webauthn import (
@@ -190,6 +190,13 @@ def authenticate_verify():
     stored.last_used_at = datetime.now(timezone.utc)
     db.session.commit()
 
+    if not stored.user.is_active:
+        # §16.5 鍵未設定ロック (E7 #114 PR-4b): is_active=False ユーザーは
+        # force なしの login_user では静かにセッション作成に失敗する。passkey
+        # 専用ユーザーがロックされるとパスワードログインも弾かれ解除手段を失う
+        # ため、force=True で限定セッションを張りロック解決ページへ誘導する。
+        login_user(stored.user, remember=False, force=True)
+        return jsonify(ok=True, redirect=url_for("migration_lock.locked"))
     login_user(stored.user, remember=True)
     next_page = request.args.get("next", "/")
     parsed = urlparse(next_page)
