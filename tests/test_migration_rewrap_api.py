@@ -250,6 +250,30 @@ class TestRewrap:
         assert r.get_json()["skipped"] == 1
         assert _db.session.get(JournalEntry, other.id).encrypted_blob == original_blob
 
+    def test_idor_bcb_other_users_row_not_updated(
+        self, db, client, migrating_user, second_user,
+    ):
+        # bcb は (year, period) 複合キーで所有者スコープする別経路。他ユーザーの
+        # year/period を指定しても user_id フィルタで skip され更新されない。
+        bcb = BalanceCacheBlob(
+            user_id=second_user.id, year=2025, period=3,
+            encrypted_blob=b"other", blob_iv=bytes(12),
+        )
+        db.session.add(bcb)
+        db.session.commit()
+        _login(client, migrating_user)
+        r = client.post("/api/v1/migration/rewrap", json={
+            "table": "bcb",
+            "items": [{
+                "year": 2025, "period": 3,
+                "encrypted_blob": _b64(NEW_BLOB),
+                "blob_iv": _b64(NEW_IV),
+            }],
+        })
+        assert r.status_code == 200
+        assert r.get_json()["skipped"] == 1
+        assert _db.session.get(BalanceCacheBlob, bcb.id).encrypted_blob == b"other"
+
     def test_invalid_table_400(self, db, client, migrating_user):
         _login(client, migrating_user)
         r = client.post("/api/v1/migration/rewrap", json={
