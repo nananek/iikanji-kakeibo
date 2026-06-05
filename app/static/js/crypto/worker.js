@@ -95,9 +95,13 @@ async function handle(msg) {
       // skip 判定に使う (GCM tag 検証失敗で throw → { ok:false })。
       if (masterKey === null) throw new Error("master key not set");
       if (rewrapKey === null) throw new Error("rewrap key not set");
+      // await 中に clearKey が masterKey を null 化しても再暗号化を完遂できる
+      // よう、開始時に参照スナップショットを取る (shared-worker-core.js と同じ
+      // 意図。専用 Worker では割り込みは実質ないが両 Worker の一貫性のため)。
+      const mk = masterKey;
       const pt = await aesGcmDecrypt(rewrapKey, msg.ciphertext, msg.iv, msg.aad);
       try {
-        const r = await aesGcmEncrypt(masterKey, pt, msg.aad);
+        const r = await aesGcmEncrypt(mk, pt, msg.aad);
         return { ok: true, iv: r.iv, ciphertext: r.ciphertext };
       } finally {
         if (isUint8(pt)) pt.fill(0);
