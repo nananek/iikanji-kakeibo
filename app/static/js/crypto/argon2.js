@@ -113,7 +113,17 @@ export async function deriveKeyFromPassphrase(passphrase, salt, opts = {}) {
       "argon2id implementation not available — call setArgon2idImpl() or load hash-wasm in browser",
     );
   }
-  const params = { ...ARGON2ID_DEFAULTS, ...(opts.params ?? {}) };
+  const merged = { ...ARGON2ID_DEFAULTS, ...(opts.params ?? {}) };
+  // サーバ保存の kdf_params は `memory` (KiB) フィールド名 (wrapped_keys の
+  // 検証スキーマ KDF_MEMORY_MIN/MAX)。hash-wasm のパラメータ名は `memorySize`。
+  // 解錠時に stored kdf_params.{memory} を渡されても正しく効くよう alias 解決する
+  // (明示指定された memorySize / memory を優先し、無ければ既定値)。
+  const givenParams = opts.params ?? {};
+  const params = {
+    ...merged,
+    memorySize: givenParams.memorySize ?? givenParams.memory
+      ?? ARGON2ID_DEFAULTS.memorySize,
+  };
   // NFKD 正規化 + UTF-8 化。derived_key 生成後にゼロ埋めする
   const passwordBytes = normalizePassphraseBytes(passphrase);
   try {

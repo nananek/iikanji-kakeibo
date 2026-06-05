@@ -143,7 +143,7 @@
         </p>
         <div class="row row-cols-1 row-cols-md-3 g-3">
           <div class="col">
-            <button class="btn btn-outline-primary w-100 text-start p-3 h-100"
+            <button class="btn btn-outline-primary w-100 text-start p-3"
                     @click="selectPasskey()" :disabled="loading">
               <h6 class="mb-1"><i class="bi bi-fingerprint"></i> Passkey</h6>
               <small class="text-muted">指紋・Face ID 等。最速で安全 (PRF 拡張対応端末)。<br>
@@ -156,14 +156,14 @@
             </small>
           </div>
           <div class="col">
-            <button class="btn btn-outline-primary w-100 text-start p-3 h-100"
+            <button class="btn btn-outline-primary w-100 text-start p-3"
                     @click="selectPassphrase()" :disabled="loading">
               <h6 class="mb-1"><i class="bi bi-key"></i> パスフレーズ</h6>
               <small class="text-muted">8 文字以上の文字列で MK を保護。ログイン時に入力。</small>
             </button>
           </div>
           <div class="col">
-            <button class="btn btn-outline-primary w-100 text-start p-3 h-100"
+            <button class="btn btn-outline-primary w-100 text-start p-3"
                     @click="selectRecovery()" :disabled="loading">
               <h6 class="mb-1"><i class="bi bi-card-list"></i> リカバリシード (24 単語)</h6>
               <small class="text-muted">BIP-39 形式の 24 単語フレーズ。緊急復旧用、紙にメモして保管。</small>
