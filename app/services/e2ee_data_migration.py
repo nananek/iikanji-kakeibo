@@ -232,6 +232,7 @@ def migrate_all_to_e2ee(db, *, user_id=None):  # pragma: no cover
     storage = get_storage_backend() if voucher_ready else None
     totals = {"users": 0, "journal_entries": 0, "journal_entry_lines": 0,
               "medical_expenses": 0, "vouchers": 0, "voucher_audit_logs": 0}
+    old_plaintext_keys = []  # 旧平文ファイルは DB コミット後にまとめて削除 (NG-1)
     for uid in user_ids:
         mk = _ensure_temp_mk(conn, uid)
         if ledger_ready:
@@ -239,11 +240,21 @@ def migrate_all_to_e2ee(db, *, user_id=None):  # pragma: no cover
             totals["journal_entry_lines"] += _migrate_journal_entry_lines(conn, uid, mk)
             totals["medical_expenses"] += _migrate_medical_expenses(conn, uid, mk)
         if voucher_ready:
-            totals["vouchers"] += _migrate_vouchers(conn, uid, mk, storage)
+            n_v, old_keys = _migrate_vouchers(conn, uid, mk, storage)
+            totals["vouchers"] += n_v
+            old_plaintext_keys.extend(old_keys)
             totals["voucher_audit_logs"] += _migrate_voucher_audit_logs(conn, uid, mk)
         totals["users"] += 1
 
     db.session.commit()
+
+    # コミット成功後に旧平文画像/サムネを削除する。ここでクラッシュしても DB は
+    # 暗号文を指しており平文の取り残し (容量) が残るだけで、整合性は保たれる。
+    for old_key in old_plaintext_keys:
+        try:
+            storage.delete(old_key)
+        except Exception:
+            pass  # 削除失敗は移行を止めない
     return totals
 
 
@@ -278,6 +289,7 @@ def _migrate_vouchers(conn, user_id, mk, storage):  # pragma: no cover
         {"uid": user_id},
     ).fetchall()
     n = 0
+    old_keys = []
     for r in rows:
         plain = storage.get(r.image_key)
         aad_id = r.aad_id
@@ -309,16 +321,14 @@ def _migrate_vouchers(conn, user_id, mk, storage):  # pragma: no cover
             {"mb": meta_blob, "mi": meta_iv, "fhp": file_hash_plain,
              "fhc": file_hash_cipher, "tk": thumb_key, "ik": new_key, "id": r.id},
         )
-        # 旧平文の本体画像と旧サーバ生成サムネ (_thumb.jpg) を削除する。
-        # プライバシー上、平文画像を残さない (E7 の目的)。
+        # 旧平文の本体画像と旧サーバ生成サムネ (_thumb.jpg) は **DB コミット後**に
+        # 削除する (NG-1: コミット前に消すとロールバック時に平文を失う)。ここでは
+        # 削除予定キーを集めて返すだけ。
         for old in (r.image_key, make_thumbnail_key(r.image_key)):
             if old and old != new_key and old != thumb_key:
-                try:
-                    storage.delete(old)
-                except Exception:
-                    pass  # 削除失敗は移行を止めない (容量のみの問題)
+                old_keys.append(old)
         n += 1
-    return n
+    return n, old_keys
 
 
 def _migrate_voucher_audit_logs(conn, user_id, mk):  # pragma: no cover
@@ -343,7 +353,10 @@ def _migrate_voucher_audit_logs(conn, user_id, mk):  # pragma: no cover
     n = 0
     for r in rows:
         if not r.aad_id:
-            continue  # 親 voucher が未移行 (aad_id なし) の場合はスキップ
+            # 親 voucher に aad_id が無い = 未暗号化 (image_key='' で _migrate_vouchers の
+            # 対象外だった等)。AAD を確定できないのでスキップ (INFO-1)。通常は
+            # _migrate_vouchers が先に全証憑へ aad_id を付与するため発生しない。
+            continue
         try:
             detail_obj = json.loads(r.detail)
         except (ValueError, TypeError):
