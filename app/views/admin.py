@@ -7,6 +7,7 @@
 
 from flask import Blueprint, jsonify, render_template
 
+from app.extensions import limiter
 from app.services.migration_status import migration_progress_report
 from app.services.ops_auth import require_ops_basic_auth
 
@@ -14,6 +15,7 @@ bp = Blueprint("admin", __name__, url_prefix="/admin")
 
 
 @bp.route("/migration-progress.json")
+@limiter.limit("30/minute")
 @require_ops_basic_auth
 def migration_progress_json():
     """§16.6 の進捗を JSON で返す (機械処理・cron 監視用)。"""
@@ -21,6 +23,7 @@ def migration_progress_json():
 
 
 @bp.route("/migration-progress")
+@limiter.limit("30/minute")
 @require_ops_basic_auth
 def migration_progress():
     """§16.6 の進捗を Web UI (進捗バー) で表示する。"""

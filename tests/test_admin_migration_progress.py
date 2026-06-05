@@ -113,3 +113,20 @@ def test_html_dashboard_renders(client, db, ops_creds):
     assert resp.status_code == 200
     assert resp.mimetype == "text/html"
     assert "E2EE 移行進捗" in resp.get_data(as_text=True)
+
+
+# --- レート制限 (Basic 認証のブルートフォース耐性) ---
+
+
+def test_rate_limited_after_30_requests(ratelimit_app, ratelimit_client, monkeypatch):
+    monkeypatch.setitem(ratelimit_app.config, "OPS_BASIC_AUTH_USER", "ops")
+    monkeypatch.setitem(ratelimit_app.config, "OPS_BASIC_AUTH_PASS", "s3cret")
+    # 認証失敗 (401) もレート制限の対象 (limiter が auth より外側)。
+    for _ in range(30):
+        r = ratelimit_client.get("/admin/migration-progress.json",
+                                 headers=_basic("ops", "wrong"))
+        assert r.status_code == 401
+    # 31 回目 → 429
+    r = ratelimit_client.get("/admin/migration-progress.json",
+                             headers=_basic("ops", "wrong"))
+    assert r.status_code == 429
