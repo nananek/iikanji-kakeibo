@@ -718,12 +718,23 @@ class TestVoucherBlobs:
 
 
 class TestVoucherImage:
-    def _seed(self, db, user_id, image_ct=b"\x01" * 48, deleted=False):
-        from app.services.storage import get_storage_backend
+    def _seed(self, db, user_id, image_ct=b"\x01" * 48, deleted=False,
+              thumb_ct=None):
+        from app.services.storage import (
+            get_storage_backend, make_encrypted_thumbnail_key,
+        )
         v = make_voucher(db, user_id, image_key=f"vouchers/{user_id}/img.bin")
+        # 再ラップ対象の実証憑は E2EE 化済み (encrypted_meta_blob あり)。この場合
+        # のみ serve_voucher_image が ?size=thumb で thumbnail_key を使う。
+        v.encrypted_meta_blob = b"meta"
+        v.meta_iv = bytes(12)
         if deleted:
             v.deleted_at = datetime.now(timezone.utc)
-        get_storage_backend().put(v.image_key, image_ct, "application/octet-stream")
+        backend = get_storage_backend()
+        backend.put(v.image_key, image_ct, "application/octet-stream")
+        if thumb_ct is not None:
+            v.thumbnail_key = make_encrypted_thumbnail_key(v.image_key)
+            backend.put(v.thumbnail_key, thumb_ct, "application/octet-stream")
         db.session.commit()
         return v
 
@@ -734,6 +745,15 @@ class TestVoucherImage:
         r = client.get(f"/api/v1/migration/voucher-image/{v.id}")
         assert r.status_code == 200
         assert r.data == ct
+
+    def test_serves_thumbnail(self, db, client, migrating_user):
+        img = b"\x05" * 60
+        thumb = b"\x07" * 40
+        v = self._seed(db, migrating_user.id, image_ct=img, thumb_ct=thumb)
+        _login(client, migrating_user)
+        r = client.get(f"/api/v1/migration/voucher-image/{v.id}?size=thumb")
+        assert r.status_code == 200
+        assert r.data == thumb
 
     def test_serves_soft_deleted_image(self, db, client, migrating_user):
         ct = b"\x06" * 60
