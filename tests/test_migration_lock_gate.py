@@ -150,6 +150,27 @@ def test_bearer_blocked_for_locked_user(client, db, locked_user):
     assert resp.status_code == 403
 
 
+def test_oauth_token_blocked_for_locked_user(client, db, locked_user):
+    """ロック中ユーザーの OAuth トークンも Bearer 認証段階で 403 (§16.5)。"""
+    from app.models.oauth import OAuthToken
+    raw, token_hash, prefix = OAuthToken.generate()
+    tok = OAuthToken(
+        user_id=locked_user.id,
+        name="locked-oauth",
+        token_hash=token_hash,
+        token_prefix=prefix,
+        is_active=True,
+    )
+    db.session.add(tok)
+    db.session.commit()
+
+    resp = client.get(
+        "/api/v1/journals?year=2026",
+        headers={"Authorization": f"Bearer {raw}"},
+    )
+    assert resp.status_code == 403
+
+
 # --- ゲートのブロック ---
 
 
