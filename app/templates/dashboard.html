@@ -10,6 +10,34 @@
 </script>
 <h2 class="mb-4"><i class="bi bi-speedometer2"></i> ダッシュボード</h2>
 
+{% if migration_active %}
+<div id="migration-rewrap-banner" class="alert alert-warning shadow-sm" role="alert">
+  <div class="d-flex align-items-start">
+    <i class="bi bi-shield-lock-fill fs-4 me-2"></i>
+    <div class="flex-grow-1">
+      <h6 class="alert-heading mb-1">E2EE 移行を完了してください</h6>
+      <p class="mb-2 small">
+        現在、あなたのデータはサーバ側でも復号できる暫定状態です。移行を実行すると
+        あなたの鍵で再暗号化し、サーバが内容を読めない状態 (真の E2EE) になります。
+        暗号鍵を解除した状態で実行してください。
+      </p>
+      <div id="migration-rewrap-progress" class="progress d-none mb-2" style="height: 1.25rem;">
+        <div id="migration-rewrap-bar" class="progress-bar progress-bar-striped progress-bar-animated"
+             role="progressbar" style="width: 0%;"
+             aria-valuenow="0" aria-valuemin="0" aria-valuemax="100">0%</div>
+      </div>
+      <button type="button" id="migration-rewrap-btn" class="btn btn-warning btn-sm">
+        <i class="bi bi-shield-check"></i> 移行を実行
+      </button>
+    </div>
+  </div>
+  <script id="migration-rewrap-params" type="application/json">
+  {{ {"user_id": effective_user_id, "years": migration_years} | tojson }}
+  </script>
+</div>
+<script type="module" src="{{ url_for('static', filename='js/migration/migration_rewrap_hook.mjs') }}"></script>
+{% endif %}
+
 <div id="dashboard-status" class="d-none" role="status" aria-live="polite"></div>
 
 <div class="row mb-4">
