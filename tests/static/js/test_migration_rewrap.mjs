@@ -133,6 +133,17 @@ test("rewrapRecordItems: 既に本物 MK 済 (temp-MK 復号不可) は skip", a
 });
 
 
+test("rewrapRecordItems: base64 破損は skip でなく throw (移行中断で安全側)", async () => {
+  const client = await makeClient(rnd(32));
+  await client.setRewrapKey(new Uint8Array(rnd(32)));
+  await assert.rejects(() =>
+    rewrapRecordItems(client, [
+      { key: { id: 1 }, blobB64: "@@@invalid@@@", ivB64: "AAAA", aad: buildAAD("je", 1) },
+    ]),
+  );
+});
+
+
 // --- runRewrapMigration end-to-end (偽 fetch) ---
 
 function jsonResp(obj) {

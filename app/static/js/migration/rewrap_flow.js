@@ -68,14 +68,13 @@ export async function rewrapRecordItems(client, rawItems) {
   const items = [];
   let skipped = 0;
   for (const it of rawItems) {
-    let blob, iv;
-    try {
-      blob = b64decode(it.blobB64);
-      iv = b64decode(it.ivB64);
-    } catch (_e) {
-      skipped++;
-      continue;
-    }
+    // base64 decode の失敗はサーバ応答の破損 (= 異常) であり、「再ラップ済 skip」
+    // とは性質が異なる。これを silently skip すると、未再ラップのまま finalize で
+    // temp_mk が消去され、その blob が恒久的に復号不能になりうる。よって decode
+    // 失敗は throw して移行全体を中断する (temp_mk は保持されるので安全に再実行
+    // 可能)。skip は temp-MK 復号失敗 (= 既に本物 MK 済) のみに限定する。
+    const blob = b64decode(it.blobB64);
+    const iv = b64decode(it.ivB64);
     try {
       const re = await rewrapRecord(client, blob, iv, it.aad);
       items.push({
