@@ -166,3 +166,50 @@ export async function decryptRecord(client, blob, iv, aad) {
   try { res.plaintext.fill(0); } catch (_e) { /* ignore */ }
   return JSON.parse(json);
 }
+
+
+/**
+ * E7 (#114) 再ラップ: record 形式 (blob + 別 iv) の暗号文を temp-MK で復号し本物 MK
+ * で再暗号化する。AAD は不変、key と iv のみ変わる。平文は Worker 内に留まる。
+ *
+ * @param {Object} client  SharedCryptoClient (setRewrapKey で temp-MK 設定済)
+ * @param {Uint8Array} blob  既存 ciphertext + tag (temp-MK 暗号)
+ * @param {Uint8Array} iv    既存 12B IV
+ * @param {Uint8Array} aad
+ * @returns {Promise<{blob: Uint8Array, iv: Uint8Array}>}  本物 MK 暗号の新 blob/iv
+ *   既に本物 MK 済 (temp-MK で復号不可) の場合 client.rewrap が reject する
+ *   (呼び出し側が skip 判定に使う)。
+ */
+export async function rewrapRecord(client, blob, iv, aad) {
+  if (!client || typeof client.rewrap !== "function") {
+    throw new Error("client.rewrap (SharedCryptoClient) is required");
+  }
+  const res = await client.rewrap(blob, iv, aad);
+  return { blob: res.ciphertext, iv: res.iv };
+}
+
+
+/**
+ * E7 (#114) 再ラップ: 画像 inline-iv 形式 (iv(12B)||ciphertext||tag) の暗号文を
+ * 再ラップする。先頭 12B を iv として分離し rewrap、新 iv を再び先頭へ embed する。
+ *
+ * @param {Object} client
+ * @param {Uint8Array} blobWithIv  iv(12B) || ciphertext || tag (temp-MK 暗号)
+ * @param {Uint8Array} aad
+ * @returns {Promise<Uint8Array>}  iv(12B) || ciphertext || tag (本物 MK 暗号)
+ */
+export async function rewrapBlob(client, blobWithIv, aad) {
+  if (!client || typeof client.rewrap !== "function") {
+    throw new Error("client.rewrap (SharedCryptoClient) is required");
+  }
+  if (!(blobWithIv instanceof Uint8Array) || blobWithIv.length < 12 + 16) {
+    throw new Error("rewrapBlob: invalid image blob (need iv+ct+tag)");
+  }
+  const iv = blobWithIv.subarray(0, 12);
+  const ct = blobWithIv.subarray(12);
+  const res = await client.rewrap(ct, iv, aad);
+  const out = new Uint8Array(12 + res.ciphertext.length);
+  out.set(res.iv, 0);
+  out.set(res.ciphertext, 12);
+  return out;
+}

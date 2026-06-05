@@ -169,6 +169,21 @@ export class SharedCryptoClient {
     return this.#send({ type: "decrypt", ciphertext, iv, aad });
   }
 
+  // E7 (#114) 再ラップ移行: temp-MK を decrypt 専用副鍵としてセット。
+  setRewrapKey(rawKey) {
+    return this.#send({ type: "setRewrapKey", rawKey }, ["rawKey"]);
+  }
+
+  clearRewrapKey() {
+    return this.#send({ type: "clearRewrapKey" });
+  }
+
+  // temp-MK (副鍵) で復号 → 本物 MK (primary) で再暗号化。{ciphertext, iv} を返す。
+  // temp-MK で復号できない (既に再ラップ済) 場合は reject する。
+  rewrap(ciphertext, iv, aad) {
+    return this.#send({ type: "rewrap", ciphertext, iv, aad });
+  }
+
   wrap(derivedKey) {
     return this.#send({ type: "wrap", derivedKey }, ["derivedKey"]);
   }
