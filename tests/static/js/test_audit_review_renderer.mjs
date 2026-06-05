@@ -14,6 +14,8 @@ const {
   normalizeEntries,
   buildResponseJson,
   validateProposal,
+  validateEntryIntegrity,
+  validateTrialBalance,
 } = await import(M.href);
 
 const META = { "1010": { name: "現金" }, "1020": { name: "普通預金" }, "5010": { name: "通信費" } };
@@ -329,4 +331,166 @@ test("normalizeEntries: is_closing / fiscal_period を伝播 (Lv3)", () => {
   assert.equal(e10.fiscal_period, 16);
   assert.equal(e11.is_closing, false);
   assert.equal(e11.fiscal_period, null);
+});
+
+// ---- validateEntryIntegrity (§13 監査時検査) ----------------------------
+
+const _codes = (errs) => errs.map((e) => e.code).sort();
+
+test("validateEntryIntegrity: 正常な貸借一致仕訳 (Lv3) はエラー無し", () => {
+  const entry = {
+    id: 1, is_closing: false, fiscal_period: 5,
+    lines: [
+      { account_code: "5010", debit: 100, credit: 0 },
+      { account_code: "1010", debit: 0, credit: 100 },
+    ],
+  };
+  const { errors } = validateEntryIntegrity(entry, META, { level: 3 });
+  assert.deepEqual(errors, []);
+});
+
+test("validateEntryIntegrity: Lv3 で貸借不一致を検出", () => {
+  const entry = {
+    id: 1, lines: [
+      { account_code: "5010", debit: 100, credit: 0 },
+      { account_code: "1010", debit: 0, credit: 99 },
+    ],
+  };
+  const { errors } = validateEntryIntegrity(entry, META, { level: 3 });
+  assert.ok(_codes(errors).includes("unbalanced"));
+});
+
+test("validateEntryIntegrity: 科目マスタに無い account_code を検出", () => {
+  const entry = {
+    id: 1, lines: [
+      { account_code: "9999", debit: 100, credit: 0 },
+      { account_code: "1010", debit: 0, credit: 100 },
+    ],
+  };
+  const { errors } = validateEntryIntegrity(entry, META, { level: 3 });
+  assert.ok(_codes(errors).includes("unknown_account"));
+});
+
+test("validateEntryIntegrity: 空の account_code を検出", () => {
+  const entry = {
+    id: 1, lines: [
+      { account_code: "", debit: 100, credit: 0 },
+      { account_code: "1010", debit: 0, credit: 100 },
+    ],
+  };
+  const { errors } = validateEntryIntegrity(entry, META, { level: 3 });
+  assert.ok(_codes(errors).includes("missing_account"));
+});
+
+test("validateEntryIntegrity: 借方・貸方両方 > 0 (XOR 違反) を検出", () => {
+  const entry = {
+    id: 1, lines: [
+      { account_code: "5010", debit: 100, credit: 50 },
+      { account_code: "1010", debit: 0, credit: 50 },
+    ],
+  };
+  const { errors } = validateEntryIntegrity(entry, META, { level: 3 });
+  assert.ok(_codes(errors).includes("both_sides"));
+});
+
+test("validateEntryIntegrity: 非整数/負の金額を検出", () => {
+  const entry = {
+    id: 1, lines: [
+      { account_code: "5010", debit: 10.5, credit: 0 },
+      { account_code: "1010", debit: 0, credit: -3 },
+    ],
+  };
+  const { errors } = validateEntryIntegrity(entry, META, { level: 3 });
+  assert.ok(_codes(errors).includes("non_integer"));
+});
+
+test("validateEntryIntegrity: 手動 period16 (is_closing=false) を検出", () => {
+  const entry = {
+    id: 1, is_closing: false, fiscal_period: 16,
+    lines: [
+      { account_code: "5010", debit: 100, credit: 0 },
+      { account_code: "1010", debit: 0, credit: 100 },
+    ],
+  };
+  const { errors } = validateEntryIntegrity(entry, META, { level: 3 });
+  assert.ok(_codes(errors).includes("manual_closing"));
+});
+
+test("validateEntryIntegrity: 正規の closing (is_closing=true, period16) は manual_closing 出ない", () => {
+  const entry = {
+    id: 1, is_closing: true, fiscal_period: 16,
+    lines: [
+      { account_code: "5010", debit: 0, credit: 100 },
+      { account_code: "1010", debit: 100, credit: 0 },
+    ],
+  };
+  const { errors } = validateEntryIntegrity(entry, META, { level: 3 });
+  assert.ok(!_codes(errors).includes("manual_closing"));
+});
+
+test("validateEntryIntegrity: Lv2 はマスク行で貸借が崩れても unbalanced を出さない", () => {
+  // 非公開科目 (proprietor 等) の貸方行がマスク除外され借方のみ残ったケース。
+  const entry = {
+    id: 1, lines: [
+      { account_code: "5010", debit: 100, credit: 0 },
+    ],
+  };
+  const lv2 = validateEntryIntegrity(entry, META, { level: 2 });
+  assert.ok(!_codes(lv2.errors).includes("unbalanced"));
+  // 同じデータを Lv3 で見ると貸借不一致として検出される。
+  const lv3 = validateEntryIntegrity(entry, META, { level: 3 });
+  assert.ok(_codes(lv3.errors).includes("unbalanced"));
+});
+
+test("validateEntryIntegrity: Lv2 でも可視行の科目存在/XOR は検査する", () => {
+  const entry = {
+    id: 1, lines: [
+      { account_code: "9999", debit: 100, credit: 20 },
+    ],
+  };
+  const { errors } = validateEntryIntegrity(entry, META, { level: 2 });
+  const codes = _codes(errors);
+  assert.ok(codes.includes("unknown_account"));
+  assert.ok(codes.includes("both_sides"));
+});
+
+test("validateEntryIntegrity: level 既定は 3 (貸借検査が効く)", () => {
+  const entry = {
+    id: 1, lines: [{ account_code: "5010", debit: 100, credit: 0 }],
+  };
+  const { errors } = validateEntryIntegrity(entry, META);
+  assert.ok(_codes(errors).includes("unbalanced"));
+});
+
+test("validateEntryIntegrity: lines 欠落でも throw せず errors を返す", () => {
+  assert.deepEqual(validateEntryIntegrity({}, META, { level: 3 }).errors, []);
+  assert.deepEqual(validateEntryIntegrity(null, META, { level: 3 }).errors, []);
+});
+
+// ---- validateTrialBalance (§13 Lv1 試算表検査) --------------------------
+
+test("validateTrialBalance: 借方合計=貸方合計ならエラー無し", () => {
+  const tb = [
+    { account_code: "5010", debit: 300, credit: 0 },
+    { account_code: "1010", debit: 0, credit: 300 },
+  ];
+  const r = validateTrialBalance(tb);
+  assert.deepEqual(r.errors, []);
+  assert.equal(r.debitTotal, 300);
+  assert.equal(r.creditTotal, 300);
+});
+
+test("validateTrialBalance: 借方≠貸方で trial_unbalanced", () => {
+  const tb = [
+    { account_code: "5010", debit: 300, credit: 0 },
+    { account_code: "1010", debit: 0, credit: 280 },
+  ];
+  const r = validateTrialBalance(tb);
+  assert.ok(r.errors.some((e) => e.code === "trial_unbalanced"));
+});
+
+test("validateTrialBalance: 空/非配列は安全に 0 を返す", () => {
+  assert.deepEqual(validateTrialBalance([]).errors, []);
+  assert.deepEqual(validateTrialBalance(undefined).errors, []);
+  assert.equal(validateTrialBalance(null).debitTotal, 0);
 });

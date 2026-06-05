@@ -342,6 +342,110 @@ export async function initAuditReview(cfg) {
 // サーバは response_type のみ管理し中身は読めない (HPKE 暗号文)。
 
 /**
+ * 監査時検査 (§13): 復号済みの正規化仕訳 (normalizeEntries の 1 要素) の整合性を
+ * 検査し、エラー配列を返す純粋関数。throw せず {errors:[{code,message}]} を返す
+ * (監査は異常発見が目的なので非ブロッキングで可視化する)。
+ *
+ * #338 で平文 account_code/debit/credit を物理 DROP したため、貸借一致・科目存在の
+ * 検査はクライアント (owner 書込時) + 監査時 (本関数) の責務へ移った (§12.11/§13)。
+ *
+ * level によって検査粒度を変える:
+ *  - 3 (Lv3 本人同等): 可視行の科目存在/XOR/整数 + **仕訳単位の貸借一致** + 手動 period16。
+ *  - 2 (Lv2 税務科目): 非公開科目行がマスク除外され仕訳単位の貸借が構造的に不一致に
+ *    見えるため、**貸借一致はスキップ**。可視行の科目存在/XOR/整数 + 手動 period16 のみ。
+ *  - 1 (Lv1 集計のみ): 仕訳本体が無いので本関数の対象外 (validateTrialBalance を使う)。
+ *
+ * @param {Object} entry  normalizeEntries の 1 要素
+ *   {id, date, description, is_closing, fiscal_period, lines:[{account_code, debit, credit}]}
+ * @param {Object} accountsMeta  code -> {name, ...}
+ * @param {Object} [opts]
+ * @param {number} [opts.level=3]  監査権限レベル (1/2/3)
+ * @returns {{errors: Array<{code:string, message:string}>}}
+ */
+export function validateEntryIntegrity(entry, accountsMeta, opts = {}) {
+  const level = opts.level ?? 3;
+  const meta = accountsMeta || {};
+  const lines = Array.isArray(entry && entry.lines) ? entry.lines : [];
+  const errors = [];
+
+  // 可視行ごとの検査 (Lv2/Lv3 共通)。Lv2 のマスクで行は減りうるが、残った行は
+  // それぞれ正当 (科目存在・片側のみ・非負整数) であるべき。
+  let totalDebit = 0;
+  let totalCredit = 0;
+  for (const l of lines) {
+    const code = String((l && l.account_code) ?? "").trim();
+    if (!code) {
+      errors.push({ code: "missing_account", message: "科目コードが空の明細があります。" });
+    } else if (!Object.prototype.hasOwnProperty.call(meta, code)) {
+      errors.push({
+        code: "unknown_account",
+        message: `科目 ${code} は科目マスタに存在しません。`,
+      });
+    }
+    const debit = Number((l && l.debit) ?? 0);
+    const credit = Number((l && l.credit) ?? 0);
+    if (!Number.isInteger(debit) || debit < 0 || !Number.isInteger(credit) || credit < 0) {
+      errors.push({
+        code: "non_integer",
+        message: `科目 ${code || "(空)"} の借方/貸方は 0 以上の整数である必要があります。`,
+      });
+    } else if ((debit > 0) === (credit > 0)) {
+      // 片側のみ > 0 でないと不正 (両側 > 0 / 両側 0 はいずれも異常)。
+      errors.push({
+        code: "both_sides",
+        message: `科目 ${code || "(空)"} は借方・貸方のどちらか一方のみが入る必要があります。`,
+      });
+    }
+    totalDebit += Number.isFinite(debit) ? debit : 0;
+    totalCredit += Number.isFinite(credit) ? credit : 0;
+  }
+
+  // 手動の損益振替 (期16) 検出: fiscal_period=16 は closing 自動生成専用。is_closing が
+  // 立っていない 16 は手動入力の疑い (§12.11)。
+  if (entry && entry.fiscal_period === 16 && !entry.is_closing) {
+    errors.push({
+      code: "manual_closing",
+      message: "手動の損益振替 (期16) 仕訳の疑いがあります。",
+    });
+  }
+
+  // 仕訳単位の貸借一致は Lv3 のみ (Lv2 はマスク行で誤検知するためスキップ)。
+  if (level >= 3 && totalDebit !== totalCredit) {
+    errors.push({
+      code: "unbalanced",
+      message: `貸借が一致しません (借方 ${totalDebit} / 貸方 ${totalCredit})。`,
+    });
+  }
+
+  return { errors };
+}
+
+/**
+ * 監査時検査 (§13): 試算表 (snapshot.trial_balance) の借方合計と貸方合計の一致を
+ * 検査する純粋関数。Lv1 (集計のみ。仕訳本体を持たない) で唯一の整合性検査。
+ *
+ * @param {Array<{account_code:string, debit:number, credit:number}>} trialBalance
+ * @returns {{errors: Array<{code:string, message:string}>, debitTotal:number, creditTotal:number}}
+ */
+export function validateTrialBalance(trialBalance) {
+  const rows = Array.isArray(trialBalance) ? trialBalance : [];
+  let debitTotal = 0;
+  let creditTotal = 0;
+  for (const r of rows) {
+    debitTotal += Number((r && r.debit) ?? 0) || 0;
+    creditTotal += Number((r && r.credit) ?? 0) || 0;
+  }
+  const errors = [];
+  if (debitTotal !== creditTotal) {
+    errors.push({
+      code: "trial_unbalanced",
+      message: `試算表の貸借が一致しません (借方 ${debitTotal} / 貸方 ${creditTotal})。`,
+    });
+  }
+  return { errors, debitTotal, creditTotal };
+}
+
+/**
  * 構造化修正案 (§14.9) を検証して正規化する純粋関数。owner 側が採用時に呼ぶ
  * buildJournalEntry と同一ルール (行 >= 2 / 貸借一致 / debit XOR credit / 非負整数)
  * に揃え、採用時の builder throw を未然に防ぐ。account_code は accountsMeta に存在必須。
