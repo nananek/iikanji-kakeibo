@@ -208,7 +208,7 @@ class TestBackupRestoreValidation:
         backup_skeleton,
     ):
         """#338 Phase 5-backup: 平文金額を export/restore しなくなったため、サーバは
-        貸借一致を検査しない (§13: クライアント復号 + 監査時検査へ委譲)。
+        貸借一致を検査しない (§12.11: クライアント復号 + 監査時検査へ委譲)。
 
         encrypted_blob さえ揃っていれば、平文金額の有無/整合に関わらず受理される。
         """

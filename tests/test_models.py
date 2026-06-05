@@ -69,7 +69,7 @@ class TestAPIKey:
 class TestJournalEntry:
     # #338 item5 (Phase 5b): total_debit / total_credit / is_balanced プロパティは
     # 削除済 (平文金額をサーバが持たなくなったため。集計・貸借はクライアント +
-    # 監査時検査の責務 §12.11/§13)。よって旧 test_is_balanced は撤去した。
+    # 監査時検査の責務 §12.11)。よって旧 test_is_balanced は撤去した。
 
     def test_cascade_delete(self, db, user, accounts):
         from tests.conftest import make_journal

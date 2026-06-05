@@ -241,7 +241,7 @@ def _validate_backup(user_id: int, backup: Any) -> None:
     # #338 Phase 5-backup: 旧来ここで journal_entry の貸借合計一致を平文
     # debit_amount/credit_amount から検算していたが、平文金額は export/restore から
     # 除去済 (本体は encrypted_blob のみ) のため、サーバはもはや貸借を検査できない。
-    # §13 のとおり貸借一致の検査はクライアント (復号時) + 監査時検査へ全面委譲する。
+    # §12.11 のとおり貸借一致の検査はクライアント (復号時) + 監査時検査へ全面委譲する。
 
 
 # --- delete (User と鍵類は残す) ---

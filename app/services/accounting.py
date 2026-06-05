@@ -24,7 +24,7 @@ def create_journal_entry(user_id, lines_data, *, fiscal_year, fiscal_month,
             (Phase E3: クライアント側で AES-GCM 暗号化済の line 本体)。
             #338 item5: 平文 account_code / debit_amount / credit_amount は
             DB に書かない (line 本体は encrypted_blob のみ。集計・科目存在・貸借は
-            クライアント + 監査時検査の責務へ §12.11/§13)。後方互換で lines_data に
+            クライアント + 監査時検査の責務へ §12.11)。後方互換で lines_data に
             これらが残っていても無視する。
         fiscal_year: 平文の年度フィルタ用メタ列 (date 暗号化後の代替)。
         fiscal_month: 平文の計上期間メタ列 (0=期首, 1-12=月, 13-15=決算整理,
@@ -44,7 +44,7 @@ def create_journal_entry(user_id, lines_data, *, fiscal_year, fiscal_month,
             複数 entry をまとめて 1 トランザクションにする batch API 用。
     """
     # #338 item5: サーバは平文金額を持たなくなったため貸借一致をサーバ側で検査
-    # できない (§12.11/§13 でクライアント + 監査時検査の責務へ移行)。
+    # できない (§12.11 でクライアント + 監査時検査の責務へ移行)。
     if (encrypted_blob is None) != (blob_iv is None):
         raise ValueError("encrypted_blob と blob_iv は同時に指定が必要です。")
     # 多層防御: API 以外の caller が短い IV で保存しないよう service 層でも検査。
