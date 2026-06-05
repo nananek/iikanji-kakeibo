@@ -144,16 +144,33 @@ test("includeClosing=true (default) で closing も含む", () => {
   assert.equal(r.rows.length, 2);
 });
 
-test("entry.id 昇順でソート (id 順は概ね時系列)", () => {
-  const entries = [
+test("日付昇順でソート、同日は entry.id 順 (v4 の ORDER BY date, id 相当)", () => {
+  // 同一日付なら entry.id (作成順) で安定ソート
+  const sameDate = [
     entry(30, 1, "journal", [["1010", 300, 0]]),
     entry(10, 1, "journal", [["1010", 100, 0]]),
     entry(20, 1, "journal", [["1010", 200, 0]]),
   ];
+  assert.deepEqual(
+    computeLedger(sameDate, { accountCode: "1010", normalBalance: "debit" })
+      .rows.map((x) => x.entry_id),
+    [10, 20, 30],
+  );
+});
+
+test("作成順 (id) と日付順が異なる場合は日付順が優先され残高も日付順に積む", () => {
+  // id 順だと [1,2,3] だが、日付は 2026-01-05(id2) < 02-20(id3) < 03-10(id1)。
+  const entries = [
+    entry(1, 1, "journal", [["1010", 100, 0]], "2026-03-10"),
+    entry(2, 1, "journal", [["1010", 200, 0]], "2026-01-05"),
+    entry(3, 1, "journal", [["1010", 300, 0]], "2026-02-20"),
+  ];
   const r = computeLedger(entries, {
-    accountCode: "1010", normalBalance: "debit",
+    accountCode: "1010", normalBalance: "debit", openingBalance: 0,
   });
-  assert.deepEqual(r.rows.map(x => x.entry_id), [10, 20, 30]);
+  assert.deepEqual(r.rows.map((x) => x.entry_id), [2, 3, 1]);
+  // running balance は日付順に 200 → 500 → 600
+  assert.deepEqual(r.rows.map((x) => x.balance), [200, 500, 600]);
 });
 
 test("openingBalance default = 0", () => {

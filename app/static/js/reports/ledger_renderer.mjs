@@ -226,6 +226,27 @@ function _renderPeriodGapRow() {
 }
 
 
+// データ取得・復号・集計中は tbody にスピナー行を出す (E2EE では全仕訳を
+// クライアントで復号するため体感が長い。空テーブルで固まって見えるのを防ぐ)。
+// _renderView が冒頭で tbody をクリアするので、描画時に自動で消える。
+function _showLoading() {
+  const tbody = document.getElementById("ledger-tbody");
+  if (!tbody) return;
+  while (tbody.firstChild) tbody.removeChild(tbody.firstChild);
+  const tr = document.createElement("tr");
+  const td = document.createElement("td");
+  td.colSpan = 9;
+  td.className = "text-center text-muted py-4";
+  const sp = document.createElement("span");
+  sp.className = "spinner-border spinner-border-sm me-2";
+  sp.setAttribute("role", "status");
+  td.appendChild(sp);
+  td.appendChild(document.createTextNode("元帳を集計しています…"));
+  tr.appendChild(td);
+  tbody.appendChild(tr);
+}
+
+
 function _renderView(view) {
   const tbody = document.getElementById("ledger-tbody");
   if (!tbody) return;
@@ -350,6 +371,7 @@ async function _run() {
       return;
     }
     _clearStatus();
+    _showLoading();
 
     const meta = accountsMeta[params.account_code] || {};
     const normalBalance = meta.normal_balance
