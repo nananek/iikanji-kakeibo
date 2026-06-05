@@ -339,13 +339,8 @@ class TestRewrap:
         })
         assert r.status_code == 400
 
-    def test_inactive_user_rejected_via_bearer(
-        self, db, client, migrating_user, api_key_raw,
-    ):
-        # Bearer 認証は is_active を検査しない (鍵の is_active のみ)。多重防御
-        # として _require_migration_owner の is_active ゲートが 403 を返す。
-        migrating_user.is_active = False
-        db.session.commit()
+    def test_bearer_token_rejected(self, db, client, migrating_user, api_key_raw):
+        # 書き込み系もセッション限定。write 権限のある Bearer トークンでも 403。
         raw_key, _ = api_key_raw
         r = client.post(
             "/api/v1/migration/rewrap",
@@ -517,6 +512,35 @@ class TestRewrapImage:
         })
         assert r.status_code == 500
 
+    def test_oversize_image_ct_400(self, db, client, migrating_user):
+        v = self._seed_image(db, migrating_user.id)
+        _login(client, migrating_user)
+        # 平文 10MB + GCM オーバヘッドの上限を超える
+        r = client.put("/api/v1/migration/rewrap-image", json={
+            "voucher_id": v.id,
+            "image_ct": _b64(b"\x02" * (10 * 1024 * 1024 + 2048)),
+        })
+        assert r.status_code == 400
+
+    def test_oversize_thumb_ct_400(self, db, client, migrating_user):
+        v = self._seed_image(db, migrating_user.id)
+        _login(client, migrating_user)
+        r = client.put("/api/v1/migration/rewrap-image", json={
+            "voucher_id": v.id,
+            "image_ct": _b64(b"\x02" * 48),
+            "thumb_ct": _b64(b"\x03" * (512 * 1024 + 2048)),
+        })
+        assert r.status_code == 400
+
+    def test_bearer_token_rejected(self, db, client, migrating_user, api_key_raw):
+        raw_key, _ = api_key_raw
+        r = client.put(
+            "/api/v1/migration/rewrap-image",
+            json={"voucher_id": 1, "image_ct": _b64(b"\x02" * 48)},
+            headers=_auth_header(raw_key),
+        )
+        assert r.status_code == 403
+
     def test_auditor_rejected(self, db, client, auditor):
         _login(client, auditor)
         r = client.put("/api/v1/migration/rewrap-image", json={
@@ -554,6 +578,18 @@ class TestFinalize:
         monkeypatch.setattr(_db.session, "commit", boom)
         r = client.post("/api/v1/migration/finalize")
         assert r.status_code == 500
+
+    def test_bearer_token_rejected(self, db, client, migrating_user, api_key_raw):
+        # finalize を Bearer で叩けると temp_mk 誤爆 → データ不整合。403 で遮断。
+        raw_key, _ = api_key_raw
+        r = client.post(
+            "/api/v1/migration/finalize",
+            headers=_auth_header(raw_key),
+        )
+        assert r.status_code == 403
+        # temp_mk は消えていない
+        from app.models.user import User
+        assert _db.session.get(User, migrating_user.id).migration_temp_mk is not None
 
     def test_auditor_rejected(self, db, client, auditor):
         _login(client, auditor)

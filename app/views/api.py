@@ -734,15 +734,24 @@ _MAX_REWRAP_ITEMS = 500
 
 
 def _require_migration_owner():
-    """移行 API の共通ゲート。owner (personal) 本人のみ許可。
+    """移行 API の共通ゲート。owner (personal) 本人のブラウザセッション限定。
 
     戻り値: 拒否時は (response, status)、許可時は None。
     """
+    # 移行フローは temp-MK 配布を伴う対話的なブラウザ操作。長命な Bearer
+    # トークン (APIキー/OAuth) 経由の呼び出しは全エンドポイントで禁止する。
+    # 特に finalize を Bearer で誤って叩くと temp_mk が消え、未再ラップの blob が
+    # 復号不能になり恒久的なデータ不整合を招くため、書き込み系も含めて遮断する。
+    # auth_required は Bearer → session の順に解決するので、Authorization ヘッダが
+    # 存在する限り Bearer が優先解決される → ここで弾けばセッション認証のみ通る。
+    if request.headers.get("Authorization"):
+        return jsonify({"error": "セッション認証が必要です。"}), 403
     user = g.auth_user
     if user.user_type == "auditor":
         return jsonify({"error": "監査アカウントは利用できません。"}), 403
-    if not user.is_active:
-        # §16.5 鍵未設定ロック (通常は login 時点で弾かれるが多重防御)。
+    if not user.is_active:  # pragma: no cover - 多重防御
+        # §16.5 鍵未設定ロック。Bearer は上で遮断済、セッション認証は
+        # user_loader が非アクティブを 401 で弾くため通常ここには到達しない。
         return jsonify({"error": "このアカウントはロックされています。"}), 403
     return None
 
@@ -762,11 +771,7 @@ def migration_temp_mk():
       - {active: true,  temp_mk: "<base64>"} 移行待ち
       - {active: false, temp_mk: null}       移行不要 / finalize 済
     """
-    # temp-MK は秘密。auth_required は Bearer を優先解決するため、Authorization
-    # ヘッダが存在する場合 (= トークン認証) は拒否し、セッション認証のみ許可する。
-    if request.headers.get("Authorization"):
-        return jsonify({"error": "セッション認証が必要です。"}), 403
-
+    # Bearer 拒否 (セッション限定)・監査アカウント拒否は共通ゲートで実施。
     gate = _require_migration_owner()
     if gate is not None:
         return gate
@@ -825,6 +830,8 @@ def migration_rewrap():
             Voucher, "encrypted_meta_blob", "meta_iv",
             "user_id", _MAX_RECORD_BLOB_BYTES,
         ),
+        # valog.user_id は退会後に SET NULL されうるが、移行中の本人は退会して
+        # いないため自分の監査ログの user_id は常に設定済 = 再ラップ漏れはない。
         "valog": (
             VoucherAuditLog, "encrypted_detail_blob", "detail_iv",
             "user_id", _MAX_RECORD_BLOB_BYTES,
@@ -942,8 +949,12 @@ def migration_rewrap_image():
         image_ct = b64decode(image_b64, validate=True)
     except (BinasciiError, ValueError, TypeError):
         return jsonify({"error": "image_ct の base64 が不正です。"}), 400
+    # 下限 (GCM iv+tag) と上限 (証憑アップロードと同じ平文 10MB + GCM オーバヘッド)。
+    # Flask の MAX_CONTENT_LENGTH に加え、ここでも明示的に DoS 上限を設ける。
     if len(image_ct) < _GCM_MIN_BLOB_BYTES:
         return jsonify({"error": "image_ct が短すぎます。"}), 400
+    if len(image_ct) > _MAX_VOUCHER_IMAGE_CT_BYTES:
+        return jsonify({"error": "image_ct が大きすぎます。"}), 400
 
     thumb_b64 = data.get("thumb_ct")
     thumb_ct = None
@@ -956,6 +967,8 @@ def migration_rewrap_image():
             return jsonify({"error": "thumb_ct の base64 が不正です。"}), 400
         if len(thumb_ct) < _GCM_MIN_BLOB_BYTES:
             return jsonify({"error": "thumb_ct が短すぎます。"}), 400
+        if len(thumb_ct) > _MAX_VOUCHER_THUMB_CT_BYTES:
+            return jsonify({"error": "thumb_ct が大きすぎます。"}), 400
 
     uid = g.auth_user.id
     voucher = Voucher.query.filter_by(id=voucher_id, user_id=uid).first()
