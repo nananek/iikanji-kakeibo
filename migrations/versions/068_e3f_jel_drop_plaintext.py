@@ -72,7 +72,8 @@ def upgrade():
         sa.text(
             "SELECT COUNT(*) FROM journal_entry_lines jel "
             "JOIN journal_entries je ON je.id = jel.journal_entry_id "
-            "WHERE NOT je.is_closing AND octet_length(jel.encrypted_blob)=0"
+            "WHERE NOT je.is_closing AND (jel.encrypted_blob IS NULL "
+            "OR octet_length(jel.encrypted_blob)=0)"
         )
     ).scalar()
     if unenc_lines:

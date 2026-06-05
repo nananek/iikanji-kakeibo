@@ -209,6 +209,26 @@ def register_cli(app):
 
     import click
 
+    @app.cli.command("migrate-e2ee-data")
+    @click.option("--user-id", type=int, default=None,
+                  help="特定ユーザーのみ移行 (省略時は全ユーザー)")
+    def migrate_e2ee_data_command(user_id):
+        """E7 一斉移行: 平文台帳データを temp-MK でサーバ側暗号化する (#114)。
+
+        alembic revision 054 (平文列 DROP 前) の状態で実行すること。仕訳・仕訳明細・
+        医療費の平文を encrypted_blob へ暗号化し、以後の 055 以降のドロップを安全に
+        通せるようにする。冪等。証憑画像・AI 下書き画像・クライアント再ラップは別途。
+        """
+        from app.services.e2ee_data_migration import migrate_all_to_e2ee
+        totals = migrate_all_to_e2ee(db, user_id=user_id)
+        print(
+            "E2EE データ暗号化 完了: "
+            f"users={totals['users']}, "
+            f"journal_entries={totals['journal_entries']}, "
+            f"journal_entry_lines={totals['journal_entry_lines']}, "
+            f"medical_expenses={totals['medical_expenses']}"
+        )
+
     @app.cli.command("notify-terms-update")
     @click.option("--dry-run", is_flag=True, help="送信せず対象一覧のみ表示")
     @click.option("--limit", type=int, default=None, help="送信件数の上限")
