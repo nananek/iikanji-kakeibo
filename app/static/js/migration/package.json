@@ -1,0 +1,5 @@
+{
+  "type": "module",
+  "private": true,
+  "description": "E7 (#114) temp-MK 再ラップ移行のクライアントモジュール。type=module で Node の ES import テストを可能にする (ブラウザは <script type=\"module\"> で独立にロード)。"
+}
