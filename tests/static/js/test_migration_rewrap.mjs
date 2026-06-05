@@ -11,7 +11,8 @@ const FLOW = new URL(
   "../../../app/static/js/migration/rewrap_flow.js",
   import.meta.url,
 );
-const { runRewrapMigration, rewrapRecordItems } = await import(FLOW.href);
+const { runRewrapMigration, rewrapRecordItems, rewrapVoucherImage } =
+  await import(FLOW.href);
 
 const RECORD = new URL(
   "../../../app/static/js/crypto/record.js",
@@ -286,6 +287,31 @@ test("runRewrapMigration: 全テーブル再ラップ + finalize + 本物 MK 復
   const thCt = b64decode(images[0].thumb_ct);
   const thOut = await dec(client.masterKey, thCt.subarray(12), thCt.subarray(0, 12), vthumbAad);
   assert.deepEqual([...thOut], [...thumbPlain]);
+});
+
+test("rewrapVoucherImage: サムネ取得失敗 (5xx) は throw して孤立を防ぐ", async () => {
+  const userId = 5;
+  const aadId = 9n;
+  const masterRaw = rnd(32);
+  const tempRaw = rnd(32);
+  const client = await makeClient(masterRaw);
+  await client.setRewrapKey(new Uint8Array(tempRaw));
+  const tempKey = await importAes(tempRaw, ["encrypt", "decrypt"]);
+  const imgSealed = await sealImage(tempKey, rnd(48), buildAAD("vimg", userId, aadId));
+
+  const fakeFetch = async (url) => {
+    if (url === "/api/v1/migration/voucher-image/1") return bufResp(imgSealed);
+    if (url === "/api/v1/migration/voucher-image/1?size=thumb") {
+      return { ok: false, status: 503, json: async () => ({}) };
+    }
+    throw new Error("unexpected fetch: " + url);
+  };
+
+  await assert.rejects(() => rewrapVoucherImage({
+    client, userId,
+    voucher: { id: 1, aad_id: "9", has_image: true, has_thumbnail: true },
+    fetchImpl: fakeFetch,
+  }), /thumb 1: HTTP 503/);
 });
 
 test("runRewrapMigration: temp_mk 非 active なら何もせず {active:false}", async () => {

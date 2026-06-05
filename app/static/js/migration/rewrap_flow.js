@@ -222,14 +222,23 @@ export async function rewrapVoucherImage({
       `/api/v1/migration/voucher-image/${voucher.id}?size=thumb`,
       { credentials: "include" },
     );
-    if (thRes.ok) {
-      const thBytes = new Uint8Array(await thRes.arrayBuffer());
-      try {
-        const thumbCt = await rewrapBlob(client, thBytes, aadThumb);
-        payload.thumb_ct = b64encode(thumbCt);
-      } catch (_e) {
-        // サムネが既に再ラップ済/復号不可なら本体のみ送る。
-      }
+    // サムネ取得の失敗 (ネットワーク/5xx) は一過性。ここで本体のみ PUT すると
+    // サムネが temp-MK のまま孤立し、finalize 後に復号不能になりうる。よって
+    // throw して移行を中断する (temp_mk 保持で安全に再実行可能)。
+    if (!thRes.ok) {
+      throw new Error(
+        `voucher-image thumb ${voucher.id}: HTTP ${thRes.status}`,
+      );
+    }
+    const thBytes = new Uint8Array(await thRes.arrayBuffer());
+    try {
+      const thumbCt = await rewrapBlob(client, thBytes, aadThumb);
+      payload.thumb_ct = b64encode(thumbCt);
+    } catch (_e) {
+      // ローカル AES-GCM の復号失敗は決定的 (認証タグ不一致 = 既に本物 MK 済)
+      // であり一過性ではない。サーバの直前 PUT が本体だけ失敗した稀なケースで
+      // サムネのみ先に本物 MK 済になっている状況に相当するため、本体のみ送れば
+      // 両者が本物 MK で整合する (自己修復)。
     }
   }
 

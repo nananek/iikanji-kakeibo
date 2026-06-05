@@ -88,9 +88,12 @@ async function _onMigrate(btn) {
     }
     globalThis.location.reload();
   } catch (e) {
+    // showToast は innerHTML を使うため、サーバ応答由来の文字列 (e.message には
+    // _getJson/_postJson 経由でサーバの error フィールドが含まれうる) をそのまま
+    // 渡すと XSS 経路になる。toast には固定文言のみ渡し、詳細は console に出す。
+    console.error("E2EE 再ラップ移行に失敗:", e);
     toast(
-      "E2EE 移行に失敗しました。時間をおいて再実行してください: " +
-        ((e && e.message) || e),
+      "E2EE 移行に失敗しました。時間をおいて再実行してください。",
       "danger",
     );
     btn.disabled = false;
