@@ -169,8 +169,14 @@ export async function beginPasskeyKeyDerivation(opts = {}) {
   }
   const derivedKey = await deriveKeyFromCredential(credential);
   if (!derivedKey) {
+    // PRF は「端末」ではなく**パスキーの保存先(認証情報基盤)**が対応している
+    // 必要がある。Bitwarden 等の一部パスキー管理ツールは PRF 拡張を返さない
+    // ため、ここで null になる。端末のせいに聞こえない文言にする。
     throw new Error(
-      "この端末は WebAuthn PRF 拡張に対応していません。パスフレーズ方式をご利用ください。",
+      "お使いのパスキーの保存先が暗号鍵生成 (WebAuthn PRF 拡張) に対応していません。"
+      + "Bitwarden など一部のパスキー管理ツールは未対応です。"
+      + "パスフレーズ方式をご利用いただくか、PRF 対応のパスキー "
+      + "(iCloud キーチェーン / Windows Hello / ハードウェアキー等) をご利用ください。",
     );
   }
   // PRF 出力検証ができたので finalize で sign_count 更新 + 所有権確認
