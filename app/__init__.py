@@ -294,23 +294,17 @@ def register_cli(app):
         出力件数は全て整数で、temp-MK バイト列等の機密値は一切出力しない。
         """
         import json as _json
-        from app.models.user import User
+        from app.services.migration_status import compute_migration_counts
 
-        base = User.query.filter_by(user_type="personal")
-        total = base.count()
-        key_set = base.filter(User.public_key.isnot(None)).count()
-        temp_mk_active = base.filter(
-            User.migration_temp_mk.isnot(None)
-        ).count()
-        locked = base.filter(User.is_active.is_(False)).count()
-        # 全件 int 化 (CodeQL py/clear-text-logging 誤検知回避・機密非出力の明示)。
+        c = compute_migration_counts()
+        # 既存の CLI 出力契約 (PR-4a) を維持しつつ、集計は共有関数に委譲する。
         stats = {
-            "total": int(total),
-            "key_set": int(key_set),
-            "key_unset": int(total - key_set),
-            "temp_mk_active": int(temp_mk_active),
-            "locked": int(locked),
-            "safe_to_discard_temp_mk": int(temp_mk_active) == 0,
+            "total": c["total"],
+            "key_set": c["with_keys"],
+            "key_unset": c["without_keys"],
+            "temp_mk_active": c["temp_mk_holders"],
+            "locked": c["locked"],
+            "safe_to_discard_temp_mk": c["temp_mk_holders"] == 0,
         }
 
         if as_json:
