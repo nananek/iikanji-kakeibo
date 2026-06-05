@@ -36,9 +36,60 @@ depends_on = None
 _BLOB_TABLES = ("journal_entries", "journal_entry_lines", "medical_expenses")
 
 
+def _count(conn, sql):
+    return conn.execute(sa.text(sql)).scalar() or 0
+
+
 def upgrade():
+    # === ガード (#338 / E7): 未暗号化平文の破壊防止 ===
+    # 本マイグレは平文列を物理 DROP する。v4.0.0 など E2EE データ移行 (平文→
+    # encrypted_blob 暗号化) が未完了の DB に対してそのまま走ると、平文を暗号化
+    # しないまま DROP して仕訳ヘッダ・明細・医療費の内容を恒久的に失う。よって
+    # 「暗号文 (encrypted_blob) が空/NULL なのに平文が残っている行」を検出したら
+    # 中断する。E7 のデータ暗号化を先に完了させてから再実行すること。
+    # closing 空 blob センチネル (平文も空) や空テーブル・E2EE 済み DB では発火しない。
+    conn = op.get_bind()
+    unenc_je = _count(
+        conn,
+        "SELECT COUNT(*) FROM journal_entries "
+        "WHERE (encrypted_blob IS NULL OR octet_length(encrypted_blob)=0) AND ("
+        "  date IS NOT NULL"
+        "  OR (description IS NOT NULL AND description<>'')"
+        "  OR (source IS NOT NULL AND source<>'journal')"
+        "  OR fiscal_period IS NOT NULL)",
+    )
+    unenc_jel = _count(
+        conn,
+        "SELECT COUNT(*) FROM journal_entry_lines "
+        "WHERE (encrypted_blob IS NULL OR octet_length(encrypted_blob)=0) AND ("
+        "  (description IS NOT NULL AND description<>'')"
+        "  OR account_code IS NOT NULL"
+        "  OR debit_amount IS NOT NULL"
+        "  OR credit_amount IS NOT NULL)",
+    )
+    unenc_me = _count(
+        conn,
+        "SELECT COUNT(*) FROM medical_expenses "
+        "WHERE (encrypted_blob IS NULL OR octet_length(encrypted_blob)=0) AND ("
+        "  date IS NOT NULL"
+        "  OR (patient_name IS NOT NULL AND patient_name<>'')"
+        "  OR (hospital_name IS NOT NULL AND hospital_name<>'')"
+        "  OR (treatment_description IS NOT NULL AND treatment_description<>'')"
+        "  OR (provider_type IS NOT NULL AND provider_type<>'')"
+        "  OR amount_paid IS NOT NULL"
+        "  OR insurance_reimbursement<>0)",
+    )
+    if unenc_je or unenc_jel or unenc_me:
+        raise RuntimeError(
+            "E2EE データ移行が未完了です。平文が残っているのに encrypted_blob が空の行を"
+            f" 検出しました (journal_entries={unenc_je}, journal_entry_lines={unenc_jel},"
+            f" medical_expenses={unenc_me})。平文列を DROP する前に E7 のデータ暗号化"
+            " (temp-MK によるサーバ側一括暗号化、または各利用者クライアントでの暗号化) を"
+            " 完了させてください。未暗号化のまま DROP すると内容が恒久的に失われます。"
+        )
+
     # NOT NULL 化の前に、万一 NULL の暗号文があれば空 blob センチネルで埋める
-    # (E2EE 移行済 DB では発生しない安全網)。
+    # (ガード通過後なので平文の無い退化行のみが対象。E2EE 移行済 DB では発生しない)。
     for t in _BLOB_TABLES:
         op.execute(
             sa.text(

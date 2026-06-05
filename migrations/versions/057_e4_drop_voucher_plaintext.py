@@ -46,6 +46,28 @@ depends_on = None
 
 
 def upgrade():
+    # ガード (#338 / E7): 未暗号化の証憑平文を破壊しない。original_filename / detail が
+    # 残っているのに対応する暗号文 (encrypted_meta_blob / encrypted_detail_blob) が
+    # 空/NULL の行があれば、E4 暗号化が未完了なので中断する (空テーブル・E2EE 済みは
+    # 発火しない)。
+    conn = op.get_bind()
+    unenc_fn = conn.execute(sa.text(
+        "SELECT COUNT(*) FROM vouchers "
+        "WHERE original_filename IS NOT NULL AND original_filename<>'' "
+        "AND (encrypted_meta_blob IS NULL OR octet_length(encrypted_meta_blob)=0)"
+    )).scalar() or 0
+    unenc_detail = conn.execute(sa.text(
+        "SELECT COUNT(*) FROM voucher_audit_logs "
+        "WHERE detail IS NOT NULL AND detail<>'' "
+        "AND (encrypted_detail_blob IS NULL OR octet_length(encrypted_detail_blob)=0)"
+    )).scalar() or 0
+    if unenc_fn or unenc_detail:
+        raise RuntimeError(
+            "証憑の E4 暗号化が未完了です。平文が残っているのに暗号文が空の行を検出"
+            f" (vouchers.original_filename={unenc_fn}, voucher_audit_logs.detail={unenc_detail})。"
+            " 平文列を DROP する前に E4/E7 の証憑暗号化を完了させてください。"
+        )
+
     with op.batch_alter_table("voucher_audit_logs") as batch_op:
         batch_op.drop_column("detail")
 
