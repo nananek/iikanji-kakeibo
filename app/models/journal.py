@@ -73,7 +73,7 @@ class JournalEntry(db.Model):
     # #338 item5 (Phase 5b): total_debit / total_credit / is_balanced は削除した。
     # 平文 debit_amount / credit_amount は新規行で NULL になり sum() が TypeError に
     # なるうえ、サーバは平文金額を保持しない設計 (集計・貸借はクライアント + 監査時
-    # 検査の責務 §12.11/§13)。残高表示はクライアントが encrypted_blob を復号して算出。
+    # 検査の責務 §12.11)。残高表示はクライアントが encrypted_blob を復号して算出。
 
     def __repr__(self):
         # E3-F PR-D-6-5-pre1: 平文 date は参照しない (D-6-5 で DROP)。
@@ -96,7 +96,7 @@ class JournalEntryLine(db.Model):
     # #338 item8 (Phase 8, migration 068): 平文メタ列 account_code / debit_amount /
     # credit_amount と複合 FK fk_jel_account は物理 DROP 済。行の科目・金額は全て
     # encrypted_blob に収録され、集計・貸借一致・科目存在の検査はクライアント
-    # (復号時) + 監査時検査の責務 (§13)。サーバはこれらを一切保持・参照しない
+    # (復号時) + 監査時検査の責務 (§12.11)。サーバはこれらを一切保持・参照しない
     # = 真の「DB 平文ゼロ」。account_user_id はテナント識別のため平文継続。
     # E3-F PR-D-6-5 (055): 平文 description は DROP 済。本体は encrypted_blob のみ。
     # Phase E3: クライアント暗号化された account_code / debit / credit / description

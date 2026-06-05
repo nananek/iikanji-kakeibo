@@ -27,7 +27,7 @@ class TestCreateJournalEntry:
     # 引数は撤去)。entry 本体はクライアントが暗号化して encrypted_blob に格納する。
     # #338 item5: lines_data は encrypted_blob / blob_iv のみを持つ。平文
     # account_code / debit / credit は DB に書かれず (NULL)、貸借一致・科目存在の
-    # サーバ検査も撤去された (クライアント + 監査時検査の責務 §12.11/§13)。
+    # サーバ検査も撤去された (クライアント + 監査時検査の責務 §12.11)。
     @staticmethod
     def _enc_line():
         return {"encrypted_blob": b"\x42" * 48, "blob_iv": b"\x42" * 12}

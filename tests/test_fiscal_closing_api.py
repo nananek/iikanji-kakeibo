@@ -120,7 +120,7 @@ class TestCloseClosingValidation:
 
     def test_nonexistent_account_wire_ignored(self, client, db, user, accounts, auth_header):
         """#338 item5: closing 経路もサーバの科目存在検査を撤去 (クライアント +
-        監査時検査の責務 §12.11/§13)。wire 上の存在しない account_code は無視され、
+        監査時検査の責務 §12.11)。wire 上の存在しない account_code は無視され、
         closing 仕訳は 200 で受理される (line の account_code は NULL)。
         """
         _set_closed(db, user.id, 14)

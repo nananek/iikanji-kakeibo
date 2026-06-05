@@ -112,7 +112,7 @@ class TestCreateJournal:
 
     def test_unbalanced_wire_accepted(self, client, db, user, accounts, auth_header):
         """#338 item5: サーバは平文金額を持たなくなったため貸借一致をサーバ側で
-        検査しない (§12.11/§13 でクライアント + 監査時検査の責務へ移行)。wire 上の
+        検査しない (§12.11 でクライアント + 監査時検査の責務へ移行)。wire 上の
         debit/credit は無視されるため、不一致に見える payload でも 201 で受理する。
         """
         resp = client.post("/api/v1/journals", headers=auth_header, json={
@@ -348,7 +348,7 @@ class TestCreateJournalsBatch:
     def test_invalid_account_code_wire_ignored(self, client, db, user, accounts, auth_header):
         """#338 item5: 平文 account_code はサーバが受け取らない (送られても無視)。
         存在しない account_code を wire に乗せても科目存在検査は行わず 201 で受理する
-        (科目存在はクライアント + 監査時検査の責務 §12.11/§13)。保存される line の
+        (科目存在はクライアント + 監査時検査の責務 §12.11)。保存される line の
         account_code は NULL になる。
         """
         resp = client.post("/api/v1/journals/batch", headers=auth_header, json={

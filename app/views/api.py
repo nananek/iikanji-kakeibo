@@ -344,7 +344,7 @@ def _validate_and_parse_batch_entry(e, idx):
 
     #338 item5: 平文 account_code / debit / credit は受け取らない (送られても無視)。
     line 本体は encrypted_blob のみ。科目存在・貸借一致のサーバ検査は撤去し、
-    クライアント + 監査時検査の責務へ移行した (§12.11/§13)。
+    クライアント + 監査時検査の責務へ移行した (§12.11)。
 
     エラーは ValueError を raise (caller が一括 rollback + 400 を返す)。
     """
@@ -428,7 +428,7 @@ def create_journals_batch():
     1 リクエストの全 entry を 1 トランザクションで保存する: 1 件でも
     schema validate / 確定済み期間 / 提出済みロックに失敗すれば全 rollback して
     400 を返す。#338 item5: 平文金額をサーバが持たなくなったため貸借一致の
-    サーバ検査は撤去 (クライアント + 監査時検査の責務へ §12.11/§13)。
+    サーバ検査は撤去 (クライアント + 監査時検査の責務へ §12.11)。
 
     リクエスト:
         {
@@ -545,7 +545,7 @@ def _parse_closing_lines(closing_entry):
 
     # #338 item5: 平文 account_code / debit / credit は要求しない (送られても無視)。
     # closing 本体 (科目・金額) は encrypted_blob にのみ格納。科目存在・貸借は
-    # クライアント + 監査時検査の責務 (§12.11/§13)。
+    # クライアント + 監査時検査の責務 (§12.11)。
     lines_data = []
     for li, line in enumerate(lines):
         line_blob, line_iv, err = _decode_record_crypto(
@@ -571,7 +571,7 @@ def _insert_closing_entry(user_id, year, closing_entry):
 
     戻り値: 挿入した closing 仕訳の id (closing_entry=None なら None)。
     ValueError を raise しうる (blob 不正 / fiscal メタ不正)。#338 item5: 科目存在・
-    貸借はサーバ検査せずクライアント + 監査時検査の責務 (§12.11/§13)。
+    貸借はサーバ検査せずクライアント + 監査時検査の責務 (§12.11)。
     """
     entry_blob = entry_iv = lines_data = None
     if closing_entry is not None:
@@ -1623,7 +1623,7 @@ def update_journal(entry_id):
         200 {ok, id, entry_number}
 
     確定済み期間 / 提出済みロックは 400。#338 item5: 貸借一致・科目存在のサーバ検査は
-    撤去 (クライアント + 監査時検査の責務 §12.11/§13)。
+    撤去 (クライアント + 監査時検査の責務 §12.11)。
     代理閲覧中の encrypted_blob 付き更新は 403 (AAD 不一致防止)。
     """
     data = request.get_json(silent=True)
@@ -1643,7 +1643,7 @@ def update_journal(entry_id):
         return jsonify({"error": err}), 400
 
     # #338 item5: 平文 account_code / debit / credit を受け取らないため、科目存在・
-    # 貸借一致のサーバ検査は撤去 (クライアント + 監査時検査へ §12.11/§13)。
+    # 貸借一致のサーバ検査は撤去 (クライアント + 監査時検査へ §12.11)。
     try:
         parsed = _validate_and_parse_batch_entry(data, 0)
     except ValueError as ve:

@@ -132,7 +132,7 @@ function _csrfToken() {
 
 const LEVEL_LABELS = { 1: "Lv1: 集計のみ", 2: "Lv2: 税務科目", 3: "Lv3: 本人同等" };
 
-// 監査時検査 (§13) のエラーコード → 表示ラベル。
+// 監査時検査 (§12.11) のエラーコード → 表示ラベル。
 const ISSUE_LABELS = {
   unbalanced: "貸借不一致",
   trial_unbalanced: "試算表の貸借不一致",
@@ -177,7 +177,7 @@ function _renderTrialBalance(snapshot, trialErrors) {
       </tr>`;
     })
     .join("");
-  // 監査時検査 (§13): 試算表の貸借不一致は合計行を赤背景にし、メッセージを表示。
+  // 監査時検査 (§12.11): 試算表の貸借不一致は合計行を赤背景にし、メッセージを表示。
   const bad = Array.isArray(trialErrors) && trialErrors.length > 0;
   const footClass = bad ? "table-danger fw-bold" : "table-light fw-bold";
   const warn = bad
@@ -207,7 +207,7 @@ function _renderEntries(snapshot, byEntry) {
             ` <span class="text-muted">借 ${_yen(l.debit)} / 貸 ${_yen(l.credit)}</span></div>`,
         )
         .join("");
-      // 監査時検査 (§13): この仕訳に整合性エラーがあれば明細セルにテキストで表示。
+      // 監査時検査 (§12.11): この仕訳に整合性エラーがあれば明細セルにテキストで表示。
       // owner 制御値由来のため属性ではなくテキストコンテキスト (_esc) で出す。
       const errs = errsOf[e.id] || [];
       const errHtml = errs.length
@@ -231,7 +231,7 @@ function _renderEntries(snapshot, byEntry) {
 }
 
 /**
- * 監査時検査 (§13) のサマリ banner を返す。問題なしなら成功表示。
+ * 監査時検査 (§12.11) のサマリ banner を返す。問題なしなら成功表示。
  */
 function _renderIssueSummary(issues) {
   const items = summarizeIssues(issues);
@@ -293,7 +293,7 @@ function _renderSnapshot(snapshot, pkg) {
     <span class="badge bg-primary">${_esc(LEVEL_LABELS[level] || "不明")}</span>
     <span class="text-muted small">対象: ${scope} / 第 ${_esc(pkg.round_id)} 回</span>
   </div>`;
-  // 監査時検査 (§13): 復号済みスナップショットの整合性を検査し、サマリ + 仕訳/試算表
+  // 監査時検査 (§12.11): 復号済みスナップショットの整合性を検査し、サマリ + 仕訳/試算表
   // への警告として可視化する (非ブロッキング)。
   const issues = collectSnapshotIssues(snapshot);
   // header / サマリ / 試算表 / 仕訳一覧は全て要素テキストコンテキスト (_esc で安全)。
@@ -398,12 +398,12 @@ export async function initAuditReview(cfg) {
 // サーバは response_type のみ管理し中身は読めない (HPKE 暗号文)。
 
 /**
- * 監査時検査 (§13): 復号済みの正規化仕訳 (normalizeEntries の 1 要素) の整合性を
+ * 監査時検査 (§12.11): 復号済みの正規化仕訳 (normalizeEntries の 1 要素) の整合性を
  * 検査し、エラー配列を返す純粋関数。throw せず {errors:[{code,message}]} を返す
  * (監査は異常発見が目的なので非ブロッキングで可視化する)。
  *
  * #338 で平文 account_code/debit/credit を物理 DROP したため、貸借一致・科目存在の
- * 検査はクライアント (owner 書込時) + 監査時 (本関数) の責務へ移った (§12.11/§13)。
+ * 検査はクライアント (owner 書込時) + 監査時 (本関数) の責務へ移った (§12.11)。
  *
  * level によって検査粒度を変える:
  *  - 3 (Lv3 本人同等): 可視行の科目存在/XOR/整数 + **仕訳単位の貸借一致** + 手動 period16。
@@ -477,7 +477,7 @@ export function validateEntryIntegrity(entry, accountsMeta, opts = {}) {
 }
 
 /**
- * 監査時検査 (§13): 試算表 (snapshot.trial_balance) の借方合計と貸方合計の一致を
+ * 監査時検査 (§12.11): 試算表 (snapshot.trial_balance) の借方合計と貸方合計の一致を
  * 検査する純粋関数。Lv1 (集計のみ。仕訳本体を持たない) で唯一の整合性検査。
  *
  * @param {Array<{account_code:string, debit:number, credit:number}>} trialBalance
@@ -502,7 +502,7 @@ export function validateTrialBalance(trialBalance) {
 }
 
 /**
- * 監査時検査 (§13): スナップショット全体を検査し、仕訳ごとのエラー・試算表エラー・
+ * 監査時検査 (§12.11): スナップショット全体を検査し、仕訳ごとのエラー・試算表エラー・
  * コード別件数を集約する純粋関数 (DOM 非依存)。
  *  - 仕訳ごと: validateEntryIntegrity を snapshot.level の粒度で適用。
  *  - 試算表: Lv1/Lv3 のみ validateTrialBalance を適用 (Lv2 はマスクで崩れるため除外)。

@@ -336,7 +336,7 @@ test("normalizeEntries: is_closing / fiscal_period を伝播 (Lv3)", () => {
   assert.equal(e11.fiscal_period, null);
 });
 
-// ---- validateEntryIntegrity (§13 監査時検査) ----------------------------
+// ---- validateEntryIntegrity (§12.11 監査時検査) ----------------------------
 
 const _codes = (errs) => errs.map((e) => e.code).sort();
 
@@ -470,7 +470,7 @@ test("validateEntryIntegrity: lines 欠落でも throw せず errors を返す",
   assert.deepEqual(validateEntryIntegrity(null, META, { level: 3 }).errors, []);
 });
 
-// ---- validateTrialBalance (§13 Lv1 試算表検査) --------------------------
+// ---- validateTrialBalance (§12.11 Lv1 試算表検査) --------------------------
 
 test("validateTrialBalance: 借方合計=貸方合計ならエラー無し", () => {
   const tb = [
@@ -498,7 +498,7 @@ test("validateTrialBalance: 空/非配列は安全に 0 を返す", () => {
   assert.equal(validateTrialBalance(null).debitTotal, 0);
 });
 
-// ---- collectSnapshotIssues (§13 PR-B 集約) ------------------------------
+// ---- collectSnapshotIssues (§12.11 PR-B 集約) ------------------------------
 
 const _SNAP_LV3 = {
   level: 3,
