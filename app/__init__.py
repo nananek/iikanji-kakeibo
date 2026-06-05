@@ -334,6 +334,114 @@ def register_cli(app):
                 "temp-MK 材料は破棄しないでください。"
             )
 
+    @app.cli.command("migration-lock-stale")
+    @click.option("--execute", is_flag=True,
+                  help="実際にロックする (既定は dry-run で対象一覧のみ)")
+    @click.option("--json", "as_json", is_flag=True,
+                  help="JSON で出力 (機械処理用)")
+    @click.option("--limit", type=int, default=None,
+                  help="処理件数の上限 (段階適用・検証用)")
+    def migration_lock_stale_command(execute, as_json, limit):
+        """E7 (#114) §16.5: 猶予期間を過ぎた鍵未設定ユーザーをロックする。
+
+        メンテナンスウィンドウ (config.MIGRATION_WINDOW_DATE) から
+        MIGRATION_LOCK_GRACE_DAYS (既定 30) 日を過ぎても鍵 (public_key) を
+        設定していない移行対象ユーザー (migration_temp_mk 保持中・personal・
+        is_active=True) を `is_active=False` + `locked_at=now` にし、ロック解決
+        フロー (鍵設定 or 退会) へ誘導する。次回ログイン時に migration_lock_gate
+        が /migration/locked へ送る。
+
+        既定は **dry-run** (対象一覧のみ)。`--execute` 明示時のみロックを適用し、
+        対象ユーザーへ通知メールを送る。MIGRATION_WINDOW_DATE 未設定なら no-op。
+        """
+        import json as _json
+        from datetime import datetime, timedelta, timezone, date as _date
+        from app.models.user import User
+
+        window_str = app.config.get("MIGRATION_WINDOW_DATE", "")
+        if not window_str:
+            print("MIGRATION_WINDOW_DATE が未設定のためロック処理をスキップしました。")
+            return
+        try:
+            window = _date.fromisoformat(window_str)
+        except ValueError:
+            print(f"[error] MIGRATION_WINDOW_DATE の形式が不正です: {window_str!r} "
+                  "(YYYY-MM-DD を指定してください)")
+            return
+
+        grace = app.config.get("MIGRATION_LOCK_GRACE_DAYS", 30)
+        now = datetime.now(timezone.utc)
+        cutoff = datetime.combine(
+            window + timedelta(days=grace), datetime.min.time(),
+            tzinfo=timezone.utc,
+        )
+        if now < cutoff:
+            remaining = (cutoff - now).days
+            print(f"猶予期間中です (基準日 {window} + {grace}日 = "
+                  f"{cutoff.date()})。あと約 {remaining} 日。ロック対象なし。")
+            if as_json:
+                print(_json.dumps({"locked": 0, "cutoff": cutoff.date().isoformat(),
+                                   "in_grace": True}, ensure_ascii=False))
+            return
+
+        # 移行対象 (temp-MK 保持中) かつ鍵未設定 (public_key NULL) の有効
+        # personal ユーザー。temp-MK 条件で、移行コホート以外 (公開後の新規
+        # 登録など temp-MK を持たないユーザー) を巻き込まないようスコープする。
+        query = User.query.filter(
+            User.user_type == "personal",
+            User.is_active.is_(True),
+            User.public_key.is_(None),
+            User.migration_temp_mk.isnot(None),
+        ).order_by(User.id)
+        if limit:
+            query = query.limit(limit)
+        targets = query.all()
+
+        if not execute:
+            print(f"[dry-run] ロック対象: {len(targets)} 件 "
+                  f"(基準日 {window} + {grace}日 = {cutoff.date()} を経過)")
+            for u in targets:
+                print(f"  [dry-run] {u.id}: {u.username} <{u.email}>")
+            if as_json:
+                print(_json.dumps({
+                    "would_lock": len(targets),
+                    "cutoff": cutoff.date().isoformat(),
+                    "executed": False,
+                }, ensure_ascii=False))
+            return
+
+        from app.services.mail import send_email
+        locked = 0
+        mail_failed = 0
+        for u in targets:
+            u.is_active = False
+            u.locked_at = now
+            locked += 1
+        db.session.commit()
+        # 通知メールはロック確定後に送る (送信失敗してもロックは維持)。
+        for u in targets:
+            if not u.email:
+                continue
+            try:
+                send_email(
+                    u.email,
+                    "migration_locked",
+                    {"username": u.username},
+                    raise_on_send_error=True,
+                )
+            except Exception as e:
+                print(f"  [warn] メール送信失敗 {u.id} <{u.email}>: {e}")
+                mail_failed += 1
+
+        print(f"ロック完了: {locked} 件 (メール送信失敗 {mail_failed} 件)")
+        if as_json:
+            print(_json.dumps({
+                "locked": int(locked),
+                "mail_failed": int(mail_failed),
+                "cutoff": cutoff.date().isoformat(),
+                "executed": True,
+            }, ensure_ascii=False))
+
     @app.cli.command("notify-terms-update")
     @click.option("--dry-run", is_flag=True, help="送信せず対象一覧のみ表示")
     @click.option("--limit", type=int, default=None, help="送信件数の上限")

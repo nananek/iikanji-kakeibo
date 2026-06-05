@@ -40,6 +40,20 @@ class Config:
         "REGISTRATION_INVITE_ONLY", "false"
     ).lower() == "true"
 
+    # E2EE 一斉移行 (§16) のメンテナンスウィンドウ実施日 (ISO 形式 "YYYY-MM-DD")。
+    # `flask migration-lock-stale` がこの日から MIGRATION_LOCK_GRACE_DAYS (既定 30)
+    # 経過しても鍵未設定のユーザーをロックする起点に使う。未設定 (空文字) なら
+    # ロック CLI は no-op (セルフホスト・移行前・テスト用)。temp-MK 設定時刻を
+    # ユーザー単位で保持しない設計のため、全体基準日で一斉判定する (E7 #114)。
+    MIGRATION_WINDOW_DATE = os.environ.get("MIGRATION_WINDOW_DATE", "")
+    # 鍵設定の猶予日数 (§16.5)。ロック猶予 (30) / 自動退会猶予 (ロック後 60)。
+    MIGRATION_LOCK_GRACE_DAYS = int(
+        os.environ.get("MIGRATION_LOCK_GRACE_DAYS", "30")
+    )
+    MIGRATION_PURGE_GRACE_DAYS = int(
+        os.environ.get("MIGRATION_PURGE_GRACE_DAYS", "60")
+    )
+
     # エンタイトルメント基盤の動作モード。
     # - "unlimited" (default): セルフホスト前提で全有償機能を解放。
     #   billing コンテナへの HTTP リクエストは発生しない。フォーク
