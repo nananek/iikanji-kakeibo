@@ -132,6 +132,17 @@ function _csrfToken() {
 
 const LEVEL_LABELS = { 1: "Lv1: 集計のみ", 2: "Lv2: 税務科目", 3: "Lv3: 本人同等" };
 
+// 監査時検査 (§13) のエラーコード → 表示ラベル。
+const ISSUE_LABELS = {
+  unbalanced: "貸借不一致",
+  trial_unbalanced: "試算表の貸借不一致",
+  unknown_account: "科目マスタに無い科目",
+  missing_account: "科目コード空",
+  non_integer: "金額が不正",
+  both_sides: "借方・貸方の入力不正",
+  manual_closing: "手動の損益振替 (期16)",
+};
+
 // ---- データ取得 --------------------------------------------------------
 
 async function _fetchAuditorPackages(grantId) {
@@ -150,7 +161,7 @@ function _accountName(accountsMeta, code) {
   return m && m.name ? m.name : code;
 }
 
-function _renderTrialBalance(snapshot) {
+function _renderTrialBalance(snapshot, trialErrors) {
   const rows = snapshot.trial_balance || [];
   if (rows.length === 0) return "";
   let dTotal = 0;
@@ -166,20 +177,27 @@ function _renderTrialBalance(snapshot) {
       </tr>`;
     })
     .join("");
+  // 監査時検査 (§13): 試算表の貸借不一致は合計行を赤背景にし、メッセージを表示。
+  const bad = Array.isArray(trialErrors) && trialErrors.length > 0;
+  const footClass = bad ? "table-danger fw-bold" : "table-light fw-bold";
+  const warn = bad
+    ? `<div class="text-danger small mt-1">⚠ ${_esc(trialErrors.map((e) => e.message).join(" / "))}</div>`
+    : "";
   return `<h5 class="mt-4">試算表</h5>
     <div class="table-responsive">
     <table class="table table-sm">
       <thead><tr><th>科目</th><th class="text-end">借方</th><th class="text-end">貸方</th></tr></thead>
       <tbody>${body}</tbody>
-      <tfoot><tr class="table-light fw-bold">
+      <tfoot><tr class="${footClass}">
         <td>合計</td><td class="text-end">${_yen(dTotal)}</td><td class="text-end">${_yen(cTotal)}</td>
       </tr></tfoot>
-    </table></div>`;
+    </table></div>${warn}`;
 }
 
-function _renderEntries(snapshot) {
+function _renderEntries(snapshot, byEntry) {
   const entries = normalizeEntries(snapshot);
   if (entries.length === 0) return "";
+  const errsOf = byEntry || {};
   const rows = entries
     .map((e) => {
       const lines = e.lines
@@ -189,11 +207,18 @@ function _renderEntries(snapshot) {
             ` <span class="text-muted">借 ${_yen(l.debit)} / 貸 ${_yen(l.credit)}</span></div>`,
         )
         .join("");
-      return `<tr>
+      // 監査時検査 (§13): この仕訳に整合性エラーがあれば明細セルにテキストで表示。
+      // owner 制御値由来のため属性ではなくテキストコンテキスト (_esc) で出す。
+      const errs = errsOf[e.id] || [];
+      const errHtml = errs.length
+        ? `<div class="text-danger small mt-1">⚠ ${_esc(errs.map((x) => x.message).join(" / "))}</div>`
+        : "";
+      const rowClass = errs.length ? ' class="table-warning"' : "";
+      return `<tr${rowClass}>
         <td class="text-nowrap"><code>#${_esc(e.id)}</code></td>
         <td class="text-nowrap">${_esc(e.date)}</td>
         <td>${_esc(e.description)}</td>
-        <td>${lines}</td>
+        <td>${lines}${errHtml}</td>
       </tr>`;
     })
     .join("");
@@ -203,6 +228,18 @@ function _renderEntries(snapshot) {
       <thead><tr><th>ID</th><th>日付</th><th>摘要</th><th>明細</th></tr></thead>
       <tbody>${rows}</tbody>
     </table></div>`;
+}
+
+/**
+ * 監査時検査 (§13) のサマリ banner を返す。問題なしなら成功表示。
+ */
+function _renderIssueSummary(issues) {
+  const items = summarizeIssues(issues);
+  if (items.length === 0) {
+    return `<div class="alert alert-success small py-2">整合性チェック: 問題は検出されませんでした。</div>`;
+  }
+  const parts = items.map((it) => `${_esc(it.label)} ${it.count} 件`).join(" / ");
+  return `<div class="alert alert-warning small py-2">⚠ 整合性チェックで問題を検出: ${parts}</div>`;
 }
 
 // 証憑画像は owner が seal した平文に由来し、mime / base64 は敵対的 owner が
@@ -256,9 +293,15 @@ function _renderSnapshot(snapshot, pkg) {
     <span class="badge bg-primary">${_esc(LEVEL_LABELS[level] || "不明")}</span>
     <span class="text-muted small">対象: ${scope} / 第 ${_esc(pkg.round_id)} 回</span>
   </div>`;
-  // header / 試算表 / 仕訳一覧は全て要素テキストコンテキスト (_esc で安全)。
+  // 監査時検査 (§13): 復号済みスナップショットの整合性を検査し、サマリ + 仕訳/試算表
+  // への警告として可視化する (非ブロッキング)。
+  const issues = collectSnapshotIssues(snapshot);
+  // header / サマリ / 試算表 / 仕訳一覧は全て要素テキストコンテキスト (_esc で安全)。
   body.innerHTML =
-    header + _renderTrialBalance(snapshot) + _renderEntries(snapshot);
+    header +
+    _renderIssueSummary(issues) +
+    _renderTrialBalance(snapshot, issues.trialErrors) +
+    _renderEntries(snapshot, issues.byEntry);
   // 証憑のみ属性に owner 制御値が入るので DOM API で追記する。
   _appendVouchers(snapshot, body);
 }
@@ -301,7 +344,7 @@ export async function initAuditReview(cfg) {
   }
 
   // HPKE open (worker 内)。
-  const [{ packageAAD }, { b64decode }] = await Promise.all([
+  const [{ packageAAD, snapshotHash }, { b64decode }] = await Promise.all([
     import(getStaticRoot() + "js/crypto/audit_hpke.js"),
     import(getStaticRoot() + "js/crypto/b64.js"),
   ]);
@@ -314,9 +357,22 @@ export async function initAuditReview(cfg) {
       ciphertext: b64decode(pkg.ciphertext),
       aad: packageAAD(cfg.grant_id, pkg.round_id),
     });
+    // 監査時検査 (§14.3): SHA-256(平文) == pkg.snapshot_hash を照合する。HPKE/AEAD が
+    // 改ざんを既に担保するため defense-in-depth (不一致はアプリ論理エラーの兆候)。
+    let hashWarning = "";
+    if (pkg.snapshot_hash) {
+      const ok = bytesEqual(
+        await snapshotHash(res.plaintext),
+        b64decode(pkg.snapshot_hash),
+      );
+      if (!ok) hashWarning = " ⚠ スナップショットのハッシュが一致しません (要確認)。";
+    }
     const snapshot = parseSnapshot(res.plaintext);
     _renderSnapshot(snapshot, pkg);
-    _status(`第 ${pkg.round_id} 回スナップショットを復号しました。`, "success");
+    _status(
+      `第 ${pkg.round_id} 回スナップショットを復号しました。${hashWarning}`,
+      hashWarning ? "warning" : "success",
+    );
     // PR-B の修正案送信が getReviewCtx() で参照できるようモジュールスコープに保持。
     _reviewCtx = { client, pkg, snapshot, cfg };
     document.dispatchEvent(
@@ -443,6 +499,65 @@ export function validateTrialBalance(trialBalance) {
     });
   }
   return { errors, debitTotal, creditTotal };
+}
+
+/**
+ * 監査時検査 (§13): スナップショット全体を検査し、仕訳ごとのエラー・試算表エラー・
+ * コード別件数を集約する純粋関数 (DOM 非依存)。
+ *  - 仕訳ごと: validateEntryIntegrity を snapshot.level の粒度で適用。
+ *  - 試算表: Lv1/Lv3 のみ validateTrialBalance を適用 (Lv2 はマスクで崩れるため除外)。
+ * @param {Object} snapshot  復号済みスナップショット
+ * @returns {{byEntry:Object<string,Array>, trialErrors:Array, counts:Object<string,number>, total:number}}
+ */
+export function collectSnapshotIssues(snapshot) {
+  const level = snapshot && snapshot.level;
+  const meta = (snapshot && snapshot.accounts_meta) || {};
+  const entries = normalizeEntries(snapshot);
+  const byEntry = {};
+  const counts = {};
+  const bump = (code) => {
+    counts[code] = (counts[code] || 0) + 1;
+  };
+  for (const e of entries) {
+    const { errors } = validateEntryIntegrity(e, meta, { level });
+    if (errors.length) {
+      byEntry[e.id] = errors;
+      for (const er of errors) bump(er.code);
+    }
+  }
+  // 試算表の貸借一致は Lv2 ではマスク除外で構造的に崩れるため検査しない (Lv1/Lv3 のみ)。
+  let trialErrors = [];
+  if (level !== 2) {
+    trialErrors = validateTrialBalance(snapshot && snapshot.trial_balance).errors;
+    for (const er of trialErrors) bump(er.code);
+  }
+  const total = Object.values(counts).reduce((a, b) => a + b, 0);
+  return { byEntry, trialErrors, counts, total };
+}
+
+/**
+ * collectSnapshotIssues の counts を表示用の {code,label,count} 配列へ整形する純粋関数。
+ * @param {{counts:Object<string,number>}} issues
+ * @returns {Array<{code:string, label:string, count:number}>}
+ */
+export function summarizeIssues(issues) {
+  const counts = (issues && issues.counts) || {};
+  return Object.keys(counts)
+    .filter((c) => counts[c] > 0)
+    .map((c) => ({ code: c, label: ISSUE_LABELS[c] || c, count: counts[c] }));
+}
+
+/**
+ * 2 つのバイト列が等しいか定数時間寄りで比較する純粋関数 (snapshot_hash 照合用)。
+ * @param {Uint8Array} a
+ * @param {Uint8Array} b
+ * @returns {boolean}
+ */
+export function bytesEqual(a, b) {
+  if (!a || !b || a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a[i] ^ b[i];
+  return diff === 0;
 }
 
 /**

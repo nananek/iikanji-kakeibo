@@ -16,6 +16,9 @@ const {
   validateProposal,
   validateEntryIntegrity,
   validateTrialBalance,
+  collectSnapshotIssues,
+  summarizeIssues,
+  bytesEqual,
 } = await import(M.href);
 
 const META = { "1010": { name: "現金" }, "1020": { name: "普通預金" }, "5010": { name: "通信費" } };
@@ -493,4 +496,140 @@ test("validateTrialBalance: 空/非配列は安全に 0 を返す", () => {
   assert.deepEqual(validateTrialBalance([]).errors, []);
   assert.deepEqual(validateTrialBalance(undefined).errors, []);
   assert.equal(validateTrialBalance(null).debitTotal, 0);
+});
+
+// ---- collectSnapshotIssues (§13 PR-B 集約) ------------------------------
+
+const _SNAP_LV3 = {
+  level: 3,
+  accounts_meta: META,
+  trial_balance: [
+    { account_code: "5010", debit: 100, credit: 0 },
+    { account_code: "1010", debit: 0, credit: 100 },
+  ],
+  journal_entries: [
+    { id: 1, is_closing: false, fiscal_period: 5 },
+    { id: 2, is_closing: false, fiscal_period: 5 },
+  ],
+  journal_entry_lines: [
+    { journal_entry_id: 1, account_code: "5010", debit_amount: 100, credit_amount: 0 },
+    { journal_entry_id: 1, account_code: "1010", debit_amount: 0, credit_amount: 100 },
+    // 仕訳2: 未知科目 9999 + 貸借不一致 (100 vs 90)
+    { journal_entry_id: 2, account_code: "5010", debit_amount: 100, credit_amount: 0 },
+    { journal_entry_id: 2, account_code: "9999", debit_amount: 0, credit_amount: 90 },
+  ],
+};
+
+test("collectSnapshotIssues: Lv3 で仕訳ごとのエラーと件数を集約", () => {
+  const issues = collectSnapshotIssues(_SNAP_LV3);
+  // 仕訳1 はエラー無し、仕訳2 は unknown_account + unbalanced。
+  assert.deepEqual(Object.keys(issues.byEntry), ["2"]);
+  assert.equal(issues.counts.unknown_account, 1);
+  assert.equal(issues.counts.unbalanced, 1);
+  assert.equal(issues.total, 2);
+  // trial_balance は釣り合っているので試算表エラー無し。
+  assert.deepEqual(issues.trialErrors, []);
+});
+
+test("collectSnapshotIssues: クリーンな Lv3 は total 0", () => {
+  const clean = {
+    level: 3, accounts_meta: META,
+    trial_balance: [
+      { account_code: "5010", debit: 100, credit: 0 },
+      { account_code: "1010", debit: 0, credit: 100 },
+    ],
+    journal_entries: [{ id: 1, is_closing: false, fiscal_period: 5 }],
+    journal_entry_lines: [
+      { journal_entry_id: 1, account_code: "5010", debit_amount: 100, credit_amount: 0 },
+      { journal_entry_id: 1, account_code: "1010", debit_amount: 0, credit_amount: 100 },
+    ],
+  };
+  const issues = collectSnapshotIssues(clean);
+  assert.equal(issues.total, 0);
+  assert.deepEqual(issues.byEntry, {});
+  assert.deepEqual(issues.trialErrors, []);
+});
+
+test("collectSnapshotIssues: Lv3 は試算表の不一致も仕訳エラーも両方集約", () => {
+  const snap = {
+    level: 3, accounts_meta: META,
+    // 試算表が不一致 (100 vs 90)。
+    trial_balance: [
+      { account_code: "5010", debit: 100, credit: 0 },
+      { account_code: "1010", debit: 0, credit: 90 },
+    ],
+    // 仕訳も貸借不一致。
+    journal_entries: [{ id: 1, is_closing: false, fiscal_period: 5 }],
+    journal_entry_lines: [
+      { journal_entry_id: 1, account_code: "5010", debit_amount: 100, credit_amount: 0 },
+      { journal_entry_id: 1, account_code: "1010", debit_amount: 0, credit_amount: 90 },
+    ],
+  };
+  const issues = collectSnapshotIssues(snap);
+  assert.equal(issues.counts.trial_unbalanced, 1);
+  assert.equal(issues.counts.unbalanced, 1);
+  assert.equal(issues.trialErrors.length, 1);
+  assert.deepEqual(Object.keys(issues.byEntry), ["1"]);
+});
+
+test("collectSnapshotIssues: Lv1 (集計のみ) は試算表の不一致のみ検出", () => {
+  const lv1 = {
+    level: 1, accounts_meta: META,
+    trial_balance: [
+      { account_code: "5010", debit: 100, credit: 0 },
+      { account_code: "1010", debit: 0, credit: 90 },
+    ],
+  };
+  const issues = collectSnapshotIssues(lv1);
+  assert.deepEqual(issues.byEntry, {});
+  assert.equal(issues.counts.trial_unbalanced, 1);
+  assert.equal(issues.trialErrors.length, 1);
+});
+
+test("collectSnapshotIssues: Lv2 は試算表/仕訳貸借をスキップし可視行エラーのみ", () => {
+  const lv2 = {
+    level: 2, accounts_meta: META,
+    // Lv2 の試算表はマスクで崩れうるので検査しない。
+    trial_balance: [{ account_code: "5010", debit: 100, credit: 0 }],
+    entries: [
+      // マスクで借方のみ残る = Lv3 なら unbalanced だが Lv2 は計上しない。
+      { id: 10, lines: [{ account_code: "5010", debit: 100, credit: 0 }] },
+      // 未知科目は Lv2 でも検出。
+      { id: 11, lines: [{ account_code: "9999", debit: 50, credit: 0 }] },
+    ],
+  };
+  const issues = collectSnapshotIssues(lv2);
+  assert.equal(issues.counts.unbalanced, undefined);
+  assert.equal(issues.counts.trial_unbalanced, undefined);
+  assert.equal(issues.counts.unknown_account, 1);
+  assert.deepEqual(Object.keys(issues.byEntry), ["11"]);
+});
+
+// ---- summarizeIssues ---------------------------------------------------
+
+test("summarizeIssues: counts を label 付き配列へ整形し 0 件は除外", () => {
+  const out = summarizeIssues({ counts: { unbalanced: 2, unknown_account: 1, non_integer: 0 } });
+  const byCode = Object.fromEntries(out.map((x) => [x.code, x]));
+  assert.equal(byCode.unbalanced.count, 2);
+  assert.equal(byCode.unbalanced.label, "貸借不一致");
+  assert.equal(byCode.unknown_account.label, "科目マスタに無い科目");
+  assert.equal(byCode.non_integer, undefined); // 0 件は除外
+});
+
+test("summarizeIssues: 空/null は空配列", () => {
+  assert.deepEqual(summarizeIssues({ counts: {} }), []);
+  assert.deepEqual(summarizeIssues(null), []);
+});
+
+// ---- bytesEqual (snapshot_hash 照合) -----------------------------------
+
+test("bytesEqual: 同一バイト列は true", () => {
+  assert.equal(bytesEqual(new Uint8Array([1, 2, 3]), new Uint8Array([1, 2, 3])), true);
+});
+
+test("bytesEqual: 異なる内容/長さ/null は false", () => {
+  assert.equal(bytesEqual(new Uint8Array([1, 2, 3]), new Uint8Array([1, 2, 4])), false);
+  assert.equal(bytesEqual(new Uint8Array([1, 2]), new Uint8Array([1, 2, 3])), false);
+  assert.equal(bytesEqual(null, new Uint8Array([1])), false);
+  assert.equal(bytesEqual(new Uint8Array([1]), null), false);
 });
