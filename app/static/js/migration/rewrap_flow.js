@@ -335,7 +335,11 @@ export async function runRewrapMigration({
   }
 
   // 2) 副鍵 (temp-MK) を Worker に decrypt 専用で設定。
+  // setRewrapKey は buffer を Worker へ Transferable 転送する (メイン側 tempMk は
+  // detach される)。base64 文字列 tm.temp_mk は JS 仕様上ゼロ化できないので、
+  // 早めに GC されるよう参照を落としておく (機密の滞留を最小化)。
   const tempMk = b64decode(tm.temp_mk);
+  tm.temp_mk = null;
   await client.setRewrapKey(tempMk);
 
   const summary = {
