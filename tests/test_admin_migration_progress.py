@@ -118,7 +118,25 @@ def test_html_dashboard_renders(client, db, ops_creds):
 # --- レート制限 (Basic 認証のブルートフォース耐性) ---
 
 
-def test_rate_limited_after_30_requests(ratelimit_app, ratelimit_client, monkeypatch):
+@pytest.fixture
+def _restore_limiter():
+    """レート制限テストが global limiter の enabled / storage を leak させ、
+    後続テスト (login/register 等の低レート endpoint) を 429 にする既知の罠
+    (feedback_test_limiter_leak) を防ぐ。テスト後に状態を復元する。
+    """
+    from app.extensions import limiter
+    yield
+    # セッション既定 (TestConfig.RATELIMIT_ENABLED=False) へ明示復元する。
+    # fixture 解決順に依存して prev が True になる事故を避けるため固定値で戻す。
+    limiter.enabled = False
+    try:
+        limiter.reset()
+    except Exception:
+        pass
+
+
+def test_rate_limited_after_30_requests(ratelimit_app, ratelimit_client,
+                                        monkeypatch, _restore_limiter):
     monkeypatch.setitem(ratelimit_app.config, "OPS_BASIC_AUTH_USER", "ops")
     monkeypatch.setitem(ratelimit_app.config, "OPS_BASIC_AUTH_PASS", "s3cret")
     # 認証失敗 (401) もレート制限の対象 (limiter が auth より外側)。
