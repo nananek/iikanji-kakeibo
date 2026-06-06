@@ -39,6 +39,12 @@ mk_wrap_key    = HKDF(master, info="iikanji-mk-wrap-v1")   # ← サーバに送
 **プリミティブ仕様 (byte 精度。client-py/TUI と相互実装するため確定値):**
 - `Argon2id`: パラメータは `memory=64 MiB, iterations=3, parallelism=1`、出力 32B。`salt` は 16B (per-user、`wrapped_keys.salt` と同枠)。**これを v5.x の確定値とする** (client-py/TUI と byte 互換が要るため可変にしない)。`index.md §4` 現行の「※調整余地あり」表記は本方式の実装 PR (PR-1) で**削除し確定する**。
 - `HKDF` = **`HKDF-SHA256(ikm=master, salt=zero(32B), info=<上記文字列>, L=32)`**。info 文字列はバージョン付き (`iikanji-login-v1` / `iikanji-mk-wrap-v1`) を**全フローで厳守**する (短縮形を使わない)。**info は ASCII/UTF-8 でエンコードした bytes として扱う** (Python `b"iikanji-login-v1"`, JS `new TextEncoder().encode("iikanji-login-v1")`)。client-py/TUI との byte 互換に直結するため実装間で揃える。`salt=zero(32B)` を選ぶ**理由**: `master` は Argon2id 出力で高エントロピーなため、RFC 5869 §2.2 のゼロ salt 使用条件 (IKM が既に高エントロピーなら salt 省略可) を満たす。結果として既存 `bip39.js` の HKDF 実装とも一致する (= salt 値を変える理由がない。「bip39.js に合わせるため」ではなく、両者が同じ RFC 条件に従うから一致する)。
+- **`seed_bytes` 正規化 (リカバリシード由来の HKDF 入力。§3.4.1 で使用)**: BIP-39 ニーモニックを
+  ①Unicode **NFKD** 正規化 ②前後空白除去 (trim) ③連続空白を単一 ASCII space (0x20) に畳む
+  ④小文字化 (lowercase) ⑤UTF-8 エンコード、の順でバイト列化する。`bip39.js` の
+  `deriveKeyFromMnemonic` 入力と byte 一致させること (client-py/TUI も同手順で実装)。この
+  `seed_bytes` を IKM に `info="iikanji-master-key-v1"` (MK unwrap 鍵) と
+  `info="iikanji-recovery-login-v1"` (recovery_verifier) を別々に HKDF 導出する。
 - **通信前提**: 上記すべて **TLS 必須**。`login_verifier` は HKDF で一方向化済みとはいえ照合値であり、平文 HTTP で送ると MITM が再送・なりすましに使えるため、登録/ログインの全 API は HTTPS のみで提供する。
 
 - サーバが見るのは `login_verifier` だけ。HKDF は一方向なので `master` も
@@ -174,6 +180,8 @@ HMAC の**メッセージ先頭にドメインラベル + `0x00`** を付けて�
 - MK unwrap 鍵 (既存): `HKDF-SHA256(seed_bytes, salt=zero(32), info="iikanji-master-key-v1", L=32)`
 - リカバリ検証値 (新規): `recovery_verifier = HKDF-SHA256(seed_bytes, salt=zero(32),
   info="iikanji-recovery-login-v1", L=32)` (**出力長 32B**、`login_verifier` と同じ)。
+  `salt=zero(32)` は**意図的** — `seed_bytes` (BIP-39 24 語, ~256 bit エントロピー) が IKM として
+  十分なので可変 salt を導入しても安全性は向上しない (RFC 5869 §2.2、§2 の login HKDF と同方針)。
 - `seed_bytes` の正規化はバイト精度で確定する (client-py/TUI が独自実装するため §2 のプリミティブ
   仕様に転記)。手順: ①Unicode NFKD 正規化 ②前後空白除去 (trim) ③連続空白を単一 ASCII space
   (0x20) に畳む ④小文字化 (lowercase) ⑤UTF-8 エンコード。これは `bip39.js` の
@@ -226,9 +234,10 @@ recovery_seed wrapped_key を作成 (ウィザード) する際、クライア�
    ```
 6. サーバ: 旧 `recovery_verifier` を `recovery_seed_server_hash` と `hmac.compare_digest` で定数
    時間照合。OK なら**単一トランザクション**で login_* + passphrase wrapped_key (新PW) +
-   recovery_seed wrapped_key (新シード) + recovery_seed_server_hash (新) を更新 (= 新保存完了後に
-   旧シード無効化、§3.4 の順序)。passkey_prf 鍵は MK 不変でそのまま有効。**finish 成功時に当該
-   ユーザーの既存サーバセッションを全失効させる** (下記「セッション失効」)。
+   recovery_seed wrapped_key (新シード) + recovery_seed_server_hash (新) + **`session_token_version`
+   インクリメント** を更新 (= 新保存完了後に旧シード無効化、§3.4 の順序)。passkey_prf 鍵は MK
+   不変でそのまま有効。version インクリメントにより当該ユーザーの既存サーバセッションが全失効する
+   (下記「セッション失効」)。
 7. クライアント: **新シードを 1 回限りセキュア表示** (初回登録と同等要件)。
 
 **セッション失効 (リセット後)**: recovery reset はパスワード変更 (§3.3) より影響が大きい (攻撃者が
@@ -260,6 +269,8 @@ wrapped_key と `recovery_seed_server_hash` を持つユーザーは本フロー
   (レート制限・列挙耐性のダミー決定性と長さ 48B/12B 一致・旧 verifier 照合・シードローテーション・
   NULL ユーザー・finish 成功時のセッション失効)。
 - PR-4b-3: 公開リセットページ UI + クライアントリセットフロー JS + 新シードセキュア表示 + E2E。
+  passkey_only ユーザー向けに「この操作によりパスワード認証が有効になります」警告表示を入れる
+  (上記「passkey_only revival」含意の UI 明示)。
 - **既存ユーザー (`recovery_seed_server_hash` = NULL) の後埋め方針**:
   - **推奨 (primary)**: 解錠済みセッションでウィザードからシードを再入力 (または再発行) させ、
     そのとき `recovery_verifier` を計算してサーバに後付け保存する専用導線を設ける。能動的に
