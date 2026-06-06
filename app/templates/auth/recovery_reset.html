@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+{% block title %}パスワードリセット - いいかんじ™家計簿{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-lg-6">
+    <h2><i class="bi bi-shield-lock"></i> リカバリシードでパスワードをリセット</h2>
+    <p class="text-muted small">
+      パスワードを忘れた場合、登録時に控えた <strong>24 語のリカバリシード</strong> で
+      新しいパスワードを設定できます。マスター鍵 (MK) 自体は変わらないため、データは保持されます。
+      処理はすべてブラウザ内で行われ、<strong>シードや新パスワードはサーバーに送信されません</strong>。
+    </p>
+
+    {# #385 PR-4b-3: 送信は recovery_reset.mjs が横取りし、/auth/recovery/begin|finish へ
+       fetch する (サーバに平文シード/パスワードを送らない)。 #}
+    <div id="reset-form-card" class="card shadow-sm">
+      <div class="card-body p-4">
+        <div class="alert alert-warning small" role="alert">
+          <i class="bi bi-exclamation-triangle"></i>
+          <strong>この操作によりパスワード認証が有効になります。</strong>
+          パスキー専用モードのアカウントでも、リセット後はこのパスワードでログインできるように
+          なります。また<strong>リカバリシードは新しいものに更新</strong>され、古いシードは使えなく
+          なります。
+        </div>
+        <form id="recovery-reset-form" autocomplete="off">
+          <div class="mb-3">
+            <label class="form-label">ユーザー名</label>
+            <input type="text" class="form-control" name="username"
+                   autocomplete="username" required>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">リカバリシード (24 語・半角スペース区切り)</label>
+            <textarea class="form-control" name="mnemonic" rows="3"
+                      autocomplete="off" spellcheck="false" required></textarea>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">新しいパスワード (8 文字以上)</label>
+            <input type="password" class="form-control" name="new_password"
+                   autocomplete="new-password" minlength="8" required>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">新しいパスワード (確認)</label>
+            <input type="password" class="form-control" name="new_password_confirm"
+                   autocomplete="new-password" minlength="8" required>
+          </div>
+          <button type="submit" class="btn btn-primary">パスワードをリセットする</button>
+          <a href="{{ url_for('auth.login') }}" class="btn btn-link">ログインに戻る</a>
+        </form>
+        <div id="reset-status" class="mt-3 small d-none"></div>
+      </div>
+    </div>
+
+    {# 完了後: 新しいリカバリシードを 1 回限り表示する #}
+    <div id="reset-done-card" class="card shadow-sm border-success d-none">
+      <div class="card-body p-4">
+        <h5 class="text-success"><i class="bi bi-check-circle"></i> パスワードをリセットしました</h5>
+        <div class="alert alert-warning small mt-3" role="alert">
+          <strong><i class="bi bi-exclamation-triangle"></i> 新しいリカバリシードが表示されるのは 1 回のみ</strong>。
+          必ず紙にメモして安全に保管してください。古いシードはもう使えません。
+        </div>
+        <div id="new-seed-grid" class="row g-2 my-3 font-monospace small"></div>
+        <div class="form-check mb-3">
+          <input class="form-check-input" type="checkbox" id="new-seed-acked">
+          <label class="form-check-label" for="new-seed-acked">
+            新しい 24 語を紙にメモしました。
+          </label>
+        </div>
+        <a id="goto-login-btn" href="{{ url_for('auth.login') }}"
+           class="btn btn-primary disabled" aria-disabled="true">ログインへ進む</a>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+{# Argon2id WASM + SharedWorker を使うため module で読み込む #}
+<script type="module" src="{{ url_for('static', filename='js/auth/recovery_reset.mjs') }}"></script>
+<script>
+  // 新シードをメモした確認で初めてログインへ進めるようにする (誤って閉じて控え忘れる事故防止)。
+  document.addEventListener("change", (ev) => {
+    if (ev.target && ev.target.id === "new-seed-acked") {
+      const btn = document.getElementById("goto-login-btn");
+      if (!btn) return;
+      if (ev.target.checked) { btn.classList.remove("disabled"); btn.removeAttribute("aria-disabled"); }
+      else { btn.classList.add("disabled"); btn.setAttribute("aria-disabled", "true"); }
+    }
+  });
+</script>
+{% endblock %}

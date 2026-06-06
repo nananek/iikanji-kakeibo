@@ -31,6 +31,21 @@ def _safe_next_url(fallback: str) -> str:
 bp = Blueprint("auth", __name__)
 
 
+@bp.route("/auth/recovery-reset", methods=["GET"])
+def recovery_reset():
+    """リカバリシードによるパスワードリセットの公開ページ (#385 PR-4b-3、設計書 §3.4.1)。
+
+    実際の処理はクライアント JS (recovery_reset.mjs) が /auth/recovery/begin|finish へ
+    fetch して行う (サーバに平文シード/パスワードは送らない)。login 派生 MK 未設定環境では
+    リセット機構が無効なので 404。
+    """
+    if not current_app.config.get("LOGIN_SERVER_SECRET"):
+        abort(404)
+    if current_user.is_authenticated:
+        return redirect(url_for("dashboard.index"))
+    return render_template("auth/recovery_reset.html")
+
+
 @bp.route("/login", methods=["GET", "POST"])
 @limiter.limit("10/minute", methods=["POST"])
 def login():
