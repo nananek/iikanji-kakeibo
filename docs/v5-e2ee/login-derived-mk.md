@@ -4,8 +4,14 @@
 ための設計。現行 (v5.0) の「passphrase / passkey / recovery を 3 方式並列で初回
 選択」は UX が悪く、特にリカバリシードを第一級の選択肢に出したのは設計ミスだった。
 
-> **前提**: 運用環境はいつでも v4.0.0-beta に戻せるため**破壊的変更可**。既存
-> werkzeug ハッシュからの段階移行は不要で、クリーンカットオーバーしてよい。
+> **前提 (自然移行)**: 既存 v4 ユーザーは**アカウント・データを保持したまま初回ログイン時に
+> 透過移行**する (クリーン再作成はしない)。移行するのは**認証因子のみ** (werkzeug パスワード →
+> ログイン派生 MK)。データの暗号化自体は E3〜E7 の temp-MK 土台で**既に完了している** (v5
+> デプロイ時に `e2ee_data_migration.py` が全平文をサーバ側 temp-MK で暗号化し平文列は物理 DROP
+> 済)。本方式が初回ログイン時に行うのは ① werkzeug の最終 1 回検証 ② ログインパスワードからの
+> MK 確立 ③ temp-MK→自分の MK への **rewrap の透過駆動** (既存 `/migration/rewrap` を再利用)
+> の 3 点。ユーザーは「鍵設定」を意識せず、パスワード 1 回入力 + 進捗バーで完了する。**従来の
+> gate + 3 方式ウィザードによる移行誘導は廃止**する (§7 参照)。
 
 ## 1. 方針
 
@@ -32,7 +38,7 @@ mk_wrap_key    = HKDF(master, info="iikanji-mk-wrap-v1")   # ← サーバに送
 
 **プリミティブ仕様 (byte 精度。client-py/TUI と相互実装するため確定値):**
 - `Argon2id`: パラメータは `memory=64 MiB, iterations=3, parallelism=1`、出力 32B。`salt` は 16B (per-user、`wrapped_keys.salt` と同枠)。**これを v5.x の確定値とする** (client-py/TUI と byte 互換が要るため可変にしない)。`index.md §4` 現行の「※調整余地あり」表記は本方式の実装 PR (PR-1) で**削除し確定する**。
-- `HKDF` = **`HKDF-SHA256(ikm=master, salt=zero(32B), info=<上記文字列>, L=32)`**。info 文字列はバージョン付き (`iikanji-login-v1` / `iikanji-mk-wrap-v1`) を**全フローで厳守**する (短縮形を使わない)。`salt=zero(32B)` を選ぶ**理由**: `master` は Argon2id 出力で高エントロピーなため、RFC 5869 §2.2 のゼロ salt 使用条件 (IKM が既に高エントロピーなら salt 省略可) を満たす。結果として既存 `bip39.js` の HKDF 実装とも一致する (= salt 値を変える理由がない。「bip39.js に合わせるため」ではなく、両者が同じ RFC 条件に従うから一致する)。
+- `HKDF` = **`HKDF-SHA256(ikm=master, salt=zero(32B), info=<上記文字列>, L=32)`**。info 文字列はバージョン付き (`iikanji-login-v1` / `iikanji-mk-wrap-v1`) を**全フローで厳守**する (短縮形を使わない)。**info は ASCII/UTF-8 でエンコードした bytes として扱う** (Python `b"iikanji-login-v1"`, JS `new TextEncoder().encode("iikanji-login-v1")`)。client-py/TUI との byte 互換に直結するため実装間で揃える。`salt=zero(32B)` を選ぶ**理由**: `master` は Argon2id 出力で高エントロピーなため、RFC 5869 §2.2 のゼロ salt 使用条件 (IKM が既に高エントロピーなら salt 省略可) を満たす。結果として既存 `bip39.js` の HKDF 実装とも一致する (= salt 値を変える理由がない。「bip39.js に合わせるため」ではなく、両者が同じ RFC 条件に従うから一致する)。
 - **通信前提**: 上記すべて **TLS 必須**。`login_verifier` は HKDF で一方向化済みとはいえ照合値であり、平文 HTTP で送ると MITM が再送・なりすましに使えるため、登録/ログインの全 API は HTTPS のみで提供する。
 
 - サーバが見るのは `login_verifier` だけ。HKDF は一方向なので `master` も
@@ -90,19 +96,29 @@ HMAC の**メッセージ先頭にドメインラベル + `0x00`** を付けて�
 6. クライアントはリカバリシードを生成・表示し、別の wrapped_key として保存 (緊急用)。
 
 ### 3.2 ログイン (2 ラウンド)
-1. `POST /auth/login/begin {username}` → サーバが `{salt, kdf_params}` を返す。
-   未知ユーザーには**決定的ダミー salt** =
-   `HMAC-SHA256(LOGIN_SERVER_SECRET, "dummy-salt" || 0x00 || username)[0:16]` から
-   導いた 16B を返す (リクエスト毎にランダムだと「同名 2 回で salt が変わる」差で
-   存在判定されるため、**username に対し決定的**にして列挙耐性を持たせる。脅威モデル
-   §Q3 と整合)。
+1. `POST /auth/login/begin {username}` → サーバが `{salt, kdf_params, migration_required}`
+   を返す。`migration_required` は**初回移行が必要か**のフラグ:
+   - **既移行ユーザー** (`login_salt` 有) → `{salt: login_salt, kdf_params, migration_required: false}`。
+   - **v4 移行対象** (`password_hash` 有 / `login_salt` 無) → `{salt: 新規ランダム 16B,
+     kdf_params: 確定値, migration_required: true}`。**旧 werkzeug ハッシュから salt を導出しない**
+     (新 salt をサーバ側で発行し、§3.5 の移行 finish で正式保存)。
+   - **未知ユーザー** → **決定的ダミー salt** =
+     `HMAC-SHA256(LOGIN_SERVER_SECRET, "dummy-salt" || 0x00 || username)[0:16]` から
+     導いた 16B + `migration_required: false` を返す (リクエスト毎にランダムだと「同名 2 回で
+     salt が変わる」差で存在判定されるため、**username に対し決定的**にして列挙耐性を持たせる。
+     脅威モデル §Q3 と整合)。`migration_required` の真偽でも存在判定されぬよう、未知ユーザーへは
+     常に `false` を返し、応答は定数時間にする。
 2. クライアント: `master = Argon2id(password, salt)`、`login_verifier = HKDF(master,"iikanji-login-v1")`。
 3. `POST /auth/login/finish {username, login_verifier}` → サーバが
    `HMAC-SHA256(LOGIN_SERVER_SECRET, "login-hash" || 0x00 || login_verifier)` を計算し
-   保存値 (`login_server_hash`) と定数時間比較。OK ならセッション確立 +
-   `wrapped_master_key` 等を返す。
+   保存値 (`login_server_hash`) と**定数時間比較** (実装は Python stdlib `hmac.compare_digest()`)。
+   OK ならセッション確立 + `wrapped_master_key` 等を返す。
 4. クライアント: `mk_wrap_key = HKDF(master,"iikanji-mk-wrap-v1")` → MK unwrap → SharedWorker へ。
    **以後、別途の「暗号鍵解除」操作は不要**。
+   - **セッション内ライフタイム**: MK unwrap 完了後、`master` / `mk_wrap_key` は即座にゼロ化・
+     破棄する (SharedWorker・メインスレッド双方に保持し続けない。Spectre 系サイドチャネルの
+     露出面を最小化)。パスワード変更 (§3.3) 時は再導出が要るため、その場でユーザーに再入力を
+     求めて導出し直す (保持はしない)。SharedWorker に常駐させるのは MK のみ。
 
 ### 3.3 パスワード変更
 - **必ず新 salt を生成する** (Argon2id の原則: 同パスワードでも salt が変われば
@@ -116,11 +132,73 @@ HMAC の**メッセージ先頭にドメインラベル + `0x00`** を付けて�
 - パスワードは MK の唯一の常用守り → 忘れたら**リカバリシードでのみ復旧**。
   リカバリで MK を unwrap → 新パスワードを設定し直す (3.3 と同じく再 wrap)。
 - **リカバリシードは 1 回限り使用** (index.md §8 と整合)。復旧後に**旧シードを無効化し
-  新シードを発行**して再提示する (使用済みシードの再利用を防ぐ)。**新シードの再提示は
+  新シードを発行**して再提示する (使用済みシードの再利用を防ぐ)。**無効化のタイミングは
+  新 `wrapped_master_key` (新パスワード由来) のサーバ保存が完了した後**にする — MK unwrap 成功
+  直後に旧シードを無効化すると、新パスワード設定が失敗した場合に MK へアクセスできなくなり詰む
+  ため (順序: 新 wrap 保存完了 → 旧シード無効化 → 新シード提示)。**新シードの再提示は
   初回登録時と同等のセキュア表示要件**を満たすこと (1 回限り表示・画面/履歴キャッシュ
   禁止・コピー時の注意喚起。PR-4 で実装漏れしやすいので明記)。
 - リカバリシードも無ければ MK 復元不可能 (規約で明示。文言は `terms` テンプレートに
   追記する ToDo)。
+
+### 3.5 自然な v4 → ログイン派生移行 (in-login・本方式の中核)
+
+既存 v4 ユーザー (werkzeug `password_hash` 有 / `login_salt` 無) が**初回ログイン時に
+透過移行**する。前提として v5 デプロイ時に `e2ee_data_migration.py` が全平文をサーバ側
+**temp-MK** で暗号化済み (`users.migration_temp_mk` に保持) で、平文列は物理 DROP 済。よって
+本フローが行うのは**認証因子の移行**と **temp-MK→自分の MK への rewrap 駆動**であり、生平文の
+暗号化ではない。
+
+```
+[ログイン画面] パスワード 1 回入力
+  │
+  ├ ① POST /auth/login/begin {username}
+  │     → サーバ: password_hash 有 / login_salt 無 を検出
+  │     → {salt: 新規 16B, kdf_params, migration_required: true}
+  │
+  ├ ② クライアント: master = Argon2id(password, salt)
+  │     login_verifier = HKDF(master,"iikanji-login-v1")
+  │     mk_wrap_key   = HKDF(master,"iikanji-mk-wrap-v1")
+  │     MK = random(32B)              ← 本人専用の新 MK を生成
+  │     {wrapped_master_key, wrap_iv} = AES-256-GCM(mk_wrap_key, MK)
+  │
+  ├ ③ POST /auth/login/finish (移行パス)
+  │     {username, password, login_verifier, login_salt, login_kdf_params,
+  │      wrapped_master_key, wrap_iv}
+  │     → サーバ: (a) user.check_password(password) で werkzeug を最終 1 回検証
+  │              失敗 → 汎用エラー・移行しない
+  │            (b) 単一トランザクションで login_server_hash / login_salt /
+  │                login_kdf_params / login_secret_version を設定し、
+  │                wrapped_keys(method='passphrase') を UPSERT
+  │            (c) ★ password_hash はまだ残す (rewrap 未完のため)
+  │            (d) commit → セッション確立 → migration_temp_mk 有無を返す
+  │
+  ├ ④ クライアント: MK を SharedWorker へ。migration_temp_mk 有なら:
+  │     GET /api/v1/migration/temp-mk → temp-MK 取得
+  │     [進捗バー] 6 テーブル (je/jel/me/vmeta/valog/bcb) を
+  │       POST /api/v1/migration/rewrap で temp-MK→自 MK に再暗号
+  │       (証憑画像は PUT /api/v1/migration/rewrap-image)
+  │
+  └ ⑤ POST /api/v1/migration/finalize
+        → サーバ: migration_temp_mk 破棄 + ★ password_hash を NULL クリア
+                + 移行完了マーク
+```
+
+**移行の完了条件**: ③ で認証因子は移行されるが、移行が「完了」するのは ⑤ finalize 後。
+`password_hash` は finalize まで残し、temp-MK 破棄と同時にクリアする。
+
+**中断耐性 (冪等・再開可能)**:
+- ③ commit 前にクラッシュ → `login_salt` 未設定のまま。次回ログインも `migration_required: true`
+  で**やり直し** (`password_hash` 無傷)。
+- ③ commit 後・⑤ 前にクラッシュ (rewrap 途中) → `login_salt` は設定済なので次回 begin は
+  **通常パス** (`migration_required: false`)。`login_verifier` で認証後、`migration_temp_mk`
+  がまだ有ることを検出して **rewrap を resume** する。`/migration/rewrap` は処理済み行を skip
+  する idempotent 実装なので二重暗号化は起きない。resume 完了で ⑤ finalize。
+- したがって**いつ中断しても安全**で、データが二重暗号化・破損する経路は無い。
+
+**gate との関係**: 本フローはログイン中 (セッション確立前後) に駆動するため、E7 の鍵未設定
+gate (`is_active=False` → `/migration/locked`) を**移行誘導には使わない**。gate は「30 日 stale
+ロック」「退会導線」の役割としてのみ残す (§7.2)。
 
 ## 4. 限界 (正直な明記)
 
@@ -147,10 +225,16 @@ OPAQUE (aPAKE) を使えば「サーバは salt 相当も見ない + 列挙耐�
 
 ## 6. 段階 PR 案
 
+0. **PR-0 設計書リワーク (本 PR)**: §7 の「クリーンカットオーバー」を **§3.5 自然移行** に
+   差し替え、§3.2 `migration_required` / §7.1 段階 nullable→drop / §7.2 gate 整理 / #386
+   レビュー申し送り (HKDF info byte エンコード・`hmac.compare_digest`・鍵破棄・旧シード無効化
+   タイミング) を反映。コードなし。
 1. **PR-1 クライアント KDF プリミティブ**: `master/login_verifier/mk_wrap_key` 派生
    (argon2.js + HKDF) と単体テスト (golden vector)。
-2. **PR-2 ログイン 2 ラウンド API**: `/auth/login/begin` `/finish` + サーバ側
-   `server_hash` 保管。列挙耐性 (ダミー salt)。既存 `/login` は破壊的に置換。
+2. **PR-2 ログイン 2 ラウンド API + 透過移行パス**: `/auth/login/begin` `/finish` + サーバ側
+   `server_hash` 保管。列挙耐性 (ダミー salt)。**§3.5 の移行 finish パス** (werkzeug 最終検証 +
+   login material 確立) を含む。既存 `/login` は破壊的に置換。マイグレ `070` で `login_*` 列追加
+   + `password_hash` nullable 化 (drop は後続)。
    - **レート制限**: `/auth/login/begin` は**認証前**に呼ばれ列挙の攻撃面になるため、
      既存ログイン系と同等の `@limiter.limit("5-10/minute")` を**必ず付与**する
      (ダミー salt でも応答時間差での存在判定を避けるため定数時間で応答)。`/finish`
@@ -158,10 +242,12 @@ OPAQUE (aPAKE) を使えば「サーバは salt 相当も見ない + 列挙耐�
    - **PR-3 までの過渡期**: PR-2 が先行マージされる間、`passkey_only_login` 制御は
      既存 `auth.py` の `/login` が引き続き担保する (新 `/begin`/`/finish` には §7.2 の
      パスワード必須化が PR-3 で入るまで passkey_only ユーザーを通さないガードを置く)。
-3. **PR-3 ウィザード再構成**: 「パスワード = 鍵」前提に。初回登録でパスワードから
-   MK 確立 + リカバリシードを**必須バックアップ**として提示。passphrase 単独方式は
+3. **PR-3 ウィザード再構成 + 透過 rewrap ドライバ**: 「パスワード = 鍵」前提に。初回登録で
+   パスワードから MK 確立 + リカバリシードを**必須バックアップ**として提示。passphrase 単独方式は
    廃止 (= login password に統合)。Passkey/リカバリは追加・緊急として残す
-   (鍵の追加・削除 UI は実装済)。**この PR で `index.md §2 / §10` の鍵管理記述を
+   (鍵の追加・削除 UI は実装済)。**§3.5 ④ の temp-MK→自 MK rewrap 進捗ドライバ**をログイン後
+   フローに組込み、gate+3 方式ウィザードの移行誘導を廃止する。**データ暗号化パスは E7 で完了済
+   なので本 PR では不要** (透過 rewrap のみ)。**この PR で `index.md §2 / §10` の鍵管理記述を
    本方式に更新する** (`passphrase` method の意味変化を反映)。
 4. **PR-4 パスワード変更/リセット**: MK 不変・ラップ更新。リカバリ経由リセット。
 5. **PR-5 client-py / TUI**: 同じ派生を実装 (web と byte 互換)。
@@ -171,10 +257,18 @@ OPAQUE (aPAKE) を使えば「サーバは salt 相当も見ない + 列挙耐�
 ## 7. 影響範囲・DB スキーマ差分
 
 ### 7.1 DB スキーマ
-- `users.password_hash` (werkzeug hash) を**廃止**し、代わりに
-  `users.login_server_hash` (= `HMAC-SHA256(LOGIN_SERVER_SECRET, login_verifier)`、32B) と
-  `users.login_salt` (16B) + `users.login_kdf_params` (JSON) + `users.login_secret_version`
-  (SMALLINT、§3.1 の遅延ローテーション用) を置く。(werkzeug 依存も撤去。)
+- `users` に `login_server_hash` (= `HMAC-SHA256(LOGIN_SERVER_SECRET, login_verifier)`、
+  **BYTEA 32B**) と `login_salt` (**BYTEA 16B**) + `login_kdf_params` (JSON) +
+  `login_secret_version` (SMALLINT、§3.1 の遅延ローテーション用) を追加する。
+  - **列型は BYTEA** (base64/hex の VARCHAR ではない) で確定する。`login_server_hash` は HMAC
+    生 32B、`login_salt` は乱数生 16B をそのまま格納する (実装間の byte 互換と無駄なエンコード
+    往復回避のため)。`login_kdf_params` は `{memory, iterations, parallelism}` の JSON。
+  - **`password_hash` は段階的に撤去する** (自然移行のため即 drop しない):
+    1. マイグレ `070` で `login_*` 列追加と同時に `password_hash` を **nullable=True** 化。
+    2. §3.5 の初回移行 finish で werkzeug 検証 → finalize 時に該当ユーザーの `password_hash` を
+       NULL クリア (移行済みフラグも兼ねる)。
+    3. **全ユーザーの移行完了後** (移行窓終了後)、**後続マイグレで `password_hash` 列を物理 DROP**
+       + werkzeug 依存を撤去する。`login_salt IS NOT NULL` を移行済み判定に使う。
 - `wrapped_keys` テーブルの `method` enum は**変更しない** (`passkey_prf` /
   `passphrase` / `recovery_seed`)。`login` という新 method は**作らない** ——
   「login パスワード由来の鍵」は従来 `passphrase` method の wrapped_key として
@@ -187,7 +281,15 @@ OPAQUE (aPAKE) を使えば「サーバは salt 相当も見ない + 列挙耐�
   > その wrapped_key の「元になる認証情報」が本方式 (PR-3 以降) では**ログインパスワード**に
   > 変わる (鍵派生ロジックの変更)。`index.md §10.1` を読んで従来の「別途設定したパスフレーズ」
   > として実装しないこと。
-- 破壊的変更可のため既存ユーザーはクリーン再作成 (段階移行不要)。
+- 既存ユーザーはクリーン再作成しない。§3.5 の in-login 透過移行でアカウント・データを保持する。
+
+### 7.1.1 移行ゲート (`is_active=False` / `/migration/locked`) の役割整理
+- E7 の鍵未設定ゲート (`migration_lock_gate` @ `app/__init__.py`、`/migration/locked`) は
+  **本方式の移行誘導には使わない**。§3.5 の透過移行はログインフロー内で完結するため、ゲートで
+  別ウィザードへ誘導する必要がない。**gate + 3 方式ウィザードによる移行導線は廃止**する。
+- ゲート自体は残し、役割を「30 日 stale ロック (PR-4b-2 の `migration-lock-stale`)」と
+  「退会導線」に限定する。3 方式選択 UI (`encryptionKeyWizard` の `choose` ステップ) は
+  passphrase 単独選択を外す形で PR-3 で再構成する。
 
 ### 7.2 `passkey_only_login` ユーザーの扱い
 - 現行 `auth.py` はパスワードログインを passkey_only ユーザーに対し弾く
@@ -197,8 +299,9 @@ OPAQUE (aPAKE) を使えば「サーバは salt 相当も見ない + 列挙耐�
   (Passkey PRF → `mk_wrap_key` 相当を別 wrapped_key として追加できる) に限定。
   - 理由: パスワード非保有だと「ログイン = MK 解錠」の単一入力 UX が成立せず、
     Passkey PRF の環境依存 (Bitwarden 非対応等) で常用解錠が不安定になるため。
-  - v5.0 時点の passkey_only ユーザーが居れば、移行時にパスワード設定を必須化
-    (破壊的変更可なのでクリーン再作成で吸収)。
+  - v5.0 時点の passkey_only ユーザーが居れば、§3.5 の初回移行時にパスワード設定を必須化
+    する (アカウントは保持。パスワード未設定だと移行 finish が成立しないため、移行 UI で
+    パスワード設定を促す)。
 
 ### 7.3 その他
 - `auth.py` (login 2 ラウンド化 / register / password 変更 / recovery)。
