@@ -66,6 +66,9 @@ mk_wrap_key    = HKDF(master, info="iikanji-mk-wrap-v1")   # ← サーバに送
 将来用途を足す場合は必ず別 info にする (PRF/HKDF のドメイン分離規約 §webauthn_prf と同様)。
 `iikanji-master-key-v1` は既存 (リカバリシードからの MK unwrap)、`iikanji-recovery-login-v1` は
 §3.4.1 で新規追加 (同一シードから別 info で recovery_verifier を独立導出)。
+注: `iikanji-master-key-v1` は `webauthn_prf.js` の WebAuthn PRF path でも同一文字列を info として
+使用するが、IKM (一方はリカバリシード bytes、他方は PRF 出力) が異なるためドメイン分離は維持される
+(出力衝突なし)。
 
 ### LOGIN_SERVER_SECRET の用途分離
 
@@ -152,6 +155,10 @@ HMAC の**メッセージ先頭にドメインラベル + `0x00`** を付けて�
 - **MK 自体は不変**。旧 `mk_wrap_key` で unwrap → 新 `mk_wrap_key'` で再 wrap。
 - サーバへ `{new salt', new server_hash', new wrapped_master_key', new wrap_iv'}` を送る。
 - 既存の `recovery_seed` / `passkey_prf` wrapped_key は MK 不変なので**そのまま有効**。
+- <!-- TODO PR-4b-1: パスワード変更成功時も session_token_version をインクリメントし、旧 PW で
+  確立した既存セッションを失効させる (§3.4.1「セッション失効」と同機構)。 --> パスワード変更でも
+  旧パスワードで確立済みの既存セッションを失効させるため、§3.4.1 で導入する `session_token_version`
+  を本フローの成功時にもインクリメントする (PR-4b-1 で適用)。
 
 ### 3.4 パスワード忘れ
 - パスワードは MK の唯一の常用守り → 忘れたら**リカバリシードでのみ復旧**。
@@ -248,7 +255,10 @@ recovery_seed wrapped_key を作成 (ウィザード) する際、クライア�
    }
    ```
 6. サーバ: 旧 `recovery_verifier` を `recovery_seed_server_hash` と `hmac.compare_digest` で定数
-   時間照合。OK なら**単一トランザクション**で次を更新 (= 新保存完了後に旧シード無効化、§3.4 の順序):
+   時間照合。**`recovery_seed_server_hash` が NULL のケース (旧ウィザード作成ユーザー / シード未設定)
+   でも `hmac.compare_digest(computed, b"\x00"*32)` 等のダミー照合を常に実行してから失敗させる**
+   (`if hash is None: return` の早期 return はタイミングでシード有無を漏らすので禁止)。OK なら
+   **単一トランザクション**で次を更新 (= 新保存完了後に旧シード無効化、§3.4 の順序):
    - `login_*` (login_salt / login_verifier の server_hash / login_kdf_params / login_secret_version) ← 新PW由来
    - passphrase wrapped_key ← `passphrase_wrapped_master_key` / `passphrase_wrap_iv`
    - recovery_seed wrapped_key ← `recovery_wrapped_master_key` / `recovery_wrap_iv`
@@ -318,6 +328,13 @@ wrapped_key と `recovery_seed_server_hash` を持つユーザーは本フロー
 - **レート制限の粒度 (PR-4b-2)**: login API と同等以上に厳格化する。`begin`: per-IP `5/minute` +
   per-username `10/hour`。`finish`: per-IP `5/minute` + per-username `5/hour` (verifier 総当たり
   抑止)。limiter の teardown reset (フルスイート leak 対策) もテストに入れる。
+- **finish の NULL ハッシュ定数時間照合 (PR-4b-2)**: `recovery_seed_server_hash` が NULL でも
+  `hmac.compare_digest(computed, b"\x00"*32)` のダミー照合を常に実行してから失敗させる
+  (None チェックで早期 return 禁止)。テストに「NULL ハッシュでも `compare_digest` が 1 回呼ばれ、
+  かつ必ず失敗する」ケースを含める。
+- **CLAUDE.md の CSRF 免除一覧更新 (PR-4b-2)**: 現状の記載 (WebAuthn / REST API のみ) は実態と
+  乖離 (`auth_api_bp` / `wrapped_keys_bp` / `keypair_bp` / `audit_packages_bp` / `ai_config_api_bp`
+  / device authorization / oauth token も免除済)。recovery bp 追加時に一覧を全面更新する。
 
 ### 3.5 自然な v4 → ログイン派生移行 (in-login・本方式の中核)
 
