@@ -53,6 +53,20 @@ def index():
     )
 
 
+@bp.route("/password")
+@login_required
+def change_password():
+    """ログインパスワード変更ページ (#385 PR-4 §3.3)。
+
+    ログイン派生 MK 方式 (LOGIN_SERVER_SECRET 設定時) でのみ意味を持つ。MK は不変で
+    クライアントが再 wrap し /auth/login/change-password へ送る。未設定環境では 404。
+    """
+    if not current_app.config.get("LOGIN_SERVER_SECRET"):
+        from flask import abort
+        abort(404)
+    return render_template("settings/change_password.html")
+
+
 @bp.route("/display")
 @login_required
 def display():

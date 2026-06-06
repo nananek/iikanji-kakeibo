@@ -252,3 +252,70 @@ def _finish_migrate(user, username, login_verifier, data):
         "needs_rewrap": needs_rewrap,
         "years": migration_rewrap_years(user.id) if needs_rewrap else [],
     })
+
+
+@bp.route("/change-password", methods=["POST"])
+@limiter.limit("10/minute")
+def change_password():
+    """ログイン中ユーザーのパスワード変更 (設計書 §3.3)。
+
+    MK 自体は不変。クライアントが旧パスワードで MK を unwrap → 新 salt で再 wrap し、
+    新 login material と再 wrap 済 passphrase 鍵を送る。サーバは **旧 login_verifier を
+    再認証** (セッション乗っ取りによる勝手な変更を防ぐ) してから、login_* と passphrase
+    wrapped_key を単一トランザクションで更新する。recovery_seed / passkey_prf 鍵は MK
+    不変なのでそのまま有効。
+
+    リクエスト: {old_login_verifier, login_verifier, login_salt, login_kdf_params,
+                 wrapped_master_key, wrap_iv} (いずれも base64 / JSON)
+    """
+    if not ld.is_configured():
+        return jsonify({"error": "login not configured"}), 503
+    if not current_user.is_authenticated or current_user.user_type != "personal":
+        return jsonify({"error": "authentication required"}), 401
+    user = current_user
+
+    # ログイン派生方式で確立済みのユーザーのみ対象 (passkey_only 等は対象外)。
+    if user.login_salt is None or not user.login_server_hash:
+        return jsonify({"error": "password change not applicable"}), 400
+
+    data = request.get_json(silent=True) or {}
+    old_login_verifier = _b64d(data.get("old_login_verifier"), 32)
+    new_login_verifier = _b64d(data.get("login_verifier"), 32)
+    login_salt = _b64d(data.get("login_salt"), LOGIN_SALT_LEN)
+    wrapped = _b64d(data.get("wrapped_master_key"))
+    wrap_iv = _b64d(data.get("wrap_iv"), WRAP_IV_LEN)
+    kdf = ld.validate_kdf_params(data.get("login_kdf_params"))
+    if (
+        old_login_verifier is None
+        or new_login_verifier is None
+        or login_salt is None
+        or wrapped is None
+        or not (0 < len(wrapped) <= MAX_WRAPPED_KEY_SIZE)
+        or wrap_iv is None
+        or kdf is None
+    ):
+        return jsonify({"error": "invalid request"}), 400
+
+    # 旧パスワード再認証 (定数時間比較)。失敗なら何も変更しない。
+    if not ld.verify_login_verifier(user.login_server_hash, old_login_verifier):
+        return jsonify({"error": "現在のパスワードが正しくありません。"}), 401
+
+    wk = (
+        WrappedKey.query.filter_by(user_id=user.id, method=METHOD_PASSPHRASE)
+        .filter(WrappedKey.webauthn_credential_id.is_(None))
+        .first()
+    )
+    if wk is None:
+        return jsonify({"error": "password change not applicable"}), 400
+
+    # 単一トランザクションで認証因子 + passphrase wrapped_key を更新。MK は不変。
+    user.login_server_hash = ld.compute_login_server_hash(new_login_verifier)
+    user.login_salt = login_salt
+    user.login_kdf_params = kdf
+    user.login_secret_version = ld.CURRENT_SECRET_VERSION
+    wk.wrapped_master_key = wrapped
+    wk.wrap_iv = wrap_iv
+    wk.salt = login_salt
+    wk.kdf_params = kdf
+    db.session.commit()
+    return jsonify({"ok": True})

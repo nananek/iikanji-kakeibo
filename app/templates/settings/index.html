@@ -140,10 +140,20 @@
 
 <h5 class="mt-4 mb-3 text-muted"><i class="bi bi-shield-lock"></i> セキュリティ</h5>
 <div class="row row-cols-1 row-cols-md-2 row-cols-lg-3 g-3 mb-4">
+  {% if login_derived_enabled %}
+  <div class="col">
+    <a href="{{ url_for('settings.change_password') }}" class="card h-100 text-decoration-none shadow-sm">
+      <div class="card-body">
+        <h6 class="card-title"><i class="bi bi-key text-primary"></i> パスワード変更</h6>
+        <p class="card-text text-muted small mb-0">ログインパスワードの変更（MK は不変）</p>
+      </div>
+    </a>
+  </div>
+  {% endif %}
   <div class="col">
     <a href="{{ url_for('settings.passkeys') }}" class="card h-100 text-decoration-none shadow-sm">
       <div class="card-body">
-        <h6 class="card-title"><i class="bi bi-key text-primary"></i> Passkey管理</h6>
+        <h6 class="card-title"><i class="bi bi-fingerprint text-primary"></i> Passkey管理</h6>
         <p class="card-text text-muted small mb-0">指紋認証・Face IDでのログイン設定</p>
       </div>
     </a>
