@@ -1,7 +1,7 @@
 import json
 from datetime import date, datetime, timezone
 
-from flask import Blueprint, render_template, redirect, url_for, flash, request, jsonify, make_response, current_app, session as flask_session
+from flask import Blueprint, render_template, redirect, url_for, flash, request, jsonify, make_response, current_app, abort, session as flask_session
 from flask_login import login_required, logout_user, current_user
 
 from sqlalchemy.orm import joinedload
@@ -85,7 +85,6 @@ def totp():
     状態: 有効 (enabled) / 登録中 (secret 作成済・確認待ち) / 無効。登録中は QR を表示する。
     """
     if not _totp_enabled_config():
-        from flask import abort
         abort(404)
     from app.services import totp as totp_svc
     from app.services import login_derived as ld
@@ -108,10 +107,10 @@ def totp():
 
 @bp.route("/totp/begin", methods=["POST"])
 @login_required
+@limiter.limit("10 per hour")
 def totp_begin():
     """TOTP 登録開始: secret を生成し at-rest 暗号化して保存 (totp_enabled=False)。"""
     if not _totp_enabled_config():
-        from flask import abort
         abort(404)
     if current_user.totp_enabled:
         flash("TOTP は既に有効です。", "info")
@@ -132,10 +131,11 @@ def totp_begin():
 
 @bp.route("/totp/confirm", methods=["POST"])
 @login_required
+# TOTP コードの総当り抑止 (30 秒窓 10^6)。セッション乗っ取り後の総当りも遮る。
+@limiter.limit("5 per minute")
 def totp_confirm():
     """確認コードを検証し TOTP を有効化する (verify-before-enable)。成功でバックアップコード発行。"""
     if not _totp_enabled_config():
-        from flask import abort
         abort(404)
     if current_user.totp_enabled or not current_user.totp_secret_encrypted:
         flash("TOTP 登録の状態が不正です。", "danger")
@@ -154,6 +154,9 @@ def totp_confirm():
 
     current_user.totp_enabled = True
     current_user.totp_confirmed_at = datetime.now(timezone.utc)
+    # replay 対策の起点 (§3.6.4): 確認に使った step を記録し、ログイン (PR-T3) で
+    # 同一以前 step の再利用を弾く。
+    current_user.totp_last_used_step = totp_svc.current_step(secret)
     codes = totp_svc.generate_backup_codes(current_user.id)
     db.session.commit()
     return render_template("settings/totp_backup_codes_show.html", codes=codes)
@@ -161,12 +164,24 @@ def totp_confirm():
 
 @bp.route("/totp/disable", methods=["POST"])
 @login_required
+@limiter.limit("10 per hour")
 def totp_disable():
-    """TOTP を無効化: secret / 確認状態をクリアしバックアップコードを削除する (§3.6.2)。"""
+    """TOTP を無効化: secret / 確認状態をクリアしバックアップコードを削除する (§3.6.2)。
+
+    **有効な TOTP の無効化はセキュリティ降格なのでパスワード再認証を必須**にする
+    (セッション乗っ取り対策)。未確認の登録 (totp_enabled=False) の中止は降格でないため
+    再認証不要。
+    """
     if not _totp_enabled_config():
-        from flask import abort
         abort(404)
     from app.models.totp_backup_code import TotpBackupCode
+
+    was_enabled = current_user.totp_enabled
+    if was_enabled:
+        password = request.form.get("password", "")
+        if not password or not current_user.check_password(password):
+            flash("パスワードが正しくありません。", "danger")
+            return redirect(url_for("settings.totp"))
 
     current_user.totp_enabled = False
     current_user.totp_secret_encrypted = None
@@ -175,16 +190,17 @@ def totp_disable():
     current_user.totp_last_used_step = None
     TotpBackupCode.query.filter_by(user_id=current_user.id).delete()
     db.session.commit()
-    flash("TOTP 2 要素認証を無効にしました。", "success")
+    if was_enabled:
+        flash("TOTP 2 要素認証を無効にしました。", "success")
     return redirect(url_for("settings.totp"))
 
 
 @bp.route("/totp/backup-codes/regenerate", methods=["POST"])
 @login_required
+@limiter.limit("10 per hour")
 def totp_regenerate_backup_codes():
     """バックアップコードを再生成する (旧コードは全削除)。TOTP 有効時のみ。"""
     if not _totp_enabled_config():
-        from flask import abort
         abort(404)
     if not current_user.totp_enabled:
         flash("TOTP が有効ではありません。", "danger")

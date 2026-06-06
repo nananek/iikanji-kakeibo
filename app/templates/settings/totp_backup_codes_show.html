@@ -23,6 +23,9 @@
         <pre class="bg-light p-3 rounded user-select-all" style="font-size: 1.05rem; line-height: 1.8;"><code id="backup-codes" class="user-select-all">{% for c in codes %}{{ c }}
 {% endfor %}</code></pre>
         <div class="d-flex gap-2 flex-wrap">
+          <button type="button" class="btn btn-outline-primary" id="btn-copy-backup">
+            <i class="bi bi-clipboard"></i> クリップボードにコピー
+          </button>
           <button type="button" class="btn btn-outline-secondary" onclick="window.print()">
             <i class="bi bi-printer"></i> 印刷
           </button>
@@ -35,4 +38,14 @@
     </div>
   </div>
 </div>
+<script>
+  document.getElementById("btn-copy-backup")?.addEventListener("click", async () => {
+    const text = document.getElementById("backup-codes")?.textContent || "";
+    try {
+      await navigator.clipboard.writeText(text.trim());
+      const btn = document.getElementById("btn-copy-backup");
+      btn.innerHTML = '<i class="bi bi-check2"></i> コピーしました';
+    } catch (_e) { /* clipboard 不可環境は手動選択でコピー */ }
+  });
+</script>
 {% endblock %}

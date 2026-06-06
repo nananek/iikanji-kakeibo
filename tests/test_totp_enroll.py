@@ -120,12 +120,37 @@ def test_disable_clears_everything(client, db, user, app):
     _login(client, user)
     client.post("/settings/totp/begin")
     client.post("/settings/totp/confirm", data={"code": _current_code(user, app)})
-    r = client.post("/settings/totp/disable")
+    # 有効な TOTP の無効化はパスワード再認証が必要 (user fixture のパスワード)
+    r = client.post("/settings/totp/disable", data={"password": "password123"})
     assert r.status_code == 302
     refreshed = db.session.get(User, user.id)
     assert refreshed.totp_enabled is False
     assert refreshed.totp_secret_encrypted is None
     assert TotpBackupCode.query.filter_by(user_id=user.id).count() == 0
+
+
+def test_disable_requires_password_when_enabled(client, db, user, app):
+    """有効な TOTP の無効化はパスワード無し/誤りでは行えない (再認証必須)。"""
+    _login(client, user)
+    client.post("/settings/totp/begin")
+    client.post("/settings/totp/confirm", data={"code": _current_code(user, app)})
+    # パスワード無し
+    client.post("/settings/totp/disable", data={})
+    assert db.session.get(User, user.id).totp_enabled is True
+    # 誤パスワード
+    client.post("/settings/totp/disable", data={"password": "wrongpass"})
+    assert db.session.get(User, user.id).totp_enabled is True
+
+
+def test_cancel_enrollment_without_password(client, db, user):
+    """未確認の登録中止は降格でないのでパスワード不要 (totp_enabled=False のまま)。"""
+    _login(client, user)
+    client.post("/settings/totp/begin")
+    r = client.post("/settings/totp/disable", data={})  # password 不要
+    assert r.status_code == 302
+    refreshed = db.session.get(User, user.id)
+    assert refreshed.totp_secret_encrypted is None
+    assert refreshed.totp_enabled is False
 
 
 def test_regenerate_backup_codes_requires_enabled(client, db, user):
@@ -141,3 +166,22 @@ def test_totp_404_when_not_configured(client, db, user, app):
     app.config["LOGIN_SERVER_SECRET"] = ""
     assert client.get("/settings/totp").status_code == 404
     assert client.post("/settings/totp/begin").status_code == 404
+
+
+def test_confirm_rate_limited(ratelimit_app, ratelimit_client):
+    """/totp/confirm はコード総当り抑止のため 5/min で 429 になる (§3.6.4)。"""
+    ratelimit_app.config["LOGIN_SERVER_SECRET"] = LOGIN_SECRET
+    with ratelimit_app.app_context():
+        u = User(username="rl_totp", email="rl_totp@test.com", user_type="personal")
+        u.set_password("password123")
+        _db.session.add(u)
+        _db.session.commit()
+        uid = u.id
+    with ratelimit_client.session_transaction() as sess:
+        sess["_user_id"] = str(uid)
+        sess["_fresh"] = True
+    ratelimit_client.post("/settings/totp/begin")
+    last = None
+    for _ in range(6):
+        last = ratelimit_client.post("/settings/totp/confirm", data={"code": "000000"})
+    assert last.status_code == 429

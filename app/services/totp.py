@@ -7,6 +7,7 @@ secret のサーバ側 at-rest 暗号化は login_derived.encrypt/decrypt_totp_s
 import base64
 import hashlib
 import secrets
+import time
 
 import pyotp
 import qrcode
@@ -60,6 +61,15 @@ def verify_code(secret_bytes, code):
     if not code.isdigit():
         return False
     return pyotp.TOTP(secret_to_base32(secret_bytes)).verify(code, valid_window=VALID_WINDOW)
+
+
+def current_step(secret_bytes=None, at=None):
+    """現在 (or at) の TOTP step 番号 = floor(unixtime/30)。replay 記録用 (§3.6.4)。
+
+    secret_bytes は API 対称性のため受けるが step 計算には不要 (時刻のみ)。
+    """
+    t = at if at is not None else time.time()
+    return int(t) // 30
 
 
 def _hash_backup_code(raw):
