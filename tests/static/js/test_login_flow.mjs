@@ -143,6 +143,48 @@ test("移行ログイン: generateKey→wrap→finish→ensureKeyPair→rewrap�
 });
 
 
+test("通常ログイン: needs_rewrap=true なら rewrap を resume する (中断復帰)", async () => {
+  let rewrapArgs = null;
+  let keypairCalled = false;
+  const fetchImpl = makeFetch({
+    "/auth/login/begin": () => jsonResponse(200, { salt: btoa("0123456789abcdef"), kdf_params: {}, migration_required: false }),
+    "/auth/login/finish": () => jsonResponse(200, { ok: true, user_id: 5, needs_rewrap: true, years: [2024] }),
+  });
+  const r = await runLoginFlow({
+    username: "u", password: "p", client: fakeClient(),
+    deps: {
+      fetchImpl,
+      ...baseDeps({
+        ensureKeyPair: async () => { keypairCalled = true; return true; },
+        runRewrapMigration: async (a) => { rewrapArgs = a; return { active: true }; },
+      }),
+    },
+  });
+  assert.equal(r.status, "redirect");
+  assert.equal(keypairCalled, true);
+  assert.deepEqual(rewrapArgs.years, [2024]);
+});
+
+
+test("移行ログイン: post-finish 例外は致命にせず clearKey + redirect", async () => {
+  const fetchImpl = makeFetch({
+    "/auth/login/begin": () => jsonResponse(200, { salt: btoa("0123456789abcdef"), kdf_params: {}, migration_required: true }),
+    "/auth/login/finish": () => jsonResponse(200, { ok: true, user_id: 1, needs_rewrap: true, years: [2025] }),
+  });
+  const client = fakeClient();
+  const r = await runLoginFlow({
+    username: "u", password: "p", client,
+    deps: {
+      fetchImpl,
+      ...baseDeps({ ensureKeyPair: async () => { throw new Error("boom"); } }),
+    },
+  });
+  // 認証因子は server-side 確立済なので redirect。Worker の MK は clearKey する。
+  assert.equal(r.status, "redirect");
+  assert.ok(client.log.includes("clearKey"));
+});
+
+
 test("移行ログイン: needs_rewrap=false なら rewrap を呼ばない", async () => {
   let rewrapCalled = false;
   const fetchImpl = makeFetch({
