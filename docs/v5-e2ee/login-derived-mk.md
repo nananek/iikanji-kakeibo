@@ -62,6 +62,7 @@ mk_wrap_key    = HKDF(master, info="iikanji-mk-wrap-v1")   # ← サーバに送
 | MK ラップ鍵 | `iikanji-mk-wrap-v1` | `master` (Argon2id(login_password)) |
 | MK unwrap 鍵 (リカバリシード) | `iikanji-master-key-v1` | `seed_bytes` (BIP-39 24 語) |
 | シード検証値 (recovery_verifier) | `iikanji-recovery-login-v1` | `seed_bytes` (BIP-39 24 語) |
+| TOTP secret の at-rest 暗号鍵 (§3.6) | `iikanji-totp-enc-v1` | `LOGIN_SERVER_SECRET` |
 
 将来用途を足す場合は必ず別 info にする (PRF/HKDF のドメイン分離規約 §webauthn_prf と同様)。
 `iikanji-master-key-v1` は既存 (リカバリシードからの MK unwrap)、`iikanji-recovery-login-v1` は
@@ -444,6 +445,150 @@ session から削除する。
 gate (`is_active=False` → `/migration/locked`) を**移行誘導には使わない**。gate は「30 日 stale
 ロック」「退会導線」の役割としてのみ残す (§7.2)。
 
+### 3.6 TOTP 2 要素認証 (opt-in) + `passkey_only_login` 廃止
+
+`passkey_only_login` を廃止し全ユーザーにパスワード (= 常用鍵) を必須化する (§7.2) と、
+Passkey 未設定ユーザーの常用ログインが**パスワード単一要素**になる。これを補うため TOTP
+(RFC 6238) を第 2 要素として追加する。
+
+**確定した設計判断 (ユーザー決定 2026-06-07)**:
+1. **適用範囲 = 任意 (opt-in)・推奨**。設定画面で各ユーザーが有効化、既定オフ。家計簿アプリで
+   デバイス紛失ロックアウトを避けつつ希望者は 2FA 可。強く推奨表示する。
+2. **2FA 充足 = Passkey or TOTP**。Passkey は既にフィッシング耐性ある強因子なので、Passkey
+   保有者は TOTP を**設定しなくてよい** (Passkey ログインで所持因子を満たせる)。UI で「Passkey
+   設定済みなら TOTP は任意」と案内する。実装は単純に `totp_required = user.totp_enabled`
+   (TOTP を有効化した人だけパスワードログインで TOTP を要求)。
+3. **リカバリシードでのリセットは TOTP をバイパス** (seed = 全権復旧因子、§3.4.1)。
+
+#### 3.6.0 この E2EE モデルでの TOTP の守備範囲 (正直な明記)
+
+TOTP は `finish` の**サーバ側ゲート**であり、守れるもの/守れないものが普通の Web と異なる:
+
+| シナリオ | TOTP の効果 |
+|---|---|
+| **(a) パスワード単独漏れの遠隔攻撃** (フィッシング/使い回し/他所漏洩) | ✅ ブロック (デバイス無しでは finish を通せない) = TOTP 最大の価値 |
+| (b) サーバ DB 丸ごと漏洩 + パスワード既知 | ❌ 無力 (攻撃者は `wrapped_master_key`/blob を DB 直取り → パスワードでオフライン復号。防御は Argon2id コスト + `login_server_hash` が HMAC) |
+| (c) リアルタイム中継フィッシング (TOTP コード即転送) | △ 弱い (TOTP はフィッシング耐性なし。Passkey の領分) |
+
+- **TOTP secret は MK 派生に混ぜない**。揮発的 (デバイス紛失 = 全データ喪失) になるため、
+  あくまでアクセスゲート専用。
+- **TOTP secret はサーバが検証時に復号する必要があるので E2EE 不可** (`wrapped_keys`/MK 方式は
+  使えない)。サーバ鍵で at-rest 暗号化する (§3.6.1)。これは「サーバが読める認証用シークレット」
+  でありユーザーデータではないので E2EE 原則と矛盾しない。
+
+#### 3.6.1 TOTP secret のサーバ側 at-rest 暗号化
+
+- 暗号鍵: `totp_enc_key = HKDF-SHA256(LOGIN_SERVER_SECRET, salt=zero(32),
+  info="iikanji-totp-enc-v1", L=32)`。`LOGIN_SERVER_SECRET` から専用 info で導出し、
+  login_verifier / recovery のドメインと分離する。`salt=zero(32)` は**意図的** —
+  `LOGIN_SERVER_SECRET` 自体が高エントロピー鍵素材なので可変 salt は不要 (RFC 5869 §2.2、
+  §2 の他の HKDF と同方針)。
+- 保存: TOTP secret (RFC 4226 推奨 20B = 160bit) を `AES-256-GCM(totp_enc_key, iv,
+  plaintext=secret, aad=str(user_id))` で暗号化し、`users.totp_secret_encrypted`
+  (BYTEA = ciphertext 20B + GCM tag 16B = **36B**) / `users.totp_secret_iv` (BYTEA 12B) に格納。
+  **AAD に user_id を含める**ことで別ユーザーへの暗号文移植を防ぐ。
+- **`secret_version` 共有**: `LOGIN_SERVER_SECRET` をローテすると `totp_enc_key` も変わるので
+  再暗号化が要る。`login_secret_version` を TOTP にも適用し、verify 成功時 (= secret を復号
+  できた瞬間) に新鍵で再暗号化する遅延ローテ (§3.1 と同方針)。
+- 実装: `cryptography>=48` の `AESGCM` を利用 (既に `migration_crypto.py` で使用)。
+  `login_derived.py` に `totp-enc` の HKDF ラベルと暗号化/復号ヘルパーを追加する。
+
+#### 3.6.2 登録フロー (opt-in・verify-before-enable)
+
+1. 設定画面で「TOTP を有効化」。サーバが secret (20B) を生成 → at-rest 暗号化して保存
+   (`totp_enabled=False`)。`otpauth://totp/...` URI + QR を応答に乗せる。**secret 平文は登録時の
+   1 回だけ応答に乗る** (QR 表示に必須、TLS 前提)。DB には暗号文のみ。
+2. ユーザーが authenticator アプリに登録 → 6 桁コードを入力して**確認**。サーバが secret を
+   復号し `pyotp` で検証 → 成功で `totp_enabled=True` + `totp_confirmed_at` セット。
+3. **verify-before-enable**: 確認コードが通るまで `totp_enabled=False` のまま (誤登録による
+   ロックアウト防止)。確認成功時に**バックアップコードを発行・表示** (§3.6.3)。
+
+**ライフサイクル (disable → re-enable)**:
+- **無効化時** (`totp_enabled=True → False`): `totp_secret_encrypted` / `totp_secret_iv` /
+  `totp_confirmed_at` / `totp_last_used_step` を **NULL クリア**し、バックアップコードを全件
+  無効化 (物理削除 or 全 `used_at` セット)。旧 secret は再利用しない。
+- **再有効化時**: 必ず**新しい secret を生成**する (§3.6.2 step1 から再実行)。旧 authenticator
+  登録を消したユーザーが新 QR で確実に再登録できる。
+- **未確認登録中の競合**: `totp_enabled=False` で確認待ちの間に再度「有効化」を叩くと secret が
+  上書きされうる。確認前 secret はまだ誰も使えないので**最後の生成で単純上書き**してよい
+  (確認は最新 secret に対してのみ成立)。確認 (`enable`) は `totp_enabled=False` を条件に含めた
+  単一 UPDATE で行い、二重確認をはじく。
+
+#### 3.6.3 バックアップコード
+
+- **フォーマット (確定)**: 1 コード = `secrets.token_hex(5)` = **10 桁 hex** (40bit)。表示は
+  `xxxxx-xxxxx` のようにグループ化。**N=10 個**発行。`recovery_code` のハッシュ方式に揃え
+  **SHA-256 hexdigest を保存** (平文は発行時 1 回だけ表示)。`recovery_code` との差分は「単一
+  コードでなく 10 個のセット」「typeable のため hex 40bit (recovery_code は token_hex(32)=256bit)」。
+  40bit でも 1 回限り使用 + finish のレート制限 + 10 個上限で総当たりは非現実的。
+- **保存テーブル `totp_backup_codes`**: `user_id` / `code_hash` (CHAR 64, SHA-256) /
+  `code_prefix` (表示用 先頭 4 桁 + "...") / `used_at` (TIMESTAMPTZ nullable)。1 回限り使用
+  (`used_at` でマーク)。
+- **再生成**: 旧コードを**全件物理削除**してから新 10 個を発行する (旧コードは即無効)。
+- TOTP デバイス紛失時の入口。**最終手段はリカバリシード** (§3.4.1。reset は TOTP をバイパス)。
+
+#### 3.6.4 ログイン統合 (2 ラウンドへの注入)
+
+- **`/auth/login/begin`**: 応答に `totp_required: bool` を追加。`user 実在 && totp_enabled` で
+  true、それ以外 (未知ユーザー含む) は false。決定的なので列挙耐性は §3.2 の `migration_required`
+  と同レベル (ユーザー名既知前提では「TOTP 有効か」が既存ユーザーについて漏れるが許容)。
+- **`/auth/login/finish`**: `totp_required` のユーザーは `totp_code` と
+  **`totp_type` ("totp" | "backup")** を送る。**判別はクライアントが明示する `totp_type` で行う**
+  (6 桁数字の正規表現推測に頼らない — バックアップコードが偶然 6 桁になる曖昧さを排除)。サーバは
+  **login_verifier 照合 OK の後に**:
+  - `totp_type=="totp"`: secret を復号し `pyotp.TOTP.verify` (時刻ずれ ±1 step 許容)。
+  - `totp_type=="backup"`: `totp_backup_codes` を SHA-256 で照合し、未使用なら `used_at` セット。
+  - 失敗なら 401 (login_verifier が正しくても拒否)。
+- **replay 対策 (必須・PR-T3 で実装)**: TOTP 成功時に使用した step (= `floor(unixtime/30)`) を
+  `users.totp_last_used_step` に記録し、**同一 step の再利用を拒否**する (RFC 6238 推奨。30 秒窓内の
+  盗聴即転送を防ぐ)。
+- レート制限: TOTP の総当たり (10^6) 抑止のため `finish` の per-username 制限を強化する。具体値:
+  **per-username `5/minute` + `20/hour`、連続失敗 5 回で当該ユーザーを 15 分一時ロック** (失敗
+  カウンタは成功でリセット)。バックアップコードにも同レート制限を適用。
+- **CSRF**: TOTP 登録/管理 API (設定画面、ログイン済み) は **CSRF 保護を維持** (通常の Web フォーム
+  /htmx 経由)。ログイン経路の `/auth/login/finish` は既存どおり JSON 専用で **CSRF 免除**
+  (auth_api の方針)。
+
+#### 3.6.5 リセット (§3.4.1) / パスワード変更 (§3.3) との関係
+
+- **リカバリシードリセットは TOTP をバイパス** (seed = 全権)。`/auth/recovery/finish` で
+  `totp_enabled=False` に初期化 + `totp_secret_encrypted`/`totp_secret_iv` クリア +
+  バックアップコード無効化する (デバイスも紛失している可能性が高いのでリセット後に再設定させる)。
+  → §3.4.1 finish の更新項目に追補 (実装は TOTP 導入 PR で §3.4.1 の finish に足す)。
+- **パスワード変更 (§3.3) は TOTP に影響しない** (MK 不変、TOTP secret は別管理で据え置き)。
+
+#### 3.6.6 `passkey_only_login` 廃止
+
+- §7.2 の方針を実装に落とす。全ユーザーにパスワード必須化。`passkey_only_login` 分岐を撤去:
+  `auth.py` のパスワードログイン弾き、`settings.py` の `passkey_only_enable/disable`、関連
+  テンプレート (`passkeys.html` / `delete_account.html`)、`forms/settings.py`。
+- 既存 passkey_only ユーザー (`password_hash` NULL の可能性) は §3.5 移行時 or 設定でパスワード
+  設定を促す。リカバリシードリセットでも `passkey_only_login=False` に解除済み (§3.4.1 / PR-4b-2)。
+- 列は後続マイグレで物理 DROP (または常時 False に固定し UI 撤去)。
+- **`password_hash=NULL` かつ `login_salt=NULL` ユーザーの fallback (詰み防止)**: パスワードを
+  持たないユーザーは `/auth/login/finish` がそもそも成立しない (`login_salt` 無しで照合不能 →
+  通常パス 401)。よって PR-T4 で `passkey_only_login` 強制を撤去しても**勝手にログイン不能には
+  ならない** (元々パスワードで入れない)。このユーザーの入口は次の 3 つに限定される:
+  1. **Passkey ログイン** (WebAuthn 経路。従来どおり有効)
+  2. **リカバリシードによるリセット** (§3.4.1。新パスワードを設定して password 経路を開通)
+  3. ログイン画面で「パスワード未設定」を検知したら**パスワード設定フローへ誘導**
+     (`/auth/login/begin` は password_hash 無 & login_salt 無のユーザーに既に
+     `requires_password_setup: true` を返す実装がある → これを UI で受けて設定させる)
+  PR-T4 はこの 3 経路が機能することを E2E で確認してから `passkey_only_login` 列を DROP する。
+
+#### 3.6.7 段階 PR 案 (TOTP)
+
+- **PR-T1**: secret 保管基盤 — マイグレ (`users.totp_secret_encrypted`/`totp_secret_iv`/
+  `totp_enabled`/`totp_confirmed_at`/`totp_last_used_step` + `totp_backup_codes` テーブル) +
+  `login_derived` に `totp-enc` ラベルと AES-GCM 暗号化/復号ヘルパー + `pyotp` 依存追加 + テスト。
+  **既マージの `/auth/recovery/finish` (#403) にパッチ**を当て、リセット成功時に totp_* 列を
+  クリア + バックアップコードを無効化する (§3.6.5。実装者が見落とさないようスコープに明記)。
+- **PR-T2**: 登録/確認/バックアップコード発行 UI + API (settings)。verify-before-enable。
+- **PR-T3**: ログイン統合 (`begin` の `totp_required` + `finish` の `totp_code` 検証 +
+  バックアップコード受理 + レート制限) + 実ブラウザ E2E。
+- **PR-T4**: `passkey_only_login` 廃止 (コード撤去 + 列 DROP マイグレ + 既存ユーザー移行導線)。
+- recovery finish の TOTP 初期化 (§3.6.5) は PR-T1 or PR-T3 で §3.4.1 finish に追補。
+
 ## 4. 限界 (正直な明記)
 
 1. **オフライン総当たりは原理的に残る**: サーバは `wrapped_master_key`+`salt` を
@@ -458,6 +603,10 @@ gate (`is_active=False` → `/migration/locked`) を**移行誘導には使わ�
    据えることで得る (設計書 §1 脅威モデルに追記)。
 3. **ユーザー列挙**: `login/begin` が salt を返すため、未知ユーザーにダミー salt
    を返す等の対策が要る。厳密にやるなら OPAQUE (RFC 9807)。
+   - **TOTP のフィッシング非耐性 (§3.6)**: TOTP (opt-in 第 2 要素) はパスワード単独漏れの
+     遠隔攻撃を塞ぐが、リアルタイム中継フィッシングには弱い。フィッシング耐性が要るユーザーには
+     Passkey を推奨する (TOTP は普遍的に使える代替)。サーバ DB 漏洩 + パスワード既知の
+     オフライン復号は TOTP では防げない (1 と同根)。
 4. **移行窓中の状態漏洩 (限定的)**: `login/begin` の `migration_required: true` は対象が
    「v4 移行未完了」であることを示す。未知ユーザーへは常に `false` を返すため新規列挙は防げる
    が、**既存ユーザーに対しては移行状態が伝わる**。許容リスク (移行窓中限定・移行完了で
@@ -537,6 +686,12 @@ OPAQUE (aPAKE) を使えば「サーバは salt 相当も見ない + 列挙耐�
   > 変わる (鍵派生ロジックの変更)。`index.md §10.1` を読んで従来の「別途設定したパスフレーズ」
   > として実装しないこと。
 - 既存ユーザーはクリーン再作成しない。§3.5 の in-login 透過移行でアカウント・データを保持する。
+- **TOTP 2FA 用の列 (§3.6)**: `users` に `totp_secret_encrypted` (BYTEA 36B = 暗号文 20B + tag
+  16B) / `totp_secret_iv` (BYTEA 12B) / `totp_enabled` (BOOLEAN default false) /
+  `totp_confirmed_at` (TIMESTAMPTZ nullable) / `totp_last_used_step` (BIGINT nullable、replay 対策
+  §3.6.4) を追加。バックアップコードは別テーブル `totp_backup_codes`
+  (`user_id`, `code_hash` CHAR64 SHA-256, `code_prefix`, `used_at`) で 1 回限り使用を管理。
+  TOTP secret は MK でなく `LOGIN_SERVER_SECRET` 由来鍵で at-rest 暗号化する (§3.6.1)。
 
 ### 7.1.1 移行ゲート (`is_active=False` / `/migration/locked`) の役割整理
 - E7 の鍵未設定ゲート (`migration_lock_gate` @ `app/__init__.py`、`/migration/locked`) は
@@ -557,6 +712,9 @@ OPAQUE (aPAKE) を使えば「サーバは salt 相当も見ない + 列挙耐�
   - v5.0 時点の passkey_only ユーザーが居れば、§3.5 の初回移行時にパスワード設定を必須化
     する (アカウントは保持。パスワード未設定だと移行 finish が成立しないため、移行 UI で
     パスワード設定を促す)。
+- **パスワード単一要素の補強は TOTP (§3.6)**: passkey_only 廃止でパスワード単一要素になる
+  ユーザー向けに、opt-in の TOTP 2FA を提供する。2FA 充足 = Passkey or TOTP。`passkey_only_login`
+  の具体的な撤去手順・既存ユーザー移行・列 DROP は §3.6.6 を参照。
 
 ### 7.3 その他
 - `auth.py` (login 2 ラウンド化 / register / password 変更 / recovery)。
