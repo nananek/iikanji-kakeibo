@@ -28,6 +28,9 @@ const BITS_PER_WORD = 11; // 2^11 = 2048
 
 // HKDF info コンテキスト。設計書 §2 / §3 と一致させる (鍵ドメイン分離)。
 const HKDF_INFO = "iikanji-master-key-v1";
+// #385 PR-4b-1: リカバリシードをフル復旧因子化する verifier の info (設計書 §3.4.1)。
+// 同一 seed_bytes から別 info で MK unwrap 鍵 (HKDF_INFO) と独立に導出する。
+const RECOVERY_VERIFIER_INFO = "iikanji-recovery-login-v1";
 
 /** wordlist がちょうど 2048 語であることを起動時に確認 (壊れた場合の安全装置)。 */
 if (BIP39_ENGLISH_WORDLIST.length !== 2048) {
@@ -150,10 +153,43 @@ export async function deriveKeyFromMnemonic(mnemonic) {
   // HKDF の input は mnemonic UTF-8 バイト列 (設計書記述に忠実) とする
   entropy.fill(0); // 即座にゼロ埋め (派生処理には不要)
 
+  return hkdfFromMnemonic(mnemonic, HKDF_INFO);
+}
+
+/**
+ * リカバリシードからサーバ照合用 recovery_verifier (32B) を派生する (#385 PR-4b-1)。
+ *
+ * MK unwrap 鍵 (deriveKeyFromMnemonic, info="iikanji-master-key-v1") と**同一の
+ * seed_bytes 正規化**を共有しつつ、info="iikanji-recovery-login-v1" で独立に導出する
+ * (設計書 §3.4.1)。同一シードから別 info の 2 値は HKDF の PRF 性で独立。
+ *
+ * サーバはこれを HMAC(LOGIN_SERVER_SECRET, "recovery-hash"||0x00||recovery_verifier)
+ * にして recovery_seed_server_hash に保存・照合する。
+ *
+ * @param {string} mnemonic  BIP-39 24 語
+ * @returns {Promise<Uint8Array>} 32B recovery_verifier (呼び出し側でゼロ埋め必須)
+ */
+export async function deriveRecoveryVerifier(mnemonic) {
+  // verifier 派生でもチェックサム検証は通しておく (不正シードを早期に弾く)。
+  const entropy = await mnemonicToEntropy(mnemonic);
+  entropy.fill(0);
+  return hkdfFromMnemonic(mnemonic, RECOVERY_VERIFIER_INFO);
+}
+
+/**
+ * seed_bytes 正規化 + HKDF-SHA256(salt=zero(32), info, L=32) の共通実装。
+ *
+ * 正規化は MK unwrap 鍵と recovery_verifier で**完全一致させる** (どちらも同じ
+ * seed_bytes を IKM にする)。client-py/TUI もこの手順と byte 一致させること
+ * (設計書 §2 プリミティブ仕様 / §3.4.1)。注: 既存リカバリシードとの後方互換のため
+ * trim → toLowerCase → 連続空白畳み の手順を変更しない (英語 BIP-39 語彙では NFKD は
+ * no-op なので省略しても byte 一致する)。
+ */
+async function hkdfFromMnemonic(mnemonic, info) {
   const normalized = mnemonic.trim().toLowerCase().split(/\s+/).join(" ");
   const inputBytes = new TextEncoder().encode(normalized);
   const salt = new Uint8Array(32); // all-zero (HKDF-SHA256 推奨の hashLen=32)
-  const infoBytes = new TextEncoder().encode(HKDF_INFO);
+  const infoBytes = new TextEncoder().encode(info);
   try {
     // HKDF: importKey(raw, HKDF) → deriveBits(HKDF, salt, info, L=256 bit)
     const ikm = await crypto.subtle.importKey(

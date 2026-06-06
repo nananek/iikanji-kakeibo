@@ -21,6 +21,7 @@ import {
 } from "./api.js";
 import {
   deriveKeyFromMnemonic,
+  deriveRecoveryVerifier,
   generateMnemonic,
 } from "./bip39.js";
 import { loadHashWasm } from "./hash_wasm_loader.js";
@@ -460,8 +461,12 @@ export function encryptionKeyWizard(config = {}) {
         // 追加モードは既存 MK を wrap、初回は新規 MK 生成。
         workerKeyGenerated = await this._prepareMkForRegister();
         let derived;
+        let recoveryVerifier;
         try {
           derived = await deriveKeyFromMnemonic(this.mnemonic);
+          // #385 PR-4b-1: 同一シードからサーバ照合用 recovery_verifier も導出し、
+          // recovery_seed_server_hash を確立する (seed-only リセットを有効化、§3.4.1)。
+          recoveryVerifier = await deriveRecoveryVerifier(this.mnemonic);
           const { wrapped, iv } = await client.wrap(derived);
           await createWrappedKey({
             method: "recovery_seed",
@@ -470,11 +475,15 @@ export function encryptionKeyWizard(config = {}) {
             salt: null,
             kdf_params: null,
             webauthn_credential_id: null,
+            recovery_verifier: recoveryVerifier,
             label: this.addMode ? "リカバリシード (追加)" : "リカバリシード (初回)",
           });
         } finally {
           if (derived && derived.byteLength > 0) {
             try { derived.fill(0); } catch (_e) { /* detached */ }
+          }
+          if (recoveryVerifier && recoveryVerifier.byteLength > 0) {
+            try { recoveryVerifier.fill(0); } catch (_e) { /* detached */ }
           }
         }
         // 成功パス: rollback フラグを下ろす

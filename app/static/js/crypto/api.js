@@ -53,6 +53,7 @@ export async function listWrappedKeys() {
  *   kdf_params: { memory, iterations, parallelism } | null
  *   webauthn_credential_id: number | null
  *   label: string | null
+ *   recovery_verifier: Uint8Array (32B, recovery_seed 時のサーバ側 verifier 確立用) | null
  * 追加オプション:
  *   rotationToken: string (X-Rotation-Id ヘッダ、ローテーション中の create)
  */
@@ -66,6 +67,10 @@ export async function createWrappedKey(payload, opts = {}) {
     webauthn_credential_id: payload.webauthn_credential_id ?? null,
     label: payload.label ?? null,
   };
+  // #385 PR-4b-1: recovery_seed のサーバ側 verifier (recovery_seed_server_hash) 確立。
+  if (payload.recovery_verifier) {
+    body.recovery_verifier = b64encode(payload.recovery_verifier);
+  }
   const headers = _baseHeaders();
   if (opts.rotationToken) headers["X-Rotation-Id"] = opts.rotationToken;
   const r = await fetch("/api/v1/wrapped-keys", {
