@@ -20,11 +20,6 @@ import {
   touchWrappedKey,
 } from "./api.js";
 import {
-  ARGON2ID_DEFAULTS,
-  deriveKeyFromPassphrase,
-  generateSalt,
-} from "./argon2.js";
-import {
   deriveKeyFromMnemonic,
   generateMnemonic,
 } from "./bip39.js";
@@ -386,13 +381,6 @@ export function encryptionKeyWizard(config = {}) {
       this.step = "choose";
     },
 
-    selectPassphrase() {
-      this.error = "";
-      this.passphrase = "";
-      this.passphraseConfirm = "";
-      this.step = "passphrase";
-    },
-
     /**
      * Passkey 方式の選択。WebAuthn PRF 拡張で derived_key を派生する。
      * 既存登録済みの Passkey が前提 (新規 Passkey 登録は /settings/passkeys)。
@@ -455,68 +443,10 @@ export function encryptionKeyWizard(config = {}) {
       }
     },
 
-    async submitPassphrase() {
-      this.error = "";
-      if (this.passphrase.length < 8) {
-        this.error = "パスフレーズは 8 文字以上";
-        return;
-      }
-      if (this.passphrase !== this.passphraseConfirm) {
-        this.error = "パスフレーズが一致しません";
-        return;
-      }
-      this.loading = true;
-      // generateKey 成功後に後続が失敗したらロールバックすべき
-      let workerKeyGenerated = false;
-      try {
-        // hash-wasm を CDN からロード (初回のみ実体取得)
-        await loadHashWasm();
-        // 追加モードは既存 MK を wrap、初回は新規 MK 生成。
-        workerKeyGenerated = await this._prepareMkForRegister();
-        const salt = generateSalt();
-        let derived;
-        try {
-          derived = await deriveKeyFromPassphrase(this.passphrase, salt);
-          // Transferable: derived は wrap 後に detach される
-          const { wrapped, iv } = await client.wrap(derived);
-          await createWrappedKey({
-            method: "passphrase",
-            wrapped_master_key: wrapped,
-            wrap_iv: iv,
-            salt,
-            // サーバ検証 (wrapped_keys._validate_kdf_params) は memory/iterations/
-            // parallelism (memory は KiB) を要求する。hash-wasm の memorySize を
-            // memory にマップして送る (argon2.js は逆に memory を honor する)。
-            kdf_params: {
-              memory: ARGON2ID_DEFAULTS.memorySize,
-              iterations: ARGON2ID_DEFAULTS.iterations,
-              parallelism: ARGON2ID_DEFAULTS.parallelism,
-            },
-            webauthn_credential_id: null,
-            label: this.addMode ? "パスフレーズ (追加)" : "パスフレーズ (初回)",
-          });
-        } finally {
-          // derived は wrap で detach されているはずだが二重防御
-          if (derived && derived.byteLength > 0) {
-            try { derived.fill(0); } catch (_e) { /* detached */ }
-          }
-        }
-        // 成功パス: rollback フラグを下ろす
-        workerKeyGenerated = false;
-        this.passphrase = "";
-        this.passphraseConfirm = "";
-        await this._afterRegister("passphrase");
-      } catch (e) {
-        this.error = e?.message || String(e);
-        // generateKey 成功後の失敗なら Worker の MK を clear して矛盾状態を解消
-        if (workerKeyGenerated) {
-          await this._rollbackWorkerKey();
-          this.hasKey = false;
-        }
-      } finally {
-        this.loading = false;
-      }
-    },
+    // #385: passphrase 単独登録 (submitPassphrase/selectPassphrase) は廃止。
+    // passphrase 由来の wrapped_key は login_flow が HKDF split (mk_wrap_key) で独占
+    // 生成する。ウィザードからの raw Argon2id 登録は解錠 (login 派生) と KDF が不整合に
+    // なるため削除した。解錠は unlockWithPassphrase (login 派生) が担う。
 
     async submitRecovery() {
       this.error = "";

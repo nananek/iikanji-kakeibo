@@ -222,35 +222,8 @@
       </div>
     </template>
 
-    <!-- ステップ 3a: パスフレーズ入力 -->
-    <template x-if="step === 'passphrase'">
-      <div>
-        <h5 class="mb-3"><i class="bi bi-key"></i> パスフレーズ設定</h5>
-        <p class="text-muted small">
-          8 文字以上のパスフレーズを設定します。Argon2id (64 MiB / 3 iter) で派生します。
-          <strong>このパスフレーズを忘れると MK 復元不能になります。</strong>
-        </p>
-        <div class="mb-3">
-          <label class="form-label">パスフレーズ</label>
-          <input type="password" class="form-control" x-model="passphrase"
-                 :disabled="loading" autocomplete="new-password">
-        </div>
-        <div class="mb-3">
-          <label class="form-label">パスフレーズ (確認)</label>
-          <input type="password" class="form-control" x-model="passphraseConfirm"
-                 :disabled="loading" autocomplete="new-password">
-        </div>
-        <div class="d-flex gap-2">
-          <button class="btn btn-primary" @click="submitPassphrase()" :disabled="loading">
-            <span x-show="loading" class="spinner-border spinner-border-sm me-2"></span>
-            <span x-text="loading ? '派生中...' : '登録する'"></span>
-          </button>
-          <button class="btn btn-outline-secondary" @click="goToChoose()" :disabled="loading">
-            戻る
-          </button>
-        </div>
-      </div>
-    </template>
+    {# #385: パスフレーズ単独登録ステップは廃止 (= ログインパスワードに統合)。
+       passphrase 鍵は login_flow が生成し、解錠は unlock ステップが担う。 #}
 
     <!-- ステップ 3b: リカバリシード生成 -->
     <template x-if="step === 'recovery'">
