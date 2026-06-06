@@ -187,6 +187,24 @@ def test_finish_success_updates_all(client, db):
     assert rec.wrapped_master_key == b"\x05" * 48  # シードローテで差し替わった
 
 
+def test_finish_clears_passkey_only_login(client, db):
+    """§3.4.1 passkey_only revival: リセット成功で passkey_only_login が解除され、
+    設定した新パスワードでログインできるようになる (passkey 紛失時の詰み防止)。"""
+    u, verifier = _seed_reset_user(db, username="pkonly", verifier_byte=0x55)
+    u.passkey_only_login = True
+    db.session.commit()
+    r = client.post("/auth/recovery/finish", json=_finish_payload("pkonly", verifier))
+    assert r.status_code == 200
+    refreshed = db.session.get(User, u.id)
+    assert refreshed.passkey_only_login is False
+    assert refreshed.login_server_hash == ld.compute_login_server_hash(_verifier(0x22))
+
+
+def test_begin_overlong_username_rejected(client, db):
+    r = client.post("/auth/recovery/begin", json={"username": "a" * 256})
+    assert r.status_code == 400
+
+
 def test_finish_wrong_verifier_rejected(client, db):
     _seed_reset_user(db)
     r = client.post(

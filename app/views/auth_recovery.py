@@ -43,6 +43,7 @@ LOGIN_SALT_LEN = 16
 WRAP_IV_LEN = 12
 VERIFIER_LEN = 32
 MAX_WRAPPED_KEY_SIZE = 256  # AES-256-GCM wrapped MK は 48B 想定
+MAX_USERNAME_LEN = 255      # User.username カラム長に揃えた上限 (過大入力拒否)
 
 
 def _b64e(raw):
@@ -85,15 +86,15 @@ def recovery_begin():
         return jsonify({"error": "already authenticated"}), 400
     data = request.get_json(silent=True) or {}
     username = (data.get("username") or "").strip()
-    if not username:
+    if not username or len(username) > MAX_USERNAME_LEN:
         return jsonify({"error": "username required"}), 400
 
     # 常に DB lookup する (不在でも SELECT を投げ、hit/miss のレイテンシ差を消す)。
     user = User.query.filter_by(username=username, user_type="personal").first()
-    # 常に recovery_seed wrapped_key を lookup する (user 不在でも一致しない id で投げる)。
+    # 常に recovery_seed wrapped_key を lookup する (user 不在でも存在しない id=-1 で投げる)。
     wk = (
         WrappedKey.query.filter_by(
-            user_id=(user.id if user is not None else 0),
+            user_id=(user.id if user is not None else -1),
             method=METHOD_RECOVERY_SEED,
         ).first()
     )
@@ -148,6 +149,7 @@ def recovery_finish():
 
     if (
         not username
+        or len(username) > MAX_USERNAME_LEN
         or recovery_verifier is None
         or new_recovery_verifier is None
         or login_verifier is None
@@ -210,6 +212,12 @@ def recovery_finish():
     user.recovery_seed_server_hash = ld.compute_recovery_server_hash(
         new_recovery_verifier
     )
+
+    # passkey_only revival (§3.4.1): リカバリシードは全権復旧因子なので、passkey 紛失で
+    # passkey_only_login=True のまま詰むのを防ぐためフラグを解除し、設定した新パスワードでの
+    # ログインを有効化する (werkzeug フォールバック /login も通れるようにする)。UI では
+    # 「この操作でパスワード認証が有効になる」旨を警告する (PR-4b-3)。
+    user.passkey_only_login = False
 
     # 既存セッションを全失効 (攻撃者が握る旧 Cookie / 解錠済み MK を無効化、§3.4.1)。
     user.bump_session_token_version()
