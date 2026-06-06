@@ -39,6 +39,12 @@ mk_wrap_key    = HKDF(master, info="iikanji-mk-wrap-v1")   # ← サーバに送
 **プリミティブ仕様 (byte 精度。client-py/TUI と相互実装するため確定値):**
 - `Argon2id`: パラメータは `memory=64 MiB, iterations=3, parallelism=1`、出力 32B。`salt` は 16B (per-user、`wrapped_keys.salt` と同枠)。**これを v5.x の確定値とする** (client-py/TUI と byte 互換が要るため可変にしない)。`index.md §4` 現行の「※調整余地あり」表記は本方式の実装 PR (PR-1) で**削除し確定する**。
 - `HKDF` = **`HKDF-SHA256(ikm=master, salt=zero(32B), info=<上記文字列>, L=32)`**。info 文字列はバージョン付き (`iikanji-login-v1` / `iikanji-mk-wrap-v1`) を**全フローで厳守**する (短縮形を使わない)。**info は ASCII/UTF-8 でエンコードした bytes として扱う** (Python `b"iikanji-login-v1"`, JS `new TextEncoder().encode("iikanji-login-v1")`)。client-py/TUI との byte 互換に直結するため実装間で揃える。`salt=zero(32B)` を選ぶ**理由**: `master` は Argon2id 出力で高エントロピーなため、RFC 5869 §2.2 のゼロ salt 使用条件 (IKM が既に高エントロピーなら salt 省略可) を満たす。結果として既存 `bip39.js` の HKDF 実装とも一致する (= salt 値を変える理由がない。「bip39.js に合わせるため」ではなく、両者が同じ RFC 条件に従うから一致する)。
+- **`seed_bytes` 正規化 (リカバリシード由来の HKDF 入力。§3.4.1 で使用)**: BIP-39 ニーモニックを
+  ①Unicode **NFKD** 正規化 ②前後空白除去 (trim) ③連続空白を単一 ASCII space (0x20) に畳む
+  ④小文字化 (lowercase) ⑤UTF-8 エンコード、の順でバイト列化する。`bip39.js` の
+  `deriveKeyFromMnemonic` 入力と byte 一致させること (client-py/TUI も同手順で実装)。この
+  `seed_bytes` を IKM に `info="iikanji-master-key-v1"` (MK unwrap 鍵) と
+  `info="iikanji-recovery-login-v1"` (recovery_verifier) を別々に HKDF 導出する。
 - **通信前提**: 上記すべて **TLS 必須**。`login_verifier` は HKDF で一方向化済みとはいえ照合値であり、平文 HTTP で送ると MITM が再送・なりすましに使えるため、登録/ログインの全 API は HTTPS のみで提供する。
 
 - サーバが見るのは `login_verifier` だけ。HKDF は一方向なので `master` も
@@ -50,12 +56,19 @@ mk_wrap_key    = HKDF(master, info="iikanji-mk-wrap-v1")   # ← サーバに送
 
 ### HKDF info (ドメイン分離) 一覧
 
-| 用途 | info |
-|------|------|
-| ログイン検証値 | `iikanji-login-v1` |
-| MK ラップ鍵 | `iikanji-mk-wrap-v1` |
+| 用途 | info | 導出元 (ikm) |
+|------|------|------|
+| ログイン検証値 | `iikanji-login-v1` | `master` (Argon2id(login_password)) |
+| MK ラップ鍵 | `iikanji-mk-wrap-v1` | `master` (Argon2id(login_password)) |
+| MK unwrap 鍵 (リカバリシード) | `iikanji-master-key-v1` | `seed_bytes` (BIP-39 24 語) |
+| シード検証値 (recovery_verifier) | `iikanji-recovery-login-v1` | `seed_bytes` (BIP-39 24 語) |
 
 将来用途を足す場合は必ず別 info にする (PRF/HKDF のドメイン分離規約 §webauthn_prf と同様)。
+`iikanji-master-key-v1` は既存 (リカバリシードからの MK unwrap)、`iikanji-recovery-login-v1` は
+§3.4.1 で新規追加 (同一シードから別 info で recovery_verifier を独立導出)。
+注: `iikanji-master-key-v1` は `webauthn_prf.js` の WebAuthn PRF path でも同一文字列を info として
+使用するが、IKM (一方はリカバリシード bytes、他方は PRF 出力) が異なるためドメイン分離は維持される
+(出力衝突なし)。
 
 ### LOGIN_SERVER_SECRET の用途分離
 
@@ -66,8 +79,17 @@ HMAC の**メッセージ先頭にドメインラベル + `0x00`** を付けて�
 |------|----------------|
 | ログイン検証ハッシュ | `"login-hash" \|\| 0x00 \|\| login_verifier` |
 | 列挙耐性ダミー salt | `"dummy-salt" \|\| 0x00 \|\| username` |
+| リカバリ検証ハッシュ (§3.4.1) | `"recovery-hash" \|\| 0x00 \|\| recovery_verifier` |
+| リカバリダミー wrap (§3.4.1) | `"dummy-recovery-wrap" \|\| 0x00 \|\| username` |
+| リカバリダミー wrap2 — 伸長用 (§3.4.1) | `"dummy-recovery-wrap2" \|\| 0x00 \|\| username` |
+| リカバリダミー IV (§3.4.1) | `"dummy-recovery-iv" \|\| 0x00 \|\| username` |
 
 (別環境変数に割るより 1 秘密 + ラベル分離の方が運用・ローテーションが単純。)
+`secret_version` 機構 (§3.1): `recovery_seed_server_hash` も `login_server_hash` と**同一の
+`LOGIN_SERVER_SECRET` + 同一 `login_secret_version`** を共有する (別カラムは設けない)。秘密
+ローテ時は recovery reset / login 成功で平文 verifier を握れた瞬間に両ハッシュとも遅延再計算
+する。リカバリダミー応答 (上記 3 ラベル) は秘密ローテで値が変わるが、決定的かつ列挙耐性のみが
+目的なので version 管理は不要 (照合に使わない)。
 
 ## 3. フロー
 
@@ -133,6 +155,8 @@ HMAC の**メッセージ先頭にドメインラベル + `0x00`** を付けて�
 - **MK 自体は不変**。旧 `mk_wrap_key` で unwrap → 新 `mk_wrap_key'` で再 wrap。
 - サーバへ `{new salt', new server_hash', new wrapped_master_key', new wrap_iv'}` を送る。
 - 既存の `recovery_seed` / `passkey_prf` wrapped_key は MK 不変なので**そのまま有効**。
+- **(PR-4b-1 で適用)** パスワード変更でも旧パスワードで確立済みの既存セッションを失効させるため、
+  §3.4.1 で導入する `session_token_version` を本フローの成功時にもインクリメントする。
 
 ### 3.4 パスワード忘れ
 - パスワードは MK の唯一の常用守り → 忘れたら**リカバリシードでのみ復旧**。
@@ -146,6 +170,169 @@ HMAC の**メッセージ先頭にドメインラベル + `0x00`** を付けて�
   禁止・コピー時の注意喚起。PR-4 で実装漏れしやすいので明記)。
 - リカバリシードも無ければ MK 復元不可能 (規約で明示。文言は `terms` テンプレートに
   追記する ToDo)。
+
+#### 3.4.1 リセット認証モデル: リカバリシードを「フル復旧因子」化 (採用方針)
+
+パスワードを忘れたユーザーが確実に持つのは**ウィザードで必須提示したリカバリシード
+(24 語)**。一方サーバが検証できる既存因子は recovery code (`ikr_`、ログイン用) のみで、
+これは登録時に必ず作られるわけではない。よって**リセットはシード単体で完結できる**必要が
+ある。シードは MK を unwrap できる (recovery_seed wrapped_key) が、**サーバ側 verifier が
+無い**ため、シードを知らない攻撃者でも別 MK で `login_*`/wrapped_key を上書きしてアカウントを
+破壊できる DoS 経路になる。これを塞ぐため、**リカバリシードにサーバ側 verifier を持たせて
+ログイン因子にも昇格**する。
+
+**ドメイン分離 (シードの 2 用途)**:
+- MK unwrap 鍵 (既存): `HKDF-SHA256(seed_bytes, salt=zero(32), info="iikanji-master-key-v1", L=32)`
+- リカバリ検証値 (新規): `recovery_verifier = HKDF-SHA256(seed_bytes, salt=zero(32),
+  info="iikanji-recovery-login-v1", L=32)` (**出力長 32B**、`login_verifier` と同じ)。
+  `salt=zero(32)` は**意図的** — `seed_bytes` (BIP-39 24 語, ~256 bit エントロピー) が IKM として
+  十分なので可変 salt を導入しても安全性は向上しない (RFC 5869 §2.2、§2 の login HKDF と同方針)。
+- `seed_bytes` の正規化はバイト精度で確定する (client-py/TUI が独自実装するため §2 のプリミティブ
+  仕様に転記)。手順: ①Unicode NFKD 正規化 ②前後空白除去 (trim) ③連続空白を単一 ASCII space
+  (0x20) に畳む ④小文字化 (lowercase) ⑤UTF-8 エンコード。これは `bip39.js` の
+  `deriveKeyFromMnemonic` 入力と byte 一致させること。info 文字列が異なるので 2 値は独立。
+
+**DB**: `users.recovery_seed_server_hash` (BYTEA 32B, nullable) =
+`HMAC-SHA256(LOGIN_SERVER_SECRET, "recovery-hash" || 0x00 || recovery_verifier)`。
+DB 流出時もシード平文/recovery_verifier を得られない (login_server_hash と同方針)。
+recovery_seed wrapped_key を作成 (ウィザード) する際、クライアントが `recovery_verifier` も
+計算して送り、サーバが本ハッシュを保存する。
+
+**CSRF / 認証方針**: `/auth/recovery/begin` `/auth/recovery/finish` は**未認証の公開 JSON API**
+(`/auth/login/begin|finish` と同じ扱い)。ログイン API 同様 **CSRF 免除** (`csrf.exempt`) とし、
+代わりに `@limiter.limit` でレート制限する (login API と同方針 §3.2)。HTML フォーム POST では
+なく `fetch` JSON で実装する。
+
+**リセットフロー**:
+1. 公開ページ `/auth/recovery-reset`。`POST /auth/recovery/begin {username}` →
+   recovery_seed wrapped_key の `{wrapped_master_key, wrap_iv}` を返す (MK unwrap 用)。
+   **列挙耐性 (§3.2 の dummy-salt と同方針)**: ユーザー不在 / `recovery_seed_server_hash` が
+   NULL / recovery_seed wrapped_key 無しの全ケースで、**username 由来の決定的ダミー**を一様・
+   定数時間で返す。**実値の長さと完全一致させる**こと: 実 `wrapped_master_key` は AES-256-GCM
+   出力 = ciphertext 32B + GCM tag 16B = **48B**、`wrap_iv` は **12B**。ダミーも同じ長さで返す:
+   ```
+   dummy_wrap_raw = HMAC-SHA256(LOGIN_SERVER_SECRET, "dummy-recovery-wrap"  || 0x00 || username)      # 32B
+   dummy_wrap_ext = HMAC-SHA256(LOGIN_SERVER_SECRET, "dummy-recovery-wrap2" || 0x00 || username)[0:16] # 16B
+   wrapped_master_key = dummy_wrap_raw || dummy_wrap_ext                                               # 48B
+   wrap_iv            = HMAC-SHA256(LOGIN_SERVER_SECRET, "dummy-recovery-iv" || 0x00 || username)[0:12] # 12B
+   ```
+   決定的なので「同一 username で 2 回叩いて値が変わる差」からシード設定有無が漏れず、長さも実値
+   (48B/12B) と一致するので**長さによる real/dummy 判別もできない**。ダミーで unwrap しても finish
+   の verifier 照合で必ず失敗する。
+
+   **定数時間の実装指針 (タイミング攻撃対策 / 必須)**: 「定数時間」を満たすには、素直な分岐
+   (実ユーザーのみ DB lookup → 実値 / 不在は lookup せずダミー) が DB I/O レイテンシ差 (1〜5ms)
+   でユーザー存在を漏らすため**不可**。よって:
+   - **DB lookup は分岐に関わらず常に 1 回実行**する (`username` で `User` を引く。不在でも
+     SELECT を投げる)。
+   - **ダミー HMAC 計算 (3 本) も常に実行**する。実値が使えるか否かは計算後に選択する
+     (早期 return で計算をスキップしない)。
+   - 実値返却 / ダミー返却の選択は**値の差し替えのみ**で行い、コードパスの分岐量を揃える。
+   - PR-4b-2 のテストに「begin は DB hit/miss・NULL hash・wrapped_key 欠如のいずれでも常に同じ
+     HMAC 計算回数を通る」ことの検証ケースを必ず含める。
+   - **移行期の非対称状態** (WARN-1) もすべてダミー応答で通す: ①`recovery_seed_server_hash` は
+     有るが recovery_seed wrapped_key が NULL、②wrapped_key は有るが `recovery_seed_server_hash`
+     が NULL (旧ウィザードで作成したユーザー)。どちらも begin はダミーで通し、finish の verifier
+     照合で失敗させる (NULL hash は照合不能なので必ず失敗)。移行期テストにこの 2 状態を含める。
+2. ユーザーが 24 語シード入力。クライアント: `deriveKeyFromMnemonic(seed)` で MK を unwrap、
+   かつ `recovery_verifier` を導出。
+3. ユーザーが新パスワード入力。新 salt → 新 login material、MK を新 mk_wrap_key で再 wrap。
+4. **シードローテーション (§3.4 の旧シード無効化)**: クライアントが `window.crypto.getRandomValues`
+   (初回登録フローと同じ乱数源) で**新 24 語シード**を生成し、MK を新シード鍵で再 wrap、新
+   `recovery_verifier'` を導出。
+5. `POST /auth/recovery/finish`。フィールド命名は §3.3 (パスワード変更) との混同を避け、用途が
+   自明になるよう接頭辞を付ける:
+   ```
+   {
+     username,
+     recovery_verifier,                  // 旧シード由来。サーバ認証用 (照合される)
+     login_salt, login_verifier, login_kdf_params,        // 新PW由来 (login_* を更新)
+     passphrase_wrapped_master_key, passphrase_wrap_iv,   // MK を新PW mk_wrap_key で wrap (passphrase wrapped_key として保存)
+     recovery_wrapped_master_key, recovery_wrap_iv,       // MK を新シードで wrap (recovery_seed wrapped_key として保存)
+     new_recovery_verifier               // 新シード由来。新 recovery_seed_server_hash の素
+   }
+   ```
+6. サーバ: 旧 `recovery_verifier` を `recovery_seed_server_hash` と `hmac.compare_digest` で定数
+   時間照合。**`recovery_seed_server_hash` が NULL のケース (旧ウィザード作成ユーザー / シード未設定)
+   でも `hmac.compare_digest(computed, b"\x00"*32)` 等のダミー照合を常に実行してから失敗させる**
+   (`if hash is None: return` の早期 return はタイミングでシード有無を漏らすので禁止)。OK なら
+   **単一トランザクション**で次を更新 (= 新保存完了後に旧シード無効化、§3.4 の順序):
+   - `login_*` (login_salt / login_verifier の server_hash / login_kdf_params / login_secret_version) ← 新PW由来
+   - passphrase wrapped_key ← `passphrase_wrapped_master_key` / `passphrase_wrap_iv`
+   - recovery_seed wrapped_key ← `recovery_wrapped_master_key` / `recovery_wrap_iv`
+   - `recovery_seed_server_hash` (新) ← **`HMAC(LOGIN_SERVER_SECRET, "recovery-hash" || 0x00 ||
+     new_recovery_verifier)` を計算して保存** (受信した `new_recovery_verifier` から導出。生の
+     verifier は保存しない)
+   - `session_token_version` インクリメント
+
+   passkey_prf 鍵は MK 不変でそのまま有効。version インクリメントにより当該ユーザーの既存サーバ
+   セッションが全失効する (下記「セッション失効」)。
+7. クライアント: **新シードを 1 回限りセキュア表示** (初回登録と同等要件)。
+
+**セッション失効 (リセット後)**: recovery reset はパスワード変更 (§3.3) より影響が大きい (攻撃者が
+シードを入手した場合の乗っ取り経路)。MK 自体は不変なので、攻撃者の既存セッションに残った解錠済み
+MK (SharedWorker) や Flask-Login セッション Cookie が reset 後も生き続けるリスクがある。よって
+**finish 成功時にサーバ側で当該ユーザーの全セッションを失効**させる: `User` に
+`session_token_version` (INTEGER, §3.3 のパスワード変更でも将来導入候補) を持たせ、Flask-Login
+の `user_loader` / `get_id` でこの version をセッションに焼き込み照合する (version 不一致 =
+強制ログアウト)。reset の finish で version をインクリメントすれば、旧セッションは次回リクエストで
+無効化される。新パスワードでログインし直したセッションのみが有効になる。(本機構は §3.3 にも
+波及するため PR-4b で導入し §3.3 のパスワード変更にも適用する。)
+
+**passkey_only ユーザーの扱い (脅威モデル含意)**: `passkey_only_login=True` でも recovery_seed
+wrapped_key と `recovery_seed_server_hash` を持つユーザーは本フローを利用できる (「パスワード忘れ」
+ではなく「パスワード認証を再有効化したい」ケース。finish で login_* が設定されるので結果的に
+パスワードログインが復活する)。**含意**: ユーザーが意図的に `passkey_only_login=True` にして
+パスワード認証を無効化していても、シードを持つ者が reset を実行すると passkey_only 保護が外れる。
+これは**許容する** — リカバリシードを保有しているのは本人のみという前提 (シードは初回に 1 回限り
+セキュア表示し、本人が物理保管する) であり、シードを持つ = 本人の最終リカバリ権限とみなす。逆に
+「passkey_only を維持したまま reset したい」需要は想定しない (reset の目的がパスワード復活のため)。
+リカバリシードを持たない passkey_only ユーザーは本フロー対象外 (passkey 認証で入る)。
+
+**段階 PR 案 (PR-4b)**:
+- PR-4b-1: `recovery_seed_server_hash` (BYTEA 32B) + `session_token_version` (INTEGER default 0)
+  列 (マイグレ) + recovery_seed 作成時にサーバ保存 (wrapped_keys API 拡張 or 専用) + クライアント
+  recovery_verifier 導出 (login_kdf.js) + Flask-Login `get_id`/`user_loader` の version 焼込み・
+  照合 (§3.3 パスワード変更にも適用)。
+- PR-4b-2: `/auth/recovery/begin` `/finish` エンドポイント (CSRF 免除 + レート制限) + テスト
+  (レート制限・列挙耐性のダミー決定性と長さ 48B/12B 一致・旧 verifier 照合・シードローテーション・
+  NULL ユーザー・finish 成功時のセッション失効)。
+- PR-4b-3: 公開リセットページ UI + クライアントリセットフロー JS + 新シードセキュア表示 + E2E。
+  passkey_only ユーザー向けに「この操作によりパスワード認証が有効になります」警告表示を入れる
+  (上記「passkey_only revival」含意の UI 明示)。
+- **既存ユーザー (`recovery_seed_server_hash` = NULL) の後埋め方針**:
+  - **推奨 (primary)**: 解錠済みセッションでウィザードからシードを再入力 (または再発行) させ、
+    そのとき `recovery_verifier` を計算してサーバに後付け保存する専用導線を設ける。能動的に
+    seed-only リセットを有効化できる。
+  - **fallback**: 上記をスキップしたユーザーは、次回シードローテ (= 何らかの理由でシード再発行)
+    時に自動確立される。
+  - **NULL ユーザーの begin 応答**: サーバは NULL でも `begin` を**通常どおりダミー応答で通す**
+    (シード未設定と同じ列挙耐性応答)。「NULL なのでリセット不可」と即時に区別できる応答は返さない
+    (列挙耐性のため)。実際のリセット可否は finish の verifier 照合で判定 (NULL ユーザーは必ず失敗)。
+    移行期に seed-only リセットが使えないユーザーは passkey / 再ログイン経由になる旨を UI に明記。
+
+**実装チェックリスト (PR-4b-1/2 に転記)**:
+- **`session_token_version` の後方互換 (PR-4b-1)**: マイグレで `session_token_version INTEGER
+  NOT NULL DEFAULT 0` を設定。既存 Flask-Login セッション Cookie には version 情報が無いため、
+  `user_loader` は **Cookie に version が無い旧形式 = version 0 として扱い**、`User.session_token_version`
+  が 0 のうちは透過的に通過させる (= 既存ログインセッションを切らない)。`get_id()` は
+  `f"{id}.{version}"`、`user_loader` は `.` で分割し version 不一致なら拒否 (version 欠如時は 0)。
+  テストに「version 無し Cookie が version=0 ユーザーで通過」「DB の version を 1 に上げると旧
+  Cookie が拒否される」の後方互換ケースを含める。
+- **CSRF 免除の確認 (PR-4b-2)**: `recovery/begin|finish` を `csrf.exempt` する前に、`auth` BP の
+  `login/begin|finish` が実際に exempt されていることをコードで確認する (CLAUDE.md の exempt 一覧は
+  現状 WebAuthn / REST API のみ記載)。確認後、CLAUDE.md の `csrf.exempt` 対象一覧に
+  `recovery/begin|finish` を追記する。
+- **レート制限の粒度 (PR-4b-2)**: login API と同等以上に厳格化する。`begin`: per-IP `5/minute` +
+  per-username `10/hour`。`finish`: per-IP `5/minute` + per-username `5/hour` (verifier 総当たり
+  抑止)。limiter の teardown reset (フルスイート leak 対策) もテストに入れる。
+- **finish の NULL ハッシュ定数時間照合 (PR-4b-2)**: `recovery_seed_server_hash` が NULL でも
+  `hmac.compare_digest(computed, b"\x00"*32)` のダミー照合を常に実行してから失敗させる
+  (None チェックで早期 return 禁止)。テストに「NULL ハッシュでも `compare_digest` が 1 回呼ばれ、
+  かつ必ず失敗する」ケースを含める。
+- **CLAUDE.md の CSRF 免除一覧更新 (PR-4b-2)**: 現状の記載 (WebAuthn / REST API のみ) は実態と
+  乖離 (`auth_api_bp` / `wrapped_keys_bp` / `keypair_bp` / `audit_packages_bp` / `ai_config_api_bp`
+  / device authorization / oauth token も免除済)。recovery bp 追加時に一覧を全面更新する。
 
 ### 3.5 自然な v4 → ログイン派生移行 (in-login・本方式の中核)
 
