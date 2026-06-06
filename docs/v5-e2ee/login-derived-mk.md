@@ -154,6 +154,7 @@ HMAC の**メッセージ先頭にドメインラベル + `0x00`** を付けて�
   │
   ├ ① POST /auth/login/begin {username}
   │     → サーバ: password_hash 有 / login_salt 無 を検出
+  │     → 新規 salt(16B) を生成し Flask session に一時保存 (pending_login_salt)
   │     → {salt: 新規 16B, kdf_params, migration_required: true}
   │
   ├ ② クライアント: master = Argon2id(password, salt)
@@ -166,7 +167,9 @@ HMAC の**メッセージ先頭にドメインラベル + `0x00`** を付けて�
   │     {username, password, login_verifier, login_salt, login_kdf_params,
   │      wrapped_master_key, wrap_iv}
   │     → サーバ: (a) user.check_password(password) で werkzeug を最終 1 回検証
-  │              失敗 → 汎用エラー・移行しない
+  │              失敗 → 汎用エラー・移行しない (⚠️ §2 例外。下記「平文…」参照)
+  │            (a') 送られた login_salt が session の pending_login_salt と
+  │                 一致するか確認 (compare_digest)。不一致 → 拒否
   │            (b) 単一トランザクションで login_server_hash / login_salt /
   │                login_kdf_params / login_secret_version を設定し、
   │                wrapped_keys(method='passphrase') を UPSERT
@@ -183,6 +186,25 @@ HMAC の**メッセージ先頭にドメインラベル + `0x00`** を付けて�
         → サーバ: migration_temp_mk 破棄 + ★ password_hash を NULL クリア
                 + 移行完了マーク
 ```
+
+**⚠️ 平文パスワードの一時送信 (§2「平文をサーバに送らない」原則の例外)**:
+③ の移行パスでは `password` (平文) をサーバへ送る。werkzeug の `check_password_hash()` が
+平文を必要とするためで、**移行フロー (`migration_required=true`) に限定した一時的例外**。
+通常ログイン (§3.2) は `login_verifier` のみで §2 原則を維持する。受動管理者モデル (§4-2) が
+「DB とログを読むだけ」を攻撃者像とする以上、平文がログに残らないことが必須。実装上の必須対策:
+- アクセスログ・例外スタックトレース・デバッグ出力に `password` を含めない (Flask デバッグ
+  モード無効、Sentry 等の `before_send` で当該フィールドを明示除外)。
+- `password` の参照は `check_password()` への引数渡しのみとし、直後に変数スコープから
+  `del` する。リクエストボディ全体を丸ごとログ出力しない。
+- この平文送信は v5 デプロイ後の各 v4 ユーザー初回ログイン 1 回限りで、移行完了後は二度と
+  発生しない (finalize で `password_hash` クリア → 以後 `login_verifier` のみ)。
+
+**一時 salt の管理 (改ざん・競合防止)**: ① でサーバが発行する移行用 salt は **Flask session に
+`pending_login_salt` として一時保存**し、③ で送られた `login_salt` と `compare_digest` で
+一致確認する (③ a')。これによりクライアントのバグや実装ミスで任意 salt が送られても弾ける
+(TLS 前提でも多層防御)。中断後 ① を呼び直すと新 salt で上書きされ、最後に呼んだ ① の salt で
+③ が成立する (前回 salt との競合は session 上書きで解消)。③ 成立後は `pending_login_salt` を
+session から削除する。
 
 **移行の完了条件**: ③ で認証因子は移行されるが、移行が「完了」するのは ⑤ finalize 後。
 `password_hash` は finalize まで残し、temp-MK 破棄と同時にクリアする。
@@ -233,12 +255,19 @@ OPAQUE (aPAKE) を使えば「サーバは salt 相当も見ない + 列挙耐�
    (argon2.js + HKDF) と単体テスト (golden vector)。
 2. **PR-2 ログイン 2 ラウンド API + 透過移行パス**: `/auth/login/begin` `/finish` + サーバ側
    `server_hash` 保管。列挙耐性 (ダミー salt)。**§3.5 の移行 finish パス** (werkzeug 最終検証 +
-   login material 確立) を含む。既存 `/login` は破壊的に置換。マイグレ `070` で `login_*` 列追加
-   + `password_hash` nullable 化 (drop は後続)。
+   login material 確立) を含む。**`/begin` / `/finish` を新規追加し、旧 `/login` は PR-3 で
+   廃止予定として残す** (PR-2 単独では破壊せず共存。下記「過渡期」のため)。マイグレ `070` で
+   `login_*` 列追加 + `password_hash` nullable 化 (drop は後続)。
    - **レート制限**: `/auth/login/begin` は**認証前**に呼ばれ列挙の攻撃面になるため、
      既存ログイン系と同等の `@limiter.limit("5-10/minute")` を**必ず付与**する
      (ダミー salt でも応答時間差での存在判定を避けるため定数時間で応答)。`/finish`
      も同様にレート制限。
+   - **定数時間応答の実装**: `/begin` は既知/未知ユーザーで応答時間差を作らない。既存
+     `recovery_login` の `_dummy_check()` (`compare_digest` でダミー検証) と同等の方式を採り、
+     未知ユーザーでもダミー salt 計算 (HMAC) を実行して早期 return しない。
+   - **temp-MK 系エンドポイントの棲み分け**: `§3.5 ④` の `temp-mk` / `rewrap` / `finalize` は
+     既存実装 (`app/views/api.py`、`/api/v1` Blueprint・CSRF 免除・Bearer/セッション両対応)
+     を**そのまま再利用**する (移行専用に新 prefix を切らない。既存 E7 機構との二重化回避)。
    - **PR-3 までの過渡期**: PR-2 が先行マージされる間、`passkey_only_login` 制御は
      既存 `auth.py` の `/login` が引き続き担保する (新 `/begin`/`/finish` には §7.2 の
      パスワード必須化が PR-3 で入るまで passkey_only ユーザーを通さないガードを置く)。
