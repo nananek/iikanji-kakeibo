@@ -60,6 +60,14 @@
                         <i class="bi bi-unlock"></i> この鍵で解除
                       </button>
                     </template>
+                    <!-- 削除は解錠中のみ (誤って最後の鍵を消さないよう、登録が
+                         2 件以上のときだけ表示。最終 1 件はサーバも 409 で保護) -->
+                    <template x-if="hasKey && existingKeys.length > 1">
+                      <button class="btn btn-sm btn-outline-danger" @click="deleteKey(k)"
+                              :disabled="loading" title="この鍵を削除">
+                        <i class="bi bi-trash"></i>
+                      </button>
+                    </template>
                   </div>
                 </li>
               </template>
@@ -74,13 +82,18 @@
             </button>
           </template>
           <template x-if="existingKeys.length > 0 && hasKey">
+            <button class="btn btn-primary btn-sm" @click="addAnotherMethod()" :disabled="loading">
+              <i class="bi bi-plus-lg"></i> 別の方式を追加
+            </button>
+          </template>
+          <template x-if="existingKeys.length > 0 && hasKey">
             <button class="btn btn-outline-secondary btn-sm" @click="lockKey()" :disabled="loading">
               <i class="bi bi-lock"></i> 今すぐロックする
             </button>
           </template>
-          <template x-if="existingKeys.length > 0">
+          <template x-if="existingKeys.length > 0 && !hasKey">
             <span class="text-muted small ms-2 align-self-center">
-              鍵の追加・削除 UI は次期 PR で対応予定です。
+              鍵を解除すると、別方式の追加や鍵の削除ができます。
             </span>
           </template>
         </div>
@@ -162,10 +175,16 @@
     <!-- ステップ 2: 方式選択 -->
     <template x-if="step === 'choose'">
       <div>
-        <h5 class="mb-3"><i class="bi bi-2-square"></i> 派生方式を選択</h5>
-        <p class="text-muted small">
+        <h5 class="mb-3">
+          <i class="bi bi-2-square"></i>
+          <span x-text="addMode ? '追加する方式を選択' : '派生方式を選択'"></span>
+        </h5>
+        <p class="text-muted small" x-show="!addMode">
           マスター鍵 (MK) を保護する派生方式を選んでください。<strong>1 つ目</strong>の方式は初回必須です。
-          後から別方式を追加できます (次期 PR)。
+          後からこの画面で別方式を追加・削除できます。
+        </p>
+        <p class="text-muted small" x-show="addMode" x-cloak>
+          解除中の暗号鍵を、選んだ方式でも保護します (同じ鍵を別の方法で解除できるようになります)。
         </p>
 
         <div class="row row-cols-1 row-cols-md-3 g-3">
@@ -283,8 +302,9 @@
         <i class="bi bi-check-circle-fill text-success display-1"></i>
         <h4 class="mt-3">鍵を登録しました</h4>
         <p class="text-muted">
-          方式: <code x-text="doneMethod"></code> /
-          次期 PR でロック画面・他端末ログインに対応します。
+          方式: <code x-text="doneMethod"></code><br>
+          この鍵で暗号化が有効になりました。設定トップに戻ると、別方式の追加や
+          鍵の削除ができます。
         </p>
         <a href="{{ url_for('settings.index') }}" class="btn btn-outline-secondary">
           設定トップへ戻る

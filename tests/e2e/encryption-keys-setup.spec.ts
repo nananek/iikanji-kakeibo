@@ -99,4 +99,57 @@ test.describe("暗号鍵ウィザード: パスフレーズ方式の鍵生成 (�
     // 解錠成功で start 画面に戻り「解除済み」バッジが出る
     await expect(page.locator("text=解除済み")).toBeVisible({ timeout: 30000 });
   });
+
+  test("別方式の追加 (リカバリ) → 追加した方式で解錠 → 鍵の削除", async ({ page }) => {
+    test.setTimeout(90000);
+    // サーバの UNIQUE 制約により passphrase / recovery_seed は各 1 件まで。
+    // よって初回 passphrase に対し「別方式 = リカバリシード」を追加する。
+    await login(page);
+    await page.goto(`${BASE_URL}/settings/encryption-keys`, { waitUntil: "networkidle" });
+
+    // 1) 初回: パスフレーズで鍵生成
+    await page.click('button:has-text("初回設定を開始")');
+    await page.click('button:has-text("パスフレーズ")');
+    const pw = page.locator('input[type="password"][autocomplete="new-password"]');
+    await pw.nth(0).fill(PASSPHRASE);
+    await pw.nth(1).fill(PASSPHRASE);
+    await page.click('button:has-text("登録する")');
+    await expect(page.locator("text=鍵を登録しました")).toBeVisible({ timeout: 30000 });
+
+    // 2) 再読込 → パスフレーズで解錠 → 解錠中に「別の方式を追加」でリカバリシード
+    await page.reload({ waitUntil: "networkidle" });
+    await page.click('button:has-text("この鍵で解除")');
+    await page.fill('input[type="password"][autocomplete="current-password"]', PASSPHRASE);
+    await page.click('button:has-text("解除する")');
+    await expect(page.locator("text=解除済み")).toBeVisible({ timeout: 30000 });
+
+    await page.click('button:has-text("別の方式を追加")');
+    await page.click('button:has-text("リカバリシード")');
+    // 生成された 24 単語を Alpine state から取得 (解錠検証で再入力する)
+    const mnemonic = await page.evaluate(() => {
+      const el = document.querySelector('[x-data]');
+      return el && el._x_dataStack ? el._x_dataStack[0].mnemonic : "";
+    });
+    expect(mnemonic.split(" ").length).toBe(24);
+    await page.check("#mnemonic-acked");
+    await page.click('button:has-text("登録する")');
+    // 追加完了で start に戻り、鍵が 2 件になる
+    await expect(page.locator("ul.list-group > li")).toHaveCount(2, { timeout: 30000 });
+    await expect(page.locator(".alert-danger:visible")).toHaveCount(0);
+
+    // 3) ロック → 追加したリカバリシードで解錠できる (= 同じ MK を wrap している)
+    await page.click('button:has-text("今すぐロックする")');
+    const recLi = page.locator("li.list-group-item", { hasText: "リカバリシード" });
+    await recLi.locator('button:has-text("この鍵で解除")').click();
+    await page.fill("textarea", mnemonic);
+    await page.click('button:has-text("解除する")');
+    await expect(page.locator("text=解除済み")).toBeVisible({ timeout: 30000 });
+
+    // 4) 鍵の削除: confirm を承認し、パスフレーズ鍵を削除 → 1 件になる
+    page.on("dialog", (d) => d.accept());
+    const ppLi = page.locator("li.list-group-item", { hasText: "パスフレーズ" });
+    await ppLi.locator('button[title="この鍵を削除"]').click();
+    await expect(page.locator("ul.list-group > li")).toHaveCount(1, { timeout: 30000 });
+    await expect(page.locator(".alert-danger:visible")).toHaveCount(0);
+  });
 });

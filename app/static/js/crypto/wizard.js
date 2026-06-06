@@ -15,6 +15,7 @@
 import { SharedCryptoClient } from "./shared-client.js";
 import {
   createWrappedKey,
+  deleteWrappedKey,
   listWrappedKeys,
   touchWrappedKey,
 } from "./api.js";
@@ -79,6 +80,9 @@ export function encryptionKeyWizard(config = {}) {
     unlockingKey: null,        // 解除対象の wrapped_key オブジェクト
     unlockPassphrase: "",      // パスフレーズ方式の入力
     unlockMnemonic: "",        // リカバリシード方式の入力
+    // 追加モード: true なら「解錠中の MK を別方式で wrap して鍵を追加」。
+    // false (既定) は初回セットアップ (新規 MK 生成)。
+    addMode: false,
     // X25519 鍵ペア backfill 用ユーザー ID (テンプレートから注入、§14 / E5 PR-A)
     _userId: config.userId ?? null,
 
@@ -302,6 +306,75 @@ export function encryptionKeyWizard(config = {}) {
       }
     },
 
+    /**
+     * 鍵登録の前に MK を準備する。
+     * - 通常 (初回): _ensureNewKeySafe で多重鍵を防ぎ generateKey で新規 MK 生成。
+     *   返り値 true (= generateKey した → 失敗時 _rollbackWorkerKey 対象)。
+     * - 追加 (addMode): 解錠済みの既存 MK をそのまま wrap する。generateKey せず、
+     *   MK 未解錠なら中断。返り値 false (= MK を生成していないので rollback 不要)。
+     */
+    async _prepareMkForRegister() {
+      if (this.addMode) {
+        const st = await client.status();
+        if (!st.hasKey) {
+          throw new Error(
+            "鍵を追加するには、先に既存の鍵で暗号鍵を解除してください。",
+          );
+        }
+        return false;
+      }
+      await this._ensureNewKeySafe();
+      await client.generateKey();
+      return true;
+    },
+
+    /** createWrappedKey 成功後の遷移。追加モードは一覧へ戻り、初回は done へ。 */
+    async _afterRegister(method) {
+      if (this.addMode) {
+        this.addMode = false;
+        this.step = "start";
+        try {
+          this.existingKeys = await listWrappedKeys();
+        } catch (_e) { /* ignore */ }
+      } else {
+        this.doneMethod = method;
+        this.step = "done";
+        this.hasKey = true;
+        // 新規 MK 確立直後に X25519 鍵ペアを生成・保管 (§14 / E5 PR-A)
+        await this._backfillKeyPair();
+      }
+    },
+
+    /** 「別の方式を追加」: 解錠中の MK に別方式の wrapped_key を足す。 */
+    addAnotherMethod() {
+      this.error = "";
+      this.addMode = true;
+      this.step = "choose";
+    },
+
+    /** wrapped_key を削除する (最終 1 件はサーバが 409 で保護)。 */
+    async deleteKey(wk) {
+      this.error = "";
+      if (!wk || wk.id == null) return;
+      const label = wk.label || wk.method || "この鍵";
+      if (typeof globalThis.confirm === "function"
+          && !globalThis.confirm(
+            `「${label}」を削除します。よろしいですか?\n`
+            + "(この方式での解除ができなくなります。他に登録済みの方式が必要です)",
+          )) {
+        return;
+      }
+      this.loading = true;
+      try {
+        await deleteWrappedKey(wk.id);
+        this.existingKeys = await listWrappedKeys();
+      } catch (e) {
+        this.error = "鍵の削除に失敗しました: " + (e?.message || e);
+      } finally {
+        this.loading = false;
+      }
+    },
+
     proceedChoose() {
       this.error = "";
       this.step = "choose";
@@ -326,14 +399,12 @@ export function encryptionKeyWizard(config = {}) {
       // 失敗した場合でも必ずゼロ埋めできるようにする (PR #143 申し送り対応)
       let derivedKey = null;
       try {
-        await this._ensureNewKeySafe();
         // 1. Passkey PRF 認証 → derived_key + credential DB PK
         const result = await beginPasskeyKeyDerivation();
         derivedKey = result.derivedKey;
         const credentialDbId = result.credentialDbId;
-        // 2. SharedWorker で新規 MK 生成
-        await client.generateKey();
-        workerKeyGenerated = true;
+        // 2. 追加モードは既存 MK を wrap、初回は新規 MK 生成。
+        workerKeyGenerated = await this._prepareMkForRegister();
         // 3. derived_key で MK を wrap (Transferable で detach される)
         const { wrapped, iv } = await client.wrap(derivedKey);
         // 4. wrapped_keys に登録 (method=passkey_prf + webauthn_credential_id)
@@ -344,14 +415,10 @@ export function encryptionKeyWizard(config = {}) {
           salt: null,
           kdf_params: null,
           webauthn_credential_id: credentialDbId,
-          label: "Passkey (初回)",
+          label: this.addMode ? "Passkey (追加)" : "Passkey (初回)",
         });
         workerKeyGenerated = false;
-        this.doneMethod = "passkey_prf";
-        this.step = "done";
-        this.hasKey = true;
-        // 新規 MK 確立直後に X25519 鍵ペアを生成・保管 (§14 / E5 PR-A)
-        await this._backfillKeyPair();
+        await this._afterRegister("passkey_prf");
       } catch (e) {
         this.error = e?.message || String(e);
         if (workerKeyGenerated) {
@@ -396,11 +463,10 @@ export function encryptionKeyWizard(config = {}) {
       // generateKey 成功後に後続が失敗したらロールバックすべき
       let workerKeyGenerated = false;
       try {
-        await this._ensureNewKeySafe();
         // hash-wasm を CDN からロード (初回のみ実体取得)
         await loadHashWasm();
-        await client.generateKey();
-        workerKeyGenerated = true;
+        // 追加モードは既存 MK を wrap、初回は新規 MK 生成。
+        workerKeyGenerated = await this._prepareMkForRegister();
         const salt = generateSalt();
         let derived;
         try {
@@ -421,7 +487,7 @@ export function encryptionKeyWizard(config = {}) {
               parallelism: ARGON2ID_DEFAULTS.parallelism,
             },
             webauthn_credential_id: null,
-            label: "パスフレーズ (初回)",
+            label: this.addMode ? "パスフレーズ (追加)" : "パスフレーズ (初回)",
           });
         } finally {
           // derived は wrap で detach されているはずだが二重防御
@@ -433,11 +499,7 @@ export function encryptionKeyWizard(config = {}) {
         workerKeyGenerated = false;
         this.passphrase = "";
         this.passphraseConfirm = "";
-        this.doneMethod = "passphrase";
-        this.step = "done";
-        this.hasKey = true;
-        // 新規 MK 確立直後に X25519 鍵ペアを生成・保管 (§14 / E5 PR-A)
-        await this._backfillKeyPair();
+        await this._afterRegister("passphrase");
       } catch (e) {
         this.error = e?.message || String(e);
         // generateKey 成功後の失敗なら Worker の MK を clear して矛盾状態を解消
@@ -459,9 +521,8 @@ export function encryptionKeyWizard(config = {}) {
       this.loading = true;
       let workerKeyGenerated = false;
       try {
-        await this._ensureNewKeySafe();
-        await client.generateKey();
-        workerKeyGenerated = true;
+        // 追加モードは既存 MK を wrap、初回は新規 MK 生成。
+        workerKeyGenerated = await this._prepareMkForRegister();
         let derived;
         try {
           derived = await deriveKeyFromMnemonic(this.mnemonic);
@@ -473,7 +534,7 @@ export function encryptionKeyWizard(config = {}) {
             salt: null,
             kdf_params: null,
             webauthn_credential_id: null,
-            label: "リカバリシード (初回)",
+            label: this.addMode ? "リカバリシード (追加)" : "リカバリシード (初回)",
           });
         } finally {
           if (derived && derived.byteLength > 0) {
@@ -486,11 +547,7 @@ export function encryptionKeyWizard(config = {}) {
         // inspect できてしまうため、成功後すぐに空文字へクリアする。
         this.mnemonic = "";
         this.mnemonicAcked = false;
-        this.doneMethod = "recovery_seed";
-        this.step = "done";
-        this.hasKey = true;
-        // 新規 MK 確立直後に X25519 鍵ペアを生成・保管 (§14 / E5 PR-A)
-        await this._backfillKeyPair();
+        await this._afterRegister("recovery_seed");
       } catch (e) {
         this.error = e?.message || String(e);
         if (workerKeyGenerated) {
@@ -504,6 +561,7 @@ export function encryptionKeyWizard(config = {}) {
 
     backToStart() {
       this.error = "";
+      this.addMode = false;
       this.passphrase = "";
       this.passphraseConfirm = "";
       this.mnemonic = "";
