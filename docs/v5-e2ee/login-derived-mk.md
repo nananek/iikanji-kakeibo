@@ -32,7 +32,8 @@ mk_wrap_key    = HKDF(master, info="iikanji-mk-wrap-v1")   # ← サーバに送
 
 **プリミティブ仕様 (byte 精度。client-py/TUI と相互実装するため確定値):**
 - `Argon2id`: パラメータは `memory=64 MiB, iterations=3, parallelism=1`、出力 32B。`salt` は 16B (per-user、`wrapped_keys.salt` と同枠)。**これを v5.x の確定値とする** (client-py/TUI と byte 互換が要るため可変にしない)。`index.md §4` 現行の「※調整余地あり」表記は本方式の実装 PR (PR-1) で**削除し確定する**。
-- `HKDF` = **`HKDF-SHA256(ikm=master, salt=zero(32B), info=<上記文字列>, L=32)`**。info 文字列はバージョン付き (`iikanji-login-v1` / `iikanji-mk-wrap-v1`) を**全フローで厳守**する (短縮形を使わない)。`salt=zero(32B)` は RFC 5869 §2.2 (salt 省略時は HashLen バイトのゼロ列) に準拠し、既存 `bip39.js` の HKDF 実装と一致させる。
+- `HKDF` = **`HKDF-SHA256(ikm=master, salt=zero(32B), info=<上記文字列>, L=32)`**。info 文字列はバージョン付き (`iikanji-login-v1` / `iikanji-mk-wrap-v1`) を**全フローで厳守**する (短縮形を使わない)。`salt=zero(32B)` を選ぶ**理由**: `master` は Argon2id 出力で高エントロピーなため、RFC 5869 §2.2 のゼロ salt 使用条件 (IKM が既に高エントロピーなら salt 省略可) を満たす。結果として既存 `bip39.js` の HKDF 実装とも一致する (= salt 値を変える理由がない。「bip39.js に合わせるため」ではなく、両者が同じ RFC 条件に従うから一致する)。
+- **通信前提**: 上記すべて **TLS 必須**。`login_verifier` は HKDF で一方向化済みとはいえ照合値であり、平文 HTTP で送ると MITM が再送・なりすましに使えるため、登録/ログインの全 API は HTTPS のみで提供する。
 
 - サーバが見るのは `login_verifier` だけ。HKDF は一方向なので `master` も
   `mk_wrap_key` も導けない → **パスワード流用前提でも受動管理者は MK を取れない**。
@@ -182,6 +183,10 @@ OPAQUE (aPAKE) を使えば「サーバは salt 相当も見ない + 列挙耐�
   **注**: `index.md §2 / §10` は現状「パスフレーズ (フォールバック)」= 別途設定する
   passphrase として記述しており、本方式での意味変化 (= ログインパスワード由来) は
   **PR-3 で `index.md` を更新して反映**する (それまでは本設計書が正)。
+  > ⚠️ **実装者注**: `wrapped_keys.method='passphrase'` の **CHECK 制約値自体は不変**だが、
+  > その wrapped_key の「元になる認証情報」が本方式 (PR-3 以降) では**ログインパスワード**に
+  > 変わる (鍵派生ロジックの変更)。`index.md §10.1` を読んで従来の「別途設定したパスフレーズ」
+  > として実装しないこと。
 - 破壊的変更可のため既存ユーザーはクリーン再作成 (段階移行不要)。
 
 ### 7.2 `passkey_only_login` ユーザーの扱い
