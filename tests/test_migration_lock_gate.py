@@ -55,7 +55,7 @@ def test_login_locked_user_redirects_to_locked(client, locked_user):
     assert "/migration/locked" in resp.headers["Location"]
     # 限定セッションが張られている (force-login)。
     with client.session_transaction() as sess:
-        assert sess.get("_user_id") == str(locked_user.id)
+        assert sess.get("_user_id") == f"{locked_user.id}.0"
 
 
 def test_login_active_user_goes_to_dashboard(client, user):
@@ -84,7 +84,7 @@ def test_recovery_login_locked_user_redirects_to_locked(client, db, locked_user)
     assert resp.status_code == 302
     assert "/migration/locked" in resp.headers["Location"]
     with client.session_transaction() as sess:
-        assert sess.get("_user_id") == str(locked_user.id)
+        assert sess.get("_user_id") == f"{locked_user.id}.0"
         # pending_recovery を立てない (lock gate とのループ回避)。
         assert sess.get("pending_recovery_action") is None
 
@@ -122,7 +122,7 @@ def test_passkey_login_locked_user_redirects_to_locked(client, db, locked_user):
     assert "/migration/locked" in body["redirect"]
     # force-login で限定セッションが張られている。
     with client.session_transaction() as sess:
-        assert sess.get("_user_id") == str(locked_user.id)
+        assert sess.get("_user_id") == f"{locked_user.id}.0"
 
 
 # --- Bearer 認証のロック遮断 ---

@@ -78,6 +78,20 @@ class User(UserMixin, db.Model):
     login_kdf_params = db.Column(db.JSON, nullable=True)          # {memory, iterations, parallelism}
     login_secret_version = db.Column(db.SmallInteger, nullable=True)  # 遅延ローテーション用
 
+    # #385 PR-4b-1: リカバリシードをフル復旧因子化する verifier (設計書 §3.4.1)。
+    # recovery_seed_server_hash = HMAC(LOGIN_SERVER_SECRET, "recovery-hash"||0x00||
+    #   recovery_verifier)。recovery_verifier = HKDF(seed_bytes,"iikanji-recovery-login-v1")。
+    # DB 流出時もシード平文/verifier を得られない。旧ウィザード作成ユーザーは NULL。
+    recovery_seed_server_hash = db.Column(db.LargeBinary, nullable=True)  # 32B
+
+    # #385 PR-4b-1: セッション失効カウンタ (設計書 §3.4.1 セッション失効)。get_id() に
+    # 焼き込み、リセット/パスワード変更でインクリメントすると旧 Cookie が load_user の
+    # 照合で失効する。version 情報を持たない旧 Cookie は load_user が 0 とみなすため、
+    # default 0 で後方互換 (既存ログインセッションを切らない)。
+    session_token_version = db.Column(
+        db.Integer, nullable=False, default=0, server_default="0"
+    )
+
     accounts = db.relationship("Account", backref="user", lazy="dynamic")
     journal_entries = db.relationship("JournalEntry", backref="user", lazy="dynamic")
     medical_expenses = db.relationship("MedicalExpense", backref="user", lazy="dynamic")
@@ -159,10 +173,43 @@ class User(UserMixin, db.Model):
             and self.recovery_code_used_at is None
         )
 
+    def get_id(self):
+        """Flask-Login のセッション識別子。
+
+        #385 PR-4b-1: セッション失効のため `session_token_version` を焼き込む
+        ("id.version" 形式)。リセット/パスワード変更で version をインクリメントすると、
+        旧 version を持つ Cookie は load_user の照合で弾かれ強制ログアウトになる
+        (設計書 §3.4.1 セッション失効)。
+        """
+        return f"{self.id}.{self.session_token_version or 0}"
+
+    def bump_session_token_version(self):
+        """セッション失効: version をインクリメントし旧 Cookie を無効化する。"""
+        self.session_token_version = (self.session_token_version or 0) + 1
+
     def __repr__(self):
         return f"<User {self.username}>"
 
 
 @login_manager.user_loader
 def load_user(user_id):
-    return db.session.get(User, int(user_id))
+    # #385 PR-4b-1: get_id() は "id.version" 形式 (session_token_version 焼き込み)。
+    # 旧 Cookie (version 無し) は version=0 として扱い後方互換を保つ
+    # (session_token_version 既定 0 の既存ユーザーは通過する)。version 不一致は
+    # リセット/パスワード変更によるセッション失効なので None を返して強制ログアウト。
+    raw = str(user_id)
+    if "." in raw:
+        id_str, _, ver_str = raw.partition(".")
+    else:
+        id_str, ver_str = raw, "0"
+    try:
+        uid = int(id_str)
+        ver = int(ver_str)
+    except (TypeError, ValueError):
+        return None
+    user = db.session.get(User, uid)
+    if user is None:
+        return None
+    if (user.session_token_version or 0) != ver:
+        return None
+    return user

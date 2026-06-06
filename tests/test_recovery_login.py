@@ -177,7 +177,7 @@ class TestPasskeyOnlyLoginBlock:
         }, follow_redirects=False)
         assert resp.status_code == 302
         with client.session_transaction() as sess:
-            assert sess.get("_user_id") == str(user.id)
+            assert sess.get("_user_id") == f"{user.id}.0"
 
 
 class TestPasskeyOnlyToggle:
@@ -330,7 +330,7 @@ class TestRecoveryLogin:
         assert "/settings/passkeys" in resp.headers["Location"]
         # セッションに pending_recovery_action が立っている
         with client.session_transaction() as sess:
-            assert sess.get("_user_id") == str(passkey_only_user.id)
+            assert sess.get("_user_id") == f"{passkey_only_user.id}.0"
             assert sess.get("pending_recovery_action") is True
         # コードが消費済みになっている
         db.session.refresh(passkey_only_user)

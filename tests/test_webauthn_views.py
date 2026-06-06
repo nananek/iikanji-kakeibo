@@ -152,9 +152,9 @@ class TestAuthenticateVerify:
             assert resp.status_code == 200
             body = resp.get_json()
             assert body["ok"] is True
-            # ログイン状態
+            # ログイン状態 (#385 PR-4b-1: get_id は "id.version" 形式)
             with client.session_transaction() as sess:
-                assert sess.get("_user_id") == str(user.id)
+                assert sess.get("_user_id") == f"{user.id}.0"
 
     def test_verify_failure_safe_message(self, db, client, user, accounts):
         cred = WebAuthnCredential(

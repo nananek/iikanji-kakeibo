@@ -34,6 +34,7 @@ from app.models.wrapped_key import (
     METHOD_RECOVERY_SEED,
     WrappedKey,
 )
+from app.services import login_derived
 from app.services.api_auth import auth_required, rate_limit_key
 
 
@@ -256,6 +257,28 @@ def create_wrapped_key():
             return jsonify(
                 error=f"{method} must not have webauthn_credential_id"
             ), 400
+
+    # #385 PR-4b-1: recovery_seed 作成時に recovery_verifier を受け取り、サーバ側
+    # verifier (recovery_seed_server_hash) を確立する (設計書 §3.4.1)。後方互換のため
+    # optional: 未指定 (旧クライアント) なら従来どおりハッシュ無しで作成する。
+    recovery_verifier, err = _b64_or_400(payload, "recovery_verifier", required=False)
+    if err is not None:
+        return jsonify(error=err), 400
+    if recovery_verifier is not None:
+        if method != METHOD_RECOVERY_SEED:
+            return jsonify(
+                error="recovery_verifier is only valid for recovery_seed"
+            ), 400
+        if len(recovery_verifier) != 32:
+            return jsonify(error="recovery_verifier length must be 32 bytes"), 400
+        # LOGIN_SERVER_SECRET 未設定 (login-derived 未活性化だが E2EE ウィザードは
+        # 動く構成) では verifier ハッシュを計算できない。recovery seed 作成自体は
+        # 壊さず、ハッシュ保存だけグレースフルにスキップする (seed-only リセットは
+        # secret 設定後に後埋め導線で確立、§3.4.1)。
+        if login_derived.is_configured():
+            g.auth_user.recovery_seed_server_hash = (
+                login_derived.compute_recovery_server_hash(recovery_verifier)
+            )
 
     row = WrappedKey(
         user_id=g.auth_user.id,

@@ -32,6 +32,8 @@ MIN_KDF_ITERATIONS = 3
 
 _LOGIN_HASH_LABEL = b"login-hash\x00"
 _DUMMY_SALT_LABEL = b"dummy-salt\x00"
+# #385 PR-4b: リカバリシードをフル復旧因子化する verifier 用ラベル (§3.4.1)。
+_RECOVERY_HASH_LABEL = b"recovery-hash\x00"
 
 
 def _secret_bytes():
@@ -61,6 +63,37 @@ def verify_login_verifier(stored_hash, login_verifier):
         return False
     computed = compute_login_server_hash(login_verifier)
     return hmac.compare_digest(computed, bytes(stored_hash))
+
+
+def compute_recovery_server_hash(recovery_verifier, *, secret=None):
+    """recovery_seed_server_hash = HMAC-SHA256(secret, "recovery-hash"||0x00||recovery_verifier)。
+
+    recovery_verifier は HKDF(seed_bytes, info="iikanji-recovery-login-v1") の 32B
+    (クライアントが計算して送る)。login_server_hash と同じく生の verifier は保存せず、
+    本ハッシュのみ DB に置く (§3.4.1)。
+
+    @param recovery_verifier  クライアントが送る 32B (bytes)
+    @returns 32B HMAC ダイジェスト (bytes)
+    """
+    if secret is None:
+        secret = _secret_bytes()
+    return hmac.new(
+        secret, _RECOVERY_HASH_LABEL + recovery_verifier, hashlib.sha256
+    ).digest()
+
+
+def verify_recovery_verifier(stored_hash, recovery_verifier):
+    """recovery_verifier が保存ハッシュと一致するか定数時間照合する (§3.4.1)。
+
+    stored_hash が NULL (旧ウィザード作成 / シード未設定) でも `0x00 * 32` との
+    ダミー照合を**常に実行してから** False を返す。`if stored_hash is None: return`
+    の早期 return はタイミングでシード設定有無を漏らすため使わない。
+    """
+    computed = compute_recovery_server_hash(recovery_verifier)
+    reference = bytes(stored_hash) if stored_hash else b"\x00" * 32
+    matched = hmac.compare_digest(computed, reference)
+    # NULL の場合は (理論上 computed が全ゼロでも) 認証成立させない。
+    return matched and bool(stored_hash)
 
 
 def compute_dummy_salt(username):
