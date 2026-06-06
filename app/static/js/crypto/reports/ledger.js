@@ -64,11 +64,16 @@ export function computeLedger(entries, options) {
     );
   }
 
-  // entry.id 昇順 (作成順 = 概ね時系列)
+  // 日付 (復号した entry.date) 昇順 → 同日は entry.id (作成順) で安定ソート。
+  // v4 (平文) サーバの `ORDER BY date, id` と一致させる。E2EE では date が
+  // 暗号化されているためクライアントで復号後にソートする必要がある。entry.id
+  // 順だけだと「作成順 ≠ 日付順」(バックデート入力・取込・AI 証憑等) のとき
+  // 表示が日付順に並ばず、running balance の積み上げ順もずれて残高が乱れる。
   const sorted = [...entries].sort((a, b) => {
-    const ai = a.id ?? 0;
-    const bi = b.id ?? 0;
-    return ai - bi;
+    const ad = a.date || "";
+    const bd = b.date || "";
+    if (ad !== bd) return ad < bd ? -1 : 1;
+    return (a.id ?? 0) - (b.id ?? 0);
   });
 
   const rows = [];
