@@ -16,8 +16,13 @@ HMAC した `login_server_hash` を保存・照合する。DB が流出しても
 
 import hashlib
 import hmac
+import os
 
 from flask import current_app
+
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
 # Argon2id 既定パラメータ (client argon2.js の ARGON2ID_DEFAULTS と一致。確定値)。
 DEFAULT_KDF_PARAMS = {"memory": 65536, "iterations": 3, "parallelism": 1}
@@ -38,6 +43,8 @@ _RECOVERY_HASH_LABEL = b"recovery-hash\x00"
 _DUMMY_RECOVERY_WRAP_LABEL = b"dummy-recovery-wrap\x00"
 _DUMMY_RECOVERY_WRAP2_LABEL = b"dummy-recovery-wrap2\x00"
 _DUMMY_RECOVERY_IV_LABEL = b"dummy-recovery-iv\x00"
+# PR-T1: TOTP secret の at-rest 暗号鍵を導出する HKDF info (§3.6.1)。
+_TOTP_ENC_INFO = b"iikanji-totp-enc-v1"
 
 
 def _secret_bytes():
@@ -141,6 +148,43 @@ def compute_dummy_salt(username):
         hashlib.sha256,
     ).digest()
     return digest[:16]
+
+
+def _totp_enc_key():
+    """TOTP secret の at-rest 暗号鍵 = HKDF-SHA256(LOGIN_SERVER_SECRET, salt=zero(32),
+    info="iikanji-totp-enc-v1", L=32) (§3.6.1)。
+
+    salt=zero(32) は意図的 — LOGIN_SERVER_SECRET 自体が高エントロピー鍵素材なので可変
+    salt は不要 (RFC 5869 §2.2)。login_verifier / recovery のドメインと info で分離する。
+    """
+    return HKDF(
+        algorithm=hashes.SHA256(), length=32, salt=b"\x00" * 32, info=_TOTP_ENC_INFO,
+    ).derive(_secret_bytes())
+
+
+def encrypt_totp_secret(secret_bytes, user_id):
+    """TOTP secret をサーバ鍵で AES-256-GCM 暗号化する (§3.6.1)。
+
+    AAD に user_id を含めることで別ユーザーへの暗号文移植を防ぐ。AAD は
+    `str(user_id).encode("ascii")` に固定 (環境非依存)。
+
+    @returns (ciphertext+tag: bytes, iv: 12 bytes)
+    """
+    key = _totp_enc_key()
+    iv = os.urandom(12)
+    aad = str(int(user_id)).encode("ascii")
+    ciphertext = AESGCM(key).encrypt(iv, secret_bytes, aad)
+    return ciphertext, iv
+
+
+def decrypt_totp_secret(ciphertext, iv, user_id):
+    """encrypt_totp_secret の逆。改ざん/別ユーザー移植は InvalidTag で失敗する。
+
+    @returns secret_bytes
+    """
+    key = _totp_enc_key()
+    aad = str(int(user_id)).encode("ascii")
+    return AESGCM(key).decrypt(bytes(iv), bytes(ciphertext), aad)
 
 
 def validate_kdf_params(params):
