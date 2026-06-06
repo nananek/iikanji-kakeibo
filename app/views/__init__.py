@@ -1,4 +1,5 @@
 from app.views.auth import bp as auth_bp
+from app.views.auth_api import bp as auth_api_bp
 from app.views.dashboard import bp as dashboard_bp
 from app.views.cashbook import bp as cashbook_bp
 from app.views.journal import bp as journal_bp
@@ -26,6 +27,7 @@ from app.views.admin import bp as admin_bp
 
 def register_blueprints(app):
     app.register_blueprint(auth_bp)
+    app.register_blueprint(auth_api_bp)
     app.register_blueprint(dashboard_bp)
     app.register_blueprint(cashbook_bp)
     app.register_blueprint(journal_bp)
