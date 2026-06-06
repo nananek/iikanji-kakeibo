@@ -109,7 +109,9 @@ export async function runLoginFlow({
     }
     return await _doNormal({
       f, client, username, material, nextUrl,
+      onStatus, onProgress,
       listWrappedKeysImpl: _listWrappedKeys,
+      ensureKeyPairImpl: _ensureKeyPair, runRewrapImpl: _runRewrap,
     });
   } finally {
     // login_verifier はゼロ化。mk_wrap_key は wrap/unwrap で Transferable detach 済。
@@ -119,7 +121,10 @@ export async function runLoginFlow({
 }
 
 
-async function _doNormal({ f, client, username, material, nextUrl, listWrappedKeysImpl }) {
+async function _doNormal({
+  f, client, username, material, nextUrl,
+  onStatus, onProgress, listWrappedKeysImpl, ensureKeyPairImpl, runRewrapImpl,
+}) {
   const resp = await _postJson(f, "/auth/login/finish", {
     username,
     login_verifier: b64encode(material.loginVerifier),
@@ -127,6 +132,7 @@ async function _doNormal({ f, client, username, material, nextUrl, listWrappedKe
   if (!resp.ok) {
     return { status: "error", message: "ユーザー名またはパスワードが正しくありません。" };
   }
+  const fin = await resp.json();
   // 認証成功 (セッション確立)。passphrase wrapped_key を取得して MK を unwrap する。
   const keys = await listWrappedKeysImpl();
   const pp = keys.find((k) => k.method === "passphrase");
@@ -138,6 +144,23 @@ async function _doNormal({ f, client, username, material, nextUrl, listWrappedKe
   }
   // unwrap は mk_wrap_key を Transferable detach し、MK を SharedWorker に展開する。
   await client.unwrap(material.mkWrapKey, pp.wrapped_master_key, pp.wrap_iv);
+
+  // 移行 finish 後に rewrap が中断されていれば (temp-MK 残存)、ここで resume する
+  // (設計書 §3.5。/migration/rewrap は処理済みを skip する idempotent 実装)。
+  if (fin.needs_rewrap) {
+    try {
+      await ensureKeyPairImpl(client, fin.user_id, f);
+      onStatus("データの暗号化を再開しています…");
+      await runRewrapImpl({
+        client, userId: fin.user_id, years: fin.years || [],
+        fetchImpl: f, onProgress, onStatus,
+      });
+    } catch (e) {
+      // resume 失敗は致命でない (MK 解錠済・次回再試行 or バナーから完了可)。
+      // ログインは成立しているのでダッシュボードへ進める。
+      console.warn("rewrap resume deferred:", e);
+    }
+  }
   return { status: "redirect", url: nextUrl };
 }
 
@@ -175,17 +198,26 @@ async function _doMigrate({
   }
   const fin = await resp.json();
 
-  // 鍵ペア (X25519) を生成・保管する。public_key が立つと鍵未設定ゲートが自己回復する。
-  onStatus("暗号鍵を準備しています…");
-  await ensureKeyPairImpl(client, fin.user_id, f);
+  // ここまでで認証因子は server-side 確立済 (login_salt + wrapped_key)。以降の鍵ペア
+  // 生成・rewrap が失敗しても、MK は wrapped_key として復元可能で rewrap は次回ログイン
+  // (通常パス) で resume できる。よって致命にせず、失敗時も MK をクリアしてダッシュボードへ
+  // 進める (Worker に MK を残さない = レビュー Minor 対応)。
+  try {
+    // 鍵ペア (X25519) を生成・保管する。public_key が立つと鍵未設定ゲートが自己回復する。
+    onStatus("暗号鍵を準備しています…");
+    await ensureKeyPairImpl(client, fin.user_id, f);
 
-  // temp-MK→自 MK の rewrap を進捗バー付きで駆動し finalize する。
-  if (fin.needs_rewrap) {
-    onStatus("データを暗号化しています…");
-    await runRewrapImpl({
-      client, userId: fin.user_id, years: fin.years || [],
-      fetchImpl: f, onProgress, onStatus,
-    });
+    // temp-MK→自 MK の rewrap を進捗バー付きで駆動し finalize する。
+    if (fin.needs_rewrap) {
+      onStatus("データを暗号化しています…");
+      await runRewrapImpl({
+        client, userId: fin.user_id, years: fin.years || [],
+        fetchImpl: f, onProgress, onStatus,
+      });
+    }
+  } catch (e) {
+    console.warn("post-migration setup deferred:", e);
+    await client.clearKey();
   }
   return { status: "redirect", url: nextUrl };
 }

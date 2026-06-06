@@ -152,7 +152,16 @@ def _finish_normal(user, login_verifier):
     locked = not user.is_active
     # is_active=False (鍵未設定ロック) は force=True で限定セッション (gate が制御)。
     login_user(user, remember=not locked, force=locked)
-    return jsonify({"ok": True, "locked": locked})
+    # 移行 finish 後に rewrap が中断された場合、次回は通常パスに来る。temp-MK が
+    # 残っていればクライアントが rewrap を resume できるよう情報を返す (設計書 §3.5)。
+    needs_rewrap = user.migration_temp_mk is not None
+    return jsonify({
+        "ok": True,
+        "locked": locked,
+        "user_id": user.id,
+        "needs_rewrap": needs_rewrap,
+        "years": migration_rewrap_years(user.id) if needs_rewrap else [],
+    })
 
 
 def _finish_migrate(user, username, login_verifier, data):
