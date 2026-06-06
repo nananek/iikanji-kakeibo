@@ -1,4 +1,5 @@
 import json
+import re
 from datetime import date
 
 from flask import Blueprint, render_template, redirect, url_for, flash, request, jsonify, make_response
@@ -11,9 +12,15 @@ from app.models.voucher import Voucher
 from app.models.voucher_audit_log import VoucherAuditLog
 from app.forms.journal import JournalForm
 from app.services.fiscal import check_entry_modifiable, get_effective_period, get_closed_periods_map, get_restricted_before_year
-from app.views.helpers import get_grouped_accounts, is_safe_internal_path, safe_user_error
+from app.views.helpers import get_grouped_accounts, safe_user_error
 
 bp = Blueprint("journal", __name__, url_prefix="/journal")
+
+# 内部相対パス用の厳密な regex (CodeQL py/url-redirection を満たすため、helper 関数
+# 越しではなく view 内で直接マッチを評価する。auth.py の _INTERNAL_PATH_RE と同方針)。
+# 許容: '/' 始まり + ASCII 英数字 + `_ - . / ~` + query/fragment 記号。
+# プロトコル相対 ('//') / バックスラッシュ / scheme / netloc を排除。
+_INTERNAL_REDIRECT_RE = re.compile(r"\A/(?!/)[A-Za-z0-9_\-./~?=&%#]*\Z")
 
 
 
@@ -271,7 +278,11 @@ def bulk_delete():
     entry_ids = request.form.getlist("entry_ids", type=int)
     raw_redirect = request.form.get("redirect_url", "")
     fallback_url = url_for("journal.index")
-    redirect_url = raw_redirect if is_safe_internal_path(raw_redirect) else fallback_url
+    # オープンリダイレクト防止: helper 越しではなく view 内でインラインに内部パスを
+    # 検証する (CodeQL py/url-redirection がガードを辿れるようにする)。
+    redirect_url = (
+        raw_redirect if _INTERNAL_REDIRECT_RE.fullmatch(raw_redirect) else fallback_url
+    )
 
     if not entry_ids:
         flash("削除する仕訳が選択されていません。", "warning")

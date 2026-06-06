@@ -334,8 +334,10 @@ def _parse_fiscal_meta(data):
     """単一エンドポイント用に _validate_fiscal_meta を (year, month, err) で包む。"""
     try:
         fiscal_year, fiscal_month = _validate_fiscal_meta(data)
-    except ValueError as e:
-        return None, None, str(e)
+    except ValueError:
+        # 例外メッセージ (ユーザー入力を含みうる) は応答に載せず、制御済みの
+        # 定数メッセージを返す (CodeQL py/stack-trace-exposure 回避)。
+        return None, None, "会計期間 (fiscal_year / fiscal_month) の指定が不正です。"
     return fiscal_year, fiscal_month, None
 
 
@@ -1220,8 +1222,8 @@ def list_balance_cache_blobs():
     try:
         year = int(year_str)
         _validate_year(year)
-    except ValueError as e:
-        return jsonify({"error": str(e)}), 400
+    except ValueError:
+        return jsonify({"error": "year の指定が不正です (1900〜2200 の整数)。"}), 400
 
     user_id = g.auth_user.id
     blobs = (
@@ -1256,8 +1258,8 @@ def upsert_balance_cache_blob(year, period):
     try:
         _validate_year(year)
         _validate_period(period)
-    except ValueError as e:
-        return jsonify({"error": str(e)}), 400
+    except ValueError:
+        return jsonify({"error": "year または period の指定が不正です。"}), 400
 
     data = request.get_json(silent=True)
     if not data:
@@ -1309,8 +1311,8 @@ def delete_balance_cache_blobs(year):
     """
     try:
         _validate_year(year)
-    except ValueError as e:
-        return jsonify({"error": str(e)}), 400
+    except ValueError:
+        return jsonify({"error": "year の指定が不正です (1900〜2200 の整数)。"}), 400
 
     user_id = g.auth_user.id
     q = BalanceCacheBlob.query.filter_by(user_id=user_id, year=year)
@@ -1319,8 +1321,8 @@ def delete_balance_cache_blobs(year):
         try:
             from_period = int(from_period_str)
             _validate_period(from_period)
-        except ValueError as e:
-            return jsonify({"error": str(e)}), 400
+        except ValueError:
+            return jsonify({"error": "from_period の指定が不正です (0〜16 の整数)。"}), 400
         q = q.filter(BalanceCacheBlob.period >= from_period)
     deleted = q.delete(synchronize_session=False)
     db.session.commit()
@@ -2069,11 +2071,15 @@ def update_journal(entry_id):
     try:
         parsed = _validate_and_parse_batch_entry(data, 0)
     except ValueError as ve:
+        # _validate_and_parse_batch_entry の ValueError は制御済みの業務ルール文言
+        # (例: 損益振替期間は手動入力禁止 / lines は必須) で、ユーザー入力の生値や
+        # スタックトレースは含まない。よってそのまま返す。CodeQL py/stack-trace-exposure
+        # は本箇所では false-positive として dismiss する (#385 PR follow-up)。
         msg = str(ve)
         # entries[0]. プレフィックスは PUT では混乱を招くため除去する
         if msg.startswith("entries[0]"):
             msg = msg.replace("entries[0].", "").replace("entries[0]:", "").lstrip()
-        return jsonify({"error": msg}), 400
+        return jsonify({"error": msg}), 400  # codeql[py/stack-trace-exposure]
 
     # 更新後の対象期間が確定済みでないか確認 (fiscal_year / fiscal_month ベース)
     err = check_period_open_for_new(
