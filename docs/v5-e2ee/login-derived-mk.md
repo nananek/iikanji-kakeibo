@@ -155,10 +155,8 @@ HMAC の**メッセージ先頭にドメインラベル + `0x00`** を付けて�
 - **MK 自体は不変**。旧 `mk_wrap_key` で unwrap → 新 `mk_wrap_key'` で再 wrap。
 - サーバへ `{new salt', new server_hash', new wrapped_master_key', new wrap_iv'}` を送る。
 - 既存の `recovery_seed` / `passkey_prf` wrapped_key は MK 不変なので**そのまま有効**。
-- <!-- TODO PR-4b-1: パスワード変更成功時も session_token_version をインクリメントし、旧 PW で
-  確立した既存セッションを失効させる (§3.4.1「セッション失効」と同機構)。 --> パスワード変更でも
-  旧パスワードで確立済みの既存セッションを失効させるため、§3.4.1 で導入する `session_token_version`
-  を本フローの成功時にもインクリメントする (PR-4b-1 で適用)。
+- **(PR-4b-1 で適用)** パスワード変更でも旧パスワードで確立済みの既存セッションを失効させるため、
+  §3.4.1 で導入する `session_token_version` を本フローの成功時にもインクリメントする。
 
 ### 3.4 パスワード忘れ
 - パスワードは MK の唯一の常用守り → 忘れたら**リカバリシードでのみ復旧**。
