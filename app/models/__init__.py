@@ -22,6 +22,7 @@ from app.models.storage import StorageUsage
 from app.models.invitation import InvitationToken
 from app.models.wrapped_key import WrappedKey
 from app.models.export_job import ExportJob
+from app.models.totp_backup_code import TotpBackupCode
 
 __all__ = [
     "User",
@@ -50,4 +51,5 @@ __all__ = [
     "InvitationToken",
     "WrappedKey",
     "ExportJob",
+    "TotpBackupCode",
 ]

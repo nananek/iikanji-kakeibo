@@ -187,6 +187,29 @@ def test_finish_success_updates_all(client, db):
     assert rec.wrapped_master_key == b"\x05" * 48  # シードローテで差し替わった
 
 
+def test_finish_clears_totp(client, db):
+    """§3.6.5: リカバリリセットは TOTP をバイパス + 初期化する。secret/確認状態クリア +
+    バックアップコード削除。"""
+    from app.models.totp_backup_code import TotpBackupCode
+
+    u, verifier = _seed_reset_user(db, username="totpuser", verifier_byte=0x66)
+    u.totp_enabled = True
+    u.totp_secret_encrypted = b"\xab" * 36
+    u.totp_secret_iv = b"\xcd" * 12
+    u.totp_last_used_step = 12345
+    db.session.add(TotpBackupCode(user_id=u.id, code_hash="x" * 64, code_prefix="ab.."))
+    db.session.commit()
+
+    r = client.post("/auth/recovery/finish", json=_finish_payload("totpuser", verifier))
+    assert r.status_code == 200
+    refreshed = db.session.get(User, u.id)
+    assert refreshed.totp_enabled is False
+    assert refreshed.totp_secret_encrypted is None
+    assert refreshed.totp_secret_iv is None
+    assert refreshed.totp_last_used_step is None
+    assert TotpBackupCode.query.filter_by(user_id=u.id).count() == 0
+
+
 def test_finish_clears_passkey_only_login(client, db):
     """§3.4.1 passkey_only revival: リセット成功で passkey_only_login が解除され、
     設定した新パスワードでログインできるようになる (passkey 紛失時の詰み防止)。"""

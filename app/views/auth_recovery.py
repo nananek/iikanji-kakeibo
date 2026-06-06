@@ -29,6 +29,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.extensions import db, limiter
 from app.models.user import User
+from app.models.totp_backup_code import TotpBackupCode
 from app.models.wrapped_key import (
     METHOD_PASSPHRASE,
     METHOD_RECOVERY_SEED,
@@ -218,6 +219,16 @@ def recovery_finish():
     # ログインを有効化する (werkzeug フォールバック /login も通れるようにする)。UI では
     # 「この操作でパスワード認証が有効になる」旨を警告する (PR-4b-3)。
     user.passkey_only_login = False
+
+    # TOTP バイパス + 初期化 (§3.6.5、PR-T1): リカバリシードリセットは TOTP をバイパスする
+    # (seed = 全権復旧因子)。TOTP デバイスも紛失している可能性が高いので secret/確認状態を
+    # クリアし、バックアップコードを無効化する。リセット後に改めて TOTP を再設定させる。
+    user.totp_enabled = False
+    user.totp_secret_encrypted = None
+    user.totp_secret_iv = None
+    user.totp_confirmed_at = None
+    user.totp_last_used_step = None
+    TotpBackupCode.query.filter_by(user_id=user.id).delete()
 
     # 既存セッションを全失効 (攻撃者が握る旧 Cookie / 解錠済み MK を無効化、§3.4.1)。
     user.bump_session_token_version()

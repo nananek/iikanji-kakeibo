@@ -92,6 +92,20 @@ class User(UserMixin, db.Model):
         db.Integer, nullable=False, default=0, server_default="0"
     )
 
+    # #385 PR-T1: TOTP 2FA (opt-in、設計書 §3.6)。secret はサーバが検証時に復号する必要が
+    # あるため E2EE 不可。LOGIN_SERVER_SECRET 由来鍵で AES-256-GCM at-rest 暗号化して保管する
+    # (login_derived.encrypt_totp_secret)。MK 派生には混ぜない。
+    totp_secret_encrypted = db.Column(db.LargeBinary, nullable=True)  # 暗号文+tag (36B)
+    totp_secret_iv = db.Column(db.LargeBinary, nullable=True)         # 12B
+    # verify-before-enable: 確認コードが通るまで False (誤登録ロックアウト防止)。
+    totp_enabled = db.Column(
+        db.Boolean, nullable=False, default=False, server_default=db.false()
+    )
+    totp_confirmed_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    # replay 対策 (§3.6.4): 最後に検証成功した TOTP step (floor(unixtime/30)) を記録し、
+    # 同一以前 step の再利用を拒否する。
+    totp_last_used_step = db.Column(db.BigInteger, nullable=True)
+
     accounts = db.relationship("Account", backref="user", lazy="dynamic")
     journal_entries = db.relationship("JournalEntry", backref="user", lazy="dynamic")
     medical_expenses = db.relationship("MedicalExpense", backref="user", lazy="dynamic")
