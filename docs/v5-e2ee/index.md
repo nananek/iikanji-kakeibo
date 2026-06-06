@@ -174,7 +174,8 @@ WebAuthn は複数 Passkey 登録をサポートしている (v4.x で既に対�
 ### パスフレーズ
 
 - **8 文字以上、推奨 16 文字以上** (BIP-39 シードなら強度十分)
-- KDF: **Argon2id** (memory=64 MiB, iterations=3, parallelism=1) ※調整余地あり
+- KDF: **Argon2id** (memory=64 MiB, iterations=3, parallelism=1)、出力 32B (**v5.x 確定値**。
+  client-py/TUI と byte 互換が要るため可変にしない。`login-derived-mk.md §2` 参照)
 - ソルトは `wrapped_keys.salt` (16 bytes random) で per-user
 
 ### リカバリシード
