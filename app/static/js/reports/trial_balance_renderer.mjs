@@ -223,7 +223,7 @@ async function _run() {
     const [
       { SharedCryptoClient },
       { fetchJournalsForYear },
-      { computeTrialBalance },
+      { computeTrialBalance, computeBsOpeningFromPrior },
       { composeTrialBalanceView },
       { fetchBalanceCacheBlobs },
     ] = await Promise.all([
@@ -260,9 +260,34 @@ async function _run() {
     const journalsPromise = fetchJournalsForYear({
       client, userId: params.user_id, fiscalYear: params.fiscal_year,
     });
-    const [blobs, entries] = await Promise.all([bcbPromise, journalsPromise]);
+    // B/S 科目の前年繰越 (記帳開始以来の累計) 用に、前年度以前 (min_year..year-1)
+    // の全 entries を取得する。v4 サーバ試算表の opening=date<年初 累計に相当。
+    // min_year なし / 当年が最古なら fetch 不要。
+    const minYear = params.min_year;
+    const priorYearsPromise = (typeof minYear === "number"
+      && minYear < params.fiscal_year)
+      ? Promise.all(
+          Array.from(
+            { length: params.fiscal_year - minYear },
+            (_v, i) => minYear + i,
+          ).map((y) => fetchJournalsForYear({
+            client, userId: params.user_id, fiscalYear: y,
+          }).catch((e) => {
+            console.warn(`trial_balance_renderer: prior year ${y} fetch failed`, e);
+            return [];
+          })),
+        ).then((lists) => lists.flat())
+      : Promise.resolve([]);
+    const [blobs, entries, priorEntries] = await Promise.all([
+      bcbPromise, journalsPromise, priorYearsPromise,
+    ]);
 
     const opening = {};
+    // 1) B/S 科目: 前年度以前の累計を繰り越す (符号付き)。
+    const bsOpening = computeBsOpeningFromPrior(priorEntries, accountsMeta);
+    for (const [code, val] of Object.entries(bsOpening)) opening[code] = val;
+    // 2) 当年度内 pf-1 までの累計 (intra-year) を加算 (前年繰越と二重計上しない:
+    //    当年 BCB は年度内累計で前年を含まない)。
     if (pf >= 1) {
       const cacheForPeriod = blobs[pf - 1];
       if (cacheForPeriod) {
@@ -270,8 +295,9 @@ async function _run() {
           const meta = accountsMeta[code];
           if (!meta || !Array.isArray(pair) || pair.length < 2) continue;
           const [cumD, cumC] = pair;
-          opening[code] = meta.normal_balance === "debit"
+          const intra = meta.normal_balance === "debit"
             ? (cumD - cumC) : (cumC - cumD);
+          opening[code] = (opening[code] || 0) + intra;
         }
       }
     }
