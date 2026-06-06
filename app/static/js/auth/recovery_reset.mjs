@@ -155,7 +155,10 @@ export async function runRecoveryReset({ username, mnemonic, newPassword, client
     _zero(recoveryVerifier);
     if (newMat) { _zero(newMat.loginVerifier); _zero(newMat.mkWrapKey); }
     if (newRecoveryVerifier) _zero(newRecoveryVerifier);
-    // newSeedKey は client.wrap で detach 済。newMnemonic は呼び出し側が表示後に破棄。
+    // newSeedKey は client.wrap が transfer で detach する想定だが、wrap() 実装が将来
+    // 変わっても鍵素材が残らないよう防御的にゼロ化 (detach 済なら _zero は no-op)。
+    _zero(newSeedKey);
+    // newMnemonic は呼び出し側が表示後に破棄。
   }
 }
 
