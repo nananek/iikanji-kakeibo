@@ -46,6 +46,9 @@ def index():
         storage_summary = get_storage_summary(current_user)
     except NotImplementedError:
         storage_summary = None
+    # 注: `login_derived_enabled` (パスワード変更カードの出し分け) は
+    # app/__init__.py の context processor `inject_login_derived_flag` が全テンプレートに
+    # 注入するため、ここで明示的に渡す必要はない (#385 PR-4)。
     return render_template(
         "settings/index.html",
         plan_summary=plan_summary,

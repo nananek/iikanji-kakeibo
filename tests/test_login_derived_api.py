@@ -350,3 +350,31 @@ class TestChangePassword:
         ng = client.post("/auth/login/finish", json={
             "username": "testuser", "login_verifier": _b64(old_v)})
         assert ng.status_code == 401
+
+
+class TestChangePasswordPage:
+    """#385 PR-4: /settings/password とインデックスのカードが login_derived_enabled
+    (context processor inject_login_derived_flag 由来) で出し分けされる。"""
+
+    def test_page_and_card_shown_when_configured(self, client, db, user):
+        # 移行してログイン (LOGIN_SERVER_SECRET は autouse fixture で設定済)
+        salt = _begin(client, "testuser").get_json()["salt"]
+        _migrate(client, "testuser", _verifier(), salt)
+        # /settings/ に「パスワード変更」カードが出る (context processor 経由)
+        idx = client.get("/settings/")
+        assert idx.status_code == 200
+        assert "パスワード変更".encode() in idx.data
+        # 変更ページも開ける
+        page = client.get("/settings/password")
+        assert page.status_code == 200
+        assert b"change-password-form" in page.data
+
+    def test_page_404_and_card_hidden_when_unconfigured(self, app, client, db, user):
+        salt = _begin(client, "testuser").get_json()["salt"]
+        _migrate(client, "testuser", _verifier(), salt)  # ログイン確立
+        # LOGIN_SERVER_SECRET を外すと context processor が falsy → カード非表示・404
+        app.config["LOGIN_SERVER_SECRET"] = ""
+        idx = client.get("/settings/")
+        assert idx.status_code == 200
+        assert "パスワード変更".encode() not in idx.data
+        assert client.get("/settings/password").status_code == 404

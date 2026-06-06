@@ -10,9 +10,18 @@
 
 import { b64encode } from "../crypto/b64.js";
 import { deriveLoginMaterial } from "../crypto/login_kdf.js";
-import { generateSalt } from "../crypto/argon2.js";
+import { generateSalt, ARGON2ID_DEFAULTS } from "../crypto/argon2.js";
 import { loadHashWasm } from "../crypto/hash_wasm_loader.js";
 import { listWrappedKeys } from "../crypto/api.js";
+import { SharedCryptoClient } from "../crypto/shared-client.js";
+
+// サーバ検証 (login_derived.validate_kdf_params) が要求する {memory,iterations,parallelism}。
+// argon2.js の確定値から組み立てる (memorySize→memory にマップ)。
+const KDF_PARAMS = {
+  memory: ARGON2ID_DEFAULTS.memorySize,
+  iterations: ARGON2ID_DEFAULTS.iterations,
+  parallelism: ARGON2ID_DEFAULTS.parallelism,
+};
 
 
 function _zero(buf) {
@@ -79,7 +88,7 @@ export async function runChangePassword({ oldPassword, newPassword, client, deps
           old_login_verifier: b64encode(oldMat.loginVerifier),
           login_verifier: b64encode(newMat.loginVerifier),
           login_salt: b64encode(newSalt),
-          login_kdf_params: { memory: 65536, iterations: 3, parallelism: 1 },
+          login_kdf_params: KDF_PARAMS,
           wrapped_master_key: b64encode(wrapped.wrapped),
           wrap_iv: b64encode(wrapped.iv),
         }),
@@ -139,7 +148,6 @@ function _bind() {
     if (btn) btn.disabled = true;
     _setMsg(statusEl, "info", "変更しています…（鍵を再ラップ中）");
 
-    const { SharedCryptoClient } = await import("../crypto/shared-client.js");
     const workerUrl = globalThis.IIKANJI_SHARED_WORKER_URL
       || "/static/js/crypto/shared-worker.js";
     const client = new SharedCryptoClient(workerUrl);
