@@ -308,3 +308,25 @@ def test_finish_not_configured_503(client, db, app):
     assert client.post(
         "/auth/recovery/finish", json=_finish_payload("resetuser", _verifier(0x11))
     ).status_code == 503
+
+
+# --- 公開リセットページ (#385 PR-4b-3) -------------------------------------
+
+def test_reset_page_renders_when_configured(client, db):
+    r = client.get("/auth/recovery-reset")
+    assert r.status_code == 200
+    assert b"recovery-reset-form" in r.data
+
+
+def test_reset_page_404_when_not_configured(client, db, app):
+    app.config["LOGIN_SERVER_SECRET"] = ""
+    assert client.get("/auth/recovery-reset").status_code == 404
+
+
+def test_reset_page_redirects_when_authenticated(client, db, user):
+    with client.session_transaction() as sess:
+        sess["_user_id"] = str(user.id)
+        sess["_fresh"] = True
+    r = client.get("/auth/recovery-reset")
+    assert r.status_code == 302
+    assert "/login" not in r.headers["Location"]
