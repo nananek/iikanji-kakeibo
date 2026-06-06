@@ -264,6 +264,8 @@ recovery_seed wrapped_key を作成 (ウィザード) する際、クライア�
      new_recovery_verifier)` を計算して保存** (受信した `new_recovery_verifier` から導出。生の
      verifier は保存しない)
    - `session_token_version` インクリメント
+   - `passkey_only_login = False` (passkey 紛失で復旧したユーザーが新 PW でログインできるよう
+     解除。passkey_only revival、下記参照)
 
    passkey_prf 鍵は MK 不変でそのまま有効。version インクリメントにより当該ユーザーの既存サーバ
    セッションが全失効する (下記「セッション失効」)。

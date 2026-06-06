@@ -34,6 +34,10 @@ _LOGIN_HASH_LABEL = b"login-hash\x00"
 _DUMMY_SALT_LABEL = b"dummy-salt\x00"
 # #385 PR-4b: リカバリシードをフル復旧因子化する verifier 用ラベル (§3.4.1)。
 _RECOVERY_HASH_LABEL = b"recovery-hash\x00"
+# PR-4b-2: /auth/recovery/begin の列挙耐性ダミー応答用ラベル (§3.4.1)。
+_DUMMY_RECOVERY_WRAP_LABEL = b"dummy-recovery-wrap\x00"
+_DUMMY_RECOVERY_WRAP2_LABEL = b"dummy-recovery-wrap2\x00"
+_DUMMY_RECOVERY_IV_LABEL = b"dummy-recovery-iv\x00"
 
 
 def _secret_bytes():
@@ -58,7 +62,13 @@ def compute_login_server_hash(login_verifier, *, secret=None):
 
 
 def verify_login_verifier(stored_hash, login_verifier):
-    """送られた login_verifier が保存ハッシュと一致するか定数時間比較する。"""
+    """送られた login_verifier が保存ハッシュと一致するか定数時間比較する。
+
+    注: ここは stored_hash NULL で**意図的に早期 return** する。login の NULL は
+    「未移行ユーザー」を意味し、その有無は §3.2 のダミー salt で別途吸収しているため
+    タイミングで漏れても問題ない。一方 `verify_recovery_verifier` は NULL が
+    「シード未設定」を意味し、その有無を漏らしてはならないので早期 return しない (§3.4.1)。
+    """
     if not stored_hash:
         return False
     computed = compute_login_server_hash(login_verifier)
@@ -94,6 +104,30 @@ def verify_recovery_verifier(stored_hash, recovery_verifier):
     matched = hmac.compare_digest(computed, reference)
     # NULL の場合は (理論上 computed が全ゼロでも) 認証成立させない。
     return matched and bool(stored_hash)
+
+
+def compute_dummy_recovery_wrap(username):
+    """/auth/recovery/begin の列挙耐性ダミー応答 (wrapped_master_key 48B, wrap_iv 12B)。
+
+    実値 (AES-256-GCM: ciphertext 32B + GCM tag 16B = 48B / IV 12B) と**長さを一致**させ、
+    username に対し**決定的**にすることで、シード設定有無を「長さ」でも「2 回叩いて値が
+    変わる差」でも漏らさない (§3.4.1)。ダミーで unwrap しても finish の verifier 照合で
+    必ず失敗する。
+
+    @returns (wrapped_master_key: 48 bytes, wrap_iv: 12 bytes)
+    """
+    secret = _secret_bytes()
+    uname = (username or "").encode("utf-8")
+    raw = hmac.new(
+        secret, _DUMMY_RECOVERY_WRAP_LABEL + uname, hashlib.sha256
+    ).digest()  # 32B
+    ext = hmac.new(
+        secret, _DUMMY_RECOVERY_WRAP2_LABEL + uname, hashlib.sha256
+    ).digest()[:16]  # 16B
+    iv = hmac.new(
+        secret, _DUMMY_RECOVERY_IV_LABEL + uname, hashlib.sha256
+    ).digest()[:12]  # 12B
+    return raw + ext, iv
 
 
 def compute_dummy_salt(username):
