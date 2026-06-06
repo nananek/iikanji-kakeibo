@@ -25,6 +25,21 @@ with app.app_context():
         u.set_password('e2e_pass_12345')
     db.session.commit()
 
+    # #385: ログイン派生 MK の auth 状態を毎回リセットする。CI は fresh DB だが、
+    # ローカルの永続 DB ではテスト間で login_salt / wrapped_keys が蓄積し汚染するため、
+    # 初回ログインで必ず fresh 移行 (deterministic) が走るよう未移行状態に戻す。
+    from app.models.wrapped_key import WrappedKey
+    WrappedKey.query.filter_by(user_id=u.id).delete()
+    u.login_salt = None
+    u.login_server_hash = None
+    u.login_kdf_params = None
+    u.login_secret_version = None
+    u.migration_temp_mk = None
+    u.public_key = None
+    u.encrypted_private_key = None
+    u.private_key_iv = None
+    db.session.commit()
+
     # 標準科目シード
     seed_accounts_for_user(u.id)
 

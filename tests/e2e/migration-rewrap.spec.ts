@@ -1,13 +1,14 @@
-// E7 (#114) 平文→E2EE 一斉移行 (§16) のブラウザ E2E。
+// #385 PR-3b: v4 平文→E2EE 透過移行 (ログイン駆動) のブラウザ E2E。
 //
 // 「メンテナンスウィンドウで genkey 済 (サーバが temp-MK で全台帳を暗号化した)」
-// 状態のユーザーが、ブラウザで自分の本物 MK へ再ラップ移行を完遂し、データが
-// 壊れない (本物 MK で原本どおり復号できる) ことを端から端まで検証する。
+// 状態の v4 ユーザー (werkzeug password_hash・login_salt 未設定) が、**ログイン画面で
+// パスワードを入力するだけ**で透過移行を完遂し、データが壊れないことを検証する。
 //
-// MK は voucher-e2ee.spec と同じく SharedCryptoClient.setKey() で生 32B を直接
-// 注入し、Argon2id パスフレーズ派生 (hash-wasm 依存・低速) を回避する。鍵派生
-// 自体は JS 単体テストで網羅済み。本テストの目的は「temp-MK 暗号 → 本物 MK 再ラップ
-// → finalize → 復号一致」のブラウザ統合パスの検証。
+// ログイン押下で login_flow.mjs が ① /auth/login/begin ② 実 Argon2id で master 導出
+// ③ HKDF split ④ MK 生成 + wrap ⑤ /auth/login/finish 移行 ⑥ 鍵ペア確立 ⑦ temp-MK→自 MK
+// rewrap ⑧ finalize までをログインページ上で完遂してから redirect する。検証では
+// MK をログインパスワード + login_salt から再導出 (通常ログインと同じ HKDF split 解錠)
+// して復号照合する。
 //
 // finalize が temp_mk を破棄する (片道) ため、beforeEach で移行状態を毎回作り直す
 // (retry 安全)。
@@ -19,10 +20,8 @@ const BASE_URL = "http://127.0.0.1:5000";
 const USERNAME = "e2e_migrate";
 const PASSWORD = "e2e_pass_12345"; // gitleaks:allow E2E テスト用のダミーパスワード (秘密情報ではない)
 const YEAR = 2026;
-// 本物 MK (固定 32B)。再ラップ・復号照合の双方で同一鍵を注入する。
-const MK = Array.from({ length: 32 }, (_, i) => (i * 5 + 11) % 256);
 
-// シード (migration_crypto) が temp-MK で暗号化する原本。再ラップ後に本物 MK で
+// シード (migration_crypto) が temp-MK で暗号化する原本。透過移行後に自 MK で
 // 復号した結果がこれと一致すれば「データ無損傷」。
 const EXPECTED = [
   { desc: "テスト食費", lines: [
@@ -116,79 +115,75 @@ async function login(page) {
   await page.goto(`${BASE_URL}/login`);
   await page.fill('input[name="username"]', USERNAME);
   await page.fill('input[name="password"]', PASSWORD);
+  // ログイン押下で透過移行 (Argon2id + rewrap + finalize) まで自動駆動されるため長め。
   await Promise.all([
-    page.waitForURL((u) => !u.pathname.includes("/login"), { timeout: 15000 }),
+    page.waitForURL((u) => !u.pathname.includes("/login"), { timeout: 30000 }),
     page.click('input[type="submit"], button[type="submit"]'),
   ]);
 }
 
-test.describe("E7 平文→E2EE 移行 (クライアント再ラップ)", () => {
+test.describe("#385 v4 透過移行 (ログイン駆動)", () => {
   let uid: number;
 
   test.beforeEach(() => {
     uid = seedMigrationUser();
   });
 
-  test("temp-MK → 本物 MK 再ラップ + finalize でデータ無損傷", async ({ page }) => {
-    test.setTimeout(60000);
+  test("ログインだけで透過移行が完遂しデータ無損傷", async ({ page }) => {
+    test.setTimeout(120000);
+    // ログイン押下で login_flow が透過移行 (Argon2id → MK 生成 → wrap → 鍵ペア →
+    // temp-MK→自 MK rewrap → finalize) をログインページ上で完遂してから redirect する。
     await login(page);
     expect(page.url()).not.toContain("/login");
 
-    // 移行待ち = ダッシュボードに再ラップバナーが出る。
-    await expect(page.locator("#migration-rewrap-btn")).toHaveCount(1);
+    // 透過移行は finalize まで完了 → ダッシュボードに再ラップバナーは出ない。
+    await expect(page.locator("#migration-rewrap-btn")).toHaveCount(0);
 
-    // 本物 MK 注入 → 鍵ペア確立 (ウィザード相当) → 再ラップ移行を実行。
-    const run = await page.evaluate(async ({ mk, uid, year }) => {
+    // 検証: MK をログインパスワード + login_salt から再導出 (= 通常ログインと同じ
+    // HKDF split 解錠) し、rewrap 後データを復号して原本と照合する。Playwright は
+    // 遷移で SharedWorker を破棄するため (実ブラウザは保持)、ここで MK を張り直す。
+    const v = await page.evaluate(async ({ uid, year, password }) => {
       try {
+        const loader = await import("/static/js/crypto/hash_wasm_loader.js");
+        const kdf = await import("/static/js/crypto/login_kdf.js");
+        const api = await import("/static/js/crypto/api.js");
         const sc = await import("/static/js/crypto/shared-client.js");
-        const kp = await import("/static/js/crypto/keypair.js");
-        const flow = await import("/static/js/migration/rewrap_flow.js");
+        const rec = await import("/static/js/crypto/record.js");
+        const b64 = await import("/static/js/crypto/b64.js");
+        await loader.loadHashWasm();
+        const keys = await api.listWrappedKeys();
+        const pp = keys.find((k) => k.method === "passphrase");
+        if (!pp) return { error: "passphrase wrapped_key not found" };
+        const { mkWrapKey } = await kdf.deriveLoginMaterial(
+          password, pp.salt, { params: pp.kdf_params });
         const client = new sc.SharedCryptoClient("/static/js/crypto/shared-worker.js");
-        window.__mk = client;
-        await client.setKey(new Uint8Array(mk));
-        const st = await client.status();
-        await kp.ensureKeyPair(client, uid); // public_key 確立 (temp-mk 取得の前提)
-        const summary = await flow.runRewrapMigration({
-          client, userId: uid, years: [year],
-        });
-        return { hasKey: st.hasKey, summary };
+        await client.unwrap(mkWrapKey, pp.wrapped_master_key, pp.wrap_iv);
+
+        const body = await (await fetch(
+          `/api/v1/journals?fiscal_year=${year}&per_page=100`,
+          { credentials: "include" })).json();
+        const out = [];
+        for (const e of body.journals || []) {
+          const je = await rec.decryptRecord(client,
+            b64.b64decode(e.encrypted_blob), b64.b64decode(e.blob_iv),
+            rec.buildAAD("je", uid));
+          const lines = [];
+          for (const l of e.lines || []) {
+            lines.push(await rec.decryptRecord(client,
+              b64.b64decode(l.encrypted_blob), b64.b64decode(l.blob_iv),
+              rec.buildAAD("jel", uid)));
+          }
+          out.push({ je, lines });
+        }
+        const tm = await (await fetch("/api/v1/migration/temp-mk",
+          { credentials: "include" })).json();
+        return { decrypted: out, tempmk: tm };
       } catch (e) {
         return { error: String((e && e.message) || e) };
       }
-    }, { mk: MK, uid, year: YEAR });
+    }, { uid, year: YEAR, password: PASSWORD });
 
-    expect(run.error || "").toBe("");
-    expect(run.hasKey).toBe(true);
-    expect(run.summary.je).toBe(2);
-    expect(run.summary.jel).toBe(4);
-    expect(run.summary.finalized).toBe(true);
-
-    // 本物 MK で再ラップ後データを復号し、原本と照合 + temp-mk 失効確認。
-    const v = await page.evaluate(async ({ uid, year }) => {
-      const rec = await import("/static/js/crypto/record.js");
-      const b64 = await import("/static/js/crypto/b64.js");
-      const client = window.__mk;
-      const body = await (await fetch(
-        `/api/v1/journals?fiscal_year=${year}&per_page=100`,
-        { credentials: "include" })).json();
-      const out = [];
-      for (const e of body.journals || []) {
-        const je = await rec.decryptRecord(client,
-          b64.b64decode(e.encrypted_blob), b64.b64decode(e.blob_iv),
-          rec.buildAAD("je", uid));
-        const lines = [];
-        for (const l of e.lines || []) {
-          lines.push(await rec.decryptRecord(client,
-            b64.b64decode(l.encrypted_blob), b64.b64decode(l.blob_iv),
-            rec.buildAAD("jel", uid)));
-        }
-        out.push({ je, lines });
-      }
-      const tm = await (await fetch("/api/v1/migration/temp-mk",
-        { credentials: "include" })).json();
-      return { decrypted: out, tempmk: tm };
-    }, { uid, year: YEAR });
-
+    expect(v.error || "").toBe("");
     expect(v.decrypted.length).toBe(EXPECTED.length);
     for (const exp of EXPECTED) {
       const got = v.decrypted.find((d) => d.je && d.je.description === exp.desc);
@@ -202,10 +197,6 @@ test.describe("E7 平文→E2EE 移行 (クライアント再ラップ)", () => 
     }
     // finalize 済 → temp-MK はもう取得できない (真の E2EE 確立)。
     expect(v.tempmk.active).toBe(false);
-
-    // reload 後はバナーが消える (サーバ側 migration_temp_mk が NULL)。
-    await page.goto(`${BASE_URL}/`, { waitUntil: "domcontentloaded" });
-    await expect(page.locator("#migration-rewrap-btn")).toHaveCount(0);
 
     // 仕訳帳一覧ページが 500 にならない (UI 健全性)。
     const resp = await page.goto(`${BASE_URL}/journal/`, { waitUntil: "domcontentloaded" });

@@ -31,6 +31,7 @@ import {
 import { loadHashWasm } from "./hash_wasm_loader.js";
 import { beginPasskeyKeyDerivation } from "./passkey_flow.js";
 import { ensureKeyPair } from "./keypair.js";
+import { deriveLoginMaterial } from "./login_kdf.js";
 
 
 // SharedWorker URL は base.html 等で `window.IIKANJI_SHARED_WORKER_URL` に
@@ -180,23 +181,28 @@ export function encryptionKeyWizard(config = {}) {
         return;
       }
       this.loading = true;
-      let derived = null;
+      let material = null;
       try {
         await loadHashWasm();
         const wk = this.unlockingKey;
-        derived = await deriveKeyFromPassphrase(
+        // #385: passphrase wrapped_key は login_flow が mk_wrap_key = HKDF split(
+        // Argon2id(login_password, login_salt)) で wrap している。よって解錠も
+        // deriveLoginMaterial の mk_wrap_key で行う (旧 Argon2id 直接派生では
+        // 鍵が一致せず解錠できない)。入力するパスフレーズ = ログインパスワード。
+        material = await deriveLoginMaterial(
           this.unlockPassphrase,
           wk.salt,
           { params: wk.kdf_params ?? undefined },
         );
-        await client.unwrap(derived, wk.wrapped_master_key, wk.wrap_iv);
+        await client.unwrap(material.mkWrapKey, wk.wrapped_master_key, wk.wrap_iv);
         await this._onUnlockSuccess();
       } catch (e) {
         // unwrap 失敗 = パスフレーズ誤り (タグ検証 NG) が大半
         this.error = "解除に失敗しました。パスフレーズが正しいか確認してください。";
       } finally {
-        if (derived && derived.byteLength > 0) {
-          try { derived.fill(0); } catch (_e) { /* detached */ }
+        if (material) {
+          try { material.mkWrapKey.fill(0); } catch (_e) { /* detached */ }
+          try { material.loginVerifier.fill(0); } catch (_e) { /* detached */ }
         }
         this.loading = false;
       }

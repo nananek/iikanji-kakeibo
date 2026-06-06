@@ -171,12 +171,19 @@ WebAuthn は複数 Passkey 登録をサポートしている (v4.x で既に対�
     拡張 (例: AuditPackage 暗号化用の別 info) に備える)
 - パスキー紛失時は **別の Passkey** か **パスフレーズ** か **リカバリシード** で MK を復元 → 新しい Passkey に再ラップ
 
-### パスフレーズ
+### パスフレーズ (= ログインパスワード由来 / #385)
 
-- **8 文字以上、推奨 16 文字以上** (BIP-39 シードなら強度十分)
+> **#385 で意味変更**: `wrapped_keys.method='passphrase'` は v5.x では**ログインパスワード
+> 由来の常用鍵**を指す (別途設定するパスフレーズではない)。初回ログイン時に login_flow が
+> 自動で確立し、解錠もログインパスワードで行う。詳細は `login-derived-mk.md` を正とする。
+> 単独パスフレーズ設定 UI (ウィザードの選択肢) は廃止した。
+
+- **8 文字以上、推奨 16 文字以上** (ログインパスワードと共用。HKDF split で受動管理者は MK 不可導)
 - KDF: **Argon2id** (memory=64 MiB, iterations=3, parallelism=1)、出力 32B (**v5.x 確定値**。
   client-py/TUI と byte 互換が要るため可変にしない。`login-derived-mk.md §2` 参照)
-- ソルトは `wrapped_keys.salt` (16 bytes random) で per-user
+- `master = Argon2id(login_password, login_salt)` → `mk_wrap_key = HKDF(master,
+  "iikanji-mk-wrap-v1")` で MK を wrap/unwrap (解錠は wizard も login_flow も同じ派生を使う)
+- ソルトは `wrapped_keys.salt` (= `users.login_salt`、16 bytes random) で per-user
 
 ### リカバリシード
 

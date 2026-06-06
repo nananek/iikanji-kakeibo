@@ -13,7 +13,7 @@ async function login(page, retries = 2) {
       await page.fill('input[name="password"]', PASSWORD);
       await page.click('input[type="submit"]');
       await page.waitForURL((url) => !url.pathname.includes("/login"), {
-        timeout: 10000,
+        timeout: 30000,
       });
       return;
     } catch {
