@@ -32,7 +32,7 @@ mk_wrap_key    = HKDF(master, info="iikanji-mk-wrap-v1")   # ← サーバに送
 
 **プリミティブ仕様 (byte 精度。client-py/TUI と相互実装するため確定値):**
 - `Argon2id`: パラメータは**設計書 §4 (index.md) の確定値**を使う = `memory=64 MiB, iterations=3, parallelism=1`、出力 32B。`salt` は 16B (per-user、`wrapped_keys.salt` と同枠)。
-- `HKDF` = **`HKDF-SHA256(ikm=master, salt=zero(32B), info=<上記文字列>, L=32)`**。info 文字列はバージョン付き (`iikanji-login-v1` / `iikanji-mk-wrap-v1`) を**全フローで厳守**する (短縮形を使わない)。
+- `HKDF` = **`HKDF-SHA256(ikm=master, salt=zero(32B), info=<上記文字列>, L=32)`**。info 文字列はバージョン付き (`iikanji-login-v1` / `iikanji-mk-wrap-v1`) を**全フローで厳守**する (短縮形を使わない)。`salt=zero(32B)` は RFC 5869 §2.2 (salt 省略時は HashLen バイトのゼロ列) に準拠し、既存 `bip39.js` の HKDF 実装と一致させる。
 
 - サーバが見るのは `login_verifier` だけ。HKDF は一方向なので `master` も
   `mk_wrap_key` も導けない → **パスワード流用前提でも受動管理者は MK を取れない**。
@@ -58,15 +58,21 @@ mk_wrap_key    = HKDF(master, info="iikanji-mk-wrap-v1")   # ← サーバに送
 3. `login_verifier = HKDF(master,"iikanji-login-v1")`、`mk_wrap_key = HKDF(master,"iikanji-mk-wrap-v1")`。
 4. クライアントが MK (32B random) を生成し `mk_wrap_key` で wrap。
 5. サーバへ送信: `{salt, kdf_params, login_verifier, wrapped_master_key, wrap_iv}`。
-   - サーバは `login_verifier` を**そのまま保存せず** `server_hash = HMAC-SHA256(SERVER_SECRET, login_verifier)`
-     を保存する。`SERVER_SECRET` は環境変数管理のサーバ固有秘密。**DB が流出しても
-     `SERVER_SECRET` が無ければ `login_verifier` 平文を得られない**ようにする
+   - サーバは `login_verifier` を**そのまま保存せず** `server_hash = HMAC-SHA256(LOGIN_SERVER_SECRET, login_verifier)`
+     を保存する。`LOGIN_SERVER_SECRET` は**本用途専用の**環境変数管理サーバ固有秘密
+     (email 擬名化の `server_secret` (index.md:67) とは**別変数**にして用途を混ぜない)。
+     **DB が流出しても `LOGIN_SERVER_SECRET` が無ければ `login_verifier` 平文を得られない**
      (二重 slow KDF は不要。`login_verifier` は既に高エントロピーなので HMAC で十分)。
+   - **`LOGIN_SERVER_SECRET` ローテーション**: 秘密を差し替えると全 `login_server_hash`
+     が無効になるため、**遅延ローテーション**を採る = `login_server_hash` に
+     `secret_version` を併記し、ログイン成功時 (= `login_verifier` を平文で握れる瞬間) に
+     旧 version なら新 secret で `server_hash` を再計算して上書きする。強制再認証は不要。
+     緊急失効が要る場合のみ全 version を無効化し全ユーザーにパスワード再設定を促す。
 6. クライアントはリカバリシードを生成・表示し、別の wrapped_key として保存 (緊急用)。
 
 ### 3.2 ログイン (2 ラウンド)
 1. `POST /auth/login/begin {username}` → サーバが `{salt, kdf_params}` を返す。
-   未知ユーザーには**決定的ダミー salt** = `HMAC-SHA256(SERVER_SECRET, username)` から
+   未知ユーザーには**決定的ダミー salt** = `HMAC-SHA256(LOGIN_SERVER_SECRET, username)` から
    導いた 16B を返す (リクエスト毎にランダムだと「同名 2 回で salt が変わる」差で
    存在判定されるため、**username に対し決定的**にして列挙耐性を持たせる。脅威モデル
    §Q3 と整合)。
@@ -122,10 +128,18 @@ OPAQUE (aPAKE) を使えば「サーバは salt 相当も見ない + 列挙耐�
    (argon2.js + HKDF) と単体テスト (golden vector)。
 2. **PR-2 ログイン 2 ラウンド API**: `/auth/login/begin` `/finish` + サーバ側
    `server_hash` 保管。列挙耐性 (ダミー salt)。既存 `/login` は破壊的に置換。
+   - **レート制限**: `/auth/login/begin` は**認証前**に呼ばれ列挙の攻撃面になるため、
+     既存ログイン系と同等の `@limiter.limit("5-10/minute")` を**必ず付与**する
+     (ダミー salt でも応答時間差での存在判定を避けるため定数時間で応答)。`/finish`
+     も同様にレート制限。
+   - **PR-3 までの過渡期**: PR-2 が先行マージされる間、`passkey_only_login` 制御は
+     既存 `auth.py` の `/login` が引き続き担保する (新 `/begin`/`/finish` には §7.2 の
+     パスワード必須化が PR-3 で入るまで passkey_only ユーザーを通さないガードを置く)。
 3. **PR-3 ウィザード再構成**: 「パスワード = 鍵」前提に。初回登録でパスワードから
    MK 確立 + リカバリシードを**必須バックアップ**として提示。passphrase 単独方式は
    廃止 (= login password に統合)。Passkey/リカバリは追加・緊急として残す
-   (鍵の追加・削除 UI は実装済)。
+   (鍵の追加・削除 UI は実装済)。**この PR で `index.md §2 / §10` の鍵管理記述を
+   本方式に更新する** (`passphrase` method の意味変化を反映)。
 4. **PR-4 パスワード変更/リセット**: MK 不変・ラップ更新。リカバリ経由リセット。
 5. **PR-5 client-py / TUI**: 同じ派生を実装 (web と byte 互換)。
 6. **ドキュメント**: 設計書 §1 (能動脅威の限界と native client 信頼根拠) / §2 / §10
@@ -135,14 +149,17 @@ OPAQUE (aPAKE) を使えば「サーバは salt 相当も見ない + 列挙耐�
 
 ### 7.1 DB スキーマ
 - `users.password_hash` (werkzeug hash) を**廃止**し、代わりに
-  `users.login_server_hash` (= `HMAC-SHA256(SERVER_SECRET, login_verifier)`、32B) と
-  `users.login_salt` (16B) + `users.login_kdf_params` (JSON) を置く。
-  (werkzeug 依存も撤去。)
+  `users.login_server_hash` (= `HMAC-SHA256(LOGIN_SERVER_SECRET, login_verifier)`、32B) と
+  `users.login_salt` (16B) + `users.login_kdf_params` (JSON) + `users.login_secret_version`
+  (SMALLINT、§3.1 の遅延ローテーション用) を置く。(werkzeug 依存も撤去。)
 - `wrapped_keys` テーブルの `method` enum は**変更しない** (`passkey_prf` /
   `passphrase` / `recovery_seed`)。`login` という新 method は**作らない** ——
   「login パスワード由来の鍵」は従来 `passphrase` method の wrapped_key として
   保存する (派生元がログインパスワードに変わるだけで、wrap の仕組みは同じ)。
   これにより鍵の追加・削除/解錠 UI を再利用できる。
+  **注**: `index.md §2 / §10` は現状「パスフレーズ (フォールバック)」= 別途設定する
+  passphrase として記述しており、本方式での意味変化 (= ログインパスワード由来) は
+  **PR-3 で `index.md` を更新して反映**する (それまでは本設計書が正)。
 - 破壊的変更可のため既存ユーザーはクリーン再作成 (段階移行不要)。
 
 ### 7.2 `passkey_only_login` ユーザーの扱い
