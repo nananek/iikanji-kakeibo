@@ -102,6 +102,12 @@ HMAC の**メッセージ先頭にドメインラベル + `0x00`** を付けて�
    - **v4 移行対象** (`password_hash` 有 / `login_salt` 無) → `{salt: 新規ランダム 16B,
      kdf_params: 確定値, migration_required: true}`。**旧 werkzeug ハッシュから salt を導出しない**
      (新 salt をサーバ側で発行し、§3.5 の移行 finish で正式保存)。
+   - **パスワード非保有 / 不正状態** (`password_hash` 無 / `login_salt` 無 = passkey_only
+     ユーザー、または race 等で両列 NULL の異常状態) → `{salt: 新規ランダム 16B, kdf_params,
+     migration_required: true, requires_password_setup: true}`。クライアントは**パスワード設定
+     UI** (§3.1 登録フロー相当) を先に提示し、ユーザーがパスワードを設定してから §3.5 ③ の
+     finish に進む。`login_verifier` 単独照合 (通常パス) には**絶対に入れない** (照合先
+     `login_server_hash` が無く認証不能のため)。
    - **未知ユーザー** → **決定的ダミー salt** =
      `HMAC-SHA256(LOGIN_SERVER_SECRET, "dummy-salt" || 0x00 || username)[0:16]` から
      導いた 16B + `migration_required: false` を返す (リクエスト毎にランダムだと「同名 2 回で
@@ -149,6 +155,10 @@ HMAC の**メッセージ先頭にドメインラベル + `0x00`** を付けて�
 本フローが行うのは**認証因子の移行**と **temp-MK→自分の MK への rewrap 駆動**であり、生平文の
 暗号化ではない。
 
+> ⚠️ **temp-MK 平文 DB 保存リスク**: `migration_temp_mk` は移行窓中 DB に平文保持される既知
+> リスク。`index.md §13.9` の警告 (KMS/HSM 暗号化 ToDo・移行窓を最短化) を参照。本フローは
+> ⑤ finalize で**ユーザー単位に即時** temp-MK を破棄することでこの露出窓を最小化する。
+
 ```
 [ログイン画面] パスワード 1 回入力
   │
@@ -183,19 +193,26 @@ HMAC の**メッセージ先頭にドメインラベル + `0x00`** を付けて�
   │       (証憑画像は PUT /api/v1/migration/rewrap-image)
   │
   └ ⑤ POST /api/v1/migration/finalize
-        → サーバ: migration_temp_mk 破棄 + ★ password_hash を NULL クリア
-                + 移行完了マーク
+        → サーバ: migration_temp_mk を NULL クリア (UPDATE users SET
+                migration_temp_mk=NULL。index.md §13.9 と整合)
+                + ★ password_hash を NULL クリア + 移行完了マーク
 ```
 
 **⚠️ 平文パスワードの一時送信 (§2「平文をサーバに送らない」原則の例外)**:
 ③ の移行パスでは `password` (平文) をサーバへ送る。werkzeug の `check_password_hash()` が
 平文を必要とするためで、**移行フロー (`migration_required=true`) に限定した一時的例外**。
 通常ログイン (§3.2) は `login_verifier` のみで §2 原則を維持する。受動管理者モデル (§4-2) が
-「DB とログを読むだけ」を攻撃者像とする以上、平文がログに残らないことが必須。実装上の必須対策:
-- アクセスログ・例外スタックトレース・デバッグ出力に `password` を含めない (Flask デバッグ
-  モード無効、Sentry 等の `before_send` で当該フィールドを明示除外)。
-- `password` の参照は `check_password()` への引数渡しのみとし、直後に変数スコープから
-  `del` する。リクエストボディ全体を丸ごとログ出力しない。
+「DB とログを読むだけ」を攻撃者像とする以上、平文がログに残らないことが必須。**PR-2 実装
+チェックリスト** (漏洩経路は Sentry だけではない — アクセスログ・APM・デバッグ出力の**すべて**で
+抑制する):
+- **アクセスログ**: gunicorn `--access-logformat` にボディを含めない。Flask `after_request` で
+  リクエストボディをログしない。
+- **APM / エラー監視**: Sentry `before_send` / Datadog 等で `password` フィールドを明示除外。
+  Flask デバッグモードは本番無効 (スタックトレースにローカル変数が出る)。
+- **dict からの除去**: Python の `del password` は**ローカル変数の参照を切るだけ**で、
+  `request.get_json()` が返す dict には `password` キーが残る。`data = request.get_json();
+  password = data.pop("password")` のように **dict からも pop** してから後続処理する。
+  `password` の参照は `check_password()` 引数渡しのみとし直後にスコープから外す。
 - この平文送信は v5 デプロイ後の各 v4 ユーザー初回ログイン 1 回限りで、移行完了後は二度と
   発生しない (finalize で `password_hash` クリア → 以後 `login_verifier` のみ)。
 
@@ -205,6 +222,10 @@ HMAC の**メッセージ先頭にドメインラベル + `0x00`** を付けて�
 (TLS 前提でも多層防御)。中断後 ① を呼び直すと新 salt で上書きされ、最後に呼んだ ① の salt で
 ③ が成立する (前回 salt との競合は session 上書きで解消)。③ 成立後は `pending_login_salt` を
 session から削除する。
+- **マルチインスタンス注記**: `pending_login_salt` を Flask session に置く以上、`/begin` と
+  `/finish` が**別インスタンスに到達すると salt が引けず移行が失敗する**。現行本番 (Tailscale +
+  単一コンテナ) では問題ないが、**水平スケール時は共有 session ストア (`SESSION_TYPE=redis`
+  等) か sticky session が前提**になる。スケール前にこの前提を満たすこと。
 
 **移行の完了条件**: ③ で認証因子は移行されるが、移行が「完了」するのは ⑤ finalize 後。
 `password_hash` は finalize まで残し、temp-MK 破棄と同時にクリアする。
@@ -217,6 +238,11 @@ session から削除する。
   がまだ有ることを検出して **rewrap を resume** する。`/migration/rewrap` は処理済み行を skip
   する idempotent 実装なので二重暗号化は起きない。resume 完了で ⑤ finalize。
 - したがって**いつ中断しても安全**で、データが二重暗号化・破損する経路は無い。
+- **passkey_only / パスワード未設定ケース** (§3.2 の `requires_password_setup`): パスワード
+  未設定のまま ③ finish に到達した場合 (`login_verifier`/`wrapped_master_key` をクライアントが
+  生成できない) は**移行を成立させない** (汎用エラーで reject)。パスワード設定 UI を完了して
+  はじめて ②③ に進める。両列 NULL の異常状態も同じく通常認証へは入れず、強制パスワード設定に
+  誘導する。
 
 **gate との関係**: 本フローはログイン中 (セッション確立前後) に駆動するため、E7 の鍵未設定
 gate (`is_active=False` → `/migration/locked`) を**移行誘導には使わない**。gate は「30 日 stale
