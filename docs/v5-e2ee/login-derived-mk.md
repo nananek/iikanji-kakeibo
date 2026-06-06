@@ -214,6 +214,21 @@ recovery_seed wrapped_key を作成 (ウィザード) する際、クライア�
    決定的なので「同一 username で 2 回叩いて値が変わる差」からシード設定有無が漏れず、長さも実値
    (48B/12B) と一致するので**長さによる real/dummy 判別もできない**。ダミーで unwrap しても finish
    の verifier 照合で必ず失敗する。
+
+   **定数時間の実装指針 (タイミング攻撃対策 / 必須)**: 「定数時間」を満たすには、素直な分岐
+   (実ユーザーのみ DB lookup → 実値 / 不在は lookup せずダミー) が DB I/O レイテンシ差 (1〜5ms)
+   でユーザー存在を漏らすため**不可**。よって:
+   - **DB lookup は分岐に関わらず常に 1 回実行**する (`username` で `User` を引く。不在でも
+     SELECT を投げる)。
+   - **ダミー HMAC 計算 (3 本) も常に実行**する。実値が使えるか否かは計算後に選択する
+     (早期 return で計算をスキップしない)。
+   - 実値返却 / ダミー返却の選択は**値の差し替えのみ**で行い、コードパスの分岐量を揃える。
+   - PR-4b-2 のテストに「begin は DB hit/miss・NULL hash・wrapped_key 欠如のいずれでも常に同じ
+     HMAC 計算回数を通る」ことの検証ケースを必ず含める。
+   - **移行期の非対称状態** (WARN-1) もすべてダミー応答で通す: ①`recovery_seed_server_hash` は
+     有るが recovery_seed wrapped_key が NULL、②wrapped_key は有るが `recovery_seed_server_hash`
+     が NULL (旧ウィザードで作成したユーザー)。どちらも begin はダミーで通し、finish の verifier
+     照合で失敗させる (NULL hash は照合不能なので必ず失敗)。移行期テストにこの 2 状態を含める。
 2. ユーザーが 24 語シード入力。クライアント: `deriveKeyFromMnemonic(seed)` で MK を unwrap、
    かつ `recovery_verifier` を導出。
 3. ユーザーが新パスワード入力。新 salt → 新 login material、MK を新 mk_wrap_key で再 wrap。
@@ -233,11 +248,17 @@ recovery_seed wrapped_key を作成 (ウィザード) する際、クライア�
    }
    ```
 6. サーバ: 旧 `recovery_verifier` を `recovery_seed_server_hash` と `hmac.compare_digest` で定数
-   時間照合。OK なら**単一トランザクション**で login_* + passphrase wrapped_key (新PW) +
-   recovery_seed wrapped_key (新シード) + recovery_seed_server_hash (新) + **`session_token_version`
-   インクリメント** を更新 (= 新保存完了後に旧シード無効化、§3.4 の順序)。passkey_prf 鍵は MK
-   不変でそのまま有効。version インクリメントにより当該ユーザーの既存サーバセッションが全失効する
-   (下記「セッション失効」)。
+   時間照合。OK なら**単一トランザクション**で次を更新 (= 新保存完了後に旧シード無効化、§3.4 の順序):
+   - `login_*` (login_salt / login_verifier の server_hash / login_kdf_params / login_secret_version) ← 新PW由来
+   - passphrase wrapped_key ← `passphrase_wrapped_master_key` / `passphrase_wrap_iv`
+   - recovery_seed wrapped_key ← `recovery_wrapped_master_key` / `recovery_wrap_iv`
+   - `recovery_seed_server_hash` (新) ← **`HMAC(LOGIN_SERVER_SECRET, "recovery-hash" || 0x00 ||
+     new_recovery_verifier)` を計算して保存** (受信した `new_recovery_verifier` から導出。生の
+     verifier は保存しない)
+   - `session_token_version` インクリメント
+
+   passkey_prf 鍵は MK 不変でそのまま有効。version インクリメントにより当該ユーザーの既存サーバ
+   セッションが全失効する (下記「セッション失効」)。
 7. クライアント: **新シードを 1 回限りセキュア表示** (初回登録と同等要件)。
 
 **セッション失効 (リセット後)**: recovery reset はパスワード変更 (§3.3) より影響が大きい (攻撃者が
@@ -281,6 +302,22 @@ wrapped_key と `recovery_seed_server_hash` を持つユーザーは本フロー
     (シード未設定と同じ列挙耐性応答)。「NULL なのでリセット不可」と即時に区別できる応答は返さない
     (列挙耐性のため)。実際のリセット可否は finish の verifier 照合で判定 (NULL ユーザーは必ず失敗)。
     移行期に seed-only リセットが使えないユーザーは passkey / 再ログイン経由になる旨を UI に明記。
+
+**実装チェックリスト (PR-4b-1/2 に転記)**:
+- **`session_token_version` の後方互換 (PR-4b-1)**: マイグレで `session_token_version INTEGER
+  NOT NULL DEFAULT 0` を設定。既存 Flask-Login セッション Cookie には version 情報が無いため、
+  `user_loader` は **Cookie に version が無い旧形式 = version 0 として扱い**、`User.session_token_version`
+  が 0 のうちは透過的に通過させる (= 既存ログインセッションを切らない)。`get_id()` は
+  `f"{id}.{version}"`、`user_loader` は `.` で分割し version 不一致なら拒否 (version 欠如時は 0)。
+  テストに「version 無し Cookie が version=0 ユーザーで通過」「DB の version を 1 に上げると旧
+  Cookie が拒否される」の後方互換ケースを含める。
+- **CSRF 免除の確認 (PR-4b-2)**: `recovery/begin|finish` を `csrf.exempt` する前に、`auth` BP の
+  `login/begin|finish` が実際に exempt されていることをコードで確認する (CLAUDE.md の exempt 一覧は
+  現状 WebAuthn / REST API のみ記載)。確認後、CLAUDE.md の `csrf.exempt` 対象一覧に
+  `recovery/begin|finish` を追記する。
+- **レート制限の粒度 (PR-4b-2)**: login API と同等以上に厳格化する。`begin`: per-IP `5/minute` +
+  per-username `10/hour`。`finish`: per-IP `5/minute` + per-username `5/hour` (verifier 総当たり
+  抑止)。limiter の teardown reset (フルスイート leak 対策) もテストに入れる。
 
 ### 3.5 自然な v4 → ログイン派生移行 (in-login・本方式の中核)
 
