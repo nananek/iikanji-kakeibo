@@ -702,7 +702,7 @@ class TestCreateJournalE2EE:
                 "fiscal_year": bad_year,
             })
             assert resp.status_code == 400, f"year={bad_year} should be rejected"
-            assert "範囲" in resp.get_json()["error"]
+            assert "不正" in resp.get_json()["error"]
 
     def test_invalid_iv_length_rejected(
         self, client, db, user, accounts, auth_header,
@@ -940,7 +940,7 @@ class TestListJournals:
         resp = client.get("/api/v1/journals?fiscal_year=99999",
                           headers=auth_header)
         assert resp.status_code == 400
-        assert "範囲" in resp.get_json()["error"]
+        assert "不正" in resp.get_json()["error"]
 
     def test_list_via_session_cookie(
         self, db, logged_in_client, user, accounts,
