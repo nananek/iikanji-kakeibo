@@ -179,7 +179,10 @@
 ### CSRF
 - `CSRFProtect()` でグローバル有効
 - メタタグ `<meta name="csrf-token">` で JS から取得可能
-- WebAuthn API と REST API (`/api/v1`) は免除
+- JSON 専用 API は `csrf.exempt` で免除 (app/__init__.py)。対象: WebAuthn API・REST API
+  (`/api/v1`)・ログイン派生 MK API (`auth_api` `/auth/login/*`)・パスワードリセット API
+  (`auth_recovery` `/auth/recovery/*`)・wrapped-keys・keypair・audit-packages・ai-config API・
+  OAuth Device Flow (device_authorization / token)
 
 ## 電子帳簿保存法対応ロードマップ
 
