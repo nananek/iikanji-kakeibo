@@ -1,26 +1,26 @@
-// 暗号鍵管理ウィザードの「実際の鍵生成」E2E (E1 / 回帰)。
+// 暗号鍵管理ウィザードの「実際の鍵生成・解錠」E2E (#385 ログイン派生 MK 活性化版)。
 //
-// 既存 encryption-keys.spec.ts はUI表示・遷移のみを検証していたため、ウィザードの
-// 鍵生成フロー (SharedCryptoClient.generateKey/wrap → createWrappedKey) は一度も
-// ブラウザで実行されておらず、以下のリグレッションを見逃していた:
-//   - this._client を Alpine の reactive プロパティに載せたため private メソッド
-//     (#send) アクセスが全エンジンで失敗 ("object is not the right class" /
-//     "Cannot access private method (this.#send)")。鍵設定が全方式で不能。
-//   - kdf_params のフィールド名不一致 (client: memorySize / server: memory) で
-//     createWrappedKey が HTTP 400。
+// 活性化後は MK と passphrase 鍵がログイン時に確立済みになる。本テストはその前提で
+// ウィザードの中核機能 (SharedCryptoClient.generateKey/wrap/unwrap → createWrappedKey/
+// deleteWrappedKey) がブラウザで正しく動くことを回帰検証する:
+//   1. ログイン派生 passphrase 鍵をログインパスワードで解錠 (HKDF split 解錠)
+//   2. リカバリシード方式を追加 (= 同じ MK を別方式で wrap)
+//   3. ロック → 追加したリカバリシードで解錠 (= 同じ MK が復元できる)
+//   4. passphrase 鍵を削除
 //
-// 本テストはパスフレーズ方式で鍵生成 → 解錠まで通す。Argon2id (hash-wasm) は
-// vendored (/static/js/vendor) なので CDN 非依存・CI 安全。Passkey 方式は実機
-// authenticator が要るため E2E 不能だが、同じ this._client 経路を通るため
-// パスフレーズ E2E が proxy リグレッションの回帰ガードになる。
+// 本テストは passphrase 鍵を削除するため、共有 e2e_test ではなく **専用ユーザー
+// e2e_keysetup** を毎回まっさらに seed して使う (他 spec の normal-path ログインが
+// passphrase 鍵を必要とするため、共有ユーザーの鍵を消すと汚染する)。
+//
+// 注: Playwright(firefox) は画面遷移で SharedWorker を破棄するため、設定画面では
+// 一旦ロック状態になる (実ブラウザは遷移後も保持)。よって解錠から始める。
 
 import { test, expect } from "@playwright/test";
 import { spawnSync } from "child_process";
 
 const BASE_URL = "http://127.0.0.1:5000";
 const USERNAME = "e2e_keysetup";
-const PASSWORD = "e2e_pass_12345"; // gitleaks:allow E2E テスト用ダミー
-const PASSPHRASE = "correct horse battery staple 12345";
+const PASSWORD = "e2e_pass_12345"; // gitleaks:allow E2E ダミー
 
 const SEED_SCRIPT = `
 from app import create_app
@@ -32,7 +32,7 @@ app = create_app()
 with app.app_context():
     ex = User.query.filter_by(username='e2e_keysetup').first()
     if ex:
-        delete_user_account(ex.id)  # 鍵を毎回まっさらに (初回設定の前提)
+        delete_user_account(ex.id)  # 鍵を毎回まっさらに (login 派生の前提)
     u = User(username='e2e_keysetup', email='e2e_keysetup@test.local',
              user_type='personal')
     u.set_password('e2e_pass_12345')
@@ -61,93 +61,62 @@ async function login(page) {
   await page.fill('input[name="username"]', USERNAME);
   await page.fill('input[name="password"]', PASSWORD);
   await Promise.all([
-    page.waitForURL((u) => !u.pathname.includes("/login"), { timeout: 15000 }),
-    page.click('input[type="submit"], button[type="submit"]'),
+    page.waitForURL((u) => !u.pathname.includes("/login"), { timeout: 30000 }),
+    page.click('input[type="submit"]'),
   ]);
 }
 
-test.describe("暗号鍵ウィザード: パスフレーズ方式の鍵生成 (回帰)", () => {
+async function openAndUnlock(page) {
+  await page.goto(`${BASE_URL}/settings/encryption-keys`, { waitUntil: "networkidle" });
+  const unlockBtn = page
+    .locator("li.list-group-item", { hasText: "passphrase" })
+    .locator('button:has-text("この鍵で解除")');
+  if ((await unlockBtn.count()) > 0) {
+    await unlockBtn.click();
+    await page.fill('input[type="password"][autocomplete="current-password"]', PASSWORD);
+    await page.click('button:has-text("解除する")');
+    await expect(page.locator("text=解除済み")).toBeVisible({ timeout: 30000 });
+  }
+}
+
+test.describe("暗号鍵ウィザード: ログイン派生 MK の解錠・別方式追加 (回帰)", () => {
   test.beforeEach(() => {
     const out = runPython(SEED_SCRIPT);
     if (!/KEYSETUP_UID=\d+/.test(out)) throw new Error("seed failed: " + out);
   });
 
-  test("初回設定 → パスフレーズで鍵生成 → done、再読込で解錠できる", async ({ page }) => {
-    test.setTimeout(60000);
+  test("ログインパスワードで解錠 → リカバリ追加 → リカバリで解錠 → passphrase 削除", async ({ page }) => {
+    test.setTimeout(120000);
     await login(page);
-    await page.goto(`${BASE_URL}/settings/encryption-keys`, { waitUntil: "networkidle" });
-
-    // 初回設定 → パスフレーズ
-    await page.click('button:has-text("初回設定を開始")');
-    await page.click('button:has-text("パスフレーズ")');
-    const pw = page.locator('input[type="password"][autocomplete="new-password"]');
-    await pw.nth(0).fill(PASSPHRASE);
-    await pw.nth(1).fill(PASSPHRASE);
-    await page.click('button:has-text("登録する")');
-
-    // 完了画面 (step=done) に到達 = generateKey/wrap/createWrappedKey が成功
-    await expect(page.locator("text=鍵を登録しました")).toBeVisible({ timeout: 30000 });
-    // proxy / kdf_params のリグレッションなら error が x-show で可視化される
-    // (.alert-danger は x-show で hidden でも DOM 上は存在するので :visible で判定)
+    await openAndUnlock(page);
+    // ログイン派生の passphrase 鍵が 1 件・解錠済み
+    await expect(page.locator("ul.list-group > li")).toHaveCount(1);
     await expect(page.locator(".alert-danger:visible")).toHaveCount(0);
 
-    // 再読込 → 登録済み鍵が一覧表示され、その鍵で解錠できる
-    await page.reload({ waitUntil: "networkidle" });
-    await page.click('button:has-text("この鍵で解除")');
-    await page.fill('input[type="password"][autocomplete="current-password"]', PASSPHRASE);
-    await page.click('button:has-text("解除する")');
-    // 解錠成功で start 画面に戻り「解除済み」バッジが出る
-    await expect(page.locator("text=解除済み")).toBeVisible({ timeout: 30000 });
-  });
-
-  test("別方式の追加 (リカバリ) → 追加した方式で解錠 → 鍵の削除", async ({ page }) => {
-    test.setTimeout(90000);
-    // サーバの UNIQUE 制約により passphrase / recovery_seed は各 1 件まで。
-    // よって初回 passphrase に対し「別方式 = リカバリシード」を追加する。
-    await login(page);
-    await page.goto(`${BASE_URL}/settings/encryption-keys`, { waitUntil: "networkidle" });
-
-    // 1) 初回: パスフレーズで鍵生成
-    await page.click('button:has-text("初回設定を開始")');
-    await page.click('button:has-text("パスフレーズ")');
-    const pw = page.locator('input[type="password"][autocomplete="new-password"]');
-    await pw.nth(0).fill(PASSPHRASE);
-    await pw.nth(1).fill(PASSPHRASE);
-    await page.click('button:has-text("登録する")');
-    await expect(page.locator("text=鍵を登録しました")).toBeVisible({ timeout: 30000 });
-
-    // 2) 再読込 → パスフレーズで解錠 → 解錠中に「別の方式を追加」でリカバリシード
-    await page.reload({ waitUntil: "networkidle" });
-    await page.click('button:has-text("この鍵で解除")');
-    await page.fill('input[type="password"][autocomplete="current-password"]', PASSPHRASE);
-    await page.click('button:has-text("解除する")');
-    await expect(page.locator("text=解除済み")).toBeVisible({ timeout: 30000 });
-
+    // 1) リカバリシードを追加 (= 解錠中の MK を別方式で wrap)
     await page.click('button:has-text("別の方式を追加")');
     await page.click('button:has-text("リカバリシード")');
-    // 生成された 24 単語を Alpine state から取得 (解錠検証で再入力する)
     const mnemonic = await page.evaluate(() => {
-      const el = document.querySelector('[x-data]');
+      const el = document.querySelector("[x-data]");
       return el && el._x_dataStack ? el._x_dataStack[0].mnemonic : "";
     });
     expect(mnemonic.split(" ").length).toBe(24);
     await page.check("#mnemonic-acked");
     await page.click('button:has-text("登録する")');
-    // 追加完了で start に戻り、鍵が 2 件になる
     await expect(page.locator("ul.list-group > li")).toHaveCount(2, { timeout: 30000 });
     await expect(page.locator(".alert-danger:visible")).toHaveCount(0);
 
-    // 3) ロック → 追加したリカバリシードで解錠できる (= 同じ MK を wrap している)
+    // 2) ロック → 追加したリカバリシードで解錠できる (= 同じ MK を wrap している)
     await page.click('button:has-text("今すぐロックする")');
-    const recLi = page.locator("li.list-group-item", { hasText: "リカバリシード" });
+    const recLi = page.locator("li.list-group-item", { hasText: "recovery_seed" });
     await recLi.locator('button:has-text("この鍵で解除")').click();
     await page.fill("textarea", mnemonic);
     await page.click('button:has-text("解除する")');
     await expect(page.locator("text=解除済み")).toBeVisible({ timeout: 30000 });
 
-    // 4) 鍵の削除: confirm を承認し、パスフレーズ鍵を削除 → 1 件になる
+    // 3) passphrase 鍵を削除 → 1 件になる
     page.on("dialog", (d) => d.accept());
-    const ppLi = page.locator("li.list-group-item", { hasText: "パスフレーズ" });
+    const ppLi = page.locator("li.list-group-item", { hasText: "passphrase" });
     await ppLi.locator('button[title="この鍵を削除"]').click();
     await expect(page.locator("ul.list-group > li")).toHaveCount(1, { timeout: 30000 });
     await expect(page.locator(".alert-danger:visible")).toHaveCount(0);

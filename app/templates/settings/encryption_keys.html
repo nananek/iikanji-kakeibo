@@ -187,12 +187,23 @@
           解除中の暗号鍵を、選んだ方式でも保護します (同じ鍵を別の方法で解除できるようになります)。
         </p>
 
-        <div class="row row-cols-1 row-cols-md-3 g-3">
+        {# #385: パスフレーズ単独方式は廃止 (= ログインパスワードに統合)。MK の常用解錠は
+           ログインパスワードが担うため、ここで追加できるのはリカバリシード (緊急用) と
+           Passkey (任意の上乗せ) の 2 方式。 #}
+        <div class="row row-cols-1 row-cols-md-2 g-3">
+          <div class="col">
+            <button class="btn btn-outline-primary w-100 text-start p-3"
+                    @click="selectRecovery()" :disabled="loading">
+              <h6 class="mb-1"><i class="bi bi-card-list"></i> リカバリシード (24 単語)</h6>
+              <small class="text-muted">BIP-39 形式の 24 単語フレーズ。<strong>緊急復旧用</strong>、紙にメモして保管。
+                パスワードを忘れたときの命綱です。</small>
+            </button>
+          </div>
           <div class="col">
             <button class="btn btn-outline-primary w-100 text-start p-3"
                     @click="selectPasskey()" :disabled="loading">
               <h6 class="mb-1"><i class="bi bi-fingerprint"></i> Passkey</h6>
-              <small class="text-muted">指紋・Face ID 等。最速で安全。<br>
+              <small class="text-muted">指紋・Face ID 等の任意の上乗せ。<br>
                 WebAuthn PRF 対応のパスキーが必要 (Bitwarden 等の一部管理ツールは非対応)。</small>
             </button>
             <small class="d-block text-muted text-center mt-1">
@@ -200,20 +211,6 @@
               <a href="{{ url_for('settings.passkeys') }}">Passkey 管理</a>
               で先に登録してください。
             </small>
-          </div>
-          <div class="col">
-            <button class="btn btn-outline-primary w-100 text-start p-3"
-                    @click="selectPassphrase()" :disabled="loading">
-              <h6 class="mb-1"><i class="bi bi-key"></i> パスフレーズ</h6>
-              <small class="text-muted">8 文字以上の文字列で MK を保護。ログイン時に入力。</small>
-            </button>
-          </div>
-          <div class="col">
-            <button class="btn btn-outline-primary w-100 text-start p-3"
-                    @click="selectRecovery()" :disabled="loading">
-              <h6 class="mb-1"><i class="bi bi-card-list"></i> リカバリシード (24 単語)</h6>
-              <small class="text-muted">BIP-39 形式の 24 単語フレーズ。緊急復旧用、紙にメモして保管。</small>
-            </button>
           </div>
         </div>
 
@@ -225,35 +222,8 @@
       </div>
     </template>
 
-    <!-- ステップ 3a: パスフレーズ入力 -->
-    <template x-if="step === 'passphrase'">
-      <div>
-        <h5 class="mb-3"><i class="bi bi-key"></i> パスフレーズ設定</h5>
-        <p class="text-muted small">
-          8 文字以上のパスフレーズを設定します。Argon2id (64 MiB / 3 iter) で派生します。
-          <strong>このパスフレーズを忘れると MK 復元不能になります。</strong>
-        </p>
-        <div class="mb-3">
-          <label class="form-label">パスフレーズ</label>
-          <input type="password" class="form-control" x-model="passphrase"
-                 :disabled="loading" autocomplete="new-password">
-        </div>
-        <div class="mb-3">
-          <label class="form-label">パスフレーズ (確認)</label>
-          <input type="password" class="form-control" x-model="passphraseConfirm"
-                 :disabled="loading" autocomplete="new-password">
-        </div>
-        <div class="d-flex gap-2">
-          <button class="btn btn-primary" @click="submitPassphrase()" :disabled="loading">
-            <span x-show="loading" class="spinner-border spinner-border-sm me-2"></span>
-            <span x-text="loading ? '派生中...' : '登録する'"></span>
-          </button>
-          <button class="btn btn-outline-secondary" @click="goToChoose()" :disabled="loading">
-            戻る
-          </button>
-        </div>
-      </div>
-    </template>
+    {# #385: パスフレーズ単独登録ステップは廃止 (= ログインパスワードに統合)。
+       passphrase 鍵は login_flow が生成し、解錠は unlock ステップが担う。 #}
 
     <!-- ステップ 3b: リカバリシード生成 -->
     <template x-if="step === 'recovery'">

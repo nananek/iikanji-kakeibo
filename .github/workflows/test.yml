@@ -94,6 +94,8 @@ jobs:
     env:
       DATABASE_URL: postgresql://iikanji:iikanji@localhost:5432/iikanji
       SECRET_KEY: ci-test-secret-key
+      # #385: ログイン派生 MK の 2 ラウンドログイン/透過移行を E2E で有効化する。
+      LOGIN_SERVER_SECRET: ci-test-login-server-secret
       STORAGE_BACKEND: local
       STORAGE_LOCAL_DIR: /tmp/iikanji-test-vouchers
       RATELIMIT_ENABLED: "false"
@@ -133,4 +135,7 @@ jobs:
           npx playwright install firefox --with-deps
 
       - name: Run E2E tests
-        run: npx playwright test tests/e2e/
+        # #385: 共有 e2e_test の初回ログイン移行が並列ワーカーで競合するため直列化する
+        # (login 派生 MK は最初の 1 回だけ migration、以降 normal-path。workers=1 で
+        # 競合を排除して deterministic にする)。
+        run: npx playwright test tests/e2e/ --workers=1
