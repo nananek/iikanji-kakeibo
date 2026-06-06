@@ -21,6 +21,13 @@ class Config:
     CAPTCHA_SECRET_KEY = os.environ.get("CAPTCHA_SECRET_KEY")
     CAPTCHA_API_URL = os.environ.get("CAPTCHA_API_URL")         # mCaptcha only
 
+    # #385 ログイン派生 MK: login_verifier の HMAC 鍵 (本用途専用のサーバ固有秘密)。
+    # DB が流出しても本秘密が無ければ login_verifier 平文 (照合値) を得られない。
+    # SECRET_KEY や email 擬名化 secret とは用途を混ぜず別変数にする (設計書 §3.1)。
+    # 本番で未設定なら起動を止める (create_app の fail-closed チェック)。
+    # ローテーション時は login_secret_version で遅延再計算 (§3.1)。
+    LOGIN_SERVER_SECRET = os.environ.get("LOGIN_SERVER_SECRET", "")
+
     # WebAuthn / Passkey
     WEBAUTHN_RP_ID = os.environ.get("WEBAUTHN_RP_ID", "localhost")
     WEBAUTHN_RP_NAME = os.environ.get("WEBAUTHN_RP_NAME", "いいかんじ™家計簿")

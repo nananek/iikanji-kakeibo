@@ -243,6 +243,13 @@ session から削除する。
   生成できない) は**移行を成立させない** (汎用エラーで reject)。パスワード設定 UI を完了して
   はじめて ②③ に進める。両列 NULL の異常状態も同じく通常認証へは入れず、強制パスワード設定に
   誘導する。
+- **`pending_login_salt` の孤立 (別端末 race)**: ① で `requires_password_setup` を受けた端末 A が
+  パスワード設定 UI 操作中に、別端末 B が passkey 認証で別セッションを確立しても、A の
+  `pending_login_salt` は A の session cookie 内に閉じており B には影響しない。A が後から ③ を
+  投げても、(i) session の salt 一致確認、(ii) `login_salt IS NULL` (未移行) 判定、(iii) werkzeug
+  検証の三段で守られる。途中で別経路により移行が完了 (`login_salt` セット) していれば ③ は
+  **`migration not applicable` で reject** され、孤立 salt は session 失効で自然消滅する
+  (二重移行・不整合は起きない)。
 
 **gate との関係**: 本フローはログイン中 (セッション確立前後) に駆動するため、E7 の鍵未設定
 gate (`is_active=False` → `/migration/locked`) を**移行誘導には使わない**。gate は「30 日 stale
@@ -262,6 +269,10 @@ gate (`is_active=False` → `/migration/locked`) を**移行誘導には使わ�
    据えることで得る (設計書 §1 脅威モデルに追記)。
 3. **ユーザー列挙**: `login/begin` が salt を返すため、未知ユーザーにダミー salt
    を返す等の対策が要る。厳密にやるなら OPAQUE (RFC 9807)。
+4. **移行窓中の状態漏洩 (限定的)**: `login/begin` の `migration_required: true` は対象が
+   「v4 移行未完了」であることを示す。未知ユーザーへは常に `false` を返すため新規列挙は防げる
+   が、**既存ユーザーに対しては移行状態が伝わる**。許容リスク (移行窓中限定・移行完了で
+   `migration_required` は恒久的に `false` になり消滅) として受容する。
 
 ## 5. OPAQUE 採用可否
 

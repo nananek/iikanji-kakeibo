@@ -18,7 +18,9 @@ class User(UserMixin, db.Model):
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(80), unique=True, nullable=False)
     email = db.Column(db.String(120), unique=True, nullable=False)
-    password_hash = db.Column(db.String(256), nullable=False)
+    # #385: 自然移行のため nullable。werkzeug ハッシュは移行 finalize で NULL クリアし、
+    # 全ユーザー移行完了後に後続マイグレで物理 DROP する (login_salt が移行済み判定)。
+    password_hash = db.Column(db.String(256), nullable=True)
     user_type = db.Column(db.String(10), nullable=False, default="personal")
     created_at = db.Column(
         db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc)
@@ -68,6 +70,14 @@ class User(UserMixin, db.Model):
     # MK ローテーション進捗 (status / progress / new_wrapped_keys_id_set 等、§10.5)
     mk_rotation_state = db.Column(db.JSON, nullable=True)
 
+    # #385 ログイン派生 MK: 認証因子をログインパスワードに一本化する (HKDF split)。
+    # 設計書 login-derived-mk.md §2 / §7.1。
+    # login_server_hash = HMAC-SHA256(LOGIN_SERVER_SECRET, "login-hash"||0x00||login_verifier)
+    login_server_hash = db.Column(db.LargeBinary, nullable=True)  # 32B
+    login_salt = db.Column(db.LargeBinary, nullable=True)         # 16B (Argon2id per-user salt)
+    login_kdf_params = db.Column(db.JSON, nullable=True)          # {memory, iterations, parallelism}
+    login_secret_version = db.Column(db.SmallInteger, nullable=True)  # 遅延ローテーション用
+
     accounts = db.relationship("Account", backref="user", lazy="dynamic")
     journal_entries = db.relationship("JournalEntry", backref="user", lazy="dynamic")
     medical_expenses = db.relationship("MedicalExpense", backref="user", lazy="dynamic")
@@ -91,7 +101,16 @@ class User(UserMixin, db.Model):
         self.password_hash = generate_password_hash(password)
 
     def check_password(self, password):
+        # #385: 移行完了ユーザー / passkey_only は password_hash が NULL。werkzeug
+        # ログインは成立しない (移行後は login_verifier 経由で認証する)。
+        if not self.password_hash:
+            return False
         return check_password_hash(self.password_hash, password)
+
+    @property
+    def is_login_migrated(self):
+        """ログイン派生 MK 方式へ移行済みか (#385)。login_salt の有無で判定。"""
+        return self.login_salt is not None
 
     def get_pref(self, key, default=None):
         if not self.preferences:

@@ -27,6 +27,11 @@ def create_app(config_class=Config):
     csrf.exempt(webauthn_bp)
     from app.views.api import bp as api_bp
     csrf.exempt(api_bp)
+    # #385 ログイン派生 MK の 2 ラウンドログイン API も JSON 専用 (fetch) なので
+    # CSRF 免除 (webauthn_bp / api_bp と同方針)。ログイン CSRF は本人の
+    # パスワード/login_verifier を要するため有害な悪用にならない。
+    from app.views.auth_api import bp as auth_api_bp
+    csrf.exempt(auth_api_bp)
     # E2EE 鍵管理 API (E1 #108) も JSON 専用。PR-C で Bearer 対応する際に
     # 非ブラウザクライアントが CSRF トークンを得られない問題を避けるため、
     # 既存 api_bp / webauthn_bp と一貫して csrf.exempt する。
