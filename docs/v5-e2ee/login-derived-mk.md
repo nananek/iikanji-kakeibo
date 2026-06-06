@@ -31,7 +31,7 @@ mk_wrap_key    = HKDF(master, info="iikanji-mk-wrap-v1")   # ← サーバに送
 ```
 
 **プリミティブ仕様 (byte 精度。client-py/TUI と相互実装するため確定値):**
-- `Argon2id`: パラメータは**設計書 §4 (index.md) の確定値**を使う = `memory=64 MiB, iterations=3, parallelism=1`、出力 32B。`salt` は 16B (per-user、`wrapped_keys.salt` と同枠)。
+- `Argon2id`: パラメータは `memory=64 MiB, iterations=3, parallelism=1`、出力 32B。`salt` は 16B (per-user、`wrapped_keys.salt` と同枠)。**これを v5.x の確定値とする** (client-py/TUI と byte 互換が要るため可変にしない)。`index.md §4` 現行の「※調整余地あり」表記は本方式の実装 PR (PR-1) で**削除し確定する**。
 - `HKDF` = **`HKDF-SHA256(ikm=master, salt=zero(32B), info=<上記文字列>, L=32)`**。info 文字列はバージョン付き (`iikanji-login-v1` / `iikanji-mk-wrap-v1`) を**全フローで厳守**する (短縮形を使わない)。`salt=zero(32B)` は RFC 5869 §2.2 (salt 省略時は HashLen バイトのゼロ列) に準拠し、既存 `bip39.js` の HKDF 実装と一致させる。
 
 - サーバが見るのは `login_verifier` だけ。HKDF は一方向なので `master` も
@@ -50,19 +50,37 @@ mk_wrap_key    = HKDF(master, info="iikanji-mk-wrap-v1")   # ← サーバに送
 
 将来用途を足す場合は必ず別 info にする (PRF/HKDF のドメイン分離規約 §webauthn_prf と同様)。
 
+### LOGIN_SERVER_SECRET の用途分離
+
+`LOGIN_SERVER_SECRET` は HMAC の鍵として**2 用途**で使う。同一鍵の無分離使用を避け、
+HMAC の**メッセージ先頭にドメインラベル + `0x00`** を付けて分離する。
+
+| 用途 | HMAC メッセージ |
+|------|----------------|
+| ログイン検証ハッシュ | `"login-hash" \|\| 0x00 \|\| login_verifier` |
+| 列挙耐性ダミー salt | `"dummy-salt" \|\| 0x00 \|\| username` |
+
+(別環境変数に割るより 1 秘密 + ラベル分離の方が運用・ローテーションが単純。)
+
 ## 3. フロー
 
 ### 3.1 登録 (パスワード設定)
 1. クライアントが `salt` (16B random) を生成。
 2. `master = Argon2id(password, salt)`。
 3. `login_verifier = HKDF(master,"iikanji-login-v1")`、`mk_wrap_key = HKDF(master,"iikanji-mk-wrap-v1")`。
-4. クライアントが MK (32B random) を生成し `mk_wrap_key` で wrap。
+4. クライアントが MK (32B random) を生成し `mk_wrap_key` で wrap:
+   **`AES-256-GCM(key=mk_wrap_key, iv=wrap_iv(12B random), plaintext=MK)`**。
+   出力 = ciphertext(32B) + GCM tag(16B) = 48B を `wrapped_master_key`、`wrap_iv`(12B)
+   を併せて保存する (index.md §5 と一致。§5 の「暫定」表記は本方式確定時に外す)。
 5. サーバへ送信: `{salt, kdf_params, login_verifier, wrapped_master_key, wrap_iv}`。
-   - サーバは `login_verifier` を**そのまま保存せず** `server_hash = HMAC-SHA256(LOGIN_SERVER_SECRET, login_verifier)`
+   - サーバは `login_verifier` を**そのまま保存せず**
+     `server_hash = HMAC-SHA256(LOGIN_SERVER_SECRET, "login-hash" || 0x00 || login_verifier)`
      を保存する。`LOGIN_SERVER_SECRET` は**本用途専用の**環境変数管理サーバ固有秘密
      (email 擬名化の `server_secret` (index.md:67) とは**別変数**にして用途を混ぜない)。
      **DB が流出しても `LOGIN_SERVER_SECRET` が無ければ `login_verifier` 平文を得られない**
      (二重 slow KDF は不要。`login_verifier` は既に高エントロピーなので HMAC で十分)。
+     `"login-hash" || 0x00 || ...` のプレフィックスは**ドメイン分離**用 (§3.2 のダミー
+     salt 用途と同一鍵を無分離で使わないため。下記「LOGIN_SERVER_SECRET の用途分離」)。
    - **`LOGIN_SERVER_SECRET` ローテーション**: 秘密を差し替えると全 `login_server_hash`
      が無効になるため、**遅延ローテーション**を採る = `login_server_hash` に
      `secret_version` を併記し、ログイン成功時 (= `login_verifier` を平文で握れる瞬間) に
@@ -72,14 +90,16 @@ mk_wrap_key    = HKDF(master, info="iikanji-mk-wrap-v1")   # ← サーバに送
 
 ### 3.2 ログイン (2 ラウンド)
 1. `POST /auth/login/begin {username}` → サーバが `{salt, kdf_params}` を返す。
-   未知ユーザーには**決定的ダミー salt** = `HMAC-SHA256(LOGIN_SERVER_SECRET, username)` から
+   未知ユーザーには**決定的ダミー salt** =
+   `HMAC-SHA256(LOGIN_SERVER_SECRET, "dummy-salt" || 0x00 || username)[0:16]` から
    導いた 16B を返す (リクエスト毎にランダムだと「同名 2 回で salt が変わる」差で
    存在判定されるため、**username に対し決定的**にして列挙耐性を持たせる。脅威モデル
    §Q3 と整合)。
 2. クライアント: `master = Argon2id(password, salt)`、`login_verifier = HKDF(master,"iikanji-login-v1")`。
 3. `POST /auth/login/finish {username, login_verifier}` → サーバが
-   `HMAC-SHA256(SERVER_SECRET, login_verifier)` と保存値を定数時間比較。OK ならセッション
-   確立 + `wrapped_master_key` 等を返す。
+   `HMAC-SHA256(LOGIN_SERVER_SECRET, "login-hash" || 0x00 || login_verifier)` を計算し
+   保存値 (`login_server_hash`) と定数時間比較。OK ならセッション確立 +
+   `wrapped_master_key` 等を返す。
 4. クライアント: `mk_wrap_key = HKDF(master,"iikanji-mk-wrap-v1")` → MK unwrap → SharedWorker へ。
    **以後、別途の「暗号鍵解除」操作は不要**。
 
@@ -95,7 +115,9 @@ mk_wrap_key    = HKDF(master, info="iikanji-mk-wrap-v1")   # ← サーバに送
 - パスワードは MK の唯一の常用守り → 忘れたら**リカバリシードでのみ復旧**。
   リカバリで MK を unwrap → 新パスワードを設定し直す (3.3 と同じく再 wrap)。
 - **リカバリシードは 1 回限り使用** (index.md §8 と整合)。復旧後に**旧シードを無効化し
-  新シードを発行**して再提示する (使用済みシードの再利用を防ぐ)。
+  新シードを発行**して再提示する (使用済みシードの再利用を防ぐ)。**新シードの再提示は
+  初回登録時と同等のセキュア表示要件**を満たすこと (1 回限り表示・画面/履歴キャッシュ
+  禁止・コピー時の注意喚起。PR-4 で実装漏れしやすいので明記)。
 - リカバリシードも無ければ MK 復元不可能 (規約で明示。文言は `terms` テンプレートに
   追記する ToDo)。
 
