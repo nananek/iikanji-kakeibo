@@ -61,6 +61,15 @@ def balance():
         for a in accounts
     }
 
+    # B/S 科目の前年繰越 (= 記帳開始以来の累計) を出すための最古年度。仕訳ゼロ
+    # なら None で前年 fetch ループを skip。v4 サーバ試算表の opening=date<年初
+    # 累計に相当する処理をクライアントで再現するために必要 (#試算表 B/S 繰越)。
+    min_year = (
+        db.session.query(func.min(JournalEntry.fiscal_year))
+        .filter(JournalEntry.user_id == user_id)
+        .scalar()
+    )
+
     return render_template(
         "reports/balance.html",
         year=year,
@@ -69,6 +78,7 @@ def balance():
         period_labels=PERIOD_LABELS,
         accounts_meta=accounts_meta,
         effective_user_id=user_id,
+        min_year=min_year,
     )
 
 

@@ -7,7 +7,7 @@ const M = new URL(
   "../../../app/static/js/crypto/reports/trial_balance.js",
   import.meta.url,
 );
-const { computeTrialBalance, balanceOf } = await import(M.href);
+const { computeTrialBalance, balanceOf, computeBsOpeningFromPrior } = await import(M.href);
 
 
 // --- helper ---
@@ -158,4 +158,44 @@ test("balanceOf: credit normal", () => {
 
 test("balanceOf: unsupported normalBalance で throw", () => {
   assert.throws(() => balanceOf({debit: 100, credit: 50}, "evil"), /unsupported/);
+});
+
+
+// --- computeBsOpeningFromPrior (B/S 前年繰越) ---
+
+const META = {
+  "1010": { type: "asset", normal_balance: "debit" },     // 現金
+  "2010": { type: "liability", normal_balance: "credit" }, // 買掛
+  "3020": { type: "equity", normal_balance: "credit" },    // 繰越利益
+  "4010": { type: "revenue", normal_balance: "credit" },   // 売上 (P/L)
+  "5010": { type: "expense", normal_balance: "debit" },    // 費用 (P/L)
+};
+
+function ent(lines) {
+  return { lines: lines.map(([c, d, cr]) => ({ account_code: c, debit: d, credit: cr })) };
+}
+
+test("computeBsOpeningFromPrior: B/S 科目だけ符号付きで繰り越す", () => {
+  const prior = [
+    ent([["1010", 100000, 0], ["2010", 0, 40000], ["3020", 0, 60000]]),
+    ent([["1010", 0, 30000], ["2010", 10000, 0]]),
+  ];
+  const o = computeBsOpeningFromPrior(prior, META);
+  assert.equal(o["1010"], 70000);   // 資産: 100000-30000
+  assert.equal(o["2010"], 30000);   // 負債(credit): 40000-10000
+  assert.equal(o["3020"], 60000);   // 純資産(credit): 60000-0
+});
+
+test("computeBsOpeningFromPrior: P/L 科目は繰り越さない", () => {
+  const prior = [ent([["4010", 0, 500000], ["5010", 200000, 0], ["1010", 300000, 0]])];
+  const o = computeBsOpeningFromPrior(prior, META);
+  assert.equal(o["1010"], 300000);
+  assert.equal("4010" in o, false);  // 収益は対象外
+  assert.equal("5010" in o, false);  // 費用は対象外
+});
+
+test("computeBsOpeningFromPrior: 空/未知科目は無視", () => {
+  assert.deepEqual(computeBsOpeningFromPrior([], META), {});
+  const o = computeBsOpeningFromPrior([ent([["9999", 100, 0], [null, 50, 0]])], META);
+  assert.deepEqual(o, {});  // META に無い 9999, account_code null は無視
 });

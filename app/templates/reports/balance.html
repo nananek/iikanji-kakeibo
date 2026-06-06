@@ -3,7 +3,7 @@
 
 {% block content %}
 <script id="trial-balance-server-params" type="application/json">
-{{ {"fiscal_year": year, "fiscal_period_from": pf, "fiscal_period_to": pt, "user_id": effective_user_id} | tojson }}
+{{ {"fiscal_year": year, "fiscal_period_from": pf, "fiscal_period_to": pt, "user_id": effective_user_id, "min_year": min_year} | tojson }}
 </script>
 {% set range_label %}
   {% if pf == pt %}{{ period_labels.get(pf, '') }}{% else %}{{ period_labels.get(pf, '') }}〜{{ period_labels.get(pt, '') }}{% endif %}
