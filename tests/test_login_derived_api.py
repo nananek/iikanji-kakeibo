@@ -277,3 +277,104 @@ class TestLoginPageRendering:
         resp = client.get("/login")
         assert resp.status_code == 200
         assert b"js/auth/login_flow.mjs" not in resp.data
+
+
+def _change_pw(client, old_verifier, new_verifier, new_salt_b64, **overrides):
+    payload = {
+        "old_login_verifier": _b64(old_verifier),
+        "login_verifier": _b64(new_verifier),
+        "login_salt": new_salt_b64,
+        "login_kdf_params": {"memory": 65536, "iterations": 3, "parallelism": 1},
+        "wrapped_master_key": _b64(b"\x03" * 48),
+        "wrap_iv": _b64(b"\x04" * 12),
+    }
+    payload.update(overrides)
+    return client.post("/auth/login/change-password", json=payload)
+
+
+class TestChangePassword:
+    """#385 PR-4 §3.3: ログイン中のパスワード変更 (MK 不変・再 wrap)。"""
+
+    def _migrate_and_login(self, client, user, salt_b64=None, verifier=None):
+        salt = salt_b64 or _begin(client, "testuser").get_json()["salt"]
+        v = verifier if verifier is not None else _verifier(0xAA)
+        resp = _migrate(client, "testuser", v, salt)
+        assert resp.status_code == 200  # finish 移行でログイン確立
+        return salt, v
+
+    def test_change_password_success(self, client, db, user):
+        old_salt, old_v = self._migrate_and_login(client, user)
+        new_salt = _b64(b"\x07" * 16)
+        new_v = _verifier(0xCC)
+        resp = _change_pw(client, old_v, new_v, new_salt)
+        assert resp.status_code == 200, resp.get_json()
+        u = User.query.filter_by(username="testuser").first()
+        assert bytes(u.login_server_hash) == _expected_hash(new_v)
+        assert bytes(u.login_salt) == b64decode(new_salt)
+        wk = WrappedKey.query.filter_by(
+            user_id=u.id, method=METHOD_PASSPHRASE,
+        ).first()
+        assert bytes(wk.wrapped_master_key) == b"\x03" * 48
+        assert bytes(wk.salt) == b64decode(new_salt)
+
+    def test_change_password_wrong_old_rejected(self, client, db, user):
+        old_salt, old_v = self._migrate_and_login(client, user)
+        resp = _change_pw(client, _verifier(0x00), _verifier(0xCC), _b64(b"\x07" * 16))
+        assert resp.status_code == 401
+        # 何も変わっていない (旧 verifier のハッシュのまま)
+        u = User.query.filter_by(username="testuser").first()
+        assert bytes(u.login_server_hash) == _expected_hash(old_v)
+
+    def test_change_password_requires_auth(self, client, db, user):
+        # 未ログインのクライアントは 401
+        resp = _change_pw(client, _verifier(0xAA), _verifier(0xCC), _b64(b"\x07" * 16))
+        assert resp.status_code == 401
+
+    def test_change_password_invalid_material(self, client, db, user):
+        old_salt, old_v = self._migrate_and_login(client, user)
+        resp = _change_pw(client, old_v, _verifier(0xCC), _b64(b"\x07" * 16),
+                          wrap_iv=_b64(b"\x04" * 8))  # 12B でない
+        assert resp.status_code == 400
+
+    def test_normal_login_after_change(self, client, db, user):
+        old_salt, old_v = self._migrate_and_login(client, user)
+        new_salt = _b64(b"\x07" * 16)
+        new_v = _verifier(0xCC)
+        assert _change_pw(client, old_v, new_v, new_salt).status_code == 200
+        client.get("/logout")
+        # 新 verifier で通常ログイン成功、旧 verifier は失敗
+        ok = client.post("/auth/login/finish", json={
+            "username": "testuser", "login_verifier": _b64(new_v)})
+        assert ok.status_code == 200
+        client.get("/logout")
+        ng = client.post("/auth/login/finish", json={
+            "username": "testuser", "login_verifier": _b64(old_v)})
+        assert ng.status_code == 401
+
+
+class TestChangePasswordPage:
+    """#385 PR-4: /settings/password とインデックスのカードが login_derived_enabled
+    (context processor inject_login_derived_flag 由来) で出し分けされる。"""
+
+    def test_page_and_card_shown_when_configured(self, client, db, user):
+        # 移行してログイン (LOGIN_SERVER_SECRET は autouse fixture で設定済)
+        salt = _begin(client, "testuser").get_json()["salt"]
+        _migrate(client, "testuser", _verifier(), salt)
+        # /settings/ に「パスワード変更」カードが出る (context processor 経由)
+        idx = client.get("/settings/")
+        assert idx.status_code == 200
+        assert "パスワード変更".encode() in idx.data
+        # 変更ページも開ける
+        page = client.get("/settings/password")
+        assert page.status_code == 200
+        assert b"change-password-form" in page.data
+
+    def test_page_404_and_card_hidden_when_unconfigured(self, app, client, db, user):
+        salt = _begin(client, "testuser").get_json()["salt"]
+        _migrate(client, "testuser", _verifier(), salt)  # ログイン確立
+        # LOGIN_SERVER_SECRET を外すと context processor が falsy → カード非表示・404
+        app.config["LOGIN_SERVER_SECRET"] = ""
+        idx = client.get("/settings/")
+        assert idx.status_code == 200
+        assert "パスワード変更".encode() not in idx.data
+        assert client.get("/settings/password").status_code == 404
