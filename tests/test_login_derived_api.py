@@ -129,6 +129,11 @@ class TestLoginFinishMigrate:
         assert resp.status_code == 200
         body = resp.get_json()
         assert body["ok"] is True and body["migrated"] is True
+        # クライアントの rewrap ドライバが使う user_id / years を返す。
+        # この user は temp-MK を持たないので rewrap 不要・years は空。
+        assert body["user_id"] == User.query.filter_by(username="testuser").first().id
+        assert body["needs_rewrap"] is False
+        assert body["years"] == []
 
         migrated = User.query.filter_by(username="testuser").first()
         # 認証因子が確立されている
@@ -182,6 +187,21 @@ class TestLoginFinishMigrate:
         salt2 = _begin(client, "testuser").get_json()["salt"]
         resp = _migrate(client, "testuser", _verifier(0xBB), salt2)
         assert resp.status_code == 400
+
+    def test_migration_rejected_if_user_already_has_wrapped_key(self, client, db, user):
+        # 旧ウィザードで MK を確立済み (wrapped_key 有 / login_salt 無) のユーザーは
+        # 移行パスに通さない (新 MK 生成で既存鍵が孤立しデータ消失するのを防ぐ)。
+        wk = WrappedKey(
+            user_id=user.id, method=METHOD_PASSPHRASE,
+            wrapped_master_key=b"\x01" * 48, wrap_iv=b"\x02" * 12,
+            salt=b"\x03" * 16, kdf_params={"memory": 65536, "iterations": 3, "parallelism": 1},
+        )
+        db.session.add(wk)
+        db.session.commit()
+        salt = _begin(client, "testuser").get_json()["salt"]
+        resp = _migrate(client, "testuser", _verifier(), salt)
+        assert resp.status_code == 400
+        assert User.query.filter_by(username="testuser").first().login_salt is None
 
     def test_migration_is_idempotent_retry_after_interrupt(self, client, db, user):
         # begin → (finish せず中断) → 再 begin → finish が成功する
@@ -241,3 +261,19 @@ class TestLoginFinishNormal:
             "login_verifier": _b64(b"\x01" * 16),  # 32B でない
         })
         assert resp.status_code == 400
+
+
+class TestLoginPageRendering:
+    """#385 PR-3a: LOGIN_SERVER_SECRET の有無で login_flow.mjs の読み込みを切替える。"""
+
+    def test_login_flow_module_loaded_when_configured(self, app, client, db):
+        # autouse fixture で LOGIN_SERVER_SECRET は設定済み。
+        resp = client.get("/login")
+        assert resp.status_code == 200
+        assert b"js/auth/login_flow.mjs" in resp.data
+
+    def test_login_flow_module_absent_when_unconfigured(self, app, client, db):
+        app.config["LOGIN_SERVER_SECRET"] = ""
+        resp = client.get("/login")
+        assert resp.status_code == 200
+        assert b"js/auth/login_flow.mjs" not in resp.data

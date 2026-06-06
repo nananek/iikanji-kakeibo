@@ -30,6 +30,7 @@ from app.extensions import db, limiter
 from app.models.user import User
 from app.models.wrapped_key import METHOD_PASSPHRASE, WrappedKey
 from app.services import login_derived as ld
+from app.services.migration_status import migration_rewrap_years
 
 
 bp = Blueprint("auth_api", __name__, url_prefix="/auth/login")
@@ -160,6 +161,13 @@ def _finish_migrate(user, username, login_verifier, data):
     if user is None or not user.password_hash or user.login_salt is not None:
         return jsonify({"error": "migration not applicable"}), 400
 
+    # データ消失防止ガード: 既に wrapped_key を持つ (= 旧ウィザードで別パスフレーズ由来の
+    # MK を確立済み) ユーザーは、ログインパスワードからその MK を再現できない。ここで新 MK を
+    # 生成すると既存鍵が孤立し暗号化データが復号不能になるため、移行パスに通さない。
+    # 真の v4 移行対象 (E2EE 未設定・temp-MK 暗号) は wrapped_key を持たない。
+    if WrappedKey.query.filter_by(user_id=user.id).first() is not None:
+        return jsonify({"error": "migration not applicable"}), 400
+
     # werkzeug を最終 1 回検証する。平文は dict から pop してスコープを最小化し、
     # ボディがログ/例外に残らないようにする (設計書 §3.5)。
     password = data.pop("password", None)
@@ -224,10 +232,14 @@ def _finish_migrate(user, username, login_verifier, data):
 
     locked = not user.is_active
     login_user(user, remember=not locked, force=locked)
+    needs_rewrap = user.migration_temp_mk is not None
     return jsonify({
         "ok": True,
         "migrated": True,
         "locked": locked,
+        "user_id": user.id,
         # temp-MK が残っていれば、クライアントは続けて rewrap → finalize する。
-        "needs_rewrap": user.migration_temp_mk is not None,
+        # years は透過 rewrap ドライバ (runRewrapMigration) の進捗計算に使う。
+        "needs_rewrap": needs_rewrap,
+        "years": migration_rewrap_years(user.id) if needs_rewrap else [],
     })
