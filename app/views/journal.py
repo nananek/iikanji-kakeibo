@@ -1,6 +1,7 @@
 import json
 import re
 from datetime import date
+from urllib.parse import urlparse
 
 from flask import Blueprint, render_template, redirect, url_for, flash, request, jsonify, make_response
 from flask_login import login_required, current_user
@@ -277,12 +278,20 @@ def bulk_delete():
     """仕訳の一括削除"""
     entry_ids = request.form.getlist("entry_ids", type=int)
     raw_redirect = request.form.get("redirect_url", "")
-    fallback_url = url_for("journal.index")
-    # オープンリダイレクト防止: helper 越しではなく view 内でインラインに内部パスを
-    # 検証する (CodeQL py/url-redirection がガードを辿れるようにする)。
-    redirect_url = (
-        raw_redirect if _INTERNAL_REDIRECT_RE.fullmatch(raw_redirect) else fallback_url
-    )
+    # オープンリダイレクト防止: 既定を安全な内部 URL にし、多段サニタイズを view 内で
+    # 直接評価して通った時だけ raw_redirect を採用する (auth.py と同方針。CodeQL
+    # py/url-redirection がガードを辿れるよう regex + urlparse の scheme/netloc を併用)。
+    redirect_url = url_for("journal.index")
+    parsed = urlparse(raw_redirect)
+    if (
+        raw_redirect
+        and _INTERNAL_REDIRECT_RE.fullmatch(raw_redirect)
+        and not raw_redirect.startswith("//")
+        and not raw_redirect.startswith("/\\")
+        and not parsed.scheme
+        and not parsed.netloc
+    ):
+        redirect_url = raw_redirect
 
     if not entry_ids:
         flash("削除する仕訳が選択されていません。", "warning")
