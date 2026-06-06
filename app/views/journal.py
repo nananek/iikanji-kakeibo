@@ -3,7 +3,7 @@ import re
 from datetime import date
 from urllib.parse import urlparse
 
-from flask import Blueprint, render_template, redirect, url_for, flash, request, jsonify, make_response
+from flask import Blueprint, render_template, redirect, url_for, flash, request, jsonify, make_response, current_app
 from flask_login import login_required, current_user
 
 from app.extensions import db
@@ -278,9 +278,11 @@ def bulk_delete():
     """仕訳の一括削除"""
     entry_ids = request.form.getlist("entry_ids", type=int)
     raw_redirect = request.form.get("redirect_url", "")
-    # オープンリダイレクト防止: 既定を安全な内部 URL にし、多段サニタイズを view 内で
-    # 直接評価して通った時だけ raw_redirect を採用する (auth.py と同方針。CodeQL
-    # py/url-redirection がガードを辿れるよう regex + urlparse の scheme/netloc を併用)。
+    # オープンリダイレクト防止 (auth.py の _safe_next_url と同手法): 既定を安全な内部
+    # URL にし、多段サニタイズ (regex + urlparse の scheme/netloc + プロトコル相対排除)
+    # を通った時だけ、raw path を url_map で endpoint+args に解決し url_for() で再構築
+    # する。redirect には常に url_for() 由来の値だけを渡すため、CodeQL py/url-redirection
+    # の taint flow を完全に切断する (raw 値を直接 redirect しない)。
     redirect_url = url_for("journal.index")
     parsed = urlparse(raw_redirect)
     if (
@@ -291,7 +293,12 @@ def bulk_delete():
         and not parsed.scheme
         and not parsed.netloc
     ):
-        redirect_url = raw_redirect
+        try:
+            adapter = current_app.url_map.bind("")
+            endpoint, view_args = adapter.match(parsed.path or "/", method="GET")
+            redirect_url = url_for(endpoint, **view_args)
+        except Exception:
+            redirect_url = url_for("journal.index")
 
     if not entry_ids:
         flash("削除する仕訳が選択されていません。", "warning")
