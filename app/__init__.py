@@ -211,6 +211,12 @@ def create_app(config_class=Config):
     def inject_dev_flag():
         return {"is_dev": app.debug}
 
+    # #385: ログイン派生 MK の 2 ラウンドログインを有効化するか。LOGIN_SERVER_SECRET
+    # 未設定なら login.html は従来の werkzeug フォーム送信のまま (フラグ off)。
+    @app.context_processor
+    def inject_login_derived_flag():
+        return {"login_derived_enabled": bool(app.config.get("LOGIN_SERVER_SECRET"))}
+
     # Context processor for CAPTCHA
     @app.context_processor
     def inject_captcha_config():

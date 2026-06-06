@@ -7,7 +7,7 @@
     <div class="card shadow-sm mt-5">
       <div class="card-body p-4">
         <h3 class="text-center mb-4"><i class="bi bi-journal-text"></i> いいかんじ™家計簿</h3>
-        <form method="POST">
+        <form method="POST" id="login-form">
           {{ form.hidden_tag() }}
           <div class="mb-3">
             {{ form.username.label(class="form-label") }}
@@ -26,6 +26,18 @@
           {% include "auth/_captcha_widget.html" %}
           {{ form.submit(class="btn btn-primary w-100") }}
         </form>
+
+        {% if login_derived_enabled %}
+        {# #385 PR-3a: 2 ラウンドログイン + 透過移行の状況表示。鍵解錠 (Argon2id) と
+           初回移行の rewrap 進捗をここに出す。LOGIN_SERVER_SECRET 未設定時は
+           本ブロック自体を出さず、従来の werkzeug フォーム送信のままにする。 #}
+        <div id="login-status" class="mt-3 text-center small d-none"></div>
+        <div id="login-progress" class="progress mt-2 d-none" style="height: 1.25rem;">
+          <div id="login-progress-bar" class="progress-bar progress-bar-striped progress-bar-animated"
+               role="progressbar" style="width: 0%;"
+               aria-valuenow="0" aria-valuemin="0" aria-valuemax="100">0%</div>
+        </div>
+        {% endif %}
 
         <div id="passkey-section" class="d-none">
           <div class="text-center my-3">
@@ -67,6 +79,11 @@
 {% endblock %}
 
 {% block scripts %}
+{% if login_derived_enabled %}
+{# #385 PR-3a: パスワードログインを 2 ラウンド (login/begin → finish) + 透過移行に置換。
+   LOGIN_SERVER_SECRET 設定時のみ読み込み、未設定時は従来フォーム送信のまま。 #}
+<script type="module" src="{{ url_for('static', filename='js/auth/login_flow.mjs') }}"></script>
+{% endif %}
 <script src="{{ url_for('static', filename='js/webauthn.js') }}"></script>
 <script>
 // WebAuthn が使えるブラウザ＋セキュアコンテキストでのみ表示

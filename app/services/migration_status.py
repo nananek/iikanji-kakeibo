@@ -10,6 +10,27 @@ IS NOT NULL` (= まだサーバ temp-MK を保持＝再ラップ未完) で揃�
 from app.models.user import User
 
 
+def migration_rewrap_years(user_id) -> list:
+    """temp-MK→自 MK 再ラップ対象の年度一覧 (je/jel/bcb を走査する fiscal_year)。
+
+    `journal_entries.fiscal_year` と `balance_cache_blobs.year` の和集合。医療費は
+    年度フィルタなしで全取得、証憑はページ走査するため年度は不要。透過移行ログイン
+    (#385) の `/auth/login/finish` とダッシュボードバナー (dashboard.py) が共用する。
+    """
+    from app.extensions import db
+    from app.models.journal import JournalEntry
+    from app.models.balance_cache import BalanceCacheBlob
+
+    je_years = db.session.query(JournalEntry.fiscal_year).filter_by(
+        user_id=user_id,
+    ).distinct()
+    bcb_years = db.session.query(BalanceCacheBlob.year).filter_by(
+        user_id=user_id,
+    ).distinct()
+    years = {row[0] for row in je_years} | {row[0] for row in bcb_years}
+    return sorted(y for y in years if y is not None)
+
+
 def compute_migration_counts() -> dict:
     """personal ユーザーについて移行関連の生カウントを返す。
 
