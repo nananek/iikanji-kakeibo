@@ -280,7 +280,17 @@ function _bind() {
 
     if (result.status === "redirect") {
       _setStatus(statusEl, "success", "ログインしました。");
-      globalThis.location.href = result.url;
+      // オープンリダイレクト/XSS 防止: リダイレクト直前にインラインで同一 origin の
+      // 内部パスのみへ正規化する (CodeQL がガードを辿れるよう関数越しにしない)。
+      // 外部 URL / javascript: 等は origin 不一致でダッシュボードへ落とす。
+      let target = "/";
+      try {
+        const u = new URL(result.url, globalThis.location.origin);
+        if (u.origin === globalThis.location.origin) {
+          target = u.pathname + u.search + u.hash;
+        }
+      } catch (_e) { /* 不正 URL は "/" のまま */ }
+      globalThis.location.href = target;
       return; // SharedWorker の MK は次ページでも有効なので client.close しない。
     }
     try { client.close(); } catch (_e) { /* ignore */ }
