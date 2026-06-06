@@ -1,0 +1,98 @@
+{% extends "base.html" %}
+{% block title %}TOTP 2要素認証 - いいかんじ™家計簿{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-lg-7">
+    <h2><i class="bi bi-phone"></i> TOTP 2 要素認証</h2>
+    <p class="text-muted small">
+      認証アプリ (Google Authenticator / Authy など) の 6 桁コードをログイン時に追加で求める
+      2 要素認証です。パスワードが漏れても、この端末が無ければログインできません。
+      <strong>任意</strong>ですが、有効化を推奨します。Passkey を設定済みの場合は Passkey が
+      第 2 要素になるため、TOTP は任意です。
+    </p>
+
+    {% if current_user.totp_enabled %}
+      {# 有効 #}
+      <div class="card shadow-sm border-success">
+        <div class="card-body p-4">
+          <h5 class="text-success"><i class="bi bi-check-circle"></i> TOTP は有効です</h5>
+          <p class="text-muted small">
+            ログイン時に認証アプリの 6 桁コードが必要です。
+            {% if current_user.totp_confirmed_at %}
+            (有効化: {{ current_user.totp_confirmed_at.strftime("%Y-%m-%d") }})
+            {% endif %}
+          </p>
+          <div class="d-flex gap-2 flex-wrap">
+            <form method="POST" action="{{ url_for('settings.totp_regenerate_backup_codes') }}">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <button type="submit" class="btn btn-outline-secondary">
+                <i class="bi bi-arrow-repeat"></i> バックアップコードを再生成
+              </button>
+            </form>
+            <form method="POST" action="{{ url_for('settings.totp_disable') }}"
+                  onsubmit="return confirm('TOTP 2 要素認証を無効にしますか？ バックアップコードも無効になります。');">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <button type="submit" class="btn btn-outline-danger">
+                <i class="bi bi-x-circle"></i> TOTP を無効にする
+              </button>
+            </form>
+          </div>
+        </div>
+      </div>
+
+    {% elif totp_qr_svg %}
+      {# 登録中 (secret 作成済・確認待ち) #}
+      <div class="card shadow-sm">
+        <div class="card-body p-4">
+          <h5><i class="bi bi-qr-code"></i> 認証アプリに登録</h5>
+          <ol class="small text-muted">
+            <li>認証アプリで下の QR コードをスキャンしてください。</li>
+            <li>スキャンできない場合は、下のキーを手動で入力してください。</li>
+            <li>アプリに表示された 6 桁コードを入力して「確認して有効化」を押してください。</li>
+          </ol>
+          <div class="text-center my-3" style="max-width: 240px; margin: 0 auto;">
+            {# サーバ生成の SVG (path のみ・テキスト埋め込みなし) なので safe #}
+            {{ totp_qr_svg | safe }}
+          </div>
+          <p class="small">手動入力用キー:
+            <code class="user-select-all">{{ totp_manual_secret }}</code>
+          </p>
+          <form method="POST" action="{{ url_for('settings.totp_confirm') }}" class="mt-3">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <div class="mb-3">
+              <label class="form-label">確認コード (6 桁)</label>
+              <input type="text" class="form-control" name="code" inputmode="numeric"
+                     autocomplete="one-time-code" pattern="[0-9]*" maxlength="6"
+                     placeholder="123456" required autofocus>
+            </div>
+            <button type="submit" class="btn btn-primary">確認して有効化</button>
+          </form>
+          <form method="POST" action="{{ url_for('settings.totp_disable') }}" class="mt-2">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button type="submit" class="btn btn-link text-muted btn-sm">登録を中止</button>
+          </form>
+        </div>
+      </div>
+
+    {% else %}
+      {# 無効 #}
+      <div class="card shadow-sm">
+        <div class="card-body p-4">
+          <p>現在 TOTP は無効です。</p>
+          <form method="POST" action="{{ url_for('settings.totp_begin') }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button type="submit" class="btn btn-primary">
+              <i class="bi bi-shield-plus"></i> TOTP を有効化する
+            </button>
+          </form>
+        </div>
+      </div>
+    {% endif %}
+
+    <div class="mt-3">
+      <a href="{{ url_for('settings.index') }}" class="btn btn-link">設定に戻る</a>
+    </div>
+  </div>
+</div>
+{% endblock %}

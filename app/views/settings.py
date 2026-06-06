@@ -70,6 +70,132 @@ def change_password():
     return render_template("settings/change_password.html")
 
 
+# --- TOTP 2FA (#385 PR-T2、設計書 §3.6) -----------------------------------
+
+def _totp_enabled_config():
+    """TOTP 機能が利用可能か (LOGIN_SERVER_SECRET 必須。secret 暗号鍵を導出するため)。"""
+    return bool(current_app.config.get("LOGIN_SERVER_SECRET"))
+
+
+@bp.route("/totp")
+@login_required
+def totp():
+    """TOTP 2FA の状態表示・登録ページ。
+
+    状態: 有効 (enabled) / 登録中 (secret 作成済・確認待ち) / 無効。登録中は QR を表示する。
+    """
+    if not _totp_enabled_config():
+        from flask import abort
+        abort(404)
+    from app.services import totp as totp_svc
+    from app.services import login_derived as ld
+
+    qr = None
+    manual = None
+    if not current_user.totp_enabled and current_user.totp_secret_encrypted:
+        # 登録中: 保存済み secret から QR / 手動入力用 base32 を再構築する。
+        secret = ld.decrypt_totp_secret(
+            current_user.totp_secret_encrypted, current_user.totp_secret_iv,
+            current_user.id,
+        )
+        uri = totp_svc.provisioning_uri(secret, current_user.username)
+        qr = totp_svc.qr_svg(uri)
+        manual = totp_svc.secret_to_base32(secret)
+    return render_template(
+        "settings/totp.html", totp_qr_svg=qr, totp_manual_secret=manual,
+    )
+
+
+@bp.route("/totp/begin", methods=["POST"])
+@login_required
+def totp_begin():
+    """TOTP 登録開始: secret を生成し at-rest 暗号化して保存 (totp_enabled=False)。"""
+    if not _totp_enabled_config():
+        from flask import abort
+        abort(404)
+    if current_user.totp_enabled:
+        flash("TOTP は既に有効です。", "info")
+        return redirect(url_for("settings.totp"))
+    from app.services import totp as totp_svc
+    from app.services import login_derived as ld
+
+    secret = totp_svc.generate_secret_bytes()
+    ct, iv = ld.encrypt_totp_secret(secret, current_user.id)
+    current_user.totp_secret_encrypted = ct
+    current_user.totp_secret_iv = iv
+    current_user.totp_enabled = False
+    current_user.totp_confirmed_at = None
+    current_user.totp_last_used_step = None
+    db.session.commit()
+    return redirect(url_for("settings.totp"))
+
+
+@bp.route("/totp/confirm", methods=["POST"])
+@login_required
+def totp_confirm():
+    """確認コードを検証し TOTP を有効化する (verify-before-enable)。成功でバックアップコード発行。"""
+    if not _totp_enabled_config():
+        from flask import abort
+        abort(404)
+    if current_user.totp_enabled or not current_user.totp_secret_encrypted:
+        flash("TOTP 登録の状態が不正です。", "danger")
+        return redirect(url_for("settings.totp"))
+    from app.services import totp as totp_svc
+    from app.services import login_derived as ld
+
+    code = request.form.get("code", "")
+    secret = ld.decrypt_totp_secret(
+        current_user.totp_secret_encrypted, current_user.totp_secret_iv,
+        current_user.id,
+    )
+    if not totp_svc.verify_code(secret, code):
+        flash("確認コードが正しくありません。認証アプリの 6 桁を入力してください。", "danger")
+        return redirect(url_for("settings.totp"))
+
+    current_user.totp_enabled = True
+    current_user.totp_confirmed_at = datetime.now(timezone.utc)
+    codes = totp_svc.generate_backup_codes(current_user.id)
+    db.session.commit()
+    return render_template("settings/totp_backup_codes_show.html", codes=codes)
+
+
+@bp.route("/totp/disable", methods=["POST"])
+@login_required
+def totp_disable():
+    """TOTP を無効化: secret / 確認状態をクリアしバックアップコードを削除する (§3.6.2)。"""
+    if not _totp_enabled_config():
+        from flask import abort
+        abort(404)
+    from app.models.totp_backup_code import TotpBackupCode
+
+    current_user.totp_enabled = False
+    current_user.totp_secret_encrypted = None
+    current_user.totp_secret_iv = None
+    current_user.totp_confirmed_at = None
+    current_user.totp_last_used_step = None
+    TotpBackupCode.query.filter_by(user_id=current_user.id).delete()
+    db.session.commit()
+    flash("TOTP 2 要素認証を無効にしました。", "success")
+    return redirect(url_for("settings.totp"))
+
+
+@bp.route("/totp/backup-codes/regenerate", methods=["POST"])
+@login_required
+def totp_regenerate_backup_codes():
+    """バックアップコードを再生成する (旧コードは全削除)。TOTP 有効時のみ。"""
+    if not _totp_enabled_config():
+        from flask import abort
+        abort(404)
+    if not current_user.totp_enabled:
+        flash("TOTP が有効ではありません。", "danger")
+        return redirect(url_for("settings.totp"))
+    from app.services import totp as totp_svc
+
+    codes = totp_svc.generate_backup_codes(current_user.id)
+    db.session.commit()
+    return render_template("settings/totp_backup_codes_show.html", codes=codes)
+
+
 @bp.route("/display")
 @login_required
 def display():
