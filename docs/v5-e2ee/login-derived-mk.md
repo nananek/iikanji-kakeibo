@@ -147,6 +147,57 @@ HMAC の**メッセージ先頭にドメインラベル + `0x00`** を付けて�
 - リカバリシードも無ければ MK 復元不可能 (規約で明示。文言は `terms` テンプレートに
   追記する ToDo)。
 
+#### 3.4.1 リセット認証モデル: リカバリシードを「フル復旧因子」化 (採用方針)
+
+パスワードを忘れたユーザーが確実に持つのは**ウィザードで必須提示したリカバリシード
+(24 語)**。一方サーバが検証できる既存因子は recovery code (`ikr_`、ログイン用) のみで、
+これは登録時に必ず作られるわけではない。よって**リセットはシード単体で完結できる**必要が
+ある。シードは MK を unwrap できる (recovery_seed wrapped_key) が、**サーバ側 verifier が
+無い**ため、シードを知らない攻撃者でも別 MK で `login_*`/wrapped_key を上書きしてアカウントを
+破壊できる DoS 経路になる。これを塞ぐため、**リカバリシードにサーバ側 verifier を持たせて
+ログイン因子にも昇格**する。
+
+**ドメイン分離 (シードの 2 用途)**:
+- MK unwrap 鍵 (既存): `HKDF-SHA256(seed_bytes, salt=zero(32), info="iikanji-master-key-v1")`
+- リカバリ検証値 (新規): `recovery_verifier = HKDF-SHA256(seed_bytes, salt=zero(32),
+  info="iikanji-recovery-login-v1")`
+- `seed_bytes` = ニーモニックを trim/lowercase/単一スペース化した UTF-8 (bip39.js の
+  `deriveKeyFromMnemonic` 入力と同一)。info 文字列が異なるので 2 値は独立。
+
+**DB**: `users.recovery_seed_server_hash` (BYTEA 32B, nullable) =
+`HMAC-SHA256(LOGIN_SERVER_SECRET, "recovery-hash" || 0x00 || recovery_verifier)`。
+DB 流出時もシード平文/recovery_verifier を得られない (login_server_hash と同方針)。
+recovery_seed wrapped_key を作成 (ウィザード) する際、クライアントが `recovery_verifier` も
+計算して送り、サーバが本ハッシュを保存する。
+
+**リセットフロー**:
+1. 公開ページ `/auth/recovery-reset`。`POST /auth/recovery/begin {username}` →
+   recovery_seed wrapped_key の `{wrapped_master_key, wrap_iv}` を返す (MK unwrap 用)。
+   未知ユーザー / シード未設定には**一様・定数時間応答** (列挙耐性、§3.2 と同方針)。
+2. ユーザーが 24 語シード入力。クライアント: `deriveKeyFromMnemonic(seed)` で MK を unwrap、
+   かつ `recovery_verifier` を導出。
+3. ユーザーが新パスワード入力。新 salt → 新 login material、MK を新 mk_wrap_key で再 wrap。
+4. **シードローテーション (§3.4 の旧シード無効化)**: クライアントが**新 24 語シード**を生成し、
+   MK を新シード鍵で再 wrap、新 `recovery_verifier'` を導出。
+5. `POST /auth/recovery/finish {username, recovery_verifier (旧・認証用), login_salt,
+   login_verifier, login_kdf_params, wrapped_master_key, wrap_iv,
+   new_recovery_wrapped_master_key, new_recovery_wrap_iv, new_recovery_verifier}`。
+6. サーバ: 旧 `recovery_verifier` を `recovery_seed_server_hash` と定数時間照合。OK なら**単一
+   トランザクション**で login_* + passphrase wrapped_key (新PW) + recovery_seed wrapped_key
+   (新シード) + recovery_seed_server_hash (新) を更新 (= 新保存完了後に旧シード無効化、§3.4 の
+   順序)。passkey_prf 鍵は MK 不変でそのまま有効。
+7. クライアント: **新シードを 1 回限りセキュア表示** (初回登録と同等要件)。
+
+**段階 PR 案 (PR-4b)**:
+- PR-4b-1: `recovery_seed_server_hash` 列 (マイグレ) + recovery_seed 作成時にサーバ保存
+  (wrapped_keys API 拡張 or 専用) + クライアント recovery_verifier 導出 (login_kdf.js)。
+- PR-4b-2: `/auth/recovery/begin` `/finish` エンドポイント + テスト (レート制限・列挙耐性・
+  旧 verifier 照合・シードローテーション)。
+- PR-4b-3: 公開リセットページ UI + クライアントリセットフロー JS + 新シードセキュア表示 + E2E。
+- 既存ユーザーの `recovery_seed_server_hash` 後埋め: 解錠済みセッションでシードを再入力させ
+  verifier を後付け保存する導線 (or 次回シードローテ時に確立)。移行期は seed-only リセットが
+  使えないユーザーは passkey/再ログイン経由になる旨を明記。
+
 ### 3.5 自然な v4 → ログイン派生移行 (in-login・本方式の中核)
 
 既存 v4 ユーザー (werkzeug `password_hash` 有 / `login_salt` 無) が**初回ログイン時に
