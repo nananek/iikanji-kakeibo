@@ -5,7 +5,8 @@ at-rest 暗号化した TOTP secret と、バックアップコード (SHA-256 �
 
 `users` に追加:
 - `totp_secret_encrypted` (BYTEA): TOTP secret (20B) を AES-256-GCM (totp_enc_key, aad=user_id)
-  で暗号化した暗号文+tag (36B 想定)。totp_enc_key = HKDF(LOGIN_SERVER_SECRET, "iikanji-totp-enc-v1")。
+  で暗号化した暗号文+tag (36B 想定)。totp_enc_key は LOGIN_SERVER_SECRET から HKDF (info=
+  iikanji-totp-enc-v1) で導出する (login_derived._totp_enc_key、§3.6.1)。
 - `totp_secret_iv` (BYTEA 12B)
 - `totp_enabled` (BOOLEAN NOT NULL default false): verify-before-enable。確認コードが通るまで false。
 - `totp_confirmed_at` (TIMESTAMPTZ nullable)
