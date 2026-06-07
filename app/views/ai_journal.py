@@ -283,7 +283,7 @@ def draft_image(draft_id):
 @login_required
 def voucher_image(voucher_id):
     """証憑画像を返す"""
-    voucher = Voucher.active().filter_by(id=voucher_id).first_or_404()
+    voucher = Voucher.query.filter_by(id=voucher_id).first_or_404()
     if voucher.user_id != get_effective_user_id():
         return "", 403
     try:

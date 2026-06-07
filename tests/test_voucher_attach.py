@@ -8,7 +8,6 @@ import pytest
 
 from app.extensions import db as _db
 from app.models.voucher import Voucher
-from app.models.voucher_audit_log import VoucherAuditLog
 from app.models.ai_config import UserAIConfig
 from app.services.voucher import create_voucher_from_upload
 from tests.conftest import make_journal
@@ -75,25 +74,6 @@ class TestCreateVoucherFromUpload:
 
         expected_hash = hashlib.sha256(TINY_JPEG).hexdigest()
         assert voucher.file_hash == expected_hash
-
-    @patch("app.services.voucher.store_image_with_thumbnail")
-    def test_creates_audit_log(self, mock_store, db, user, accounts):
-        entry = make_journal(
-            db, user.id, "5010", "1010", 300,
-        )
-        voucher = create_voucher_from_upload(
-            user_id=user.id,
-            journal_entry_id=entry.id,
-            image_bytes=TINY_JPEG,
-            mime_type="image/jpeg",
-        )
-        db.session.commit()
-
-        log = VoucherAuditLog.query.filter_by(
-            voucher_id=voucher.id, action="attached",
-        ).first()
-        assert log is not None
-        assert str(entry.id) in log.detail
 
 
 class TestAttachEndpoint:

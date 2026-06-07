@@ -12,7 +12,6 @@ from app.models.journal import JournalEntry, JournalEntryLine
 from app.models.storage import StorageUsage
 from app.models.user import User
 from app.models.voucher import Voucher
-from app.models.voucher_audit_log import VoucherAuditLog
 from app.models.webauthn import WebAuthnCredential
 
 
@@ -66,7 +65,7 @@ def _make_user_with_data(db, *, username, email):
     db.session.add(entry)
     db.session.flush()
 
-    # Voucher + AuditLog
+    # Voucher
     voucher = Voucher(
         user_id=user.id, journal_entry_id=entry.id,
         image_key=f"vouchers/{user.id}/v.jpg",
@@ -75,11 +74,6 @@ def _make_user_with_data(db, *, username, email):
     )
     db.session.add(voucher)
     db.session.flush()
-    log = VoucherAuditLog(
-        voucher_id=voucher.id, user_id=user.id,
-        action="attached", detail="{}",
-    )
-    db.session.add(log)
 
     # APIKey
     raw, key_hash, key_prefix = APIKey.generate()
@@ -92,7 +86,7 @@ def _make_user_with_data(db, *, username, email):
     db.session.add(StorageUsage(user_id=user.id, used_bytes=100))
 
     db.session.commit()
-    return user, voucher, log, entry
+    return user, voucher, entry
 
 
 class TestDeleteUserAccountService:
@@ -101,7 +95,7 @@ class TestDeleteUserAccountService:
     def test_user_row_physically_deleted(self, db, mock_storage):
         from app.services.account_deletion import delete_user_account
 
-        user, _v, _log, _entry = _make_user_with_data(
+        user, _v, _entry = _make_user_with_data(
             db, username="alice", email="alice@example.com",
         )
         user_id = user.id
@@ -114,7 +108,7 @@ class TestDeleteUserAccountService:
     def test_related_data_deleted(self, db, mock_storage):
         from app.services.account_deletion import delete_user_account
 
-        user, voucher, _log, entry = _make_user_with_data(
+        user, voucher, entry = _make_user_with_data(
             db, username="bob", email="bob@example.com",
         )
         user_id = user.id
@@ -129,34 +123,10 @@ class TestDeleteUserAccountService:
         assert APIKey.query.filter_by(user_id=user_id).count() == 0
         assert db.session.get(StorageUsage, user_id) is None
 
-    def test_voucher_audit_log_preserved_anonymized(self, db, mock_storage):
-        """電帳法保管: VoucherAuditLog は user_id / voucher_id を NULL 化して残る."""
-        from app.services.account_deletion import delete_user_account
-
-        user, voucher, log, _entry = _make_user_with_data(
-            db, username="carol", email="carol@example.com",
-        )
-        user_id = user.id
-        voucher_id = voucher.id
-        log_id = log.id
-
-        delete_user_account(user_id)
-
-        # AuditLog 自体は残る
-        preserved = db.session.get(VoucherAuditLog, log_id)
-        assert preserved is not None
-        # user_id は NULL 化 (delete_user_account 内で明示)
-        assert preserved.user_id is None
-        # voucher_id は ondelete=SET NULL で自動 NULL 化
-        # SQLite では ondelete が動かないので、user_id NULL 化のみ保証
-        # PostgreSQL では voucher_id も NULL 化される
-        # 内容 (action / detail) は保持
-        assert preserved.action == "attached"
-
     def test_storage_files_deleted(self, db, mock_storage):
         from app.services.account_deletion import delete_user_account
 
-        user, voucher, _log, _entry = _make_user_with_data(
+        user, voucher, _entry = _make_user_with_data(
             db, username="dave", email="dave@example.com",
         )
         image_key = voucher.image_key
@@ -170,10 +140,10 @@ class TestDeleteUserAccountService:
         """別ユーザーのデータは影響を受けない."""
         from app.services.account_deletion import delete_user_account
 
-        user_a, voucher_a, _log_a, _entry_a = _make_user_with_data(
+        user_a, voucher_a, _entry_a = _make_user_with_data(
             db, username="alice2", email="alice2@example.com",
         )
-        user_b, voucher_b, log_b, _entry_b = _make_user_with_data(
+        user_b, voucher_b, _entry_b = _make_user_with_data(
             db, username="bob2", email="bob2@example.com",
         )
         user_b_id = user_b.id
@@ -185,10 +155,6 @@ class TestDeleteUserAccountService:
         # B のデータは無傷
         assert db.session.get(User, user_b_id) is not None
         assert db.session.get(Voucher, voucher_b_id) is not None
-        b_log_count = VoucherAuditLog.query.filter_by(
-            user_id=user_b_id,
-        ).count()
-        assert b_log_count > 0
 
 
 class TestDeleteAccountView:
@@ -281,7 +247,7 @@ class TestJournalEntryDeletionOrder:
     ):
         from app.services.account_deletion import delete_user_account
 
-        user, _v, _log, entry = _make_user_with_data(
+        user, _v, entry = _make_user_with_data(
             db, username="orderer", email="o@example.com",
         )
         # account + JournalEntryLine を追加 (entry に紐づく)

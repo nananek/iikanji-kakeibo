@@ -29,7 +29,6 @@ from app.services.storage_quota import (
 from app.services.voucher import create_voucher_from_draft
 from app.models.user import User
 from app.models.voucher import Voucher
-from app.models.voucher_audit_log import VoucherAuditLog
 from app.views.helpers import safe_user_error
 
 bp = Blueprint("api", __name__, url_prefix="/api/v1")
@@ -218,7 +217,7 @@ def _entry_to_dict(entry):
                 "id": v.id,
                 "uploaded_at": v.uploaded_at.isoformat() if v.uploaded_at else None,
             }
-            for v in entry.active_vouchers
+            for v in entry.vouchers
         ],
     }
 
@@ -300,8 +299,6 @@ def delete_journal(entry_id):
     if err:
         return jsonify({"error": err}), 400
 
-    from app.views.journal import log_voucher_orphan
-    log_voucher_orphan(entry, user_id)
     db.session.delete(entry)
     db.session.commit()
 
@@ -565,7 +562,7 @@ def list_vouchers():
     per_page = min(request.args.get("per_page", 20, type=int), 100)
 
     query = (
-        Voucher.active()
+        Voucher.query
         .outerjoin(JournalEntry, Voucher.journal_entry_id == JournalEntry.id)
         .filter(Voucher.user_id == user_id)
     )
@@ -664,7 +661,7 @@ def list_vouchers():
 @api_key_required(scope="journals:read")
 def api_voucher_image(voucher_id):
     """証憑画像取得 API"""
-    voucher = Voucher.active().filter_by(
+    voucher = Voucher.query.filter_by(
         id=voucher_id, user_id=g.api_user_id
     ).first()
     if not voucher:
@@ -673,42 +670,6 @@ def api_voucher_image(voucher_id):
         return serve_image(voucher.image_key, voucher.image_mime, voucher.file_hash)
     except FileNotFoundError:
         return jsonify({"error": "画像ファイルが見つかりません。"}), 404
-
-
-@bp.route("/vouchers/<int:voucher_id>/logs", methods=["GET"])
-@api_key_required(scope="journals:read")
-def api_voucher_logs(voucher_id):
-    """証憑操作ログ API。
-
-    削除済 (`deleted_at` セット済) の Voucher にも引き続きアクセス可能。
-    電帳法の訂正削除証跡として、削除後にログを参照したい運用がある。
-    """
-    voucher = Voucher.query.filter_by(
-        id=voucher_id, user_id=g.api_user_id
-    ).first()
-    if not voucher:
-        return jsonify({"error": "証憑が見つかりません。"}), 404
-
-    logs = (
-        VoucherAuditLog.query
-        .filter_by(voucher_id=voucher.id)
-        .order_by(VoucherAuditLog.created_at.desc())
-        .all()
-    )
-
-    return jsonify({
-        "ok": True,
-        "logs": [
-            {
-                "id": log.id,
-                "action": log.action,
-                "detail": log.detail,
-                "created_at": log.created_at.isoformat(),
-                "user_id": log.user_id,
-            }
-            for log in logs
-        ],
-    })
 
 
 # --- レポート API (read-only) ---

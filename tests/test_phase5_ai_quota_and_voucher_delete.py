@@ -13,7 +13,6 @@ from app.models.ai_draft import AIDraft
 from app.models.storage import StorageUsage
 from app.models.user import User
 from app.models.voucher import Voucher
-from app.models.voucher_audit_log import VoucherAuditLog
 
 
 MB = 1024 * 1024
@@ -395,12 +394,8 @@ class TestVoucherDelete:
         )
         assert resp.status_code == 302
 
-        # Voucher は論理削除 (row は残るが deleted_at がセットされる)
-        deleted = db.session.get(Voucher, voucher.id)
-        assert deleted is not None
-        assert deleted.deleted_at is not None
-        # active() スコープからは除外される
-        assert Voucher.active().filter_by(id=voucher.id).first() is None
+        # Voucher は物理削除される
+        assert db.session.get(Voucher, voucher.id) is None
         # StorageUsage は解放
         assert db.session.get(StorageUsage, user.id).used_bytes == 0
         # ストレージ削除呼び出し済
@@ -447,35 +442,6 @@ class TestVoucherDelete:
         assert db.session.get(Voucher, voucher.id) is not None
         # StorageUsage も解放されない
         assert db.session.get(StorageUsage, user.id).used_bytes == 2 * MB
-
-    def test_delete_persists_audit_log(
-        self, logged_in_client, db, user, app, mock_storage, reset_limiter,
-    ):
-        """Voucher 削除時、`action="deleted"` の AuditLog が永続化される
-        (電帳法スキャナ保存「訂正削除の事実と内容を確認できること」要件)."""
-        voucher = self._make_voucher(db, user, file_size=1 * MB)
-        db.session.add(VoucherAuditLog(
-            voucher_id=voucher.id, user_id=user.id, action="attached",
-        ))
-        db.session.commit()
-
-        resp = logged_in_client.post(
-            f"/vouchers/{voucher.id}/delete", follow_redirects=False,
-        )
-        assert resp.status_code == 302
-        # attached + deleted の 2 件が残る (物理削除はしない)
-        logs = VoucherAuditLog.query.filter_by(
-            voucher_id=voucher.id,
-        ).order_by(VoucherAuditLog.id).all()
-        assert len(logs) == 2
-        assert logs[0].action == "attached"
-        assert logs[1].action == "deleted"
-        # detail に image_key / file_hash / file_size が記録されている
-        import json as _json
-        deleted_detail = _json.loads(logs[1].detail or "{}")
-        assert "image_key" in deleted_detail
-        assert "file_hash" in deleted_detail
-        assert deleted_detail.get("file_size") == 1 * MB
 
     def test_delete_null_file_size_skipped(
         self, logged_in_client, db, user, app, mock_storage, reset_limiter,

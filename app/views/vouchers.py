@@ -1,8 +1,5 @@
 """証憑一覧ビュー — 電帳法検索要件対応"""
 
-import json
-from datetime import datetime, timezone
-
 from flask import (
     Blueprint, render_template, request, flash, redirect, url_for,
     jsonify, session,
@@ -14,7 +11,6 @@ from sqlalchemy.orm import joinedload
 from app.extensions import db, limiter
 from app.models.user import User
 from app.models.voucher import Voucher
-from app.models.voucher_audit_log import VoucherAuditLog
 from app.models.ai_config import UserAIConfig
 from app.models.journal import JournalEntry, JournalEntryLine
 from app.services.audit import get_effective_user_id
@@ -42,7 +38,7 @@ def index():
 
     # 論理削除 (Phase 5 #70 電帳法証跡永続化) されたものを除外
     query = (
-        Voucher.active()
+        Voucher.query
         .outerjoin(JournalEntry, Voucher.journal_entry_id == JournalEntry.id)
         .options(joinedload(Voucher.journal_entry))
         .filter(Voucher.user_id == user_id)
@@ -193,54 +189,32 @@ def attach(entry_id):
 @login_required
 @limiter.limit("10/minute", methods=["POST"])
 def delete(voucher_id):
-    """証憑削除 (Phase 5 #70 / 電帳法証跡永続化)。
+    """証憑を削除する。
 
-    Voucher は論理削除 (`deleted_at` セット) する。物理 row は DB に
-    残るため `VoucherAuditLog` の FK RESTRICT 制約と共存でき、
-    `action="deleted"` の削除証跡を **DB に永続化** できる (電帳法
-    スキャナ保存「訂正削除の事実と内容を確認できること」要件に対応)。
-
-    ストレージ上の画像ファイルは即削除する (容量解放を優先、訂正削除
-    の事実は AuditLog の `detail` に file_hash を残すことで担保)。
+    Voucher 本体を物理削除し、ストレージ上の画像ファイルも削除する。
 
     代理閲覧中 (`acting_as_user_id` セッション設定) は破壊操作を禁止
-    (auditor は閲覧者であり、本人の意思によらない削除は監査独立性を
-    損なう)。本人ログイン時のみ操作可能。
+    (auditor は閲覧者であり、本人の意思によらない削除はその立場の
+    独立性を損なう)。本人ログイン時のみ操作可能。
     """
     if session.get("acting_as_user_id") is not None:
         flash("代理閲覧中は証憑を削除できません。", "danger")
         return redirect(url_for("vouchers.index"))
 
     user_id = current_user.id
-    voucher = Voucher.active().filter_by(
+    voucher = Voucher.query.filter_by(
         id=voucher_id, user_id=user_id,
     ).first_or_404()
 
     image_key = voucher.image_key
     size_to_release = voucher.file_size or 0
-    file_hash = voucher.file_hash or ""
 
     from flask import current_app
-    # 電帳法の訂正削除証跡を DB に永続化 (`action="deleted"` の AuditLog)。
-    # detail に画像 key / hash / サイズを格納し、ファイル本体が削除されて
-    # も「何が削除されたか」を後から検証可能にする。
-    db.session.add(VoucherAuditLog(
-        voucher_id=voucher.id,
-        user_id=user_id,
-        action="deleted",
-        detail=json.dumps({
-            "image_key": image_key,
-            "file_hash": file_hash,
-            "file_size": size_to_release,
-        }, ensure_ascii=False),
-    ))
-    # 論理削除: deleted_at を立てる。物理 row は残るため FK RESTRICT も
-    # 満たす。`Voucher.active()` 経由の query から透過的に除外される。
-    voucher.deleted_at = datetime.now(timezone.utc)
-    # 運用フィルタ用に warning ログも残す (DB と二重で検出可能)
+    db.session.delete(voucher)
+    # 運用フィルタ用に warning ログを残す
     current_app.logger.warning(
-        "voucher deleted: id=%d user_id=%d image_key=%s file_hash=%s",
-        voucher.id, user_id, image_key, file_hash,
+        "voucher deleted: id=%d user_id=%d image_key=%s",
+        voucher.id, user_id, image_key,
     )
     db.session.commit()
 

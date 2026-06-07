@@ -39,24 +39,6 @@ class JournalEntry(db.Model):
         ),
     )
 
-    # 論理削除されていない vouchers のみを SQL レベルでフィルタして返す
-    # (PR #94 review Finding 1 反映 — 旧実装は Python フィルタだったが
-    # 削除済が大量蓄積した場合の負荷を避けるため SQL レベルに移行)。
-    # `vouchers` backref は引き続き全件を返すので、`log_voucher_orphan` /
-    # `api_voucher_logs` 等の証跡参照用途はそちらを使うこと。
-    active_vouchers = db.relationship(
-        "Voucher",
-        primaryjoin=(
-            "and_("
-            "JournalEntry.id == Voucher.journal_entry_id, "
-            "Voucher.deleted_at.is_(None)"
-            ")"
-        ),
-        viewonly=True,
-        order_by="Voucher.id",
-        lazy="select",
-    )
-
     @property
     def total_debit(self):
         return sum(line.debit_amount for line in self.lines)
