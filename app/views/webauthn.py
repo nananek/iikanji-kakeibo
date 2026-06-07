@@ -41,10 +41,28 @@ def _get_rp_id_and_origin():
 # ---------- 登録 ----------
 
 
+def _require_totp_enabled():
+    """新規パスキー登録には TOTP 有効を必須とするガード。
+
+    TOTP はパスキー紛失時の復旧経路 (旧リカバリコードの代替) を担うため、
+    パスキー登録前に TOTP を有効化させる。未有効なら 403 + code を返す。
+    """
+    if not current_user.totp_enabled:
+        return jsonify(
+            error="パスキーを登録する前に二段階認証(TOTP)を有効にしてください。",
+            code="totp_required",
+        ), 403
+    return None
+
+
 @bp.route("/register/options", methods=["POST"])
 @login_required
 def register_options():
     """登録セレモニー: PublicKeyCredentialCreationOptions を生成"""
+    gate = _require_totp_enabled()
+    if gate is not None:
+        return gate
+
     existing = WebAuthnCredential.query.filter_by(user_id=current_user.id).all()
     exclude_credentials = [
         PublicKeyCredentialDescriptor(id=c.credential_id) for c in existing
@@ -74,6 +92,10 @@ def register_options():
 @login_required
 def register_verify():
     """登録セレモニー: ブラウザからのレスポンスを検証し保存"""
+    gate = _require_totp_enabled()
+    if gate is not None:
+        return gate
+
     challenge = session.pop("webauthn_register_challenge", None)
     if not challenge:
         return jsonify(error="チャレンジが見つかりません。もう一度お試しください。"), 400

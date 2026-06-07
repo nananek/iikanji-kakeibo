@@ -1,0 +1,20 @@
+{# パスキー登録済みだが TOTP 未設定のユーザーに TOTP 設定を促すバナー。
+   旧リカバリコードの代替として TOTP が復旧経路を担うため、移行を案内する。
+   表示条件: パスキー >= 1 本 かつ totp_enabled が False。 #}
+{% if current_user.is_authenticated
+      and not current_user.totp_enabled
+      and current_user.webauthn_credentials.count() > 0 %}
+<div class="alert alert-warning d-flex align-items-start gap-2" role="alert">
+  <i class="bi bi-shield-exclamation fs-4"></i>
+  <div class="flex-grow-1">
+    <strong>二段階認証 (TOTP) を設定してください</strong>
+    <p class="mb-2 small">
+      パスキーを紛失した際の復旧手段として、認証アプリによる二段階認証の設定を
+      お願いします。今後はパスキーの追加登録にも TOTP の有効化が必要です。
+    </p>
+    <a href="{{ url_for('settings.totp_status') }}" class="btn btn-sm btn-warning">
+      <i class="bi bi-shield-lock"></i> 二段階認証を設定する
+    </a>
+  </div>
+</div>
+{% endif %}
