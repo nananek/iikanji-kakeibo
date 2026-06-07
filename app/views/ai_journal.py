@@ -31,7 +31,7 @@ from app.services.storage_quota import (
 from app.views.helpers import safe_user_error
 from app.services.voucher import create_voucher_from_draft
 from app.models.voucher import Voucher
-from app.views.helpers import get_grouped_accounts, check_deadline
+from app.views.helpers import get_grouped_accounts
 
 bp = Blueprint("ai_journal", __name__, url_prefix="/ai-journal")
 
@@ -259,15 +259,6 @@ def drafts():
                         l.get("account_name", l.get("account_code", ""))
                         for l in lines if l.get("credit_amount")
                     ]
-                    # 入力期限チェック
-                    if summary.get("date"):
-                        try:
-                            receipt_date = date_type.fromisoformat(summary["date"])
-                            summary["deadline_exceeded"] = check_deadline(
-                                receipt_date, d.created_at,
-                            )
-                        except ValueError:
-                            pass
             except (json.JSONDecodeError, IndexError):
                 pass
         draft_list.append({"draft": d, "summary": summary})
@@ -655,17 +646,6 @@ def review():
         except ValueError as e:
             flash(str(e), "danger")
 
-    # 入力期限チェック
-    deadline_exceeded = False
-    sel_date = selected.get("date")
-    if sel_date and draft.created_at:
-        try:
-            deadline_exceeded = check_deadline(
-                date_type.fromisoformat(sel_date), draft.created_at,
-            )
-        except ValueError:
-            pass
-
     return render_template(
         "ai_journal/review.html",
         suggestions=suggestions,
@@ -675,7 +655,6 @@ def review():
         draft_id=is_saved_draft,
         closed_periods=closed_periods,
         restricted_before_year=restricted_before,
-        deadline_exceeded=deadline_exceeded,
     )
 
 

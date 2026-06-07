@@ -46,7 +46,6 @@ title: 証憑 API
       "journal_entry_id": 42,
       "image_mime": "image/jpeg",
       "uploaded_at": "2026-02-15T10:30:00",
-      "deadline_exceeded": false,
       "journal": {
         "date": "2026-02-15",
         "description": "コンビニ購入",
@@ -68,7 +67,6 @@ title: 証憑 API
 | `journal_entry_id` | integer \| null | 紐づく仕訳 ID（孤立証憑は `null`） |
 | `image_mime` | string | 画像の MIME タイプ |
 | `uploaded_at` | string | アップロード日時（ISO 8601） |
-| `deadline_exceeded` | boolean | 入力期限（約2ヶ月+7日）を超過しているか |
 | `journal` | object \| null | 紐づく仕訳の情報（孤立証憑は `null`） |
 
 #### `journal`
