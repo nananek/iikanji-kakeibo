@@ -32,7 +32,6 @@ with app.app_context():
     print('TOTP_UID=' + str(u.id))
 `;
 
-
 function totpNow(base32: string): string {
   const out = runPython(`import pyotp; print(pyotp.TOTP(${JSON.stringify(base32)}).now())`);
   const m = out.match(/\d{6}/);

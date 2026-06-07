@@ -89,7 +89,6 @@ with app.app_context():
     print('MIGRATE_UID=' + str(uid))
 `;
 
-
 function seedMigrationUser(): number {
   const out = runPython(SEED_SCRIPT);
   const m = out.match(/MIGRATE_UID=(\d+)/);

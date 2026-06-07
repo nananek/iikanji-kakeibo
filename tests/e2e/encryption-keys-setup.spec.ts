@@ -43,7 +43,6 @@ with app.app_context():
     print('KEYSETUP_UID=' + str(u.id))
 `;
 
-
 async function login(page) {
   await page.goto(`${BASE_URL}/login`);
   await page.fill('input[name="username"]', USERNAME);

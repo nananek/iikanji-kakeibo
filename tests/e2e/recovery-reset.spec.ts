@@ -35,7 +35,6 @@ with app.app_context():
     print('RESET_UID=' + str(u.id))
 `;
 
-
 async function login(page, password) {
   await page.goto(`${BASE_URL}/login`);
   await page.fill('input[name="username"]', USERNAME);
