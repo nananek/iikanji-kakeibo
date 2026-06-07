@@ -1312,9 +1312,8 @@ def auto_import_webhook_delete(webhook_id):
 def delete_account():
     """退会フロー (Phase 4 公開運用整備)。
 
-    パスワード再認証 + 同意チェックを経て、ユーザーの全データを削除する。
-    電帳法保管対象の `VoucherAuditLog` は user_id NULL 化で匿名化保持、
-    他は物理削除 (詳細は `app.services.account_deletion` 参照)。
+    パスワード再認証 + 同意チェックを経て、ユーザーの全データを物理削除
+    する (詳細は `app.services.account_deletion` 参照)。
 
     代理閲覧中 (`acting_as_user_id` セッション設定) は破壊操作を禁止。
     """

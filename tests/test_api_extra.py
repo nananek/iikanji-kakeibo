@@ -11,7 +11,6 @@ from unittest.mock import MagicMock, patch
 from app.models.ai_config import UserAIConfig
 from app.models.ai_draft import AIDraft
 from app.models.voucher import Voucher
-from app.models.voucher_audit_log import VoucherAuditLog
 from tests.conftest import _auth_header, make_journal, make_voucher
 
 
@@ -334,29 +333,3 @@ class TestVoucherImage:
         resp = client.get(f"/api/v1/vouchers/{v.id}/image",
                           headers=auth_header)
         assert resp.status_code == 404
-
-
-class TestVoucherLogs:
-    def test_no_auth(self, client):
-        resp = client.get("/api/v1/vouchers/1/logs")
-        assert resp.status_code == 401
-
-    def test_404(self, client, auth_header, accounts):
-        resp = client.get("/api/v1/vouchers/9999/logs",
-                          headers=auth_header)
-        assert resp.status_code == 404
-
-    def test_returns_logs(self, db, client, user, auth_header, accounts):
-        v = make_voucher(db, user.id)
-        db.session.add(VoucherAuditLog(
-            voucher_id=v.id, user_id=user.id, action="orphaned",
-        ))
-        db.session.add(VoucherAuditLog(
-            voucher_id=v.id, user_id=user.id, action="deleted",
-        ))
-        db.session.commit()
-        resp = client.get(f"/api/v1/vouchers/{v.id}/logs",
-                          headers=auth_header)
-        assert resp.status_code == 200
-        body = resp.get_json()
-        assert len(body["logs"]) == 2

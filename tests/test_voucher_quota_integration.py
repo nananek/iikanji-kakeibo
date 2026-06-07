@@ -137,8 +137,6 @@ class TestTOCTOURollback:
 
         # Voucher は巻き戻されて存在しない
         assert Voucher.query.count() == 0
-        from app.models.voucher_audit_log import VoucherAuditLog
-        assert VoucherAuditLog.query.count() == 0
         # 単一 tx 内 rollback により StorageUsage も加算前 (初回 = row なし) に戻る
         usage = db.session.get(StorageUsage, user.id)
         assert usage is None

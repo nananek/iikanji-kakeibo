@@ -1,7 +1,6 @@
 """退会フロー: ユーザーの全データを削除する (Phase 4 公開運用整備)。
 
-電帳法スキャナ保存の 7 年保管義務に従い `VoucherAuditLog` は
-`user_id` / `voucher_id` を NULL 化して匿名で保持し、他は物理削除する。
+ユーザーに紐づく全データを物理削除する。
 
 呼び出し側は `delete_user_account(user_id)` を呼ぶだけでよい。本関数は
 内部で `db.session.commit()` を行うため、呼出元の未 commit な変更は
@@ -9,7 +8,7 @@
 """
 
 from flask import current_app
-from sqlalchemy import select as sa_select, update
+from sqlalchemy import select as sa_select
 
 from app.extensions import db
 from app.models.ai_config import UserAIConfig
@@ -31,26 +30,20 @@ from app.models.account import Account
 from app.models.tax_form import TaxFormMapping
 from app.models.user import User
 from app.models.voucher import Voucher
-from app.models.voucher_audit_log import VoucherAuditLog
 from app.models.webauthn import WebAuthnCredential
 from app.services.storage import get_storage_backend, make_thumbnail_key
 
 
 def delete_user_account(user_id: int) -> None:
-    """ユーザーの全データを削除する。
-
-    電帳法保管対象 (`VoucherAuditLog`) は user_id / voucher_id を NULL
-    化して匿名化保持。他は物理削除。
+    """ユーザーの全データを物理削除する。
 
     削除順序は SQLAlchemy session の autoflush + FK 制約に対応:
-    1. VoucherAuditLog の user_id を NULL 化 (logical delete log を残す)
-    2. Voucher のストレージファイルを削除 (best-effort) → DB row 物理削除
-       (`ondelete=SET NULL` で AuditLog の voucher_id は自動 NULL 化)
-    3. AIDraft + ストレージファイル
-    4. JournalEntryLine → JournalEntry
-    5. その他 user_id を持つテーブル全削除
-    6. AuditGrant (owner_user_id / auditor_user_id どちらでも該当)
-    7. User 物理削除
+    1. Voucher のストレージファイルを削除 (best-effort) → DB row 物理削除
+    2. AIDraft + ストレージファイル
+    3. JournalEntryLine → JournalEntry
+    4. その他 user_id を持つテーブル全削除
+    5. AuditGrant (owner_user_id / auditor_user_id どちらでも該当)
+    6. User 物理削除
 
     各削除後に flush して FK 制約違反の早期検出を狙う。最後に commit。
     """
@@ -60,16 +53,7 @@ def delete_user_account(user_id: int) -> None:
 
     backend = get_storage_backend()
 
-    # 1. VoucherAuditLog の user_id を NULL 化 (匿名化保持)
-    db.session.execute(
-        update(VoucherAuditLog)
-        .where(VoucherAuditLog.user_id == user_id)
-        .values(user_id=None)
-    )
-    db.session.flush()
-
-    # 2. Voucher: ストレージファイルを先に削除 → DB row 物理削除
-    # (ondelete=SET NULL で VoucherAuditLog.voucher_id は自動 NULL 化)
+    # 1. Voucher: ストレージファイルを先に削除 → DB row 物理削除
     vouchers = Voucher.query.filter_by(user_id=user_id).all()
     for v in vouchers:
         for k in (v.image_key, make_thumbnail_key(v.image_key)):

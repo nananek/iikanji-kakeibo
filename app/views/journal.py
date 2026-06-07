@@ -9,8 +9,6 @@ from sqlalchemy.orm import joinedload
 from app.extensions import db
 from app.models.account import Account
 from app.models.journal import JournalEntry, JournalEntryLine
-from app.models.voucher import Voucher
-from app.models.voucher_audit_log import VoucherAuditLog
 from app.forms.journal import JournalForm
 from app.services.accounting import create_journal_entry, get_next_entry_number
 from app.services.fiscal import check_entry_modifiable, check_period_open_for_new, get_effective_period, adjust_date_for_fiscal_period, get_closed_periods_map, get_restricted_before_year, is_period_locked
@@ -495,11 +493,11 @@ def get_json(entry_id):
         "fiscal_period": entry.fiscal_period,
         "is_readonly": is_readonly,
         "source": entry.source,
-        "has_voucher": len(entry.active_vouchers) > 0,
+        "has_voucher": len(entry.vouchers) > 0,
         "lines": lines,
         "vouchers": [
             {"id": v.id, "uploaded_at": v.uploaded_at.isoformat() if v.uploaded_at else None}
-            for v in entry.active_vouchers
+            for v in entry.vouchers
         ],
     })
 
@@ -736,24 +734,6 @@ def create_api():
         return jsonify({"error": safe_user_error(e)}), 400
 
 
-def log_voucher_orphan(entry, user_id):
-    """仕訳削除前に紐づく証憑の孤立化ログを記録する。"""
-    # 論理削除済も含めて orphan ログを残す (削除済 Voucher の AuditLog も
-    # 「仕訳が消えた」事実を追記すべき。電帳法の連環的な証跡保全)
-    vouchers = Voucher.query.filter_by(journal_entry_id=entry.id).all()
-    for v in vouchers:
-        db.session.add(VoucherAuditLog(
-            voucher_id=v.id,
-            user_id=user_id,
-            action="orphaned",
-            detail=json.dumps({
-                "journal_entry_id": entry.id,
-                "entry_number": entry.entry_number,
-                "description": entry.description,
-            }, ensure_ascii=False),
-        ))
-
-
 @bp.route("/<int:entry_id>/delete", methods=["POST"])
 @login_required
 def delete(entry_id):
@@ -789,7 +769,6 @@ def delete(entry_id):
         return redirect(url_for("journal.index"))
 
     num = entry.entry_number
-    log_voucher_orphan(entry, user_id)
     db.session.delete(entry)
     db.session.commit()
 
@@ -846,7 +825,6 @@ def bulk_delete():
 
     count = len(deletable)
     for entry in deletable:
-        log_voucher_orphan(entry, user_id)
         db.session.delete(entry)
     db.session.commit()
     flash(f"{count}件の仕訳を削除しました。", "success")
@@ -949,7 +927,6 @@ def delete_batch(batch_id):
     count = len(deletable)
     user_id = get_effective_user_id()
     for entry in deletable:
-        log_voucher_orphan(entry, user_id)
         db.session.delete(entry)
     db.session.commit()
     flash(f"{count}件の仕訳を削除しました。", "success")

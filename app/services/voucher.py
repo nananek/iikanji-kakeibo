@@ -1,12 +1,10 @@
 """証憑ヘルパー — Voucher 作成・管理"""
 
 import hashlib
-import json
 
 from app.extensions import db
 from app.models.user import User
 from app.models.voucher import Voucher
-from app.models.voucher_audit_log import VoucherAuditLog
 from app.models.ai_draft import AIDraft
 from app.services.storage import (
     get_storage_backend,
@@ -67,7 +65,7 @@ def create_voucher_from_upload(
     フロー (Phase 5 #70 / 単一トランザクション + ON CONFLICT upsert):
 
     1. `check_quota(user, len(image_bytes))` で事前判定
-    2. Voucher + VoucherAuditLog を session.add (commit せず)
+    2. Voucher を session.add (commit せず)
     3. ストレージへ画像書き込み (DB と独立、巻き戻しは best-effort delete)
     4. `record_upload(suppress_commit=True)` で StorageUsage を加算
     5. flush して `get_used_bytes` で TOCTOU 再検証
@@ -103,16 +101,6 @@ def create_voucher_from_upload(
     key = make_storage_key(user_id, voucher.id, mime_type)
     store_image_with_thumbnail(key, image_bytes, mime_type)
     voucher.image_key = key
-
-    db.session.add(VoucherAuditLog(
-        voucher_id=voucher.id,
-        user_id=user_id,
-        action="attached",
-        detail=json.dumps(
-            {"journal_entry_id": journal_entry_id},
-            ensure_ascii=False,
-        ),
-    ))
 
     # ON CONFLICT upsert で StorageUsage を加算 (commit せず単一 tx 内に保持)
     record_upload(user, size, suppress_commit=True)
