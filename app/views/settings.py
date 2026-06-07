@@ -115,11 +115,11 @@ def totp_begin():
     if current_user.totp_enabled:
         flash("TOTP は既に有効です。", "info")
         return redirect(url_for("settings.totp"))
-    # passkey_only ユーザー (password_hash=NULL) は無効化時のパスワード再認証が成立せず
-    # 永久ロックアウトになる。Passkey が第 2 要素なので TOTP は設定させない (§3.6.6 で
-    # passkey_only 自体を廃止予定)。
-    if current_user.passkey_only_login:
-        flash("パスキー専用モードでは TOTP は設定できません。Passkey が第 2 要素です。", "info")
+    # パスワード未設定ユーザー (password_hash=NULL) は無効化時のパスワード再認証が成立せず
+    # 永久ロックアウトになる。Passkey が第 2 要素なので TOTP は設定させない (#385 PR-T4:
+    # passkey_only_login 廃止に伴い、実条件である「再認証用パスワードの有無」で判定する)。
+    if not current_user.password_hash:
+        flash("パスワード未設定のアカウントでは TOTP を設定できません。Passkey が第 2 要素です。", "info")
         return redirect(url_for("settings.totp"))
     from app.services import totp as totp_svc
     from app.services import login_derived as ld
@@ -143,9 +143,9 @@ def totp_confirm():
     """確認コードを検証し TOTP を有効化する (verify-before-enable)。成功でバックアップコード発行。"""
     if not _totp_enabled_config():
         abort(404)
-    # 多層防御: begin で弾いているが、passkey_only は確認・有効化も拒否する (#407 申し送り)。
-    if current_user.passkey_only_login:
-        flash("パスキー専用モードでは TOTP は設定できません。", "info")
+    # 多層防御: begin で弾いているが、パスワード未設定ユーザーは確認・有効化も拒否する。
+    if not current_user.password_hash:
+        flash("パスワード未設定のアカウントでは TOTP を設定できません。", "info")
         return redirect(url_for("settings.totp"))
     if current_user.totp_enabled or not current_user.totp_secret_encrypted:
         flash("TOTP 登録の状態が不正です。", "danger")
@@ -342,16 +342,17 @@ def delete_passkey(credential_id):
         id=credential_id, user_id=current_user.id
     ).first_or_404()
 
-    # パスキー専用モード中は、最後の 1 本を削除するとログイン不能になる。
-    # 削除を拒否し、リカバリコード再生成 + モード解除を促す。
-    if current_user.passkey_only_login:
+    # パスワード未設定ユーザー (password_hash=NULL) は、最後のパスキーを削除すると
+    # パスワード/パスキーの両方を失いログイン不能になる (#385 PR-T4: 旧パスキー専用モード
+    # の保護を実条件「パスワード未設定」で継続)。削除を拒否しリカバリ/パスワード設定を促す。
+    if not current_user.password_hash:
         remaining = WebAuthnCredential.query.filter_by(
             user_id=current_user.id
         ).count()
         if remaining <= 1:
             block_msg = (
-                "パスキー専用モードでは最後のパスキーを削除できません。"
-                "先にリカバリコードを再生成し、パスキー専用モードを解除してください。"
+                "パスワード未設定のアカウントでは最後のパスキーを削除できません。"
+                "先にリカバリコードを再生成するか、パスワードを設定してください。"
             )
             if request.headers.get("HX-Request"):
                 resp = make_response("", 422)
@@ -377,61 +378,9 @@ def delete_passkey(credential_id):
     return redirect(url_for("settings.passkeys"))
 
 
-@bp.route("/passkeys/passkey-only/enable", methods=["POST"])
-@login_required
-def passkey_only_enable():
-    """パスキー専用モードを有効化。
-
-    前提: パスキー >=1 本 + 有効リカバリコード。
-    両方揃っていない場合は flash で誘導し、フラグは変更しない。
-    """
-    passkey_count = WebAuthnCredential.query.filter_by(
-        user_id=current_user.id
-    ).count()
-    if passkey_count < 1:
-        flash(
-            "パスキー専用モードに切り替える前に、パスキーを 1 つ以上登録してください。",
-            "warning",
-        )
-        return redirect(url_for("settings.passkeys"))
-    if not current_user.has_active_recovery_code:
-        flash(
-            "パスキー専用モードに切り替える前に、有効なリカバリコードを生成してください。",
-            "warning",
-        )
-        return redirect(url_for("settings.passkeys"))
-
-    current_user.passkey_only_login = True
-    db.session.commit()
-    current_app.logger.info(
-        "passkey_only_enabled: user_id=%s", current_user.id
-    )
-    flash(
-        "パスキー専用モードを有効にしました。今後はパスキーまたはリカバリコードでのみログインできます。",
-        "success",
-    )
-    return redirect(url_for("settings.passkeys"))
-
-
-@bp.route("/passkeys/passkey-only/disable", methods=["POST"])
-@login_required
-def passkey_only_disable():
-    """パスキー専用モードを解除（パスワード再認証必須）。"""
-    password = request.form.get("password", "")
-    if not password or not current_user.check_password(password):
-        flash("パスワードが正しくありません。", "danger")
-        return redirect(url_for("settings.passkeys"))
-
-    current_user.passkey_only_login = False
-    db.session.commit()
-    current_app.logger.info(
-        "passkey_only_disabled: user_id=%s", current_user.id
-    )
-    flash(
-        "パスキー専用モードを解除しました。パスワードでのログインも可能になりました。",
-        "info",
-    )
-    return redirect(url_for("settings.passkeys"))
+# #385 PR-T4: パスキー専用モード (passkey_only_login) は廃止。全ユーザーにパスワードを
+# 必須化し、2FA は「Passkey or TOTP」で充足する (設計書 §3.6.6)。enable/disable ルートは
+# 撤去した (新規 passkey_only は作れない)。列の物理 DROP は population ゼロ確認後の後続 PR。
 
 
 @bp.route("/passkeys/recovery/generate", methods=["POST"])
@@ -1341,10 +1290,10 @@ def delete_account():
 
     form = DeleteAccountForm()
     if form.validate_on_submit():
-        # Passkey 専用ユーザーはパスワードを持たないためセッション認証済を
-        # 信頼し、パスワード検証はスキップ (GDPR データ消去権の保証)。
-        # 通常ユーザーはパスワード再認証を要求する。
-        if not current_user.passkey_only_login:
+        # パスワード未設定ユーザー (password_hash=NULL) はパスワードを持たないため
+        # セッション認証済を信頼し、パスワード検証はスキップ (GDPR データ消去権の保証)。
+        # パスワードを持つユーザーはパスワード再認証を要求する (#385 PR-T4)。
+        if current_user.password_hash:
             if not current_user.check_password(form.password.data or ""):
                 flash("パスワードが正しくありません。", "danger")
                 return render_template(

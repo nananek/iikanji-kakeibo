@@ -565,6 +565,13 @@ TOTP は `finish` の**サーバ側ゲート**であり、守れるもの/守れ
 - 既存 passkey_only ユーザー (`password_hash` NULL の可能性) は §3.5 移行時 or 設定でパスワード
   設定を促す。リカバリシードリセットでも `passkey_only_login=False` に解除済み (§3.4.1 / PR-4b-2)。
 - 列は後続マイグレで物理 DROP (または常時 False に固定し UI 撤去)。
+- **段階的実装 (採用、2026-06-07)**: **PR-T4** で振る舞いを除去 (enable/disable ルート撤去 +
+  保護ロジックを `passkey_only_login` → **`password_hash` 有無** に付け替え + auth.py の
+  パスワードログイン弾き撤去 + UI 撤去) するが、**列・モデル属性は据え置き (DROP しない=可逆)**。
+  保護の実条件は「再認証用パスワードの有無」なので `password_hash` で判定する (TOTP begin/confirm
+  ガード・最後のパスキー削除ブロック・退会の再認証要否)。**列の物理 DROP は population ゼロ
+  (オーナーがパスワード経路へ移行) 確認後の後続 PR (PR-T4-drop)**。`recovery_finish` の
+  `passkey_only_login=False` は無害なため据え置き、DROP 時に除去する。
 - **`password_hash=NULL` かつ `login_salt=NULL` ユーザーの fallback (詰み防止)**: パスワードを
   持たないユーザーは `/auth/login/finish` がそもそも成立しない (`login_salt` 無しで照合不能 →
   通常パス 401)。よって PR-T4 で `passkey_only_login` 強制を撤去しても**勝手にログイン不能には

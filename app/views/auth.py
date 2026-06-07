@@ -58,12 +58,9 @@ def login():
             return render_template("auth/login.html", form=form)
         user = User.query.filter_by(username=form.username.data).first()
         if user and user.user_type == "personal" and user.check_password(form.password.data):
-            if user.passkey_only_login:
-                flash(
-                    "このアカウントはパスキー専用モードです。パスキー、またはリカバリコードでログインしてください。",
-                    "warning",
-                )
-                return render_template("auth/login.html", form=form)
+            # #385 PR-T4: パスキー専用モード廃止。パスワードを持つユーザーは常にパスワード
+            # ログイン可 (2FA は別途 TOTP / Passkey)。パスワード未設定ユーザーは check_password
+            # が False なのでここに到達しない (Passkey / リカバリで入る)。
             if not user.is_active:
                 # §16.5 鍵未設定ロック (E7 #114): 通常の login_user は
                 # is_active=False を拒否する。force=True で限定セッションを
@@ -92,12 +89,7 @@ def login_auditor():
             return render_template("auth/login_auditor.html", form=form)
         user = User.query.filter_by(username=form.username.data).first()
         if user and user.user_type == "auditor" and user.check_password(form.password.data):
-            if user.passkey_only_login:
-                flash(
-                    "このアカウントはパスキー専用モードです。パスキー、またはリカバリコードでログインしてください。",
-                    "warning",
-                )
-                return render_template("auth/login_auditor.html", form=form)
+            # #385 PR-T4: パスキー専用モード廃止 (上記 login と同方針)。
             login_user(user, remember=True)
             return redirect(_safe_next_url(url_for("auditor.dashboard")))
         flash("ユーザー名またはパスワードが正しくありません。", "danger")
