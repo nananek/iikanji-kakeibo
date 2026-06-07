@@ -110,7 +110,8 @@ class User(UserMixin, db.Model):
 
     @property
     def has_totp(self):
-        return bool(self.totp_enabled)
+        # totp_enabled は nullable=False / default=False のため None にならない
+        return self.totp_enabled
 
     def __repr__(self):
         return f"<User {self.username}>"

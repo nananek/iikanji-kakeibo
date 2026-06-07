@@ -98,3 +98,12 @@ def test_totp_status_page_renders(client, user):
     resp = client.get("/settings/totp")
     assert resp.status_code == 200
     assert "二段階認証".encode() in resp.data
+
+
+def test_status_shows_enrolling_message_after_begin(client, user, db):
+    """begin 後 (secret あり・未有効) は登録途中メッセージを表示する。"""
+    _login(client, user)
+    client.post("/settings/totp/begin")
+    resp = client.get("/settings/totp")
+    assert resp.status_code == 200
+    assert "登録途中".encode() in resp.data

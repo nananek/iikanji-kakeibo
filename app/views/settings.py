@@ -343,6 +343,7 @@ def totp_confirm():
 
 @bp.route("/totp/cancel", methods=["POST"])
 @login_required
+@limiter.limit("10/hour")
 def totp_cancel():
     """未確定 (有効化前) の登録をキャンセルし secret を破棄する。"""
     if current_user.totp_enabled:
