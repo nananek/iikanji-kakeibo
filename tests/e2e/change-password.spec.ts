@@ -7,7 +7,7 @@
 // 毎回まっさらに seed する。
 
 import { test, expect } from "@playwright/test";
-import { spawnSync } from "child_process";
+import { runPython } from "./helpers";
 
 const BASE_URL = "http://127.0.0.1:5000";
 const USERNAME = "e2e_pwchange";
@@ -34,19 +34,6 @@ with app.app_context():
     db.session.commit()
     print('PWCHANGE_UID=' + str(u.id))
 `;
-
-function runPython(stdinScript: string, timeoutMs = 30000): string {
-  const [cmd, ...args] = process.env.CI
-    ? ["python", "-"]
-    : ["docker", "compose", "exec", "-T", "web", "python", "-"];
-  const result = spawnSync(cmd, args, {
-    input: stdinScript, encoding: "utf-8", timeout: timeoutMs,
-  });
-  if (result.status !== 0) {
-    throw new Error(`python failed (status=${result.status}): ${result.stderr}`);
-  }
-  return result.stdout;
-}
 
 async function login(page, password) {
   await page.goto(`${BASE_URL}/login`);

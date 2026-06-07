@@ -2,7 +2,8 @@
 //
 // フロー (3 ステップ wizard):
 //   1. start    : status() で hasKey 確認 → 既存鍵あり/なしで分岐
-//   2. choose   : 方式選択 (passphrase / recovery_seed / passkey 将来)
+//   2. choose   : 方式選択 (recovery_seed / passkey)。#385 で passphrase 単独登録は廃止
+//                 (passphrase 鍵は login_flow が HKDF split で独占生成する)
 //   3. configure: 入力フォーム + 派生 → wrap → API POST
 //   4. done     : 完了画面 (リカバリシード方式は表示画面で「メモした」確認)
 //
