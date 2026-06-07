@@ -53,11 +53,14 @@ async function _postJson(fetchImpl, url, body) {
  *   {status:"redirect", url}      ログイン成功 (MK 解錠済)
  *   {status:"fallback"}           LOGIN_SERVER_SECRET 未設定 (503)。従来フォーム送信へ
  *   {status:"password_setup"}     passkey_only 等パスワード未保有。パスキーログインへ誘導
+ *   {status:"totp_required"}      TOTP 2FA 有効。呼び出し側が code を集めて再実行する
  *   {status:"error", message}     失敗 (message は固定文言のみ。サーバ応答は載せない)
  *
  * @param {Object} o
  * @param {string} o.username
  * @param {string} o.password
+ * @param {string} [o.totpCode]           TOTP コード or バックアップコード (2FA 有効時)
+ * @param {string} [o.totpType]           "totp" | "backup"
  * @param {string} [o.nextUrl]            成功時のリダイレクト先 (検証済みの内部パス)
  * @param {Object} o.client              SharedCryptoClient
  * @param {Function} [o.onStatus]        (text) 状況テキスト更新
@@ -65,7 +68,8 @@ async function _postJson(fetchImpl, url, body) {
  * @param {Object} [o.deps]              テスト用 DI (fetchImpl / 各暗号関数)
  */
 export async function runLoginFlow({
-  username, password, nextUrl = "/", client,
+  username, password, totpCode = "", totpType = "totp",
+  nextUrl = "/", client,
   onStatus = () => {}, onProgress = () => {}, deps = {},
 }) {
   const f = deps.fetchImpl ?? globalThis.fetch;
@@ -86,6 +90,11 @@ export async function runLoginFlow({
   const begin = await beginResp.json();
   if (begin.requires_password_setup) {
     return { status: "password_setup" };
+  }
+  // TOTP 2FA 有効でコード未入力なら、Argon2id を回す前に呼び出し側へ code 入力を促す
+  // (再 submit で totpCode 付きで戻ってくる)。
+  if (begin.totp_required && !totpCode) {
+    return { status: "totp_required" };
   }
 
   // 2) master = Argon2id(password, salt) → HKDF split。
@@ -108,7 +117,7 @@ export async function runLoginFlow({
       });
     }
     return await _doNormal({
-      f, client, username, material, nextUrl,
+      f, client, username, material, nextUrl, totpCode, totpType,
       onStatus, onProgress,
       listWrappedKeysImpl: _listWrappedKeys,
       ensureKeyPairImpl: _ensureKeyPair, runRewrapImpl: _runRewrap,
@@ -122,14 +131,23 @@ export async function runLoginFlow({
 
 
 async function _doNormal({
-  f, client, username, material, nextUrl,
+  f, client, username, material, nextUrl, totpCode = "", totpType = "totp",
   onStatus, onProgress, listWrappedKeysImpl, ensureKeyPairImpl, runRewrapImpl,
 }) {
-  const resp = await _postJson(f, "/auth/login/finish", {
+  const finishBody = {
     username,
     login_verifier: b64encode(material.loginVerifier),
-  });
+  };
+  if (totpCode) {
+    finishBody.totp_code = totpCode;
+    finishBody.totp_type = totpType;
+  }
+  const resp = await _postJson(f, "/auth/login/finish", finishBody);
   if (!resp.ok) {
+    // TOTP 有効ユーザーの 401 は「コードが違う」可能性が高いので、再入力を促す。
+    if (totpCode) {
+      return { status: "error", message: "コードまたはパスワードが正しくありません。" };
+    }
     return { status: "error", message: "ユーザー名またはパスワードが正しくありません。" };
   }
   const fin = await resp.json();
@@ -282,8 +300,12 @@ function _bind() {
   form.addEventListener("submit", async (ev) => {
     const usernameEl = form.querySelector('[name="username"]');
     const passwordEl = form.querySelector('[name="password"]');
+    const totpCodeEl = form.querySelector('#totp-code');
+    const totpBackupEl = form.querySelector('#totp-is-backup');
     const username = (usernameEl?.value || "").trim();
     const password = passwordEl?.value || "";
+    const totpCode = (totpCodeEl?.value || "").trim();
+    const totpType = totpBackupEl?.checked ? "backup" : "totp";
     // 未入力はネイティブのバリデーション/送信に委ねる。
     if (!username || !password) return;
 
@@ -296,7 +318,7 @@ function _bind() {
     let result;
     try {
       result = await runLoginFlow({
-        username, password,
+        username, password, totpCode, totpType,
         nextUrl: safeNextUrl(globalThis.location?.search),
         client,
         onStatus: (t) => _setStatus(statusEl, "spinner", t),
@@ -305,10 +327,23 @@ function _bind() {
     } catch (e) {
       console.error("login flow error", e);
       result = { status: "error", message: "ログインに失敗しました。時間をおいて再度お試しください。" };
-    } finally {
-      // パスワード文字列は JS ではゼロ化不能だが、入力欄からは消す。
-      if (passwordEl) passwordEl.value = "";
     }
+
+    // TOTP コード入力が必要: 入力欄を出して再 submit を促す。パスワードは保持する
+    // (再 submit で再導出するため。クリアすると空送信になり弾かれる)。
+    if (result.status === "totp_required") {
+      const sec = document.getElementById("totp-section");
+      if (sec) sec.classList.remove("d-none");
+      _setStatus(statusEl, "warn", "認証アプリの 6 桁コードを入力してください。");
+      try { client.close(); } catch (_e) { /* ignore */ }
+      if (totpCodeEl) totpCodeEl.focus();
+      if (submitBtn) submitBtn.disabled = false;
+      return;
+    }
+
+    // 以降は終端。パスワード文字列は JS ではゼロ化不能だが入力欄からは消す。
+    if (passwordEl) passwordEl.value = "";
+    if (totpCodeEl) totpCodeEl.value = "";
 
     if (result.status === "redirect") {
       _setStatus(statusEl, "success", "ログインしました。");

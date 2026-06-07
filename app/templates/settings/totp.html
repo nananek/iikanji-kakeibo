@@ -61,7 +61,7 @@
             {{ totp_qr_svg | safe }}
           </div>
           <p class="small">手動入力用キー:
-            <code class="user-select-all">{{ totp_manual_secret }}</code>
+            <code id="totp-manual" class="user-select-all">{{ totp_manual_secret }}</code>
           </p>
           <form method="POST" action="{{ url_for('settings.totp_confirm') }}" class="mt-3">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
