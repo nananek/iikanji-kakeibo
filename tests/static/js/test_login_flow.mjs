@@ -249,3 +249,65 @@ test("begin 400 → エラー", async () => {
   });
   assert.equal(r.status, "error");
 });
+
+
+// --- TOTP 2FA (PR-T3) ---
+
+test("TOTP: totp_required かつ code 未入力 → totp_required (derive せず finish しない)", async () => {
+  let derived = false;
+  const fetchImpl = makeFetch({
+    "/auth/login/begin": () => jsonResponse(200, { salt: btoa("0123456789abcdef"), kdf_params: {}, migration_required: false, totp_required: true }),
+    "/auth/login/finish": () => jsonResponse(200, { ok: true }),
+  });
+  const r = await runLoginFlow({
+    username: "u", password: "p", client: fakeClient(),
+    deps: { fetchImpl, ...baseDeps({ deriveLoginMaterial: async () => { derived = true; return { loginVerifier: new Uint8Array(32), mkWrapKey: new Uint8Array(32) }; } }) },
+  });
+  assert.equal(r.status, "totp_required");
+  assert.equal(derived, false); // Argon2id は回さない
+  assert.equal(fetchImpl.calls.some((c) => c.url === "/auth/login/finish"), false);
+});
+
+
+test("TOTP: code 付き再実行 → finish に totp_code/totp_type を送り redirect", async () => {
+  const fetchImpl = makeFetch({
+    "/auth/login/begin": () => jsonResponse(200, { salt: btoa("0123456789abcdef"), kdf_params: {}, migration_required: false, totp_required: true }),
+    "/auth/login/finish": () => jsonResponse(200, { ok: true }),
+  });
+  const r = await runLoginFlow({
+    username: "u", password: "p", totpCode: "123456", totpType: "totp",
+    nextUrl: "/dash", client: fakeClient(),
+    deps: { fetchImpl, ...baseDeps() },
+  });
+  assert.deepEqual(r, { status: "redirect", url: "/dash" });
+  const finishCall = fetchImpl.calls.find((c) => c.url === "/auth/login/finish");
+  assert.equal(finishCall.body.totp_code, "123456");
+  assert.equal(finishCall.body.totp_type, "totp");
+});
+
+
+test("TOTP: backup タイプを送れる", async () => {
+  const fetchImpl = makeFetch({
+    "/auth/login/begin": () => jsonResponse(200, { salt: btoa("0123456789abcdef"), kdf_params: {}, migration_required: false, totp_required: true }),
+    "/auth/login/finish": () => jsonResponse(200, { ok: true }),
+  });
+  await runLoginFlow({
+    username: "u", password: "p", totpCode: "abcd1234ef", totpType: "backup",
+    client: fakeClient(), deps: { fetchImpl, ...baseDeps() },
+  });
+  const finishCall = fetchImpl.calls.find((c) => c.url === "/auth/login/finish");
+  assert.equal(finishCall.body.totp_type, "backup");
+});
+
+
+test("TOTP: code 付きで finish 401 → エラー (再入力促し)", async () => {
+  const fetchImpl = makeFetch({
+    "/auth/login/begin": () => jsonResponse(200, { salt: btoa("0123456789abcdef"), kdf_params: {}, migration_required: false, totp_required: true }),
+    "/auth/login/finish": () => jsonResponse(401, { error: "authentication failed" }),
+  });
+  const r = await runLoginFlow({
+    username: "u", password: "p", totpCode: "000000", totpType: "totp",
+    client: fakeClient(), deps: { fetchImpl, ...baseDeps() },
+  });
+  assert.equal(r.status, "error");
+});

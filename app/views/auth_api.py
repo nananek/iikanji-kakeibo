@@ -83,6 +83,9 @@ def login_begin():
             "salt": _b64e(bytes(user.login_salt)),
             "kdf_params": user.login_kdf_params or kdf,
             "migration_required": False,
+            # #385 PR-T3: TOTP 2FA 有効なら finish で totp_code を要求する (§3.6.4)。
+            # 決定的 (totp_enabled の有無) なので列挙耐性は migration_required と同レベル。
+            "totp_required": bool(user.totp_enabled),
         })
 
     # v4 移行対象 (password_hash 有 / login_salt 無): 新規 salt を発行し session に保持。
@@ -106,15 +109,24 @@ def login_begin():
         })
 
     # 未知ユーザー: 決定的ダミー salt + migration_required:false (列挙耐性, §3.2)。
+    # totp_required も常に false (未知ユーザーで TOTP 有無を漏らさない)。
     return jsonify({
         "salt": _b64e(ld.compute_dummy_salt(username)),
         "kdf_params": kdf,
         "migration_required": False,
+        "totp_required": False,
     })
 
 
+def _finish_username_key():
+    """finish の per-username レート制限キー (TOTP コード総当り抑止、§3.6.4)。"""
+    data = request.get_json(silent=True) or {}
+    return "loginfinish:" + (data.get("username") or "").strip().lower()
+
+
 @bp.route("/finish", methods=["POST"])
-@limiter.limit("10/minute")
+@limiter.limit("10/minute")                                  # per-IP
+@limiter.limit("20 per hour", key_func=_finish_username_key)  # per-username (TOTP 総当り抑止)
 def login_finish():
     """ログイン 2 ラウンド目。通常パスと v4 移行パスを login_verifier で分岐する。"""
     if not ld.is_configured():
@@ -135,6 +147,40 @@ def login_finish():
     return _finish_normal(user, login_verifier)
 
 
+def _verify_totp_second_factor(user):
+    """TOTP 第 2 要素を検証する (§3.6.4)。成功なら None、失敗なら (jsonify, 401)。
+
+    `totp_type` ("totp" | "backup") をクライアントが明示する (6 桁数字の推測に頼らない)。
+    - totp: secret を復号し replay 対策つきで検証 → 成功 step を記録。
+    - backup: ワンタイムバックアップコードを消費。
+    成功時は呼び出し側の commit (login_user 前後) で永続化される。
+    """
+    from app.services import totp as totp_svc
+
+    data = request.get_json(silent=True) or {}
+    totp_type = data.get("totp_type")
+    totp_code = data.get("totp_code")
+    if totp_type == "backup":
+        if not totp_svc.consume_backup_code(user.id, totp_code):
+            return jsonify({"error": "authentication failed"}), 401
+        db.session.commit()
+        return None
+    # 既定は TOTP コード。
+    if not user.totp_secret_encrypted:
+        return jsonify({"error": "authentication failed"}), 401
+    secret = ld.decrypt_totp_secret(
+        user.totp_secret_encrypted, user.totp_secret_iv, user.id
+    )
+    ok, step = totp_svc.verify_code_with_step(
+        secret, totp_code, last_used_step=user.totp_last_used_step
+    )
+    if not ok:
+        return jsonify({"error": "authentication failed"}), 401
+    user.totp_last_used_step = step  # replay 記録
+    db.session.commit()
+    return None
+
+
 def _finish_normal(user, login_verifier):
     """既移行ユーザーの通常ログイン。login_verifier を HMAC 照合する。"""
     # 列挙/タイミング対策: 該当しない場合もダミー比較してから一律失敗を返す。
@@ -143,6 +189,12 @@ def _finish_normal(user, login_verifier):
         return jsonify({"error": "authentication failed"}), 401
     if not ld.verify_login_verifier(user.login_server_hash, login_verifier):
         return jsonify({"error": "authentication failed"}), 401
+
+    # #385 PR-T3: TOTP 2FA (§3.6.4)。login_verifier 照合 OK の後に第 2 要素を検証する。
+    if user.totp_enabled:
+        err = _verify_totp_second_factor(user)
+        if err is not None:
+            return err
 
     # 遅延 secret_version スタンプ (§3.1。現状は単一 secret なので version 同期のみ)。
     if user.login_secret_version != ld.CURRENT_SECRET_VERSION:

@@ -143,6 +143,10 @@ def totp_confirm():
     """確認コードを検証し TOTP を有効化する (verify-before-enable)。成功でバックアップコード発行。"""
     if not _totp_enabled_config():
         abort(404)
+    # 多層防御: begin で弾いているが、passkey_only は確認・有効化も拒否する (#407 申し送り)。
+    if current_user.passkey_only_login:
+        flash("パスキー専用モードでは TOTP は設定できません。", "info")
+        return redirect(url_for("settings.totp"))
     if current_user.totp_enabled or not current_user.totp_secret_encrypted:
         flash("TOTP 登録の状態が不正です。", "danger")
         return redirect(url_for("settings.totp"))

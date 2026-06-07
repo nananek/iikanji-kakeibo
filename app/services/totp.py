@@ -74,6 +74,33 @@ def current_step(at=None):
     return int(t) // 30
 
 
+def verify_code_with_step(secret_bytes, code, last_used_step=None, at=None):
+    """ログイン用 TOTP 検証 (replay 対策つき、§3.6.4)。
+
+    ±1 step を許容しつつ、**実際にマッチした step** を返す。`last_used_step` 以下の step は
+    リプレイ (盗聴即転送) として拒否する。
+
+    @returns (ok: bool, step: int | None)  step はマッチした実 step (replay 記録用)。
+             コード不正・不一致・replay は (False, None または step) を返す。
+    """
+    if not code or not isinstance(code, str):
+        return (False, None)
+    code = code.strip().replace(" ", "")
+    if not code.isdigit() or len(code) != 6:
+        return (False, None)
+    totp = pyotp.TOTP(secret_to_base32(secret_bytes))
+    t = at if at is not None else time.time()
+    cur = int(t) // 30
+    for offset in (-1, 0, 1):
+        step = cur + offset
+        # 定数時間比較 (step ごとの候補コードと照合)。
+        if hmac.compare_digest(totp.at(step * 30), code):
+            if last_used_step is not None and step <= last_used_step:
+                return (False, step)  # replay: 同一以前 step の再利用
+            return (True, step)
+    return (False, None)
+
+
 def _hash_backup_code(raw):
     return hashlib.sha256(raw.encode("ascii")).hexdigest()
 

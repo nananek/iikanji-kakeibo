@@ -161,6 +161,23 @@ def test_regenerate_backup_codes_requires_enabled(client, db, user):
     assert TotpBackupCode.query.filter_by(user_id=user.id).count() == 0
 
 
+def test_regenerate_backup_codes_happy_path(client, db, user, app):
+    """TOTP 有効時、再生成で新 10 個が表示され旧コードは差し替わる。"""
+    _login(client, user)
+    client.post("/settings/totp/begin")
+    client.post("/settings/totp/confirm", data={"code": _current_code(user, app)})
+    first = TotpBackupCode.query.filter_by(user_id=user.id).all()
+    first_hashes = {c.code_hash for c in first}
+    assert len(first) == 10
+    r = client.post("/settings/totp/backup-codes/regenerate")
+    assert r.status_code == 200
+    assert b"backup-codes" in r.data
+    second = TotpBackupCode.query.filter_by(user_id=user.id).all()
+    assert len(second) == 10
+    # 旧コードは全て差し替わっている (ハッシュ集合が変わる)
+    assert {c.code_hash for c in second}.isdisjoint(first_hashes)
+
+
 def test_totp_404_when_not_configured(client, db, user, app):
     _login(client, user)
     app.config["LOGIN_SERVER_SECRET"] = ""
