@@ -1,15 +1,9 @@
-import hashlib
-import secrets
 from datetime import datetime, timezone
 
 from flask_login import UserMixin
 from werkzeug.security import generate_password_hash, check_password_hash
 
 from app.extensions import db, login_manager
-
-
-RECOVERY_CODE_PREFIX = "ikr_"
-_RECOVERY_PREFIX_LEN = 11  # "ikr_" + 7 chars hex
 
 
 class User(UserMixin, db.Model):
@@ -25,9 +19,6 @@ class User(UserMixin, db.Model):
     )
     preferences = db.Column(db.JSON, nullable=True, default=dict)
 
-    # パスキー専用ログインモード（オプトイン、デフォルト無効）
-    passkey_only_login = db.Column(db.Boolean, nullable=False, default=False)
-
     # 利用規約・プライバシーポリシーへの同意バージョン (YYYY-MM-DD 形式)。
     # 規約改訂時に CURRENT_TERMS_VERSION が更新され、ユーザーの値と
     # 一致しない場合は再同意フローへ誘導する (Phase 1 #66)。
@@ -36,11 +27,6 @@ class User(UserMixin, db.Model):
     # NULL: 未送信 or 70% 未満まで回復済 / "warning": 80% 到達済 /
     # "critical": 95% 到達済。同じ帯にいる間はメール再送しない (重複防止)。
     last_quota_warning_level = db.Column(db.String(20), nullable=True)
-    # リカバリコード（パスキー紛失時の非常用、1 回限り使用）
-    recovery_code_hash = db.Column(db.String(64), nullable=True)
-    recovery_code_prefix = db.Column(db.String(20), nullable=True)
-    recovery_code_created_at = db.Column(db.DateTime(timezone=True), nullable=True)
-    recovery_code_used_at = db.Column(db.DateTime(timezone=True), nullable=True)
 
     # TOTP 2要素認証（opt-in）。secret は SECRET_KEY 由来の Fernet で暗号化。
     # totp_last_used_step はログイン時の同一コード再利用 (リプレイ) 防止用。
@@ -72,41 +58,6 @@ class User(UserMixin, db.Model):
         prefs = dict(self.preferences)
         prefs[key] = value
         self.preferences = prefs
-
-    # --- リカバリコード ---
-
-    def set_recovery_code(self):
-        """新しいリカバリコードを生成し、ハッシュを保存。生コードを返す。
-
-        既存コードがあれば即時無効化（上書き）。生コードは呼び出し側で
-        1 回だけユーザーに表示し、DB には SHA-256 ハッシュのみ保存する。
-        """
-        raw = RECOVERY_CODE_PREFIX + secrets.token_hex(32)
-        self.recovery_code_hash = hashlib.sha256(raw.encode()).hexdigest()
-        self.recovery_code_prefix = raw[:_RECOVERY_PREFIX_LEN] + "..."
-        self.recovery_code_created_at = datetime.now(timezone.utc)
-        self.recovery_code_used_at = None
-        return raw
-
-    def verify_recovery_code(self, raw):
-        """リカバリコードが正しく、まだ使用されていないか検証する。"""
-        if not self.recovery_code_hash or self.recovery_code_used_at is not None:
-            return False
-        if not isinstance(raw, str) or not raw:
-            return False
-        candidate = hashlib.sha256(raw.encode()).hexdigest()
-        return secrets.compare_digest(candidate, self.recovery_code_hash)
-
-    def consume_recovery_code(self):
-        """リカバリコードを使用済みとしてマークする。"""
-        self.recovery_code_used_at = datetime.now(timezone.utc)
-
-    @property
-    def has_active_recovery_code(self):
-        return (
-            self.recovery_code_hash is not None
-            and self.recovery_code_used_at is None
-        )
 
     @property
     def has_totp(self):

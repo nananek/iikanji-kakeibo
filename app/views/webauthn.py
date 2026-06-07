@@ -20,9 +20,7 @@ from webauthn.helpers.structs import (
 )
 
 from app.extensions import db
-from app.models.user import User
 from app.models.webauthn import WebAuthnCredential
-from app.views.helpers import maybe_clear_pending_recovery
 
 logger = logging.getLogger(__name__)
 
@@ -144,10 +142,6 @@ def register_verify():
                 "user_agent": request.headers.get("User-Agent", "") or "不明",
             },
         )
-
-    # リカバリログイン後の強制復旧フロー: パスキーが新規登録され
-    # かつ新リカバリコードも生成済みなら、pending 状態を解除する
-    maybe_clear_pending_recovery(current_user, session)
 
     return jsonify(ok=True, id=credential.id, name=credential.name)
 

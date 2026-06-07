@@ -30,17 +30,6 @@ class TestContactGet:
         resp = client.get("/legal/contact")
         assert resp.status_code == 200
 
-    def test_accessible_to_pending_recovery_user(
-        self, app, logged_in_client, db, user, reset_limiter,
-    ):
-        """リカバリログイン後の強制復旧フロー中でもアクセス可能."""
-        with logged_in_client.session_transaction() as sess:
-            sess["pending_recovery_action"] = True
-            sess["pending_recovery_user_id"] = user.id
-        resp = logged_in_client.get("/legal/contact")
-        assert resp.status_code == 200
-
-
 class TestContactPost:
     def _form_data(self, **overrides):
         data = {

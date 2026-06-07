@@ -33,46 +33,6 @@ def create_app(config_class=Config):
     csrf.exempt(device_authorization)
     csrf.exempt(oauth_token_view)
 
-    # リカバリコードでログイン後の強制復旧フロー
-    # 「新パスキー登録 + リカバリコード再生成」両達成までは限定ページのみ許可
-    @app.before_request
-    def pending_recovery_gate():
-        from flask import request, redirect, url_for, session
-        from flask_login import current_user as cu
-        if not cu.is_authenticated:
-            return
-        if not session.get("pending_recovery_action"):
-            return
-        # セッション整合性チェック: pending_recovery_user_id が現在のログイン
-        # ユーザーと一致しない場合は flag を破棄（別ユーザーで再ログイン等）
-        pending_uid = session.get("pending_recovery_user_id")
-        if pending_uid is not None and pending_uid != cu.id:
-            session.pop("pending_recovery_action", None)
-            session.pop("pending_recovery_user_id", None)
-            return
-        endpoint = request.endpoint or ""
-        # 強制復旧の遂行に必要なエンドポイントだけ許可
-        allowed_endpoints = {
-            "settings.passkeys",
-            "settings.delete_passkey",
-            "settings.recovery_generate",
-            "settings.passkey_only_enable",
-            "settings.passkey_only_disable",
-            "webauthn.register_options",
-            "webauthn.register_verify",
-            "auth.logout",
-            # 規約未同意のリカバリ後ユーザーが terms_acceptance_check と
-            # 相互リダイレクトで無限ループに陥らないよう許可。同意してから
-            # 復旧フロー (パスキー再登録 + リカバリ再生成) に進む順序。
-            "auth.accept_terms",
-            # 公開フォーム: 復旧中でも問い合わせ・法的文書閲覧を許可
-            "legal.show",
-            "legal.contact",
-        }
-        if endpoint in allowed_endpoints or endpoint.startswith("static"):
-            return
-        return redirect(url_for("settings.passkeys"))
-
     # Before-request hook for terms acceptance check
     @app.before_request
     def terms_acceptance_check():
@@ -94,8 +54,7 @@ def create_app(config_class=Config):
             return
         endpoint = request.endpoint or ""
         # 同意画面自体・ログアウト・法的文書閲覧・静的アセット・
-        # WebAuthn API は例外。`auth.recovery_login` は冒頭の
-        # `is_authenticated` チェックで弾かれるためここに含めない。
+        # WebAuthn API は例外 (下の startswith 群で許可)。
         allowed = (
             "auth.accept_terms",
             "auth.logout",

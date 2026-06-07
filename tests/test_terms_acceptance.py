@@ -280,26 +280,6 @@ class TestAcceptTermsPostNextRedirect:
         assert "evil.com" not in location
 
 
-class TestTermsAndRecoveryGateInteraction:
-    """`pending_recovery_action` + 規約未同意 の組合せで無限ループしない"""
-
-    def test_recovery_pending_user_can_reach_accept_terms(
-        self, client, db, user, app, monkeypatch, reset_limiter
-    ):
-        monkeypatch.setitem(app.config, "CURRENT_TERMS_VERSION", CURRENT_VERSION)
-        user.accepted_terms_version = None
-        db.session.commit()
-
-        with client.session_transaction() as sess:
-            sess["_user_id"] = str(user.id)
-            sess["pending_recovery_action"] = True
-            sess["pending_recovery_user_id"] = user.id
-
-        # /accept-terms は pending_recovery_gate に弾かれず到達できる
-        resp = client.get("/accept-terms", follow_redirects=False)
-        assert resp.status_code == 200
-
-
 class TestAcceptTermsAlreadyConsented:
     """同意済ユーザーが /accept-terms を直接 GET したらダッシュボードへ"""
 

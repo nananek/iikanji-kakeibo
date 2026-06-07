@@ -62,22 +62,6 @@ def is_safe_internal_path(target) -> bool:
     return True
 
 
-def maybe_clear_pending_recovery(user, session_obj):
-    """リカバリログイン後の「強制復旧フロー」終了判定。
-
-    パスキーが 1 本以上登録され、かつ新規リカバリコードも生成された場合に
-    `pending_recovery_action` セッション flag をクリアする。両方達成しないと
-    残ったまま (`before_request` で他ページがブロックされる)。
-    """
-    if not session_obj.get("pending_recovery_action"):
-        return
-    from app.models.webauthn import WebAuthnCredential
-    passkey_count = WebAuthnCredential.query.filter_by(user_id=user.id).count()
-    if passkey_count >= 1 and user.has_active_recovery_code:
-        session_obj.pop("pending_recovery_action", None)
-        session_obj.pop("pending_recovery_user_id", None)
-
-
 def check_deadline(receipt_date, uploaded_date):
     """入力期限チェック。期限超過なら True を返す。"""
     if not receipt_date or not uploaded_date:
