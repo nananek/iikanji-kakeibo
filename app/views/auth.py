@@ -1,4 +1,5 @@
 import re
+import time
 from urllib.parse import urlparse
 
 from flask import Blueprint, render_template, redirect, url_for, flash, request, session, abort, current_app
@@ -38,6 +39,36 @@ def _safe_next_url(fallback: str) -> str:
         return next_page
     return fallback
 
+
+# TOTP 2FA ゲートの pending セッション有効期限 (秒)
+_PENDING_2FA_TTL = 300
+
+
+def _clear_pending_2fa():
+    for k in (
+        "pending_2fa_user_id", "pending_2fa_kind",
+        "pending_2fa_next", "pending_2fa_ts",
+    ):
+        session.pop(k, None)
+
+
+def _login_or_2fa(user, *, kind: str, default_next: str):
+    """TOTP 未有効なら即ログイン、有効なら pending-2FA セッションを張って
+    /login/totp へ誘導する。
+
+    next URL はこの時点で検証済みの内部相対パスのみを保存する
+    (生のユーザー入力はセッションに載せない)。
+    """
+    next_url = _safe_next_url(default_next)
+    if user.totp_enabled:
+        session["pending_2fa_user_id"] = user.id
+        session["pending_2fa_kind"] = kind
+        session["pending_2fa_next"] = next_url
+        session["pending_2fa_ts"] = time.time()
+        return redirect(url_for("auth.login_totp"))
+    login_user(user, remember=True)
+    return redirect(next_url)
+
 bp = Blueprint("auth", __name__)
 
 
@@ -59,8 +90,9 @@ def login():
                     "warning",
                 )
                 return render_template("auth/login.html", form=form)
-            login_user(user, remember=True)
-            return redirect(_safe_next_url(url_for("dashboard.index")))
+            return _login_or_2fa(
+                user, kind="personal", default_next=url_for("dashboard.index")
+            )
         flash("ユーザー名またはパスワードが正しくありません。", "danger")
 
     return render_template("auth/login.html", form=form)
@@ -84,11 +116,73 @@ def login_auditor():
                     "warning",
                 )
                 return render_template("auth/login_auditor.html", form=form)
-            login_user(user, remember=True)
-            return redirect(_safe_next_url(url_for("auditor.dashboard")))
+            return _login_or_2fa(
+                user, kind="auditor", default_next=url_for("auditor.dashboard")
+            )
         flash("ユーザー名またはパスワードが正しくありません。", "danger")
 
     return render_template("auth/login_auditor.html", form=form)
+
+
+@bp.route("/login/totp", methods=["GET", "POST"])
+@limiter.limit("5/minute", methods=["POST"])
+def login_totp():
+    """パスワード認証通過後の TOTP 2FA ゲート。
+
+    `login()` / `login_auditor()` が pending-2fa セッションを張ってここへ
+    誘導する。コード検証 (リプレイ防止付き) に成功して初めて login_user する。
+    """
+    if current_user.is_authenticated:
+        return redirect(url_for("dashboard.index"))
+
+    user_id = session.get("pending_2fa_user_id")
+    ts = session.get("pending_2fa_ts", 0)
+    if not user_id or (time.time() - ts) > _PENDING_2FA_TTL:
+        _clear_pending_2fa()
+        flash("ログインの有効期限が切れました。もう一度ログインしてください。", "warning")
+        return redirect(url_for("auth.login"))
+
+    user = db.session.get(User, user_id)
+    # 防御的: TOTP が無効化された等で前提が崩れていればログインへ戻す
+    if user is None or not user.totp_enabled or not user.totp_secret_encrypted:
+        _clear_pending_2fa()
+        return redirect(url_for("auth.login"))
+
+    kind = session.get("pending_2fa_kind", "personal")
+    fallback = (
+        url_for("auditor.dashboard") if kind == "auditor"
+        else url_for("dashboard.index")
+    )
+
+    if request.method == "POST":
+        from app.services import totp as totp_svc
+
+        code = request.form.get("code", "")
+        try:
+            secret = totp_svc.decrypt_secret(user.totp_secret_encrypted)
+        except ValueError:
+            flash(
+                "二段階認証の設定に問題があります。管理者にお問い合わせください。",
+                "danger",
+            )
+            return render_template("auth/login_totp.html")
+
+        ok, step = totp_svc.verify_code_with_step(
+            secret, code, user.totp_last_used_step
+        )
+        if ok:
+            user.totp_last_used_step = step
+            db.session.commit()
+            next_url = session.get("pending_2fa_next") or fallback
+            if not is_safe_internal_path(next_url):
+                next_url = fallback
+            _clear_pending_2fa()
+            login_user(user, remember=True)
+            return redirect(next_url)
+        # リプレイと誤コードは区別せず一律メッセージ
+        flash("認証コードが正しくありません。", "danger")
+
+    return render_template("auth/login_totp.html")
 
 
 @bp.route("/recovery", methods=["GET", "POST"])

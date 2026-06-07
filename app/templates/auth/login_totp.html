@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}二段階認証 - いいかんじ™家計簿{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-md-5 col-lg-4">
+    <div class="card shadow-sm mt-5">
+      <div class="card-body p-4">
+        <h3 class="text-center mb-3">
+          <i class="bi bi-shield-lock"></i> 二段階認証
+        </h3>
+        <p class="text-muted text-center small mb-4">
+          認証アプリに表示されている 6 桁のコードを入力してください。
+        </p>
+        <form method="POST">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <div class="mb-3">
+            <label class="form-label" for="totpCode">認証コード</label>
+            <input type="text" class="form-control text-center" name="code" id="totpCode"
+                   inputmode="numeric" autocomplete="one-time-code"
+                   pattern="[0-9]*" maxlength="6" required autofocus
+                   placeholder="123456">
+          </div>
+          <button type="submit" class="btn btn-primary w-100">
+            <i class="bi bi-box-arrow-in-right"></i> ログイン
+          </button>
+        </form>
+        <hr>
+        <div class="text-center">
+          <small><a href="{{ url_for('auth.login') }}" class="text-muted">
+            <i class="bi bi-arrow-left"></i> ログインに戻る
+          </a></small>
+        </div>
+        <div class="text-center mt-2">
+          <small class="text-muted">
+            認証アプリを使えない場合は、登録済みのパスキーでログインしてください。
+          </small>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
