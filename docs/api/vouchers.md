@@ -5,7 +5,7 @@ title: 証憑 API
 
 # 証憑 API
 
-証憑（レシート・領収書画像）の一覧・画像取得・ハッシュ検証・操作ログを取得する API です。
+証憑（レシート・領収書画像）の一覧・画像取得・操作ログを取得する API です。
 
 すべてのエンドポイントに `journals:read` スコープが必要です。
 
@@ -110,60 +110,6 @@ title: 証憑 API
 
 ---
 
-## ハッシュ検証
-
-<div class="endpoint">
-  <span class="method method-get">GET</span>
-  <span class="path">/api/v1/vouchers/:id/verify</span>
-  <div class="scope">スコープ: <code>journals:read</code></div>
-</div>
-
-証憑画像の SHA-256 ハッシュを再計算し、保存時のハッシュと比較します。改ざん検出に使用します。
-
-### パスパラメータ
-
-| パラメータ | 型 | 説明 |
-|-----------|-----|------|
-| `id` | integer | 証憑 ID |
-
-### レスポンス
-
-**200 OK**
-
-```json
-{
-  "ok": true,
-  "verified": true,
-  "stored_hash": "a1b2c3d4...",
-  "computed_hash": "a1b2c3d4..."
-}
-```
-
-| フィールド | 型 | 説明 |
-|-----------|-----|------|
-| `verified` | boolean \| null | `true`: 一致、`false`: 不一致（改ざんの可能性）、`null`: ハッシュ未記録 |
-| `stored_hash` | string | 保存時の SHA-256 ハッシュ |
-| `computed_hash` | string | 再計算したハッシュ |
-
-ハッシュ未記録の場合:
-
-```json
-{
-  "ok": true,
-  "verified": null,
-  "message": "ハッシュ未記録"
-}
-```
-
-### エラー
-
-| ステータス | メッセージ |
-|:---------:|-----------|
-| 404 | `証憑が見つかりません。` |
-| 404 | `画像ファイルが見つかりません。` |
-
----
-
 ## 操作ログ
 
 <div class="endpoint">
@@ -194,13 +140,6 @@ title: 証憑 API
       "detail": "{\"journal_entry_id\": 42, \"entry_number\": 15, \"description\": \"コンビニ購入\"}",
       "created_at": "2026-02-20T14:00:00",
       "user_id": 1
-    },
-    {
-      "id": 2,
-      "action": "hash_verified",
-      "detail": null,
-      "created_at": "2026-02-21T10:00:00",
-      "user_id": 1
     }
   ]
 }
@@ -221,8 +160,6 @@ title: 証憑 API
 | 値 | 説明 |
 |----|------|
 | `orphaned` | 仕訳削除により証憑が孤立化した |
-| `hash_verified` | ハッシュ検証に成功した |
-| `hash_mismatch` | ハッシュ不一致（改ざんの可能性） |
 
 ### エラー
 

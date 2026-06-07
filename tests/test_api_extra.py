@@ -336,55 +336,6 @@ class TestVoucherImage:
         assert resp.status_code == 404
 
 
-class TestVoucherVerify:
-    def test_no_auth(self, client):
-        resp = client.get("/api/v1/vouchers/1/verify")
-        assert resp.status_code == 401
-
-    def test_404(self, client, auth_header, accounts):
-        resp = client.get("/api/v1/vouchers/9999/verify",
-                          headers=auth_header)
-        assert resp.status_code == 404
-
-    def test_no_hash_recorded(self, db, client, user, auth_header, accounts):
-        v = make_voucher(db, user.id)
-        v.file_hash = None
-        db.session.commit()
-        resp = client.get(f"/api/v1/vouchers/{v.id}/verify",
-                          headers=auth_header)
-        assert resp.status_code == 200
-        body = resp.get_json()
-        assert body["verified"] is None
-
-    def test_hash_match(self, db, client, user, auth_header, accounts):
-        import hashlib
-        data = b"image-content"
-        v = make_voucher(db, user.id)
-        v.file_hash = hashlib.sha256(data).hexdigest()
-        db.session.commit()
-        with patch("app.views.api.get_storage_backend") as mock_storage:
-            backend = MagicMock()
-            backend.get.return_value = data
-            mock_storage.return_value = backend
-            resp = client.get(f"/api/v1/vouchers/{v.id}/verify",
-                              headers=auth_header)
-        body = resp.get_json()
-        assert body["verified"] is True
-
-    def test_hash_mismatch(self, db, client, user, auth_header, accounts):
-        v = make_voucher(db, user.id)
-        v.file_hash = "0" * 64
-        db.session.commit()
-        with patch("app.views.api.get_storage_backend") as mock_storage:
-            backend = MagicMock()
-            backend.get.return_value = b"different-content"
-            mock_storage.return_value = backend
-            resp = client.get(f"/api/v1/vouchers/{v.id}/verify",
-                              headers=auth_header)
-        body = resp.get_json()
-        assert body["verified"] is False
-
-
 class TestVoucherLogs:
     def test_no_auth(self, client):
         resp = client.get("/api/v1/vouchers/1/logs")
@@ -401,7 +352,7 @@ class TestVoucherLogs:
             voucher_id=v.id, user_id=user.id, action="orphaned",
         ))
         db.session.add(VoucherAuditLog(
-            voucher_id=v.id, user_id=user.id, action="hash_verified",
+            voucher_id=v.id, user_id=user.id, action="deleted",
         ))
         db.session.commit()
         resp = client.get(f"/api/v1/vouchers/{v.id}/logs",

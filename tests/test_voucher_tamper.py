@@ -1,6 +1,5 @@
 """証憑改ざん防止（Phase 3: 電帳法）テスト"""
 
-import hashlib
 import json
 from unittest.mock import patch
 
@@ -35,13 +34,13 @@ class TestVoucherAuditLogModel:
         log = VoucherAuditLog(
             voucher_id=v.id,
             user_id=user.id,
-            action="hash_verified",
+            action="orphaned",
         )
         db.session.add(log)
         db.session.commit()
 
         assert log.id is not None
-        assert log.action == "hash_verified"
+        assert log.action == "orphaned"
         assert log.voucher_id == v.id
 
     def test_log_with_detail(self, db, user):
@@ -121,105 +120,13 @@ class TestOrphanLogging:
         assert len(logs) == 0
 
 
-class TestHashVerifyWeb:
-    """Web UI ハッシュ検証のテスト"""
-
-    def test_verify_success(self, db, logged_in_client, user):
-        image_data = b"test image content"
-        file_hash = hashlib.sha256(image_data).hexdigest()
-        v = _make_voucher_with_hash(db, user.id, file_hash=file_hash)
-
-        with patch("app.views.vouchers.get_storage_backend") as mock_sb:
-            mock_sb.return_value.get.return_value = image_data
-            resp = logged_in_client.post(f"/vouchers/{v.id}/verify")
-
-        assert resp.status_code == 302
-        log = VoucherAuditLog.query.filter_by(voucher_id=v.id).first()
-        assert log.action == "hash_verified"
-
-    def test_verify_mismatch(self, db, logged_in_client, user):
-        v = _make_voucher_with_hash(db, user.id, file_hash="a" * 64)
-
-        with patch("app.views.vouchers.get_storage_backend") as mock_sb:
-            mock_sb.return_value.get.return_value = b"tampered content"
-            resp = logged_in_client.post(f"/vouchers/{v.id}/verify")
-
-        assert resp.status_code == 302
-        log = VoucherAuditLog.query.filter_by(voucher_id=v.id).first()
-        assert log.action == "hash_mismatch"
-
-    def test_verify_no_hash(self, db, logged_in_client, user):
-        v = make_voucher(db, user.id)  # file_hash=None
-
-        resp = logged_in_client.post(f"/vouchers/{v.id}/verify")
-        assert resp.status_code == 302
-
-        logs = VoucherAuditLog.query.filter_by(voucher_id=v.id).all()
-        assert len(logs) == 0
-
-
-class TestHashVerifyAPI:
-    """API ハッシュ検証のテスト"""
-
-    def test_api_verify_success(self, client, db, user, auth_header):
-        image_data = b"api test image"
-        file_hash = hashlib.sha256(image_data).hexdigest()
-        v = _make_voucher_with_hash(db, user.id, file_hash=file_hash)
-
-        with patch("app.views.api.get_storage_backend") as mock_sb:
-            mock_sb.return_value.get.return_value = image_data
-            resp = client.get(
-                f"/api/v1/vouchers/{v.id}/verify",
-                headers=auth_header,
-            )
-
-        data = resp.get_json()
-        assert data["ok"] is True
-        assert data["verified"] is True
-        assert data["stored_hash"] == file_hash
-
-    def test_api_verify_mismatch(self, client, db, user, auth_header):
-        v = _make_voucher_with_hash(db, user.id, file_hash="b" * 64)
-
-        with patch("app.views.api.get_storage_backend") as mock_sb:
-            mock_sb.return_value.get.return_value = b"different content"
-            resp = client.get(
-                f"/api/v1/vouchers/{v.id}/verify",
-                headers=auth_header,
-            )
-
-        data = resp.get_json()
-        assert data["ok"] is True
-        assert data["verified"] is False
-
-    def test_api_verify_no_hash(self, client, db, user, auth_header):
-        v = make_voucher(db, user.id)
-
-        resp = client.get(
-            f"/api/v1/vouchers/{v.id}/verify",
-            headers=auth_header,
-        )
-        data = resp.get_json()
-        assert data["ok"] is True
-        assert data["verified"] is None
-
-    def test_api_verify_other_user(self, client, db, user, second_user, auth_header):
-        v = _make_voucher_with_hash(db, second_user.id, file_hash="c" * 64)
-
-        resp = client.get(
-            f"/api/v1/vouchers/{v.id}/verify",
-            headers=auth_header,
-        )
-        assert resp.status_code == 404
-
-
 class TestAuditLogAPI:
     """操作ログ API のテスト"""
 
     def test_api_logs(self, client, db, user, auth_header):
         v = make_voucher(db, user.id)
         db.session.add(VoucherAuditLog(
-            voucher_id=v.id, user_id=user.id, action="hash_verified",
+            voucher_id=v.id, user_id=user.id, action="deleted",
         ))
         db.session.add(VoucherAuditLog(
             voucher_id=v.id, user_id=user.id, action="orphaned",

@@ -145,7 +145,6 @@ API キー発行時にスコープ（権限）を選択します。
 |---------|------|------|---------|
 | GET | `/api/v1/vouchers` | [証憑一覧](vouchers.html#証憑一覧) | `journals:read` |
 | GET | `/api/v1/vouchers/:id/image` | [証憑画像](vouchers.html#証憑画像) | `journals:read` |
-| GET | `/api/v1/vouchers/:id/verify` | [ハッシュ検証](vouchers.html#ハッシュ検証) | `journals:read` |
 | GET | `/api/v1/vouchers/:id/logs` | [操作ログ](vouchers.html#操作ログ) | `journals:read` |
 
 ### レポート API
