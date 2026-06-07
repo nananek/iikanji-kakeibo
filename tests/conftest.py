@@ -223,6 +223,31 @@ def passkey_only_user(db, user):
     return user
 
 
+def totp_code_for(secret_b32, at=None):
+    """テスト用: base32 secret に対する現在の TOTP コードを返す。"""
+    import pyotp
+    if at is None:
+        return pyotp.TOTP(secret_b32).now()
+    return pyotp.TOTP(secret_b32).at(at)
+
+
+@pytest.fixture
+def totp_user(db, user):
+    """TOTP 有効ユーザー。生 secret (base32) を `user._test_totp_secret` に保存。
+
+    `tests.conftest.totp_code_for(secret)` で有効コードを算出できる。
+    """
+    from app.services import totp as totp_svc
+    secret = totp_svc.generate_secret()
+    user.totp_secret_encrypted = totp_svc.encrypt_secret(secret)
+    user.totp_enabled = True
+    user.totp_confirmed_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    user.totp_last_used_step = None
+    user._test_totp_secret = secret
+    db.session.commit()
+    return user
+
+
 @pytest.fixture
 def second_user(db):
     """IDOR テスト用の別ユーザー"""
