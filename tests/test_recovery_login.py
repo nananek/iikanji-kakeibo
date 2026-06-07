@@ -150,7 +150,7 @@ class TestRecoveryGenerateEndpoint:
 
 
 # ============================================================
-# パスキー専用モード (passkey_only_login)
+# 通常ログイン + リカバリコードログイン (#385 PR-T4: パスキー専用モード廃止)
 # ============================================================
 
 class TestNormalPasswordLogin:
@@ -171,12 +171,12 @@ class TestDeleteLastPasskeyBlock:
     """パスワード未設定ユーザーは最後の 1 本を削除できない (#385 PR-T4: 旧パスキー専用
     モードの保護を実条件「password_hash 無し」で継続)。"""
 
-    def test_blocks_delete_when_last_passkey(self, logged_in_client, passkey_only_user, db):
+    def test_blocks_delete_when_last_passkey(self, logged_in_client, recovery_code_user, db):
         from app.models.webauthn import WebAuthnCredential
-        passkey_only_user.password_hash = None  # パスワード未設定 = 最後のパスキー保護対象
+        recovery_code_user.password_hash = None  # パスワード未設定 = 最後のパスキー保護対象
         db.session.commit()
         cred = WebAuthnCredential.query.filter_by(
-            user_id=passkey_only_user.id
+            user_id=recovery_code_user.id
         ).first()
         resp = logged_in_client.post(
             f"/settings/passkeys/{cred.id}/delete",
@@ -187,13 +187,13 @@ class TestDeleteLastPasskeyBlock:
         # DB にまだ存在する
         assert WebAuthnCredential.query.get(cred.id) is not None
 
-    def test_allows_delete_when_more_than_one(self, logged_in_client, passkey_only_user, db):
+    def test_allows_delete_when_more_than_one(self, logged_in_client, recovery_code_user, db):
         """パスキーが 2 本あれば 1 本目は削除できる (パスワード未設定でも)"""
         from app.models.webauthn import WebAuthnCredential
-        passkey_only_user.password_hash = None
+        recovery_code_user.password_hash = None
         db.session.commit()
         extra = WebAuthnCredential(
-            user_id=passkey_only_user.id,
+            user_id=recovery_code_user.id,
             credential_id=b"second-cred",
             credential_public_key=b"pk2",
             current_sign_count=0,
@@ -201,7 +201,7 @@ class TestDeleteLastPasskeyBlock:
         db.session.add(extra)
         db.session.commit()
         first = WebAuthnCredential.query.filter_by(
-            user_id=passkey_only_user.id
+            user_id=recovery_code_user.id
         ).first()
         resp = logged_in_client.post(
             f"/settings/passkeys/{first.id}/delete",
@@ -210,7 +210,7 @@ class TestDeleteLastPasskeyBlock:
         assert resp.status_code == 200
         # 1 本になったが削除自体は成功
         assert WebAuthnCredential.query.filter_by(
-            user_id=passkey_only_user.id
+            user_id=recovery_code_user.id
         ).count() == 1
 
 
@@ -223,9 +223,9 @@ class TestRecoveryLogin:
         html = resp.data.decode()
         assert "リカバリコード" in html
 
-    def test_wrong_code_uniform_error(self, client, passkey_only_user):
+    def test_wrong_code_uniform_error(self, client, recovery_code_user):
         resp = client.post("/recovery", data={
-            "username": passkey_only_user.username,
+            "username": recovery_code_user.username,
             "recovery_code": "ikr_wrong_value",
         })
         # ログインできない (200 で再描画)
@@ -243,12 +243,12 @@ class TestRecoveryLogin:
         with client.session_transaction() as sess:
             assert "_user_id" not in sess
 
-    def test_successful_recovery_login_consumes_code(self, client, passkey_only_user, db):
+    def test_successful_recovery_login_consumes_code(self, client, recovery_code_user, db):
         """正しいコードでログインでき、コードは消費される"""
-        raw = passkey_only_user._test_recovery_code_raw
+        raw = recovery_code_user._test_recovery_code_raw
 
         resp = client.post("/recovery", data={
-            "username": passkey_only_user.username,
+            "username": recovery_code_user.username,
             "recovery_code": raw,
         }, follow_redirects=False)
         # /settings/passkeys へリダイレクト
@@ -256,25 +256,25 @@ class TestRecoveryLogin:
         assert "/settings/passkeys" in resp.headers["Location"]
         # セッションに pending_recovery_action が立っている
         with client.session_transaction() as sess:
-            assert sess.get("_user_id") == f"{passkey_only_user.id}.0"
+            assert sess.get("_user_id") == f"{recovery_code_user.id}.0"
             assert sess.get("pending_recovery_action") is True
         # コードが消費済みになっている
-        db.session.refresh(passkey_only_user)
-        assert passkey_only_user.recovery_code_used_at is not None
+        db.session.refresh(recovery_code_user)
+        assert recovery_code_user.recovery_code_used_at is not None
 
-    def test_consumed_code_cannot_login_again(self, client, passkey_only_user, db):
+    def test_consumed_code_cannot_login_again(self, client, recovery_code_user, db):
         """1 回限り使用: 一度使ったコードは再使用不可"""
-        raw = passkey_only_user._test_recovery_code_raw
+        raw = recovery_code_user._test_recovery_code_raw
         # 1 回目: 成功
         client.post("/recovery", data={
-            "username": passkey_only_user.username,
+            "username": recovery_code_user.username,
             "recovery_code": raw,
         })
         # ログアウト相当（cookie 含めて完全リセット）
         client.get("/logout")
         # 2 回目: 拒否（ログイン画面再描画）
         resp = client.post("/recovery", data={
-            "username": passkey_only_user.username,
+            "username": recovery_code_user.username,
             "recovery_code": raw,
         }, follow_redirects=False)
         assert resp.status_code == 200
@@ -293,29 +293,29 @@ class TestPendingRecoveryGate:
             "recovery_code": raw,
         })
 
-    def test_dashboard_redirects_to_passkeys(self, client, passkey_only_user, db):
-        self._login_with_recovery(client, passkey_only_user, db)
+    def test_dashboard_redirects_to_passkeys(self, client, recovery_code_user, db):
+        self._login_with_recovery(client, recovery_code_user, db)
         resp = client.get("/", follow_redirects=False)
         assert resp.status_code == 302
         assert "/settings/passkeys" in resp.headers["Location"]
 
-    def test_passkeys_page_accessible(self, client, passkey_only_user, db):
-        self._login_with_recovery(client, passkey_only_user, db)
+    def test_passkeys_page_accessible(self, client, recovery_code_user, db):
+        self._login_with_recovery(client, recovery_code_user, db)
         resp = client.get("/settings/passkeys")
         # pending 中でもパスキー画面は開ける
         assert resp.status_code == 200
 
-    def test_logout_allowed(self, client, passkey_only_user, db):
-        self._login_with_recovery(client, passkey_only_user, db)
+    def test_logout_allowed(self, client, recovery_code_user, db):
+        self._login_with_recovery(client, recovery_code_user, db)
         resp = client.get("/logout", follow_redirects=False)
         # ログアウトは pending 中でも可
         assert resp.status_code == 302
 
     def test_cleared_after_new_passkey_and_recovery(
-        self, client, passkey_only_user, db
+        self, client, recovery_code_user, db
     ):
         """新規リカバリ生成（パスキーは既に存在）で pending クリア"""
-        self._login_with_recovery(client, passkey_only_user, db)
+        self._login_with_recovery(client, recovery_code_user, db)
         # 既にパスキー 1 本ある状態。リカバリコードを再生成すると
         # has_passkey + has_recovery が両方成立して pending がクリアされる
         client.post("/settings/passkeys/recovery/generate", data={

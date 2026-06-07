@@ -27,8 +27,8 @@ class User(UserMixin, db.Model):
     )
     preferences = db.Column(db.JSON, nullable=True, default=dict)
 
-    # パスキー専用ログインモード（オプトイン、デフォルト無効）
-    passkey_only_login = db.Column(db.Boolean, nullable=False, default=False)
+    # #385 PR-T4/T4-drop: パスキー専用モード (passkey_only_login) は廃止・列 DROP 済
+    # (マイグレ 073)。全ユーザーにパスワード必須 + 2FA は「Passkey or TOTP」(設計書 §3.6.6)。
 
     # 利用規約・プライバシーポリシーへの同意バージョン (YYYY-MM-DD 形式)。
     # 規約改訂時に CURRENT_TERMS_VERSION が更新され、ユーザーの値と
@@ -129,8 +129,8 @@ class User(UserMixin, db.Model):
         self.password_hash = generate_password_hash(password)
 
     def check_password(self, password):
-        # #385: 移行完了ユーザー / passkey_only は password_hash が NULL。werkzeug
-        # ログインは成立しない (移行後は login_verifier 経由で認証する)。
+        # #385: パスワード未設定ユーザー (password_hash NULL) は werkzeug ログインが
+        # 成立しない (Passkey / リカバリ経由で入る。移行後は login_verifier で認証)。
         if not self.password_hash:
             return False
         return check_password_hash(self.password_hash, password)

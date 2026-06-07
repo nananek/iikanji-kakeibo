@@ -222,14 +222,14 @@ def logged_in_client(app, client, user):
 
 
 @pytest.fixture
-def passkey_only_user(db, user):
-    """パスキー専用モード ON + パスキー 1 本 + 有効リカバリコード。
+def recovery_code_user(db, user):
+    """パスキー 1 本 + 有効リカバリコードを持つユーザー (リカバリログインテスト用)。
 
     生成したリカバリコードの生文字列は `user._test_recovery_code_raw` 属性に
     保存される。リカバリログインテストで参照可能。
+    (#385 PR-T4-drop: 旧パスキー専用モード fixture から改称。passkey_only_login 列は廃止。)
     """
     from app.models.webauthn import WebAuthnCredential
-    user.passkey_only_login = True
     raw = user.set_recovery_code()
     user._test_recovery_code_raw = raw
     cred = WebAuthnCredential(
