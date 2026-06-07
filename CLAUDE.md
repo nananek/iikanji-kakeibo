@@ -61,7 +61,7 @@
 | settings | `/settings` | 設定トップ・外部AI・Passkey・月次確定・通知・APIキー管理・顧問アクセス |
 | webauthn | `/webauthn` | Passkey API（JSON、CSRF免除） |
 | auditor | `/auditor` | 顧問ダッシュボード・代理閲覧 |
-| vouchers | `/vouchers` | 証憑一覧（電帳法検索要件対応） |
+| vouchers | `/vouchers` | 証憑一覧（日付・金額・取引先で検索） |
 | api | `/api/v1` | REST API（仕訳CRUD・AI証憑仕訳・Bearer認証） |
 | oauth | `/oauth` | OAuth 2.0 Device Authorization Grant (RFC 8628) |
 
@@ -84,7 +84,6 @@
 | ProcessedFile | auto_import_processed_files | source_id, filename, draft_id |
 | WebhookConfig | webhook_configs | user_id, url, events |
 | Voucher | vouchers | user_id, journal_entry_id (SET NULL), image_key, image_mime, file_hash (SHA-256), uploaded_at |
-| VoucherAuditLog | voucher_audit_logs | voucher_id, user_id, action (orphaned/hash_verified/hash_mismatch), detail (JSON) |
 | BalanceCache | balance_caches | user_id, year, period, account_code, cumulative_debit, cumulative_credit |
 | WebAuthnCredential | webauthn_credentials | credential_id, credential_public_key, current_sign_count |
 | OAuthDevice | oauth_devices | device_code_hash, user_code, user_id, status (pending/approved/denied/expired/consumed), expires_at |
@@ -187,92 +186,6 @@
 - `CSRFProtect()` でグローバル有効
 - メタタグ `<meta name="csrf-token">` で JS から取得可能
 - WebAuthn API と REST API (`/api/v1`) は免除
-
-## 電子帳簿保存法対応ロードマップ
-
-AI証憑仕訳でアップロードされたレシート画像を電帳法（スキャナ保存）の要件に沿って保存するための計画。
-
-### スマートフォン撮影の根拠
-
-国税庁「電子帳簿保存法一問一答【スキャナ保存関係】」問4:
-> 「スキャナ」とは書面の国税関係書類を電磁的記録に変換する入力装置をいい、
-> スマートフォンやデジタルカメラ等についても該当すれば「スキャナ」に含まれる。
-
-- H28年度改正で「原稿台と一体」の要件が撤廃され、スマホ撮影が正式に認められた
-- 解像度 200dpi 相当（約387万画素）以上、RGB 各256階調以上 → 現行スマホは全て充足
-- 2024年改正で解像度・階調・大きさの **情報の保存** 要件も撤廃（画像自体の品質要件は維持）
-- 出典: https://www.nta.go.jp/law/joho-zeikaishaku/sonota/jirei/07scan/index.htm
-
-### 入力期限（スキャナ保存）
-
-- **早期入力方式**: 受領後おおむね **7営業日以内** にスキャン・保存
-- **業務処理サイクル方式**: 事務処理規程を策定すれば最長 **2ヶ月+おおむね7営業日以内**
-- 2024年改正: 訂正削除の履歴が残るシステムならタイムスタンプ不要
-
-### 現状の問題
-
-- v2.8.0 で画像を DB(LargeBinary) → ファイルシステム/S3 に移行済み
-- **しかし仕訳登録後にドラフトごと画像を削除しており、証憑が残らない**
-- 仕訳と証憑画像の紐付けがない
-
-### Phase 1: 証憑の永続保存と仕訳紐付け
-
-- `Voucher` モデル新設（user_id, journal_entry_id, image_key, image_mime, original_filename, uploaded_at, file_hash）
-- 仕訳登録時: ドラフト削除、画像は `Voucher` に移行して永続保存
-- `JournalEntry` → `Voucher` の 1:N リレーション（1仕訳に複数証憑）
-- 元帳・仕訳詳細画面から証憑画像を閲覧可能に
-- 仕訳削除時も証憑は保持（論理削除 or 孤立証憑として保存）
-
-### Phase 1.5: AI コンプライアンスチェック
-
-AI証憑仕訳の解析時に、電帳法スキャナ保存の要件を満たしているかをAIが自動チェック。設定画面でON/OFF可能。
-
-- `UserAIConfig` に `compliance_check` (Boolean, default=False) を追加
-- 有効時、画像解析プロンプト（Round 1）に電帳法チェック指示を注入:
-  - **画像品質**: ピンぼけ・影・切れ・歪みの検出
-  - **必須情報の視認性**: 日付・金額・取引先が読み取れるか
-  - **入力期限**: レシート日付が古すぎないか（受領日から2ヶ月超の警告）
-- AIレスポンスの `suggestions` に `compliance` フィールドを追加（pass/warn/fail + 理由）
-- UI: 下書き一覧・レビュー画面にコンプライアンス結果を表示（警告バッジ等）
-- 撮り直し推奨時はフラッシュメッセージで案内
-
-### Phase 2: 検索要件（電帳法の検索機能要件）
-
-電帳法スキャナ保存では「日付・金額・取引先」での検索が必須。
-
-- 証憑一覧画面の新設（日付・金額・摘要で絞込）
-- 仕訳の date / amount / description を経由した検索で要件を満たす
-- 証憑画像のサムネイル表示
-
-### Phase 3: 改ざん防止
-
-電帳法では「訂正削除の事実と内容を確認できること」または「訂正削除ができないこと」が必要。
-
-- 保存時に SHA-256 ハッシュを `Voucher.file_hash` に記録
-- 証憑の上書き・削除を禁止（管理者操作のみ許可、操作ログ記録）
-- S3 バックエンド使用時はオブジェクトバージョニングを推奨
-- 個人事業主向けには「事務処理規程」方式（内部規程の整備）でも可
-
-### Phase 4: タイムスタンプ（オプション）
-
-- 認定タイムスタンプ局 (TSA) 連携は大規模向け。個人事業主はクラウド保存+訂正削除防止で代替可
-- `Voucher.uploaded_at` を保存時刻の証跡として記録（Phase 1 で対応済み）
-- 将来的に FreeTSA 等の外部 TSA 連携を検討
-
-### 電帳法の主な要件チェックリスト
-
-| 要件 | 状態 | 対応 Phase |
-|------|------|-----------|
-| 証憑の保存 | ✅ Voucher モデルで永続保存 | Phase 1 |
-| 仕訳との相互関連性 | ✅ JournalEntry ↔ Voucher 1:N | Phase 1 |
-| 見読可能性（表示・印刷） | ✅ 仕訳帳・元帳から画像閲覧可 | Phase 1 |
-| AI コンプライアンスチェック | ✅ 設定画面でON/OFF可能 | Phase 1.5 |
-| 検索機能（日付・金額・取引先） | ✅ 証憑一覧画面+API | Phase 2 |
-| 訂正削除の防止/履歴 | ✅ VoucherAuditLog で操作ログ記録、ハッシュ検証 | Phase 3 |
-| タイムスタンプ | ✅ uploaded_at 記録済み、TSA連携は将来検討 | Phase 1 / 4 |
-| 入力期限の遵守（最長約2ヶ月7営業日） | ✅ 67日超過で警告バッジ表示 | Phase 4 |
-| 解像度・階調の確保 | ✅ 原本画像をそのまま保存 | — |
-| ストレージ抽象化 | ✅ local / S3 切替 | v2.8.0 済 |
 
 ## コーディング規約・注意事項
 

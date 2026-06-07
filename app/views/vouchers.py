@@ -1,4 +1,4 @@
-"""証憑一覧ビュー — 電帳法検索要件対応"""
+"""証憑一覧ビュー — 日付・金額・摘要で検索"""
 
 from flask import (
     Blueprint, render_template, request, flash, redirect, url_for,
@@ -36,7 +36,6 @@ def index():
     amount_to = request.args.get("amount_to", "")
     search = request.args.get("search", "")
 
-    # 論理削除 (Phase 5 #70 電帳法証跡永続化) されたものを除外
     query = (
         Voucher.query
         .outerjoin(JournalEntry, Voucher.journal_entry_id == JournalEntry.id)
@@ -228,7 +227,7 @@ def delete(voucher_id):
                 "voucher delete: storage delete failed %s: %s", k, e,
             )
 
-    # 容量解放 (best-effort)。Voucher 論理削除は既に完了しているため、
+    # 容量解放 (best-effort)。Voucher 削除は既に完了しているため、
     # record_delete の例外で HTTP 500 を返してもユーザー混乱を招く。
     # 失敗はログに残し、整合性監査バッチで StorageUsage drift を補完。
     if size_to_release > 0:
