@@ -1235,15 +1235,11 @@ def auto_import_webhook_add():
             flash("入力値が長すぎます。", "danger")
             return render_template("settings/auto_import_webhook_form.html")
 
-        # Webhook URL バリデーション
-        _WEBHOOK_PREFIXES = {
-            "discord": "https://discord.com/api/webhooks/",
-        }
-        expected = _WEBHOOK_PREFIXES.get(provider)
-        if expected and not webhook_url.startswith(expected):
-            flash(f"Webhook URL は {expected} で始まる必要があります。", "danger")
-            return render_template("settings/auto_import_webhook_form.html")
-
+        # Webhook URL バリデーション。
+        # ドメインは限定しない (Discord 互換の自家ホスト Webhook も許可する)。
+        # ペイロードは Discord 形式 (notify._send_discord) のまま送るため、
+        # Discord 互換エンドポイントであれば動作する。SSRF 対策の
+        # validate_external_url (private/loopback/非 http の拒否) は維持する。
         from app.services.sources import validate_external_url
         ok, err = validate_external_url(webhook_url)
         if not ok:

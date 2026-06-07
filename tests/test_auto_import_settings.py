@@ -279,13 +279,8 @@ class TestWebhookAdd:
         })
         assert resp.status_code == 200
 
-    def test_wrong_prefix(self, logged_in_client, accounts):
-        resp = logged_in_client.post("/settings/auto-import/webhooks/add", data={
-            "name": "test",
-            "webhook_url": "https://example.com/wh",  # discord.com 以外
-            "provider": "discord",
-        })
-        assert resp.status_code == 200
+    # ドメイン制限は撤廃 (Discord 互換 Webhook 対応)。非 discord.com URL の
+    # 受理は tests/test_webhook_validation.py で DNS をモックして検証する。
 
     def test_invalid_url(self, logged_in_client, accounts):
         with patch("app.services.sources.validate_external_url") as mock_v:
