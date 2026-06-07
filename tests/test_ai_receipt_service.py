@@ -226,7 +226,7 @@ class TestGetAiConfig:
 
     def test_openai_config(self, db, user, accounts):
         _ai_config(db, user.id)
-        api_key, provider, model, handler, custom, extra, compliance = _get_ai_config(user.id)
+        api_key, provider, model, handler, custom, extra = _get_ai_config(user.id)
         assert provider == "openai"
         assert handler is _call_openai
         assert extra == {}
@@ -234,7 +234,7 @@ class TestGetAiConfig:
     def test_llama_cpp_config_uses_server_url(self, db, user, accounts):
         """サーバー設定 LLAMA_CPP_URL が base_url として注入される。"""
         _llama_cpp_config(db, user.id)
-        api_key, provider, _, _, _, extra, _ = _get_ai_config(user.id)
+        api_key, provider, _, _, _, extra = _get_ai_config(user.id)
         assert api_key == ""  # ダミー "_" が空文字に
         assert provider == "llama_cpp"
         # TestConfig で http://test-llama-cpp:8080 が設定されている
@@ -283,7 +283,7 @@ class TestGetAiConfig:
         )
         db.session.add(cfg)
         db.session.commit()
-        _, _, model, _, _, _, _ = _get_ai_config(user.id)
+        _, _, model, _, _, _ = _get_ai_config(user.id)
         assert model == PROVIDER_DEFAULTS["openai"]
 
 
@@ -401,43 +401,6 @@ class TestAnalyzeAndSuggest:
             ]
             analyze_and_suggest(user.id, b"img", "image/jpeg")
             mock_ledger.assert_called_once()
-
-    def test_with_compliance_check(self, db, user, accounts):
-        cfg = UserAIConfig(
-            user_id=user.id, provider="openai",
-            api_key_encrypted=encrypt_api_key("k"),
-            model_name="gpt-4o",
-            compliance_check=True,
-        )
-        db.session.add(cfg)
-        db.session.commit()
-
-        mock_call = MagicMock(); _patches_openai = patch.dict("app.services.ai_receipt._PROVIDER_HANDLERS", {"openai": mock_call})
-        with _patches_openai:
-            mock_call.side_effect = [
-                _h({"document_type": "receipt", "items": [],
-                 "needs_ledger": False, "requested_accounts": [],
-                 "amount": 100, "description": "x", "date": "2026-02-15",
-                 "compliance": {
-                     "status": "warn",
-                     "warnings": ["切れ"],
-                     "details": ["影あり"],
-                 }}),
-                _h({"suggestions": [{
-                    "title": "x", "description": "y",
-                    "date": "2026-02-15", "entry_description": "x",
-                    "lines": [
-                        {"account_code": "5010", "debit_amount": 100,
-                         "credit_amount": 0},
-                        {"account_code": "1010", "debit_amount": 0,
-                         "credit_amount": 100},
-                    ],
-                }]}),
-            ]
-            results = analyze_and_suggest(user.id, b"img", "image/jpeg")
-            assert results[0].compliance is not None
-            assert results[0].compliance["status"] == "warn"
-
 
 class TestParseWebText:
     def test_unknown_provider(self, db, user, accounts):
@@ -670,32 +633,3 @@ class TestAnalyzeVoucherForAttachment:
             )
             assert result["consistency"]["status"] == "warn"
             assert result["consistency"]["date_match"] is False
-
-    def test_with_compliance_check(self, db, user, accounts):
-        cfg = UserAIConfig(
-            user_id=user.id, provider="openai",
-            api_key_encrypted=encrypt_api_key("k"),
-            model_name="gpt-4o", compliance_check=True,
-        )
-        db.session.add(cfg)
-        db.session.commit()
-        mock_call = MagicMock(); _patches_openai = patch.dict("app.services.ai_receipt._PROVIDER_HANDLERS", {"openai": mock_call})
-        with _patches_openai:
-            mock_call.return_value = _h({
-                "date": "2026-02-15", "description": "x",
-                "amount": 100, "document_type": "receipt",
-                "compliance": {
-                    "status": "pass", "warnings": [], "details": [],
-                },
-                "consistency": {
-                    "status": "pass",
-                    "date_match": True, "amount_match": True,
-                    "description_match": True, "warnings": [],
-                },
-            })
-            result = analyze_voucher_for_attachment(
-                user.id, b"img", "image/jpeg",
-                journal_date="2026-02-15", journal_amount=100,
-                journal_description="x",
-            )
-            assert result["compliance"]["status"] == "pass"

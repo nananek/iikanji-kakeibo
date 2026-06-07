@@ -157,7 +157,7 @@ class TestAiAnalyze:
             mock_a.return_value = [
                 JournalSuggestion(
                     title="x", description="", date="2026-02-15",
-                    entry_description="x", lines=[], compliance=None,
+                    entry_description="x", lines=[],
                 ),
             ]
             resp = client.post(

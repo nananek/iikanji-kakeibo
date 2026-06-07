@@ -181,8 +181,6 @@ def attach(entry_id):
                 )),
                 journal_description=entry.description or "",
             )
-            if result.get("compliance"):
-                response_data["compliance"] = result["compliance"]
             response_data["consistency"] = result["consistency"]
         except Exception as e:
             response_data["ai_error"] = str(e)

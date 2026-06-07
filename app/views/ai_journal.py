@@ -259,12 +259,6 @@ def drafts():
                         l.get("account_name", l.get("account_code", ""))
                         for l in lines if l.get("credit_amount")
                     ]
-                    # コンプライアンスチェック結果
-                    compliance = s.get("compliance")
-                    if isinstance(compliance, dict):
-                        summary["compliance_status"] = compliance.get("status")
-                        summary["compliance_warnings"] = compliance.get("warnings", [])
-                        summary["compliance_details"] = compliance.get("details", [])
                     # 入力期限チェック
                     if summary.get("date"):
                         try:

@@ -186,7 +186,7 @@ class TestAIJournalAnalyzeQuota:
 
         fake_sugg = JournalSuggestion(
             title="テスト", description="", date="2026-05-01",
-            entry_description="テスト", lines=[], compliance=None,
+            entry_description="テスト", lines=[],
         )
         with patch("app.views.ai_journal.analyze_and_suggest",
                    return_value=[fake_sugg]):
@@ -255,7 +255,7 @@ class TestAIJournalAnalyzeQuota:
 
         fake_sugg = JournalSuggestion(
             title="テスト", description="", date="2026-05-01",
-            entry_description="テスト", lines=[], compliance=None,
+            entry_description="テスト", lines=[],
         )
 
         # record_upload を必ず失敗させる

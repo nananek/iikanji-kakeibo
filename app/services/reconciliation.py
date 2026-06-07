@@ -479,7 +479,7 @@ def find_ai_matches(user_id, unmatched_csv, journal_candidates):
         _get_ai_config, _TEXT_PROVIDER_HANDLERS, _call_ai_text,
     )
 
-    api_key, provider, model, _, __, extra_kw, ___ = _get_ai_config(user_id)
+    api_key, provider, model, _, __, extra_kw = _get_ai_config(user_id)
     text_handler = _TEXT_PROVIDER_HANDLERS.get(provider)
     if not text_handler:
         raise ValueError(f"未対応のAIプロバイダーです: {provider}")

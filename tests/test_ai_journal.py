@@ -12,7 +12,7 @@ from app.models.user import User
 
 
 def _make_suggestions(accounts, *, title="テスト仕訳", date="2026-01-15",
-                      entry_description="テスト購入", compliance=None):
+                      entry_description="テスト購入"):
     s = {
         "title": title,
         "description": "desc",
@@ -25,8 +25,6 @@ def _make_suggestions(accounts, *, title="テスト仕訳", date="2026-01-15",
              "debit_amount": 0, "credit_amount": 1000},
         ],
     }
-    if compliance is not None:
-        s["compliance"] = compliance
     return [s]
 
 
@@ -145,19 +143,6 @@ class TestDrafts:
         _make_draft(db, user.id, suggestions_json=None, status="analyzed")
         resp = logged_in_client.get("/ai-journal/drafts")
         assert resp.status_code == 200
-
-    def test_drafts_compliance_summary(self, db, logged_in_client, user,
-                                        account_types, accounts):
-        suggestions = _make_suggestions(
-            accounts,
-            compliance={"status": "warn", "warnings": ["ピンぼけ"], "details": []},
-        )
-        _make_draft(db, user.id,
-                    suggestions_json=json.dumps(suggestions, ensure_ascii=False),
-                    status="analyzed")
-        resp = logged_in_client.get("/ai-journal/drafts")
-        assert resp.status_code == 200
-
 
 class TestDraftsDelete:
     """POST /ai-journal/drafts/<id>/delete"""

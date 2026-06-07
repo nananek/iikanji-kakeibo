@@ -42,7 +42,7 @@ class TestPaidLlmGateUnlimitedMode:
 
     def test_llama_cpp_passes_with_unlimited(self, db, user):
         _llama_cpp_config(db, user.id)
-        api_key, provider, _, _, _, extra, _ = _get_ai_config(user.id)
+        api_key, provider, _, _, _, extra = _get_ai_config(user.id)
         assert provider == "llama_cpp"
         assert api_key == ""
         assert extra["base_url"] == "http://test-llama-cpp:8080"
@@ -73,7 +73,7 @@ class TestPaidLlmGateDenied:
         monkeypatch.setattr(ent, "get_billing_client", lambda: DenyAllClient())
 
         _openai_config(db, user.id)
-        api_key, provider, _, _, _, _, _ = _get_ai_config(user.id)
+        api_key, provider, _, _, _, _ = _get_ai_config(user.id)
         assert provider == "openai"
         assert api_key == "sk-test"
 

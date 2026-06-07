@@ -290,7 +290,7 @@ def detect_columns_by_ai(user_id, headers, sample_rows):
         return None
 
     try:
-        api_key, provider, model, _, __, extra_kw, ___ = _get_ai_config(
+        api_key, provider, model, _, __, extra_kw = _get_ai_config(
             user_id
         )
     except (ValueError, RuntimeError):

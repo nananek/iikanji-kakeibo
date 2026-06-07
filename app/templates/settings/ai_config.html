@@ -104,20 +104,6 @@
             </div>
           </div>
 
-          <div class="mb-3">
-            <div class="form-check form-switch">
-              <input type="checkbox" class="form-check-input" name="compliance_check"
-                     id="complianceCheckInput" role="switch"
-                     {% if config and config.compliance_check %}checked{% endif %}>
-              <label class="form-check-label" for="complianceCheckInput">
-                電帳法コンプライアンスチェック
-              </label>
-            </div>
-            <div class="form-text">
-              有効にすると、画像解析時に電帳法スキャナ保存の要件（画像品質・必須情報の視認性・書類の妥当性）をAIがチェックします。
-            </div>
-          </div>
-
           <button type="submit" class="btn btn-primary">
             <i class="bi bi-check-lg"></i> 保存
           </button>

@@ -28,13 +28,6 @@
               <span class="badge bg-secondary">案{{ loop.index }}</span>
               {% endif %}
             </div>
-            {% if s.compliance and s.compliance.status == 'fail' %}
-              <span class="badge bg-danger ms-1"><i class="bi bi-exclamation-triangle-fill"></i></span>
-            {% elif s.compliance and s.compliance.status == 'warn' %}
-              <span class="badge bg-warning text-dark ms-1"><i class="bi bi-exclamation-triangle"></i></span>
-            {% elif s.compliance and s.compliance.status == 'pass' %}
-              <span class="badge bg-success ms-1"><i class="bi bi-check-circle"></i></span>
-            {% endif %}
             <small class="text-muted">{{ s.description[:60] }}{% if s.description|length > 60 %}...{% endif %}</small>
           </div>
         </a>
@@ -42,38 +35,6 @@
       {% endfor %}
     </div>
   </div>
-</div>
-{% endif %}
-
-{% if selected.compliance and selected.compliance.status != 'pass' %}
-<div class="alert alert-{{ 'danger' if selected.compliance.status == 'fail' else 'warning' }} mt-3 mb-0 d-flex align-items-start">
-  <div class="flex-grow-1">
-    <i class="bi bi-exclamation-triangle-fill"></i>
-    <strong>電帳法コンプライアンス{{ '警告' if selected.compliance.status == 'fail' else '注意' }}</strong>
-    {% for w in selected.compliance.warnings %}
-    <div class="mt-1">{{ w }}</div>
-    {% endfor %}
-    {% if selected.compliance.status == 'fail' %}
-    <div class="mt-2"><small>証憑として不適格の可能性があります。撮り直しを検討してください。</small></div>
-    {% endif %}
-  </div>
-  {% if selected.compliance.details %}
-  <button type="button" class="btn btn-sm btn-outline-{{ 'danger' if selected.compliance.status == 'fail' else 'warning' }} ms-2 flex-shrink-0"
-          data-bs-toggle="modal" data-bs-target="#complianceDetailModal">
-    <i class="bi bi-info-circle"></i>
-  </button>
-  {% endif %}
-</div>
-{% elif selected.compliance and selected.compliance.status == 'pass' %}
-<div class="alert alert-success mt-3 mb-0 d-flex align-items-center">
-  <i class="bi bi-check-circle-fill me-2"></i>
-  <span>電帳法チェックOK</span>
-  {% if selected.compliance.details %}
-  <button type="button" class="btn btn-sm btn-outline-success ms-2"
-          data-bs-toggle="modal" data-bs-target="#complianceDetailModal">
-    <i class="bi bi-info-circle"></i>
-  </button>
-  {% endif %}
 </div>
 {% endif %}
 
@@ -336,47 +297,6 @@
     </div>
   </div>
 </div>
-
-{% if selected.compliance and selected.compliance.details %}
-<div class="modal fade" id="complianceDetailModal" tabindex="-1">
-  <div class="modal-dialog">
-    <div class="modal-content">
-      <div class="modal-header">
-        <h6 class="modal-title"><i class="bi bi-shield-check"></i> 電帳法チェック詳細</h6>
-        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-      </div>
-      <div class="modal-body">
-        <ul class="list-group list-group-flush">
-          {% for d in selected.compliance.details %}
-          <li class="list-group-item">
-            {% if selected.compliance.status == 'pass' %}
-            <i class="bi bi-check-lg text-success me-2"></i>
-            {% elif selected.compliance.status == 'warn' %}
-            <i class="bi bi-exclamation-triangle text-warning me-2"></i>
-            {% else %}
-            <i class="bi bi-exclamation-triangle-fill text-danger me-2"></i>
-            {% endif %}
-            {{ d }}
-          </li>
-          {% endfor %}
-        </ul>
-        {% if selected.compliance.warnings %}
-        <div class="mt-3">
-          <strong class="text-{{ 'danger' if selected.compliance.status == 'fail' else 'warning' }}">
-            <i class="bi bi-exclamation-triangle-fill"></i> 警告事項
-          </strong>
-          <ul class="mt-1 mb-0">
-            {% for w in selected.compliance.warnings %}
-            <li>{{ w }}</li>
-            {% endfor %}
-          </ul>
-        </div>
-        {% endif %}
-      </div>
-    </div>
-  </div>
-</div>
-{% endif %}
 
 {% include "_partials/account_selector.html" %}
 
