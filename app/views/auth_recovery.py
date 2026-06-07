@@ -214,11 +214,10 @@ def recovery_finish():
         new_recovery_verifier
     )
 
-    # passkey_only revival (§3.4.1): リカバリシードは全権復旧因子なので、passkey 紛失で
-    # passkey_only_login=True のまま詰むのを防ぐためフラグを解除し、設定した新パスワードでの
-    # ログインを有効化する (werkzeug フォールバック /login も通れるようにする)。UI では
-    # 「この操作でパスワード認証が有効になる」旨を警告する (PR-4b-3)。
-    user.passkey_only_login = False
+    # パスワード認証の復活 (§3.4.1): リカバリシードは全権復旧因子。リセットで login_* と
+    # passphrase wrapped_key を設定するため、設定した新パスワードでログインできるようになる
+    # (旧パスキー専用モードは PR-T4/T4-drop で廃止済。UI で「パスワード認証が有効になる」旨を
+    # 警告する、PR-4b-3)。
 
     # TOTP バイパス + 初期化 (§3.6.5、PR-T1): リカバリシードリセットは TOTP をバイパスする
     # (seed = 全権復旧因子)。TOTP デバイスも紛失している可能性が高いので secret/確認状態を

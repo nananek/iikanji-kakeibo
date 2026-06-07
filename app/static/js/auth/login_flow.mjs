@@ -52,7 +52,7 @@ async function _postJson(fetchImpl, url, body) {
  * 返り値 (DOM には触れない。呼び出し側が解釈する):
  *   {status:"redirect", url}      ログイン成功 (MK 解錠済)
  *   {status:"fallback"}           LOGIN_SERVER_SECRET 未設定 (503)。従来フォーム送信へ
- *   {status:"password_setup"}     passkey_only 等パスワード未保有。パスキーログインへ誘導
+ *   {status:"password_setup"}     パスワード未設定アカウント。パスキーログインへ誘導
  *   {status:"totp_required"}      TOTP 2FA 有効。呼び出し側が code を集めて再実行する
  *   {status:"error", message}     失敗 (message は固定文言のみ。サーバ応答は載せない)
  *

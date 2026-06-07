@@ -378,9 +378,9 @@ def delete_passkey(credential_id):
     return redirect(url_for("settings.passkeys"))
 
 
-# #385 PR-T4: パスキー専用モード (passkey_only_login) は廃止。全ユーザーにパスワードを
-# 必須化し、2FA は「Passkey or TOTP」で充足する (設計書 §3.6.6)。enable/disable ルートは
-# 撤去した (新規 passkey_only は作れない)。列の物理 DROP は population ゼロ確認後の後続 PR。
+# #385 PR-T4/T4-drop: パスキー専用モードは廃止 (enable/disable ルート撤去 + 列 DROP 済、
+# マイグレ 073)。全ユーザーにパスワード必須化し、2FA は「Passkey or TOTP」で充足する
+# (設計書 §3.6.6)。再認証/ロックアウト保護は password_hash 有無で判定する。
 
 
 @bp.route("/passkeys/recovery/generate", methods=["POST"])
