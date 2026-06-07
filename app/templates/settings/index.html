@@ -150,6 +150,19 @@
     </a>
   </div>
   {% endif %}
+  {% if login_derived_enabled %}
+  <div class="col">
+    <a href="{{ url_for('settings.totp') }}" class="card h-100 text-decoration-none shadow-sm">
+      <div class="card-body">
+        <h6 class="card-title">
+          <i class="bi bi-phone text-primary"></i> TOTP 2要素認証
+          {% if current_user.totp_enabled %}<span class="badge bg-success ms-1">有効</span>{% endif %}
+        </h6>
+        <p class="card-text text-muted small mb-0">認証アプリの6桁コードでログインを保護（任意）</p>
+      </div>
+    </a>
+  </div>
+  {% endif %}
   <div class="col">
     <a href="{{ url_for('settings.passkeys') }}" class="card h-100 text-decoration-none shadow-sm">
       <div class="card-body">

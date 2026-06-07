@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}バックアップコード - いいかんじ™家計簿{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-lg-8">
+    <h2><i class="bi bi-shield-lock text-warning"></i> TOTP バックアップコード</h2>
+
+    <div class="alert alert-danger">
+      <h5 class="alert-heading"><i class="bi bi-exclamation-triangle"></i> 重要：必ず今すぐ保管してください</h5>
+      <ul class="mb-0">
+        <li><strong>このコードは今だけ表示されます。</strong> ページを離れたら二度と見られません。</li>
+        <li>認証アプリの端末を紛失したとき、ログインに使える非常用コードです。</li>
+        <li>各コードは <strong>1 回限り</strong> 使用できます。</li>
+        <li><strong>紙に印刷</strong>するなどオフラインで安全に保管してください。</li>
+        <li>再生成すると古いコードはすべて無効になります。</li>
+      </ul>
+    </div>
+
+    <div class="card mb-4">
+      <div class="card-header"><i class="bi bi-key"></i> バックアップコード ({{ codes|length }} 個)</div>
+      <div class="card-body">
+        <pre class="bg-light p-3 rounded user-select-all" style="font-size: 1.05rem; line-height: 1.8;"><code id="backup-codes" class="user-select-all">{% for c in codes %}{{ c }}
+{% endfor %}</code></pre>
+        <div class="d-flex gap-2 flex-wrap">
+          <button type="button" class="btn btn-outline-primary" id="btn-copy-backup">
+            <i class="bi bi-clipboard"></i> クリップボードにコピー
+          </button>
+          <button type="button" class="btn btn-outline-secondary" onclick="window.print()">
+            <i class="bi bi-printer"></i> 印刷
+          </button>
+          <a href="{{ url_for('settings.totp') }}" class="btn btn-success ms-auto"
+             onclick="return confirm('バックアップコードを保管しましたか？ このページを離れると二度と表示されません。');">
+            <i class="bi bi-check2"></i> 保管しました
+          </a>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<script>
+  document.getElementById("btn-copy-backup")?.addEventListener("click", async () => {
+    const text = document.getElementById("backup-codes")?.textContent || "";
+    try {
+      await navigator.clipboard.writeText(text.trim());
+      const btn = document.getElementById("btn-copy-backup");
+      btn.innerHTML = '<i class="bi bi-check2"></i> コピーしました';
+    } catch (_e) { /* clipboard 不可環境は手動選択でコピー */ }
+  });
+</script>
+{% endblock %}
