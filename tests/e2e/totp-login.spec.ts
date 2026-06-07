@@ -7,7 +7,7 @@
 // 専用ユーザー e2e_totp を毎回まっさらに seed する。
 
 import { test, expect } from "@playwright/test";
-import { spawnSync } from "child_process";
+import { runPython } from "./helpers";
 
 const BASE_URL = "http://127.0.0.1:5000";
 const USERNAME = "e2e_totp";
@@ -32,14 +32,6 @@ with app.app_context():
     print('TOTP_UID=' + str(u.id))
 `;
 
-function runPython(stdinScript: string, timeoutMs = 30000): string {
-  const [cmd, ...args] = process.env.CI
-    ? ["python", "-"]
-    : ["docker", "compose", "exec", "-T", "web", "python", "-"];
-  const result = spawnSync(cmd, args, { input: stdinScript, encoding: "utf-8", timeout: timeoutMs });
-  if (result.status !== 0) throw new Error(`python failed (status=${result.status}): ${result.stderr}`);
-  return result.stdout;
-}
 
 function totpNow(base32: string): string {
   const out = runPython(`import pyotp; print(pyotp.TOTP(${JSON.stringify(base32)}).now())`);
