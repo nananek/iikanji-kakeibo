@@ -1,15 +1,12 @@
 """AI証憑読取サービス - 証憑画像からの仕訳データ抽出"""
 
 import base64
-import hashlib
 import json
 import logging
 import re
 from dataclasses import dataclass, field
 
 import httpx
-from cryptography.fernet import Fernet
-from flask import current_app
 from sqlalchemy import func
 
 from app.extensions import db
@@ -60,11 +57,9 @@ class JournalSuggestion:
 
 
 def _get_fernet():
-    """SECRET_KEY から Fernet インスタンスを生成"""
-    secret = current_app.config["SECRET_KEY"]
-    key_bytes = hashlib.sha256(secret.encode()).digest()
-    fernet_key = base64.urlsafe_b64encode(key_bytes)
-    return Fernet(fernet_key)
+    """SECRET_KEY から Fernet インスタンスを生成 (共通ヘルパーへ委譲)"""
+    from app.services.crypto import get_fernet
+    return get_fernet()
 
 
 def encrypt_api_key(plain_key: str) -> bytes:

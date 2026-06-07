@@ -245,6 +245,143 @@ def recovery_generate():
     )
 
 
+# --- TOTP 二段階認証 ---
+
+
+def _send_totp_security_alert(event_type: str, event_label: str):
+    """TOTP 有効化/無効化のセキュリティ通知メール (送信失敗は無視)。"""
+    if not current_user.email:
+        return
+    send_email(
+        current_user.email,
+        "security_alert",
+        {
+            "username": current_user.username,
+            "event_type": event_type,
+            "event_label": event_label,
+            "event_at": datetime.now(timezone.utc).strftime(
+                "%Y-%m-%d %H:%M:%S UTC"
+            ),
+            "client_ip": request.remote_addr or "不明",
+            "user_agent": request.headers.get("User-Agent", "") or "不明",
+        },
+    )
+
+
+@bp.route("/totp")
+@login_required
+def totp_status():
+    """TOTP 設定ページ (有効 / 未設定 / 登録途中)。"""
+    enrolling = (
+        not current_user.totp_enabled
+        and current_user.totp_secret_encrypted is not None
+    )
+    return render_template(
+        "settings/totp.html",
+        totp_enabled=current_user.totp_enabled,
+        enrolling=enrolling,
+    )
+
+
+@bp.route("/totp/begin", methods=["POST"])
+@login_required
+@limiter.limit("10/hour")
+def totp_begin():
+    """TOTP 登録開始。secret を生成・暗号化保存し QR を表示 (未有効化のまま)。"""
+    from app.services import totp as totp_svc
+
+    if current_user.totp_enabled:
+        flash("二段階認証は既に有効です。", "info")
+        return redirect(url_for("settings.totp_status"))
+
+    secret = totp_svc.generate_secret()
+    current_user.totp_secret_encrypted = totp_svc.encrypt_secret(secret)
+    current_user.totp_confirmed_at = None
+    current_user.totp_last_used_step = None
+    db.session.commit()
+
+    uri = totp_svc.provisioning_uri(secret, current_user.username)
+    return render_template(
+        "settings/totp_setup.html",
+        qr_svg=totp_svc.qr_svg(uri),
+        secret=secret,
+    )
+
+
+@bp.route("/totp/confirm", methods=["POST"])
+@login_required
+@limiter.limit("5/minute")
+def totp_confirm():
+    """登録途中の secret に対しコードを検証し、TOTP を有効化する。"""
+    from app.services import totp as totp_svc
+
+    if current_user.totp_enabled or current_user.totp_secret_encrypted is None:
+        flash("二段階認証の登録が開始されていません。", "warning")
+        return redirect(url_for("settings.totp_status"))
+
+    code = request.form.get("code", "")
+    secret = totp_svc.decrypt_secret(current_user.totp_secret_encrypted)
+    if not totp_svc.verify_code(secret, code):
+        flash("認証コードが正しくありません。もう一度お試しください。", "danger")
+        uri = totp_svc.provisioning_uri(secret, current_user.username)
+        return render_template(
+            "settings/totp_setup.html",
+            qr_svg=totp_svc.qr_svg(uri),
+            secret=secret,
+        )
+
+    current_user.totp_enabled = True
+    current_user.totp_confirmed_at = datetime.now(timezone.utc)
+    current_user.totp_last_used_step = totp_svc.current_step()
+    db.session.commit()
+    current_app.logger.info("totp_enabled: user_id=%s", current_user.id)
+    _send_totp_security_alert("totp_enabled", "二段階認証が有効化されました")
+
+    flash("二段階認証を有効にしました。", "success")
+    return redirect(url_for("settings.totp_status"))
+
+
+@bp.route("/totp/cancel", methods=["POST"])
+@login_required
+@limiter.limit("10/hour")
+def totp_cancel():
+    """未確定 (有効化前) の登録をキャンセルし secret を破棄する。"""
+    if current_user.totp_enabled:
+        flash("有効な二段階認証は無効化から行ってください。", "warning")
+        return redirect(url_for("settings.totp_status"))
+    current_user.totp_secret_encrypted = None
+    current_user.totp_confirmed_at = None
+    current_user.totp_last_used_step = None
+    db.session.commit()
+    flash("二段階認証の設定を中止しました。", "info")
+    return redirect(url_for("settings.totp_status"))
+
+
+@bp.route("/totp/disable", methods=["POST"])
+@login_required
+@limiter.limit("10/hour")
+def totp_disable():
+    """TOTP を無効化 (パスワード再認証必須)。"""
+    if not current_user.totp_enabled:
+        return redirect(url_for("settings.totp_status"))
+
+    password = request.form.get("password", "")
+    if not password or not current_user.check_password(password):
+        flash("パスワードが正しくありません。", "danger")
+        return redirect(url_for("settings.totp_status"))
+
+    current_user.totp_enabled = False
+    current_user.totp_secret_encrypted = None
+    current_user.totp_confirmed_at = None
+    current_user.totp_last_used_step = None
+    db.session.commit()
+    current_app.logger.info("totp_disabled: user_id=%s", current_user.id)
+    _send_totp_security_alert("totp_disabled", "二段階認証が無効化されました")
+
+    flash("二段階認証を無効にしました。", "info")
+    return redirect(url_for("settings.totp_status"))
+
+
 # --- AI API 設定 ---
 
 

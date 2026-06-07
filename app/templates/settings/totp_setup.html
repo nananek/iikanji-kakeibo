@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}二段階認証の設定 - いいかんじ™家計簿{% endblock %}
+
+{% block content %}
+<div class="row">
+  <div class="col-lg-8">
+    <h2><i class="bi bi-qr-code"></i> 二段階認証の設定</h2>
+
+    <div class="card mb-4">
+      <div class="card-body">
+        <ol class="mb-3">
+          <li>認証アプリ (Google Authenticator、Authy など) で下の QR コードを読み取ります。</li>
+          <li>アプリに表示された 6 桁コードを入力して「有効化」を押します。</li>
+        </ol>
+
+        <div class="text-center mb-3" style="max-width: 220px; margin: 0 auto;">
+          {{ qr_svg | safe }}
+        </div>
+
+        <p class="small text-muted text-center mb-1">QR を読み取れない場合は手動でキーを入力:</p>
+        <p class="text-center mb-3"><code style="word-break: break-all;">{{ secret }}</code></p>
+
+        <form method="POST" action="{{ url_for('settings.totp_confirm') }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <div class="mb-3">
+            <label class="form-label">認証コード（6 桁）</label>
+            <input type="text" name="code" class="form-control"
+                   inputmode="numeric" autocomplete="one-time-code"
+                   pattern="[0-9]*" maxlength="6" required autofocus
+                   placeholder="123456">
+          </div>
+          <button type="submit" class="btn btn-success">
+            <i class="bi bi-shield-fill-check"></i> 有効化
+          </button>
+        </form>
+
+        <form method="POST" action="{{ url_for('settings.totp_cancel') }}" class="mt-2">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button type="submit" class="btn btn-link text-muted btn-sm p-0">設定を中止する</button>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

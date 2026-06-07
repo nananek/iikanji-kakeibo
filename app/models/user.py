@@ -42,6 +42,15 @@ class User(UserMixin, db.Model):
     recovery_code_created_at = db.Column(db.DateTime(timezone=True), nullable=True)
     recovery_code_used_at = db.Column(db.DateTime(timezone=True), nullable=True)
 
+    # TOTP 2要素認証（opt-in）。secret は SECRET_KEY 由来の Fernet で暗号化。
+    # totp_last_used_step はログイン時の同一コード再利用 (リプレイ) 防止用。
+    totp_secret_encrypted = db.Column(db.LargeBinary, nullable=True)
+    totp_enabled = db.Column(
+        db.Boolean, nullable=False, default=False, server_default=db.false()
+    )
+    totp_confirmed_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    totp_last_used_step = db.Column(db.BigInteger, nullable=True)
+
     accounts = db.relationship("Account", backref="user", lazy="dynamic")
     journal_entries = db.relationship("JournalEntry", backref="user", lazy="dynamic")
     medical_expenses = db.relationship("MedicalExpense", backref="user", lazy="dynamic")
@@ -98,6 +107,11 @@ class User(UserMixin, db.Model):
             self.recovery_code_hash is not None
             and self.recovery_code_used_at is None
         )
+
+    @property
+    def has_totp(self):
+        # totp_enabled は nullable=False / default=False のため None にならない
+        return self.totp_enabled
 
     def __repr__(self):
         return f"<User {self.username}>"
