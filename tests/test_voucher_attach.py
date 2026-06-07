@@ -183,7 +183,7 @@ class TestAttachEndpoint:
     def test_attach_with_ai_returns_results(
         self, mock_analyze, mock_store, logged_in_client, user, accounts, db,
     ):
-        """AI設定がある場合、compliance/consistency がレスポンスに含まれる"""
+        """AI設定がある場合、consistency がレスポンスに含まれる"""
         from app.services.ai_receipt import encrypt_api_key
 
         config = UserAIConfig(
@@ -196,9 +196,6 @@ class TestAttachEndpoint:
         db.session.commit()
 
         mock_analyze.return_value = {
-            "compliance": {
-                "status": "pass", "warnings": [], "details": [],
-            },
             "consistency": {
                 "status": "pass",
                 "date_match": True,
@@ -220,7 +217,6 @@ class TestAttachEndpoint:
         assert resp.status_code == 200
         result = resp.get_json()
         assert result["ok"] is True
-        assert result["compliance"]["status"] == "pass"
         assert result["consistency"]["status"] == "pass"
         mock_analyze.assert_called_once()
 

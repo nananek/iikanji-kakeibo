@@ -311,7 +311,6 @@ def ai_config_save():
     api_key = request.form.get("api_key", "").strip()
     model_name = request.form.get("model_name", "").strip()
     custom_prompt = request.form.get("custom_prompt", "").strip()
-    compliance_check = request.form.get("compliance_check") == "on"
 
     available_labels = get_available_provider_labels()
     if provider not in available_labels:
@@ -328,7 +327,6 @@ def ai_config_save():
         config.provider = provider
         config.model_name = model_name
         config.custom_prompt = custom_prompt
-        config.compliance_check = compliance_check
         if api_key:
             config.api_key_encrypted = encrypt_api_key(api_key)
         elif is_local and not api_key:
@@ -344,7 +342,6 @@ def ai_config_save():
             api_key_encrypted=encrypt_api_key(effective_key),
             model_name=model_name,
             custom_prompt=custom_prompt,
-            compliance_check=compliance_check,
         )
         db.session.add(config)
 

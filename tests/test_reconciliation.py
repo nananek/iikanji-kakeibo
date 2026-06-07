@@ -404,7 +404,7 @@ class TestFindAiMatches:
 
         with patch("app.services.ai_receipt._get_ai_config") as mock_config, \
              patch("app.services.ai_receipt._TEXT_PROVIDER_HANDLERS", {"openai": lambda *a, **kw: (mock_response, {})}):
-            mock_config.return_value = ("key", "openai", "gpt-4", None, "", {}, False)
+            mock_config.return_value = ("key", "openai", "gpt-4", None, "", {})
             results = find_ai_matches(user.id, unmatched, journal)
 
         assert len(results) == 1
@@ -420,7 +420,7 @@ class TestFindAiMatches:
 
         with patch("app.services.ai_receipt._get_ai_config") as mock_config, \
              patch("app.services.ai_receipt._TEXT_PROVIDER_HANDLERS", {"openai": lambda *a, **kw: (mock_response, {})}):
-            mock_config.return_value = ("key", "openai", "gpt-4", None, "", {}, False)
+            mock_config.return_value = ("key", "openai", "gpt-4", None, "", {})
             results = find_ai_matches(user.id, unmatched, journal)
 
         assert len(results) == 0
@@ -428,7 +428,7 @@ class TestFindAiMatches:
     def test_ai_matches_empty_inputs(self, db, user, accounts):
         """入力が空の場合は空リストを返す"""
         with patch("app.services.ai_receipt._get_ai_config") as mock_config:
-            mock_config.return_value = ("key", "openai", "gpt-4", None, "", {}, False)
+            mock_config.return_value = ("key", "openai", "gpt-4", None, "", {})
             assert find_ai_matches(user.id, [], [{"entry_id": 1}]) == []
             assert find_ai_matches(user.id, [{"csv_index": 0}], []) == []
 
@@ -479,7 +479,7 @@ class TestEdgeCases:
 
         with patch("app.services.ai_receipt._get_ai_config") as mock_config, \
              patch("app.services.ai_receipt._TEXT_PROVIDER_HANDLERS", {"openai": lambda *a, **kw: (mock_response, {})}):
-            mock_config.return_value = ("key", "openai", "gpt-4", None, "", {}, False)
+            mock_config.return_value = ("key", "openai", "gpt-4", None, "", {})
             results = find_ai_matches(user.id, unmatched, journal)
         assert results == []
 
@@ -561,7 +561,7 @@ class TestAiMatchesAdditional:
         journal = [{"entry_id": 1, "date": "2026-01-10", "description": "y", "amount": 500, "category_name": "雑"}]
         with patch("app.services.ai_receipt._get_ai_config") as mock_config, \
              patch("app.services.ai_receipt._TEXT_PROVIDER_HANDLERS", {}):
-            mock_config.return_value = ("key", "unknown", "model", None, "", {}, False)
+            mock_config.return_value = ("key", "unknown", "model", None, "", {})
             with pytest.raises(ValueError, match="未対応"):
                 find_ai_matches(user.id, unmatched, journal)
 
@@ -572,7 +572,7 @@ class TestAiMatchesAdditional:
         journal = [{"entry_id": 1, "date": "2026-01-10", "description": "y", "amount": 500, "category_name": "雑"}]
         with patch("app.services.ai_receipt._get_ai_config") as mock_config, \
              patch("app.services.ai_receipt._TEXT_PROVIDER_HANDLERS", {"openai": lambda *a, **kw: (mock_response, {})}):
-            mock_config.return_value = ("key", "openai", "gpt-4", None, "", {}, False)
+            mock_config.return_value = ("key", "openai", "gpt-4", None, "", {})
             results = find_ai_matches(user.id, unmatched, journal)
         assert results == []
 

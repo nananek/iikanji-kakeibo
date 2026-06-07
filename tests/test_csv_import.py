@@ -478,7 +478,7 @@ class TestDetectColumnsByAi:
                                   mock_handlers, app, db, user):
         mock_model.query.filter_by.return_value.first.return_value = MagicMock()
         mock_config.return_value = (
-            "key", "openai", "gpt-4o", None, "", {}, False
+            "key", "openai", "gpt-4o", None, "", {}
         )
         mock_handler = MagicMock(return_value=({
             "date_col": 0, "desc_col": 1,
@@ -504,7 +504,7 @@ class TestDetectColumnsByAi:
         """クレカCSVなど入金列なしの検出"""
         mock_model.query.filter_by.return_value.first.return_value = MagicMock()
         mock_config.return_value = (
-            "key", "openai", "gpt-4o", None, "", {}, False
+            "key", "openai", "gpt-4o", None, "", {}
         )
         mock_handler = MagicMock(return_value=({
             "date_col": 0, "desc_col": 1,
@@ -528,7 +528,7 @@ class TestDetectColumnsByAi:
                                    mock_handlers, app, db, user):
         mock_model.query.filter_by.return_value.first.return_value = MagicMock()
         mock_config.return_value = (
-            "key", "openai", "gpt-4o", None, "", {}, False
+            "key", "openai", "gpt-4o", None, "", {}
         )
         mock_handler = MagicMock(side_effect=RuntimeError("API error"))
         mock_handlers.get.return_value = mock_handler
@@ -543,7 +543,7 @@ class TestDetectColumnsByAi:
                                                mock_handlers, app, db, user):
         mock_model.query.filter_by.return_value.first.return_value = MagicMock()
         mock_config.return_value = (
-            "key", "openai", "gpt-4o", None, "", {}, False
+            "key", "openai", "gpt-4o", None, "", {}
         )
         mock_handler = MagicMock(return_value={
             "date_col": 99, "desc_col": 1,
