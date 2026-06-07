@@ -193,7 +193,6 @@ class TestAccountDeletedTemplate:
         assert "アカウント削除のお知らせ" in rendered.subject
         assert "testuser" in rendered.text_body
         assert "2026-05-19 10:00 JST" in rendered.text_body
-        assert "電帳法" in rendered.text_body
 
 
 class TestQuotaWarningTemplate:

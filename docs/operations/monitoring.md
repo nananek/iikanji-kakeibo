@@ -13,7 +13,7 @@ title: 監視
 
 | キーワード | 意味 | 対応 |
 |-----------|------|------|
-| `voucher deleted: id=...` | 証憑が論理削除された (電帳法訂正削除証跡) | ログ保管期間中は削除不可 |
+| `voucher deleted: id=...` | 証憑が削除された | 運用フィルタ用の記録 |
 | `account_deletion: ...` | ユーザー退会処理中の警告 | 失敗時はストレージ/StorageUsage に drift が残る → `flask storage-audit --fix` |
 | `record_upload failed` | 容量加算の DB エラー | quota リーク発生中 → `flask storage-audit --fix` |
 | `quota_warning failed` | 容量警告メール送信失敗 | SMTP 設定確認 |

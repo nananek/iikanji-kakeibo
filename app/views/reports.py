@@ -713,8 +713,6 @@ def ledger():
         }
         from app.models.voucher import Voucher
         voucher_map = {}
-        # 論理削除済は除外 (一覧表示や is_readonly 判定で「証憑あり」と
-        # 誤判定されないように)
         voucher_rows = Voucher.query.filter(
             Voucher.journal_entry_id.in_(entry_ids)
         ).all()
