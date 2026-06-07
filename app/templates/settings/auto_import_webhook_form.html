@@ -20,7 +20,7 @@
           <div class="mb-3">
             <label class="form-label" for="providerSelect">プロバイダー</label>
             <select class="form-select" name="provider" id="providerSelect">
-              <option value="discord" selected>Discord</option>
+              <option value="discord" selected>Discord / Discord 互換</option>
             </select>
           </div>
 
@@ -29,7 +29,9 @@
             <input type="url" class="form-control" name="webhook_url" id="webhookUrlInput"
                    placeholder="https://discord.com/api/webhooks/..." required>
             <div class="form-text">
-              Discord: サーバー設定 → 連携サービス → ウェブフック → 新しいウェブフック
+              Discord: サーバー設定 → 連携サービス → ウェブフック → 新しいウェブフック<br>
+              Discord 互換の Webhook (自家ホスト等) の URL も利用できます。
+              ペイロードは Discord 形式で送信されます。
             </div>
           </div>
 
