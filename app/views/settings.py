@@ -115,6 +115,12 @@ def totp_begin():
     if current_user.totp_enabled:
         flash("TOTP は既に有効です。", "info")
         return redirect(url_for("settings.totp"))
+    # passkey_only ユーザー (password_hash=NULL) は無効化時のパスワード再認証が成立せず
+    # 永久ロックアウトになる。Passkey が第 2 要素なので TOTP は設定させない (§3.6.6 で
+    # passkey_only 自体を廃止予定)。
+    if current_user.passkey_only_login:
+        flash("パスキー専用モードでは TOTP は設定できません。Passkey が第 2 要素です。", "info")
+        return redirect(url_for("settings.totp"))
     from app.services import totp as totp_svc
     from app.services import login_derived as ld
 
@@ -156,7 +162,7 @@ def totp_confirm():
     current_user.totp_confirmed_at = datetime.now(timezone.utc)
     # replay 対策の起点 (§3.6.4): 確認に使った step を記録し、ログイン (PR-T3) で
     # 同一以前 step の再利用を弾く。
-    current_user.totp_last_used_step = totp_svc.current_step(secret)
+    current_user.totp_last_used_step = totp_svc.current_step()
     codes = totp_svc.generate_backup_codes(current_user.id)
     db.session.commit()
     return render_template("settings/totp_backup_codes_show.html", codes=codes)

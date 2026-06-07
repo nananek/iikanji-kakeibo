@@ -168,6 +168,20 @@ def test_totp_404_when_not_configured(client, db, user, app):
     assert client.post("/settings/totp/begin").status_code == 404
 
 
+def test_passkey_only_user_cannot_begin_totp(client, db):
+    """passkey_only ユーザー (password_hash=NULL) は TOTP 登録を開始できない。
+    無効化時のパスワード再認証が成立せず永久ロックアウトになるため (§3.6.6)。"""
+    u = User(username="pko", email="pko@test.com", user_type="personal",
+             passkey_only_login=True)
+    # set_password しない (passkey_only は password_hash=NULL)
+    db.session.add(u)
+    db.session.commit()
+    _login(client, u)
+    r = client.post("/settings/totp/begin")
+    assert r.status_code == 302
+    assert db.session.get(User, u.id).totp_secret_encrypted is None
+
+
 def test_confirm_rate_limited(ratelimit_app, ratelimit_client):
     """/totp/confirm はコード総当り抑止のため 5/min で 429 になる (§3.6.4)。"""
     ratelimit_app.config["LOGIN_SERVER_SECRET"] = LOGIN_SECRET

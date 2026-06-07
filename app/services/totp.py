@@ -6,8 +6,10 @@ secret のサーバ側 at-rest 暗号化は login_derived.encrypt/decrypt_totp_s
 
 import base64
 import hashlib
+import hmac
 import secrets
 import time
+from datetime import datetime, timezone
 
 import pyotp
 import qrcode
@@ -63,10 +65,10 @@ def verify_code(secret_bytes, code):
     return pyotp.TOTP(secret_to_base32(secret_bytes)).verify(code, valid_window=VALID_WINDOW)
 
 
-def current_step(secret_bytes=None, at=None):
+def current_step(at=None):
     """現在 (or at) の TOTP step 番号 = floor(unixtime/30)。replay 記録用 (§3.6.4)。
 
-    secret_bytes は API 対称性のため受けるが step 計算には不要 (時刻のみ)。
+    secret には依存しない (時刻のみ)。`at` は Unix 時刻 (テスト用)。
     """
     t = at if at is not None else time.time()
     return int(t) // 30
@@ -104,16 +106,13 @@ def consume_backup_code(user_id, raw):
 
     @returns bool  消費成功なら True
     """
-    import hmac as _hmac
-    from datetime import datetime, timezone
-
     if not raw or not isinstance(raw, str):
         return False
     target = _hash_backup_code(raw.strip())
     rows = TotpBackupCode.query.filter_by(user_id=user_id, used_at=None).all()
     matched = None
     for row in rows:
-        if _hmac.compare_digest(row.code_hash, target):
+        if hmac.compare_digest(row.code_hash, target):
             matched = row
     if matched is None:
         return False
