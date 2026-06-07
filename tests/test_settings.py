@@ -45,14 +45,14 @@ class TestSettingsIndex:
         assert user.user_type == "personal"
         resp = logged_in_client.get("/settings/")
         html = resp.data.decode()
-        assert "監査アクセス管理" in html
+        assert "顧問アクセス管理" in html
 
     def test_auditor_does_not_see_audit(self, app, client, auditor):
         with client.session_transaction() as sess:
             sess["_user_id"] = str(auditor.id)
         resp = client.get("/settings/")
         html = resp.data.decode()
-        assert "監査アクセス管理" not in html
+        assert "顧問アクセス管理" not in html
 
 
 class TestDisplaySettings:

@@ -3,7 +3,7 @@
 - セルフホストモード (BILLING_BACKEND=unlimited, default) で
   「セルフホストモード — 全機能解放」と表示される
 - 認証必須 (未ログインは 302)
-- 個人ユーザー / 監査ユーザーの両方で表示される
+- 個人ユーザー / 顧問ユーザーの両方で表示される
 """
 
 from app.services.entitlement import UnlimitedBillingClient

@@ -1,13 +1,13 @@
 {% extends "base.html" %}
-{% block title %}監査用アカウント登録 - いいかんじ™家計簿{% endblock %}
+{% block title %}顧問用アカウント登録 - いいかんじ™家計簿{% endblock %}
 
 {% block content %}
 <div class="row justify-content-center">
   <div class="col-md-5 col-lg-4">
     <div class="card shadow-sm mt-5">
       <div class="card-body p-4">
-        <h3 class="text-center mb-4"><i class="bi bi-shield-check"></i> 監査用アカウント登録</h3>
-        <p class="text-center text-muted small mb-3">税理士・公認会計士向け</p>
+        <h3 class="text-center mb-4"><i class="bi bi-shield-check"></i> 顧問用アカウント登録</h3>
+        <p class="text-center text-muted small mb-3">税理士等向け</p>
         <form method="POST">
           {{ form.hidden_tag() }}
           {# GET 時は args、POST 再描画時は form から token を引き継ぐ。
@@ -59,7 +59,7 @@
           {{ form.submit(class="btn btn-primary w-100") }}
         </form>
         <div class="text-center mt-3">
-          <a href="{{ url_for('auth.login_auditor') }}">監査ログインに戻る</a>
+          <a href="{{ url_for('auth.login_auditor') }}">顧問ログインに戻る</a>
         </div>
         <hr>
         <div class="text-center">

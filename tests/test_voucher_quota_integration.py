@@ -191,7 +191,7 @@ class TestOnConflictUpsert:
 
 
 class TestLv2AuditorBlockedFromAttach:
-    """Lv2 監査者は vouchers.attach を呼べない (権限バイパス防止)"""
+    """Lv2 顧問は vouchers.attach を呼べない (権限バイパス防止)"""
 
     def test_lv2_acting_auditor_redirected(
         self, db, client, user, accounts, auditor

@@ -1,4 +1,4 @@
-"""監査用アカウントのヘルパー関数"""
+"""顧問用アカウントのヘルパー関数"""
 
 from flask import session, abort
 from flask_login import current_user
@@ -113,7 +113,7 @@ def is_entry_locked_for_owner(user_id, entry):
 
 
 def is_entry_locked_for_auditor(entry, allowed_account_codes):
-    """監査者が伝票を編集・削除できるかチェック
+    """顧問が伝票を編集・削除できるかチェック
 
     伝票の明細行に非公開科目が1つでもあればTrue
     """
@@ -134,7 +134,7 @@ def get_proprietor_account_code(user_id):
 
 
 def check_auditor_redirect():
-    """Lv1監査者がtax以外にアクセスしたときリダイレクト用URLを返す。不要ならNone"""
+    """Lv1顧問がtax以外にアクセスしたときリダイレクト用URLを返す。不要ならNone"""
     from flask import request
     perm = get_permission_level()
     if perm is None:
@@ -147,7 +147,7 @@ def check_auditor_redirect():
 
 
 def mask_account_name(account_name, account_code, allowed_account_codes):
-    """Lv2監査者向け: 非公開科目名を「事業主」に差し替え"""
+    """Lv2顧問向け: 非公開科目名を「事業主」に差し替え"""
     if allowed_account_codes is None:
         return account_name
     if account_code in allowed_account_codes:

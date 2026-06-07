@@ -39,15 +39,15 @@
 - `create_app()` で Flask アプリを生成
 - 16個の Blueprint を登録
 - WebAuthn API は CSRF を免除 (`csrf.exempt`)
-- before_request フックで監査権限を制御
-- テンプレートフィルタ `mask_account` で監査時の科目隠蔽
+- before_request フックで顧問権限を制御
+- テンプレートフィルタ `mask_account` で顧問アクセス時の科目隠蔽
 - CLI: `flask seed`（科目区分投入）、`flask seed-user`（ユーザー別科目投入）
 
 ### Blueprint 一覧
 
 | Blueprint | URL prefix | 用途 |
 |-----------|-----------|------|
-| auth | `/` | 認証（個人/監査ログイン・登録） |
+| auth | `/` | 認証（個人/顧問ログイン・登録） |
 | dashboard | `/` | ダッシュボード |
 | cashbook | `/cashbook` | 出納帳 |
 | journal | `/journal` | 仕訳伝票・一括削除・科目推定API |
@@ -58,9 +58,9 @@
 | ofx_import | `/ofx-import` | OFX取込 |
 | web_import | `/web-import` | Web貼り付け取込 |
 | ai_journal | `/ai-journal` | AI証憑仕訳 |
-| settings | `/settings` | 設定トップ・外部AI・Passkey・月次確定・通知・APIキー管理・監査アクセス |
+| settings | `/settings` | 設定トップ・外部AI・Passkey・月次確定・通知・APIキー管理・顧問アクセス |
 | webauthn | `/webauthn` | Passkey API（JSON、CSRF免除） |
-| auditor | `/auditor` | 監査ダッシュボード・代理閲覧 |
+| auditor | `/auditor` | 顧問ダッシュボード・代理閲覧 |
 | vouchers | `/vouchers` | 証憑一覧（電帳法検索要件対応） |
 | api | `/api/v1` | REST API（仕訳CRUD・AI証憑仕訳・Bearer認証） |
 | oauth | `/oauth` | OAuth 2.0 Device Authorization Grant (RFC 8628) |
@@ -96,7 +96,7 @@
 |---------|------|
 | accounting.py | 仕訳自動生成（出納帳→仕訳変換、振替、直接仕訳） |
 | fiscal.py | 月次確定・年度オープン判定・期間チェック・元入金科目取得 |
-| audit.py | 監査権限・代理閲覧・科目隠蔽・提出ロック |
+| audit.py | 顧問権限・代理閲覧・科目隠蔽・提出ロック |
 | csv_import.py | CSVパース（エンコーディング自動判定・日付/金額パース） |
 | ofx_import.py | OFX/QFXパース |
 | ai_receipt.py | AI証憑解析・Web明細抽出（OpenAI/Gemini/Claude/Ollama対応） |
@@ -166,7 +166,7 @@
 特殊な科目は `system_role` カラムで識別:
 - `capital`: 元入金 (3010)
 - `retained_earnings`: 繰越利益 (3020)
-- `proprietor`: 事業主 (3030) — 監査Lv2での科目隠蔽用
+- `proprietor`: 事業主 (3030) — 顧問Lv2での科目隠蔽用
 
 ### 年度制限
 - 前年以降: 常にオープン
@@ -177,7 +177,7 @@
 - FiscalClose.closed_period で確定済み月を管理（-1=未確定、0=期首のみ、1-12=月）
 - 確定済み期間の仕訳は追加・変更・削除不可
 
-### 監査用アカウント
+### 顧問用アカウント
 - Lv1: 集計結果のみ閲覧
 - Lv2: 指定された税務科目の閲覧・編集、非公開科目は「事業主」で隠蔽
 - Lv3: 本人同等の全操作

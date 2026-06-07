@@ -63,7 +63,7 @@ class TestLoginPost:
             "username": user.username,
             "password": "password123",
         })
-        # 個人ユーザーは監査ログイン不可
+        # 個人ユーザーは顧問ログイン不可
         assert resp.status_code == 200
 
 

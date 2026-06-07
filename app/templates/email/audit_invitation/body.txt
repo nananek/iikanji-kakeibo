@@ -1,12 +1,12 @@
 {{ auditor_username }} さん
 
-{{ owner_username }} さんから、あなたに家計簿の監査アクセスが付与されました。
+{{ owner_username }} さんから、あなたに家計簿の顧問アクセスが付与されました。
 
 権限レベル: {{ permission_label }}
 
 下記の URL からログインしてご確認ください。
 {{ login_url }}
 
-監査アクセスは {{ owner_username }} さんが設定画面からいつでも取り消すことができます。
+顧問アクセスは {{ owner_username }} さんが設定画面からいつでも取り消すことができます。
 
 {% include "email/_partials/footer.txt" %}

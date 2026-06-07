@@ -34,7 +34,7 @@
       <div class="collapse navbar-collapse" id="navbarNav">
         <ul class="navbar-nav me-auto">
           {% if not is_acting_as and current_user.user_type == 'auditor' %}
-          {# 監査ユーザーで代理閲覧していない場合はクライアント一覧のみ #}
+          {# 顧問ユーザーで代理閲覧していない場合はクライアント一覧のみ #}
           <li class="nav-item">
             <a class="nav-link active" href="{{ url_for('auditor.dashboard') }}">
               <i class="bi bi-people"></i> クライアント一覧

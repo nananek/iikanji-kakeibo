@@ -92,7 +92,7 @@ def create_app(config_class=Config):
             return
         endpoint = request.endpoint or ""
         # Static files, auth, external API, legal pages (contact 含む) は
-        # 監査権限制御の対象外 (公開ページ・お問い合わせは権限レベル問わず可)
+        # 顧問権限制御の対象外 (公開ページ・お問い合わせは権限レベル問わず可)
         if (
             endpoint.startswith("static")
             or endpoint.startswith("auth.")
@@ -103,8 +103,8 @@ def create_app(config_class=Config):
         # Auditor exit: always allow
         if endpoint == "auditor.exit_acting":
             return
-        # 有償ゲート: 代理閲覧中、auditor 側または被監査 owner 側のいずれかで
-        # 監査枠エンタイトルメントが必要。両者とも未契約 (= billing 側で枠が
+        # 有償ゲート: 代理閲覧中、auditor 側または顧問先 owner 側のいずれかで
+        # 顧問枠エンタイトルメントが必要。両者とも未契約 (= billing 側で枠が
         # 失効した) なら代理閲覧を即時終了させて auditor 自身のダッシュボードへ。
         # セルフホストモードでは UnlimitedBillingClient が常に True を返す。
         from app.services.entitlement import has_entitlement
@@ -122,7 +122,7 @@ def create_app(config_class=Config):
                 session.pop("acting_as_permission_level", None)
                 from flask import flash
                 flash(
-                    "監査枠の有効期限が切れています。被監査者または監査者の"
+                    "顧問枠の有効期限が切れています。顧問先または顧問の"
                     "プラン状況をご確認ください。",
                     "warning",
                 )
@@ -149,7 +149,7 @@ def create_app(config_class=Config):
             # vouchers: 書き込み系操作 (添付・削除) は Lv2 では禁止。
             # 閲覧 (index, verify GET) は許可。Phase 5 で quota 統合に
             # より StorageUsage を消費・解放する書き込みが入ったため、
-            # 監査者が容量計上を勝手に操作できないよう明示的にブロックする。
+            # 顧問が容量計上を勝手に操作できないよう明示的にブロックする。
             if endpoint in ("vouchers.attach", "vouchers.delete"):
                 from flask import flash
                 flash("この権限レベルでは証憑を変更できません。", "warning")
@@ -468,7 +468,7 @@ def register_cli(app):
                         "%Y-%m-%d %H:%M UTC"
                     ),
                     "service_label": (
-                        "監査用アカウント" if user_type == "auditor"
+                        "顧問用アカウント" if user_type == "auditor"
                         else "個人アカウント"
                     ),
                 })

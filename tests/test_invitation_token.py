@@ -272,7 +272,7 @@ class TestRegisterWithInvitationRequired:
             "password_confirm": "password123",
             "accept_terms": "y", "token": raw,
         })
-        # 監査ログインへリダイレクト
+        # 顧問ログインへリダイレクト
         assert resp.status_code == 302
         # auditor タイプで作成済
         user = User.query.filter_by(email="auditor@example.com").first()

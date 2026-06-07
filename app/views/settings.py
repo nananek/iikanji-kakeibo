@@ -756,7 +756,7 @@ def fiscal_reopen():
     return redirect(url_for("settings.fiscal", year=year))
 
 
-# --- 監査アクセス管理 ---
+# --- 顧問アクセス管理 ---
 
 
 PERMISSION_LABELS = {1: "Lv1: 集計結果のみ", 2: "Lv2: 税務科目のみ", 3: "Lv3: 本人同等"}
@@ -765,7 +765,7 @@ PERMISSION_LABELS = {1: "Lv1: 集計結果のみ", 2: "Lv2: 税務科目のみ",
 @bp.route("/audit")
 @login_required
 def audit():
-    """監査アクセス管理ページ（個人ユーザー専用）"""
+    """顧問アクセス管理ページ（個人ユーザー専用）"""
     if current_user.user_type != "personal":
         flash("この機能は個人ユーザー専用です。", "warning")
         return redirect(url_for("dashboard.index"))
@@ -786,7 +786,7 @@ def audit():
 @bp.route("/audit/add", methods=["POST"])
 @login_required
 def audit_add():
-    """監査アクセスの付与"""
+    """顧問アクセスの付与"""
     if current_user.user_type != "personal":
         flash("この機能は個人ユーザー専用です。", "warning")
         return redirect(url_for("dashboard.index"))
@@ -800,15 +800,15 @@ def audit_add():
 
     auditor = User.query.filter_by(username=username, user_type="auditor").first()
     if not auditor:
-        flash(f"監査用アカウント「{username}」が見つかりません。", "danger")
+        flash(f"顧問用アカウント「{username}」が見つかりません。", "danger")
         return redirect(url_for("settings.audit"))
 
     if auditor.id == current_user.id:
         flash("自分自身にはアクセスを付与できません。", "danger")
         return redirect(url_for("settings.audit"))
 
-    # 有償ゲート: 監査者課金 (auditor 自身) または被監査者課金 (owner が
-    # 監査枠を購入) のいずれかを満たす場合に限り AuditGrant を作成可。
+    # 有償ゲート: 顧問課金 (auditor 自身) または顧問先課金 (owner が
+    # 顧問枠を購入) のいずれかを満たす場合に限り AuditGrant を作成可。
     # セルフホストモードでは UnlimitedBillingClient が常に True を返す。
     from app.services.entitlement import has_entitlement
     if not (
@@ -816,8 +816,8 @@ def audit_add():
         or has_entitlement(current_user, "audit_seat")
     ):
         flash(
-            "監査枠を付与するには、監査者本人の有償プラン契約、"
-            "または被監査者 (あなた) 側での監査枠購入が必要です。",
+            "顧問枠を付与するには、顧問本人の有償プラン契約、"
+            "または顧問先 (あなた) 側での顧問枠購入が必要です。",
             "warning",
         )
         return redirect(url_for("settings.audit"))
@@ -852,7 +852,7 @@ def audit_add():
 
     db.session.commit()
 
-    # 監査者宛に招待メールを送る。失敗はログのみ (`send_email` 内で吸収)
+    # 顧問宛に招待メールを送る。失敗はログのみ (`send_email` 内で吸収)
     # で本体フローに影響しない。
     if auditor.email:
         from app.services.mail import send_email
@@ -874,7 +874,7 @@ def audit_add():
 @bp.route("/audit/<int:grant_id>/delete", methods=["POST"])
 @login_required
 def audit_delete(grant_id):
-    """監査アクセスの取消"""
+    """顧問アクセスの取消"""
     grant = AuditGrant.query.filter_by(
         id=grant_id, owner_user_id=current_user.id
     ).first_or_404()

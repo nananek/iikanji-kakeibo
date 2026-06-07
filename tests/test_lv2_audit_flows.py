@@ -1,4 +1,4 @@
-"""Lv2 監査者向けフロー (journal の編集) のテスト
+"""Lv2 顧問向けフロー (journal の編集) のテスト
 
 acting_as_user_id + permission_level=2 + AuditGrantAccount で
 公開科目のみ編集可能、非公開行は保持の挙動を網羅。
@@ -15,7 +15,7 @@ from app.models.journal import JournalEntry, JournalEntryLine
 
 @pytest.fixture
 def lv2_setup(db, client, user, auditor, accounts):
-    """Lv2 監査者として user の代理閲覧を行う状態を作る"""
+    """Lv2 顧問として user の代理閲覧を行う状態を作る"""
     grant = AuditGrant(
         owner_user_id=user.id,
         auditor_user_id=auditor.id,
@@ -163,7 +163,7 @@ class TestJournalEditPostLv2:
         assert any(l.account_code == "5020" for l in e.lines)
 
     def test_fiscal_period_16_blocked(self, lv2_setup, mixed_journal, client):
-        # 監査ユーザーの settings.fiscal はもともとブロックされるが、
+        # 顧問ユーザーの settings.fiscal はもともとブロックされるが、
         # edit form で fiscal_period=16 を渡すケースも明示的にブロック
         # 実際には JournalForm の SelectField choices に 16 はないので validate fail
         # ここでは form 再表示を確認

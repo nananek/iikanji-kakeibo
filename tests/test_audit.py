@@ -1,4 +1,4 @@
-"""audit.py のテスト — 監査権限・提出ロック・科目隠蔽・ユーザー隔離"""
+"""audit.py のテスト — 顧問権限・提出ロック・科目隠蔽・ユーザー隔離"""
 
 from datetime import date
 
@@ -209,7 +209,7 @@ class TestIsEntryLockedForOwner:
 
 
 # =================================================================
-# is_entry_locked_for_auditor — 監査者の編集制限
+# is_entry_locked_for_auditor — 顧問の編集制限
 # =================================================================
 
 
@@ -488,7 +488,7 @@ class TestAPISubmitLock:
 
 class TestAuditGrantModel:
     def test_unique_constraint(self, db, user, auditor):
-        """同一オーナー・監査者のグラントは1つのみ"""
+        """同一オーナー・顧問のグラントは1つのみ"""
         g1 = AuditGrant(
             owner_user_id=user.id, auditor_user_id=auditor.id,
             permission_level=1, status="draft",

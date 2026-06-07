@@ -154,7 +154,7 @@ def new():
                 if used_locked:
                     return _render_with_lines("提出済みの税務科目を含むため仕訳を作成できません。")
 
-        # Lv2監査者: 非公開科目チェック
+        # Lv2顧問: 非公開科目チェック
         if allowed_codes is not None:
             for p in parsed:
                 if p["account_code"] not in allowed_codes:

@@ -38,11 +38,11 @@ AIが証憑を読み取って仕訳を提案。
   </div>
   <div class="feature">
     <h3>つながる</h3>
-    <p>3段階の権限レベルで税理士・公認会計士と安全にデータ共有。REST API と Python クライアントで外部連携も。</p>
+    <p>3段階の権限レベルで税理士等と安全にデータ共有。REST API と Python クライアントで外部連携も。</p>
   </div>
   <div class="feature">
     <h3>まもる</h3>
-    <p>Passkey (WebAuthn) 認証・月次確定によるロック・監査用提出ロック。PWA対応でモバイルからも。</p>
+    <p>Passkey (WebAuthn) 認証・月次確定によるロック・顧問用提出ロック。PWA対応でモバイルからも。</p>
   </div>
 </div>
 
