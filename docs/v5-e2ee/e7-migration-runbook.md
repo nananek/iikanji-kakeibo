@@ -62,14 +62,43 @@ flask db upgrade 056_e4_voucher_encrypted_columns
 #    平文画像はストレージで暗号文 (.bin) に置換し、旧平文 (本体 + 旧サムネ) を削除。
 flask migrate-e2ee-data
 
-# 5. 残りの破壊的ドロップを含めて head (現在 069) まで上げる (057 original_filename
+# 5. 残りの破壊的ドロップを含めて head (現在 073) まで上げる (057 original_filename
 #    DROP / 060 image_mime DROP / 068 仕訳明細列 DROP。暗号化済なのでガードを通過)。
 #    068 は #338 の平文列物理 DROP を含む = ここで「DB 平文ゼロ」に到達する。
+#    070-073 は #385 (ログイン派生 MK / リカバリリセット / TOTP / passkey_only 廃止) の列を
+#    追加・DROP する (下記「#385 ログイン派生 MK」を必ず先に確認)。
 flask db upgrade
 
 # 6. genkey 状態を確認 (全 personal ユーザーが temp-MK を保持しているはず)
 flask migration-status            # temp_mk_active が利用者数と一致することを確認
 ```
+
+### §A-2. #385 ログイン派生 MK の有効化 (head=073 への追補)
+
+#385 (単一パスワードで E2EE) はログインパスワードを MK の常用解錠鍵にする。これを有効化
+するには、データ移行 (上記 1〜6) とは別に以下が必要:
+
+```bash
+# (a) LOGIN_SERVER_SECRET を本番環境変数に設定する (必須・本用途専用の固定ランダム値)。
+#     未設定だと 2 ラウンドログイン API が 503 を返し login 派生方式が動かない。
+#     SECRET_KEY や email 擬名化 secret とは別の独立した変数にすること。
+#     例: export LOGIN_SERVER_SECRET=$(openssl rand -hex 32)
+#
+# (b) マイグレ 070-073 は上記 step 5 の `flask db upgrade` で適用される:
+#     070 login_* 列追加 + password_hash nullable化 / 071 recovery_seed_server_hash +
+#     session_token_version / 072 totp_* + totp_backup_codes / 073 passkey_only_login DROP。
+#
+# (c) ⚠️ 073 (passkey_only_login 物理 DROP) の事前確認: パスキー専用モードのユーザーで
+#     password_hash を持つ者は、列 DROP 後にパスワードログインが復活する (意図的)。
+#     把握のため適用前に件数を確認すること:
+psql ... -c "SELECT COUNT(*) FROM users WHERE passkey_only_login=TRUE AND password_hash IS NOT NULL;"
+#     パスワードを持たない passkey_only ユーザーは Passkey / リカバリシードでログインし、
+#     リカバリシードリセットでパスワードを設定できる (移行ガイド参照)。
+```
+
+- (a) 設定後、各 v4 ユーザーは**初回ログイン時にパスワード 1 回入力で認証因子が透過移行**する
+  (werkzeug 最終検証 → login_* 確立 → §B の再ラップへ)。ops 側の per-user 操作は不要。
+- TOTP 2 要素認証は利用者が任意で有効化する (ops 作業なし)。
 
 > 注意: 本番コンテナの `entrypoint.sh` は起動時に `flask db upgrade` を head まで
 > 自動実行する。genkey 前に通常起動すると 055 のガードで停止する (平文保護)。
@@ -165,7 +194,9 @@ v4.0.0 データ (使い捨て DB) で「暗号化 → temp-MK 復号 → 平文
 | §16.5 鍵未設定ロック (lock-stale/purge-locked, 公開時用) | ✅ #371-373 (solo では不要) |
 | §16.6 進捗ダッシュボード `/admin/migration-progress` | ✅ #374 (Basic 認証) |
 | balance_cache_blobs の再ラップ (bcb) | ✅ rewrap_flow が年度ごとに処理 |
-| マイグレーション head | 069 (068 = #338 平文列物理 DROP を含む) |
+| #385 ログイン派生 MK (070) / リカバリリセット (071) / TOTP (072) / passkey_only DROP (073) | ✅ #391-411 (LOGIN_SERVER_SECRET 設定要・§A-2 参照) |
+| client-py byte 互換 (login 派生 / recovery_verifier) | ✅ client-py #17 (v3.1.0) |
+| マイグレーション head | 073 (068 = #338 平文列 DROP / 073 = passkey_only DROP) |
 
 実 v4.0.0 データ (使い捨て PG18 + 証憑 332 枚) で **head(068) までの完全移行を検証済**:
 仕訳842/明細1758/医療費3/証憑332 を暗号化 → 057/060/068 ガード通過 → 平文列 DROP +
