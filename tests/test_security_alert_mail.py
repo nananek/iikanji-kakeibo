@@ -26,15 +26,15 @@ def _post_register_verify(client, *, transports=("usb",), passkey_name="TestKey"
 
 
 class TestPasskeyAddedAlert:
-    def test_alert_sent_on_success(self, db, logged_in_client, user, accounts, capsys):
+    def test_alert_sent_on_success(self, db, logged_in_client, totp_user, accounts, capsys):
         resp = _post_register_verify(logged_in_client, transports=("usb", "nfc"))
         assert resp.status_code == 200
 
         out = capsys.readouterr().out
-        assert f"To:   {user.email}" in out
+        assert f"To:   {totp_user.email}" in out
         assert "セキュリティ通知" in out
         assert "新しいパスキーが追加されました" in out
-        assert user.username in out
+        assert totp_user.username in out
         assert "TestKey" in out
         # transports は " / " 区切り
         assert "usb / nfc" in out
@@ -43,12 +43,18 @@ class TestPasskeyAddedAlert:
         self, db, client, accounts, capsys
     ):
         from app.models.user import User
+        from app.services import totp as totp_svc
         no_email_user = User(
             username="no_email_pk",
             email="",
             user_type="personal",
         )
         no_email_user.set_password("password123")
+        # パスキー登録には TOTP 有効が必要
+        no_email_user.totp_secret_encrypted = totp_svc.encrypt_secret(
+            totp_svc.generate_secret()
+        )
+        no_email_user.totp_enabled = True
         db.session.add(no_email_user)
         db.session.commit()
 
@@ -67,7 +73,7 @@ class TestPasskeyAddedAlert:
         assert "[Mail]" not in out
 
     def test_alert_failure_does_not_break_passkey_registration(
-        self, db, logged_in_client, user, accounts, monkeypatch
+        self, db, logged_in_client, totp_user, accounts, monkeypatch
     ):
         """メール送信失敗でもパスキー登録は成功扱い"""
         from app.services import mail as mail_mod
@@ -81,14 +87,14 @@ class TestPasskeyAddedAlert:
 
         resp = _post_register_verify(logged_in_client)
         assert resp.status_code == 200
-        assert WebAuthnCredential.query.filter_by(user_id=user.id).count() == 1
+        assert WebAuthnCredential.query.filter_by(user_id=totp_user.id).count() == 1
 
 
 class TestAlertContent:
     """メール本文に重要なコンテキスト情報が含まれる"""
 
     def test_includes_ip_and_user_agent(
-        self, db, logged_in_client, user, accounts, capsys
+        self, db, logged_in_client, totp_user, accounts, capsys
     ):
         # Flask test client ではデフォルトの remote_addr / User-Agent が
         # 設定される。それらが本文に出ることを確認。

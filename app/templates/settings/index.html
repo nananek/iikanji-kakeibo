@@ -4,6 +4,8 @@
 {% block content %}
 <h2><i class="bi bi-gear"></i> 設定</h2>
 
+{% include "settings/_totp_setup_prompt_banner.html" %}
+
 {% if storage_summary %}
 <h5 class="mt-4 mb-3 text-muted"><i class="bi bi-hdd"></i> ストレージ使用量</h5>
 <div class="card mb-4 shadow-sm">

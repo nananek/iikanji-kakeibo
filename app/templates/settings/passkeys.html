@@ -8,6 +8,7 @@
     <p class="text-muted">パスワードの代わりに指紋認証やFace IDでログインできます。</p>
 
     {% include "settings/_pending_recovery_banner.html" %}
+    {% include "settings/_totp_setup_prompt_banner.html" %}
 
     {# パスキー専用モード #}
     <div class="card mb-4
@@ -83,14 +84,23 @@
         <i class="bi bi-plus-circle"></i> 新しいPasskeyを追加
       </div>
       <div class="card-body">
-        <div class="input-group">
-          <input type="text" id="passkey-name" class="form-control"
-                 placeholder="Passkey名（例: MacBook Pro、iPhone）" maxlength="100">
-          <button class="btn btn-primary" id="btn-register-passkey" type="button">
-            <i class="bi bi-key"></i> 追加
-          </button>
-        </div>
-        <div id="register-status" class="mt-2"></div>
+        {% if not current_user.totp_enabled %}
+          <div class="alert alert-info small mb-0">
+            <i class="bi bi-info-circle"></i>
+            新しいパスキーの登録には<strong>二段階認証 (TOTP)</strong> の有効化が必要です。
+            パスキー紛失時の復旧手段になります。
+            <a href="{{ url_for('settings.totp_status') }}" class="alert-link">二段階認証を設定する</a>
+          </div>
+        {% else %}
+          <div class="input-group">
+            <input type="text" id="passkey-name" class="form-control"
+                   placeholder="Passkey名（例: MacBook Pro、iPhone）" maxlength="100">
+            <button class="btn btn-primary" id="btn-register-passkey" type="button">
+              <i class="bi bi-key"></i> 追加
+            </button>
+          </div>
+          <div id="register-status" class="mt-2"></div>
+        {% endif %}
       </div>
     </div>
 
@@ -206,12 +216,15 @@
 {% block scripts %}
 <script src="{{ url_for('static', filename='js/webauthn.js') }}"></script>
 <script>
+// 二段階認証 (TOTP) 未設定時は登録 UI 自体を描画しないため、ボタンが無ければ何もしない
+const registerBtn = document.getElementById("btn-register-passkey");
+if (registerBtn) {
 if (!isWebAuthnAvailable()) {
-  document.getElementById("btn-register-passkey").disabled = true;
+  registerBtn.disabled = true;
   document.getElementById("register-status").innerHTML =
     '<span class="text-warning"><i class="bi bi-exclamation-triangle"></i> Passkeyを利用するにはHTTPSまたはlocalhostでアクセスしてください。</span>';
 }
-document.getElementById("btn-register-passkey").addEventListener("click", async () => {
+registerBtn.addEventListener("click", async () => {
   const nameInput = document.getElementById("passkey-name");
   const statusEl = document.getElementById("register-status");
   const btn = document.getElementById("btn-register-passkey");
@@ -242,5 +255,6 @@ document.getElementById("btn-register-passkey").addEventListener("click", async 
     btn.disabled = false;
   }
 });
+}
 </script>
 {% endblock %}

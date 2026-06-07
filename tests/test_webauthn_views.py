@@ -14,7 +14,7 @@ class TestRegisterOptions:
         resp = client.post("/webauthn/register/options")
         assert resp.status_code in (302, 401)
 
-    def test_authenticated_returns_options(self, logged_in_client, user, accounts):
+    def test_authenticated_returns_options(self, logged_in_client, totp_user, accounts):
         with patch("app.views.webauthn.generate_registration_options") as mock_gen, \
              patch("app.views.webauthn.options_to_json") as mock_json:
             mock_options = MagicMock()
@@ -32,13 +32,13 @@ class TestRegisterVerify:
         resp = client.post("/webauthn/register/verify", json={})
         assert resp.status_code in (302, 401)
 
-    def test_no_challenge_in_session(self, logged_in_client, user, accounts):
+    def test_no_challenge_in_session(self, logged_in_client, totp_user, accounts):
         resp = logged_in_client.post("/webauthn/register/verify", json={})
         assert resp.status_code == 400
         body = resp.get_json()
         assert "チャレンジ" in body["error"]
 
-    def test_verify_failure_safe_message(self, logged_in_client, user, accounts):
+    def test_verify_failure_safe_message(self, logged_in_client, totp_user, accounts):
         with logged_in_client.session_transaction() as sess:
             sess["webauthn_register_challenge"] = b"challenge"
         with patch("app.views.webauthn.verify_registration_response") as mock_verify:
@@ -53,7 +53,7 @@ class TestRegisterVerify:
             assert "internal error secret" not in body["error"]
             assert "検証に失敗" in body["error"]
 
-    def test_verify_success_creates_credential(self, db, logged_in_client, user, accounts):
+    def test_verify_success_creates_credential(self, db, logged_in_client, totp_user, accounts):
         with logged_in_client.session_transaction() as sess:
             sess["webauthn_register_challenge"] = b"challenge"
         with patch("app.views.webauthn.verify_registration_response") as mock_verify:
@@ -73,7 +73,7 @@ class TestRegisterVerify:
             )
             assert resp.status_code == 200
             assert resp.get_json()["ok"] is True
-            cred = WebAuthnCredential.query.filter_by(user_id=user.id).first()
+            cred = WebAuthnCredential.query.filter_by(user_id=totp_user.id).first()
             assert cred is not None
             assert cred.name == "MyKey"
             assert cred.transports == "usb / nfc"
