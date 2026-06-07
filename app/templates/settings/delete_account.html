@@ -57,10 +57,10 @@
   <form method="POST" class="mt-4">
     {{ form.hidden_tag() }}
 
-    {% if current_user.passkey_only_login %}
+    {% if not current_user.password_hash %}
     <div class="alert alert-info">
       <i class="bi bi-shield-check"></i>
-      Passkey 専用アカウントのため、パスワード入力は不要です。
+      パスワード未設定のアカウントのため、パスワード入力は不要です。
       現在のログインセッションが認証済みとして扱われます。
     </div>
     {% else %}

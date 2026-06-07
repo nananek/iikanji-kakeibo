@@ -292,7 +292,7 @@ class TestDeleteAccountView:
         self, logged_in_client, db, user, mock_storage, reset_limiter,
     ):
         """Passkey 専用ユーザーはパスワード入力なしで退会できる (GDPR 消去権)."""
-        user.passkey_only_login = True
+        user.password_hash = None  # パスワード未設定 (#385 PR-T4: 旧 passkey_only 相当)
         db.session.commit()
 
         sent = []
@@ -315,7 +315,7 @@ class TestDeleteAccountView:
         self, logged_in_client, db, user, mock_storage, reset_limiter,
     ):
         """Passkey 専用ユーザーでも confirm チェックは必須."""
-        user.passkey_only_login = True
+        user.password_hash = None  # パスワード未設定 (#385 PR-T4: 旧 passkey_only 相当)
         db.session.commit()
 
         resp = logged_in_client.post(
@@ -327,11 +327,11 @@ class TestDeleteAccountView:
         assert resp.status_code == 200
         assert db.session.get(User, user.id) is not None
 
-    def test_passkey_only_template_hides_password_field(
+    def test_password_less_template_hides_password_field(
         self, logged_in_client, db, user, reset_limiter,
     ):
-        """Passkey 専用ユーザー向けにパスワードフィールドが非表示."""
-        user.passkey_only_login = True
+        """パスワード未設定ユーザー向けにパスワードフィールドが非表示 (#385 PR-T4)."""
+        user.password_hash = None  # パスワード未設定 (旧 passkey_only 相当)
         db.session.commit()
 
         resp = logged_in_client.get("/settings/delete-account")
@@ -340,7 +340,7 @@ class TestDeleteAccountView:
         # パスワード入力欄が出ない (input type=password がない)
         assert "type=\"password\"" not in body
         # 代わりに案内が出る
-        assert "Passkey 専用アカウント" in body
+        assert "パスワード未設定のアカウント" in body
 
 
 class TestJournalEntryDeletionOrder:

@@ -185,12 +185,11 @@ def test_totp_404_when_not_configured(client, db, user, app):
     assert client.post("/settings/totp/begin").status_code == 404
 
 
-def test_passkey_only_user_cannot_begin_totp(client, db):
-    """passkey_only ユーザー (password_hash=NULL) は TOTP 登録を開始できない。
-    無効化時のパスワード再認証が成立せず永久ロックアウトになるため (§3.6.6)。"""
-    u = User(username="pko", email="pko@test.com", user_type="personal",
-             passkey_only_login=True)
-    # set_password しない (passkey_only は password_hash=NULL)
+def test_password_less_user_cannot_begin_totp(client, db):
+    """パスワード未設定ユーザー (password_hash=NULL) は TOTP 登録を開始できない。
+    無効化時のパスワード再認証が成立せず永久ロックアウトになるため (#385 PR-T4)。"""
+    u = User(username="pko", email="pko@test.com", user_type="personal")
+    # set_password しない (password_hash=NULL)
     db.session.add(u)
     db.session.commit()
     _login(client, u)

@@ -153,21 +153,8 @@ class TestRecoveryGenerateEndpoint:
 # パスキー専用モード (passkey_only_login)
 # ============================================================
 
-class TestPasskeyOnlyLoginBlock:
-    """passkey_only_login=True のユーザーはパスワードログインを拒否される"""
-
-    def test_passkey_only_user_cannot_login_with_password(
-        self, client, passkey_only_user
-    ):
-        resp = client.post("/login", data={
-            "username": passkey_only_user.username,
-            "password": "password123",
-        }, follow_redirects=False)
-        # ログイン拒否（200 で再描画、リダイレクトしない）
-        assert resp.status_code == 200
-        # セッションにログイン情報が乗っていないこと
-        with client.session_transaction() as sess:
-            assert "_user_id" not in sess
+class TestNormalPasswordLogin:
+    """通常ユーザーのパスワードログイン (#385 PR-T4: パスキー専用モード廃止後)"""
 
     def test_normal_user_can_still_login_with_password(self, client, user):
         """フラグが False のユーザーは従来通りパスワードでログインできる"""
@@ -180,77 +167,14 @@ class TestPasskeyOnlyLoginBlock:
             assert sess.get("_user_id") == f"{user.id}.0"
 
 
-class TestPasskeyOnlyToggle:
-    """パスキー専用モードの enable / disable"""
-
-    def test_enable_requires_existing_passkey(self, logged_in_client, user, db):
-        """パスキー未登録なら有効化できない"""
-        user.set_recovery_code()
-        db.session.commit()
-        resp = logged_in_client.post("/settings/passkeys/passkey-only/enable",
-                                     follow_redirects=False)
-        assert resp.status_code == 302
-        db.session.refresh(user)
-        assert user.passkey_only_login is False
-
-    def test_enable_requires_recovery_code(self, logged_in_client, user, db):
-        """リカバリコード未生成なら有効化できない"""
-        from app.models.webauthn import WebAuthnCredential
-        cred = WebAuthnCredential(
-            user_id=user.id, credential_id=b"x", credential_public_key=b"y",
-            current_sign_count=0,
-        )
-        db.session.add(cred)
-        db.session.commit()
-        resp = logged_in_client.post("/settings/passkeys/passkey-only/enable",
-                                     follow_redirects=False)
-        assert resp.status_code == 302
-        db.session.refresh(user)
-        assert user.passkey_only_login is False
-
-    def test_enable_succeeds_with_both(self, logged_in_client, user, db):
-        from app.models.webauthn import WebAuthnCredential
-        user.set_recovery_code()
-        cred = WebAuthnCredential(
-            user_id=user.id, credential_id=b"x", credential_public_key=b"y",
-            current_sign_count=0,
-        )
-        db.session.add(cred)
-        db.session.commit()
-        resp = logged_in_client.post("/settings/passkeys/passkey-only/enable",
-                                     follow_redirects=False)
-        assert resp.status_code == 302
-        db.session.refresh(user)
-        assert user.passkey_only_login is True
-
-    def test_disable_requires_password(self, logged_in_client, passkey_only_user, db):
-        resp = logged_in_client.post(
-            "/settings/passkeys/passkey-only/disable",
-            data={"password": "wrong-password"},
-            follow_redirects=False,
-        )
-        assert resp.status_code == 302
-        db.session.refresh(passkey_only_user)
-        assert passkey_only_user.passkey_only_login is True  # 変わらず
-
-    def test_disable_succeeds_with_correct_password(
-        self, logged_in_client, passkey_only_user, db
-    ):
-        resp = logged_in_client.post(
-            "/settings/passkeys/passkey-only/disable",
-            data={"password": "password123"},
-            follow_redirects=False,
-        )
-        assert resp.status_code == 302
-        db.session.refresh(passkey_only_user)
-        assert passkey_only_user.passkey_only_login is False
-
-
 class TestDeleteLastPasskeyBlock:
-    """パスキー専用モード中は最後の 1 本を削除できない"""
+    """パスワード未設定ユーザーは最後の 1 本を削除できない (#385 PR-T4: 旧パスキー専用
+    モードの保護を実条件「password_hash 無し」で継続)。"""
 
     def test_blocks_delete_when_last_passkey(self, logged_in_client, passkey_only_user, db):
         from app.models.webauthn import WebAuthnCredential
+        passkey_only_user.password_hash = None  # パスワード未設定 = 最後のパスキー保護対象
+        db.session.commit()
         cred = WebAuthnCredential.query.filter_by(
             user_id=passkey_only_user.id
         ).first()
@@ -264,8 +188,10 @@ class TestDeleteLastPasskeyBlock:
         assert WebAuthnCredential.query.get(cred.id) is not None
 
     def test_allows_delete_when_more_than_one(self, logged_in_client, passkey_only_user, db):
-        """パスキーが 2 本あれば 1 本目は削除できる"""
+        """パスキーが 2 本あれば 1 本目は削除できる (パスワード未設定でも)"""
         from app.models.webauthn import WebAuthnCredential
+        passkey_only_user.password_hash = None
+        db.session.commit()
         extra = WebAuthnCredential(
             user_id=passkey_only_user.id,
             credential_id=b"second-cred",
@@ -406,32 +332,6 @@ class TestPendingRecoveryGate:
 
 # ============================================================
 # 監査ユーザーのパスキー専用モード
-# ============================================================
-
-class TestPasskeyOnlyAuditor:
-    """auditor も passkey_only_login を使えること"""
-
-    def test_auditor_login_blocked_in_passkey_only_mode(self, client, auditor, db):
-        from app.models.webauthn import WebAuthnCredential
-        auditor.passkey_only_login = True
-        auditor.set_recovery_code()
-        db.session.add(WebAuthnCredential(
-            user_id=auditor.id, credential_id=b"a-cred",
-            credential_public_key=b"a-pk", current_sign_count=0,
-        ))
-        db.session.commit()
-        resp = client.post("/login/auditor", data={
-            "username": auditor.username,
-            "password": "password123",
-        }, follow_redirects=False)
-        # ログイン拒否（200 で再描画）
-        assert resp.status_code == 200
-        with client.session_transaction() as sess:
-            assert "_user_id" not in sess
-
-
-# ============================================================
-# タイミング攻撃対策
 # ============================================================
 
 class TestRecoveryLoginTiming:

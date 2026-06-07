@@ -85,8 +85,6 @@ def create_app(config_class=Config):
             "settings.passkeys",
             "settings.delete_passkey",
             "settings.recovery_generate",
-            "settings.passkey_only_enable",
-            "settings.passkey_only_disable",
             "webauthn.register_options",
             "webauthn.register_verify",
             "auth.logout",
