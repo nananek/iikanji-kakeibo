@@ -268,59 +268,9 @@ class TestDeleteAccountView:
         assert admin[0] == "test@example.com"
         assert admin[2]["username"] == "testuser"
 
-    def test_passkey_only_user_can_delete_without_password(
-        self, logged_in_client, db, user, mock_storage, reset_limiter,
-    ):
-        """Passkey 専用ユーザーはパスワード入力なしで退会できる (GDPR 消去権)."""
-        user.passkey_only_login = True
-        db.session.commit()
-
-        sent = []
-        with patch(
-            "app.views.settings.send_email",
-            side_effect=lambda to, t, ctx=None, **kw: sent.append((to, t)),
-        ):
-            resp = logged_in_client.post(
-                "/settings/delete-account",
-                data={"confirm": "y"},  # password 未送信
-                follow_redirects=False,
-            )
-
-        # ログイン画面へリダイレクト + User row 削除
-        assert resp.status_code == 302
-        assert db.session.get(User, user.id) is None
-        assert any(s[1] == "account_deleted" for s in sent)
-
-    def test_passkey_user_still_needs_confirm_checkbox(
-        self, logged_in_client, db, user, mock_storage, reset_limiter,
-    ):
-        """Passkey 専用ユーザーでも confirm チェックは必須."""
-        user.passkey_only_login = True
-        db.session.commit()
-
-        resp = logged_in_client.post(
-            "/settings/delete-account",
-            data={},  # confirm も未送信
-            follow_redirects=False,
-        )
-        # フォーム再描画 + User 残存
-        assert resp.status_code == 200
-        assert db.session.get(User, user.id) is not None
-
-    def test_passkey_only_template_hides_password_field(
-        self, logged_in_client, db, user, reset_limiter,
-    ):
-        """Passkey 専用ユーザー向けにパスワードフィールドが非表示."""
-        user.passkey_only_login = True
-        db.session.commit()
-
-        resp = logged_in_client.get("/settings/delete-account")
-        assert resp.status_code == 200
-        body = resp.get_data(as_text=True)
-        # パスワード入力欄が出ない (input type=password がない)
-        assert "type=\"password\"" not in body
-        # 代わりに案内が出る
-        assert "Passkey 専用アカウント" in body
+    # パスキー専用モードは廃止 (PR5)。退会は全ユーザーがパスワード必須となり、
+    # 誤パスワード拒否・パスワード欄表示は上の test_post_wrong_password_keeps_user /
+    # test_get_renders_form でカバーされる。
 
 
 class TestJournalEntryDeletionOrder:

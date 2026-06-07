@@ -200,27 +200,6 @@ def logged_in_client(app, client, user):
     return client
 
 
-@pytest.fixture
-def passkey_only_user(db, user):
-    """パスキー専用モード ON + パスキー 1 本 + 有効リカバリコード。
-
-    生成したリカバリコードの生文字列は `user._test_recovery_code_raw` 属性に
-    保存される。リカバリログインテストで参照可能。
-    """
-    from app.models.webauthn import WebAuthnCredential
-    user.passkey_only_login = True
-    raw = user.set_recovery_code()
-    user._test_recovery_code_raw = raw
-    cred = WebAuthnCredential(
-        user_id=user.id,
-        credential_id=b"test-credential-id-bytes",
-        credential_public_key=b"test-public-key-bytes",
-        current_sign_count=0,
-        name="テスト用パスキー",
-    )
-    db.session.add(cred)
-    db.session.commit()
-    return user
 
 
 def totp_code_for(secret_b32, at=None):

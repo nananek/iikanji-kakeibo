@@ -2,22 +2,19 @@
 
 from flask_wtf import FlaskForm
 from wtforms import BooleanField, PasswordField, SubmitField
-from wtforms.validators import DataRequired, Optional
+from wtforms.validators import DataRequired
 
 
 class DeleteAccountForm(FlaskForm):
     """退会フォーム。パスワード再認証 + 同意チェックを要求する。
 
-    `password` フィールドは Optional とし、Passkey 専用ユーザー
-    (`passkey_only_login=True`) はパスワードを持たないためバリデータでは
-    強制しない。view 側で `current_user.passkey_only_login` に応じて
-    動的に再認証要否を判定する (GDPR データ消去権を満たすため、
-    Passkey 専用ユーザーでも退会できなければならない)。
+    全ユーザーがパスワードを持つ (`password_hash` NOT NULL) ため、
+    退会には必ずパスワード再認証を要求する。
     """
 
     password = PasswordField(
-        "パスワード再入力 (Passkey 専用アカウントは不要)",
-        validators=[Optional()],
+        "パスワード再入力",
+        validators=[DataRequired(message="パスワードの入力が必要です")],
     )
     confirm = BooleanField(
         "全てのデータが削除されることを理解しました",
