@@ -114,31 +114,6 @@ class TestVoucherImageIDOR:
         )
         assert resp.status_code == 404
 
-    def test_api_voucher_verify_other_user(self, client, db, user, accounts,
-                                            second_user, second_user_accounts):
-        """API: 他ユーザーの証憑検証 → 404"""
-        from app.models.api_key import APIKey
-        v, _ = _setup_voucher_with_file(db, user, accounts)
-
-        raw_key, key_hash, key_prefix = APIKey.generate()
-        key = APIKey(
-            user_id=second_user.id,
-            name="other-key",
-            key_hash=key_hash,
-            key_prefix=key_prefix,
-            scopes="journals:read",
-            is_active=True,
-        )
-        db.session.add(key)
-        db.session.commit()
-
-        resp = client.get(
-            f"/api/v1/vouchers/{v.id}/verify",
-            headers={"Authorization": f"Bearer {raw_key}"},
-        )
-        assert resp.status_code == 404
-
-
 class TestOrphanVoucherImage:
     """孤立証憑（仕訳削除後）のアクセス"""
 

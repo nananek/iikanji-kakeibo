@@ -352,7 +352,7 @@ class TestVoucherLogs:
             voucher_id=v.id, user_id=user.id, action="orphaned",
         ))
         db.session.add(VoucherAuditLog(
-            voucher_id=v.id, user_id=user.id, action="hash_verified",
+            voucher_id=v.id, user_id=user.id, action="deleted",
         ))
         db.session.commit()
         resp = client.get(f"/api/v1/vouchers/{v.id}/logs",

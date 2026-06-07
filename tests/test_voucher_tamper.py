@@ -34,13 +34,13 @@ class TestVoucherAuditLogModel:
         log = VoucherAuditLog(
             voucher_id=v.id,
             user_id=user.id,
-            action="hash_verified",
+            action="orphaned",
         )
         db.session.add(log)
         db.session.commit()
 
         assert log.id is not None
-        assert log.action == "hash_verified"
+        assert log.action == "orphaned"
         assert log.voucher_id == v.id
 
     def test_log_with_detail(self, db, user):
@@ -126,7 +126,7 @@ class TestAuditLogAPI:
     def test_api_logs(self, client, db, user, auth_header):
         v = make_voucher(db, user.id)
         db.session.add(VoucherAuditLog(
-            voucher_id=v.id, user_id=user.id, action="hash_verified",
+            voucher_id=v.id, user_id=user.id, action="deleted",
         ))
         db.session.add(VoucherAuditLog(
             voucher_id=v.id, user_id=user.id, action="orphaned",

@@ -185,19 +185,6 @@ class TestSoftDeletedHiddenFromQueries:
         assert "証憑が見つかりません" in body_after
         assert voucher_img_path not in body_after
 
-    def test_hidden_from_verify_endpoint(
-        self, logged_in_client, db, user, mock_storage, reset_limiter,
-    ):
-        v = _make_voucher(db, user)
-        logged_in_client.post(
-            f"/vouchers/{v.id}/delete", follow_redirects=False,
-        )
-        # 論理削除後の verify は 404
-        resp = logged_in_client.post(
-            f"/vouchers/{v.id}/verify", follow_redirects=False,
-        )
-        assert resp.status_code == 404
-
 
 class TestEntryActiveVouchers:
     """`JournalEntry.active_vouchers` リレーションシップが削除済 Voucher
@@ -247,7 +234,7 @@ class TestApiVoucherLogsAfterSoftDelete:
         # 通常の Voucher 作成 + AuditLog 1 件
         v = _make_voucher(db, user)
         app_db.session.add(VoucherAuditLog(
-            voucher_id=v.id, user_id=user.id, action="hash_verified",
+            voucher_id=v.id, user_id=user.id, action="orphaned",
         ))
         app_db.session.commit()
 
@@ -270,5 +257,5 @@ class TestApiVoucherLogsAfterSoftDelete:
         assert resp.status_code == 200
         data = resp.get_json()
         actions = {log["action"] for log in data["logs"]}
-        assert "hash_verified" in actions
+        assert "orphaned" in actions
         assert "deleted" in actions
