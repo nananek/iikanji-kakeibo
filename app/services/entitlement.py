@@ -49,7 +49,7 @@ class BillingClient(ABC):
 
     @abstractmethod
     def get_auditor_capacity(self, user) -> Optional[int]:
-        """監査者プラン契約者の顧客数上限。
+        """顧問プラン契約者の顧客数上限。
 
         - `None`: 無制限 (Unlimited プラン or セルフホスト)
         - `int`: 上限値 (Small=5, Medium=15)
@@ -85,7 +85,7 @@ class FreeOnlyBillingClient(BillingClient):
     """無償機能のみモード。billing コンテナがない環境向け実装。
 
     全 `feature_key` で False を返すため、`paid_llm` (自家ホスト LLM) /
-    `voucher_storage` (証憑画像の永続保管) / `audit_seat` (監査枠) /
+    `voucher_storage` (証憑画像の永続保管) / `audit_seat` (顧問枠) /
     `timestamp_seal` (TSA) 等の有償機能は誰も使えない。基本の家計簿機能
     (出納帳・仕訳・取込・レポート・お問い合わせ・退会等) のみ提供する。
 
@@ -141,7 +141,7 @@ def has_entitlement(user, feature_key: FeatureKey) -> bool:
 
 
 def get_auditor_capacity(user) -> Optional[int]:
-    """監査者プランの顧客数上限。"""
+    """顧問プランの顧客数上限。"""
     return get_billing_client().get_auditor_capacity(user)
 
 

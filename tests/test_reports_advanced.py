@@ -1,6 +1,6 @@
 """レポート (reports.py) の高度なエッジケース
 
-期間範囲指定、ユーザー設定 (pref)、Lv2 監査者制限、決算月、
+期間範囲指定、ユーザー設定 (pref)、Lv2 顧問制限、決算月、
 キャッシュ vs 非キャッシュ、closing entries、事業科目折りたたみ等を網羅。
 """
 
@@ -16,7 +16,7 @@ from tests.conftest import make_journal
 
 @pytest.fixture
 def lv2_setup(db, client, user, auditor, accounts):
-    """Lv2 監査ユーザーで user を代理閲覧"""
+    """Lv2 顧問ユーザーで user を代理閲覧"""
     grant = AuditGrant(
         owner_user_id=user.id,
         auditor_user_id=auditor.id,

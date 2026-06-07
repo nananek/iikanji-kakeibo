@@ -1,4 +1,4 @@
-"""監査サービス (services/audit.py) のテスト
+"""顧問サービス (services/audit.py) のテスト
 
 既存の test_audit.py は IDOR / 公開科目フィルタ等のセッション込みのフロー。
 こちらはセッション state 切替・get_acting_as_user / require_permission /
@@ -188,7 +188,7 @@ class TestCheckAuditorRedirect:
 
     def test_lv1_on_tax_page_no_redirect(self, client, auditor, db, user, accounts):
         # 実 client で reports.tax にアクセスしてリダイレクトが起きないことを間接的に確認
-        # Lv1 監査ユーザー＋ acting_as = personal user
+        # Lv1 顧問ユーザー＋ acting_as = personal user
         from app.models.audit import AuditGrant
         grant = AuditGrant(
             owner_user_id=user.id,

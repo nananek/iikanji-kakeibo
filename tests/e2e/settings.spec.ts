@@ -70,10 +70,10 @@ test.describe("設定トップページ", () => {
     await expect(page).toHaveURL(/\/settings\/fiscal/);
   });
 
-  test("personalユーザーに監査アクセス管理が表示される", async ({ page }) => {
+  test("personalユーザーに顧問アクセス管理が表示される", async ({ page }) => {
     await page.goto(`${BASE_URL}/settings/`);
     await expect(
-      page.locator("a.card", { hasText: "監査アクセス管理" })
+      page.locator("a.card", { hasText: "顧問アクセス管理" })
     ).toBeVisible();
   });
 

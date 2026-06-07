@@ -1,4 +1,4 @@
-"""監査枠 (audit_seat) エンタイトルメントゲートのテスト (Phase 2 #67)。
+"""顧問枠 (audit_seat) エンタイトルメントゲートのテスト (Phase 2 #67)。
 
 - `/settings/audit/add` で `AuditGrant` を作成する際、auditor または
   owner のいずれかが `audit_seat` を持っている必要がある
@@ -69,7 +69,7 @@ class TestAuditAddGate:
     def test_allowed_when_only_auditor_has_seat(
         self, db, logged_in_client, user, accounts, auditor, monkeypatch
     ):
-        """監査者課金モデル: auditor 側だけで OK"""
+        """顧問課金モデル: auditor 側だけで OK"""
         _patch_billing(monkeypatch, auditor_ok=True, owner_ok=False)
 
         resp = logged_in_client.post(
@@ -82,7 +82,7 @@ class TestAuditAddGate:
     def test_allowed_when_only_owner_has_seat(
         self, db, logged_in_client, user, accounts, auditor, monkeypatch
     ):
-        """被監査者課金モデル: owner (current_user) 側だけで OK"""
+        """顧問先課金モデル: owner (current_user) 側だけで OK"""
         _patch_billing(monkeypatch, auditor_ok=False, owner_ok=True)
 
         resp = logged_in_client.post(
@@ -127,7 +127,7 @@ class TestActingAsAuditorGate:
     def test_acting_blocked_when_entitlement_lost(
         self, db, client, user, accounts, auditor, monkeypatch
     ):
-        """代理閲覧中に両者とも `audit_seat` 失効 → セッションクリア + 監査ダッシュボードへ"""
+        """代理閲覧中に両者とも `audit_seat` 失効 → セッションクリア + 顧問ダッシュボードへ"""
         grant = AuditGrant(
             owner_user_id=user.id, auditor_user_id=auditor.id,
             permission_level=3,

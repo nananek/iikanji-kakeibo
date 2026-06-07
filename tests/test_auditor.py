@@ -1,4 +1,4 @@
-"""監査ユーザー (auditor.py) のテスト"""
+"""顧問ユーザー (auditor.py) のテスト"""
 
 from app.models.audit import AuditGrant
 
@@ -44,7 +44,7 @@ class TestSwitch:
         assert resp.status_code in (302, 401)
 
     def test_idor_other_auditor_grant(self, db, client, auditor, user):
-        # 別の監査ユーザーへの grant
+        # 別の顧問ユーザーへの grant
         from app.models.user import User
         other_auditor = User(username="other_aud", email="o@x.com",
                               user_type="auditor")

@@ -1,4 +1,4 @@
-"""監査招待メール送信のテスト (Phase 6 #71)。
+"""顧問招待メール送信のテスト (Phase 6 #71)。
 
 `audit_add` で AuditGrant 作成後に `send_email("audit_invitation", ...)`
 が呼ばれることを確認。`ConsoleMailBackend` のダンプを `capsys` で
@@ -24,12 +24,12 @@ class TestAuditInvitationMail:
         assert AuditGrant.query.count() == 1
 
         out = capsys.readouterr().out
-        # 監査者のメールアドレス宛に送信される
+        # 顧問のメールアドレス宛に送信される
         assert f"To:   {auditor.email}" in out
         # 件名に owner のユーザー名 + MAIL_FROM_NAME (= "いいかんじ™家計簿")
         # が含まれる
         assert f"{user.username}" in out
-        assert "監査アクセスの招待" in out
+        assert "顧問アクセスの招待" in out
         # 件名のブランド名プレフィックスが config 由来
         assert "[いいかんじ™家計簿]" in out
         # 本文の権限レベル (PERMISSION_LABELS の値を直接参照)

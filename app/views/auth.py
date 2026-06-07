@@ -311,7 +311,7 @@ def register_auditor():
             invitation.mark_used(user.id)
         db.session.commit()
 
-        flash("監査用アカウントを作成しました。ログインしてください。", "success")
+        flash("顧問用アカウントを作成しました。ログインしてください。", "success")
         return redirect(url_for("auth.login_auditor"))
 
     return render_template("auth/register_auditor.html", form=form)

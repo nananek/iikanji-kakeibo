@@ -26,7 +26,7 @@ class TestRegistrationEnabledDefault:
     def test_login_auditor_page_shows_register_link(self, client):
         resp = client.get("/login/auditor")
         assert resp.status_code == 200
-        assert "監査用アカウント登録" in resp.get_data(as_text=True)
+        assert "顧問用アカウント登録" in resp.get_data(as_text=True)
 
     def test_post_register_creates_user(self, client, db, account_types):
         resp = client.post(
@@ -96,7 +96,7 @@ class TestRegistrationDisabled:
         monkeypatch.setitem(app.config, "REGISTRATION_ENABLED", False)
         resp = client.get("/login/auditor")
         assert resp.status_code == 200
-        assert "監査用アカウント登録" not in resp.get_data(as_text=True)
+        assert "顧問用アカウント登録" not in resp.get_data(as_text=True)
 
     def test_existing_user_can_still_login(self, client, user, app, monkeypatch):
         monkeypatch.setitem(app.config, "REGISTRATION_ENABLED", False)

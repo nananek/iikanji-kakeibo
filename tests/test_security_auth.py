@@ -54,7 +54,7 @@ class TestLogin:
         assert resp_no_user.status_code == resp_wrong_pw.status_code == 200
 
     def test_auditor_cannot_use_personal_login(self, client, db, auditor):
-        """監査ユーザーは /login からログインできない"""
+        """顧問ユーザーは /login からログインできない"""
         resp = client.post("/login", data={
             "username": "auditor",
             "password": "password123",
@@ -68,7 +68,7 @@ class TestLogin:
 
 
 class TestAuditorLogin:
-    """POST /login/auditor — 監査ユーザーログイン"""
+    """POST /login/auditor — 顧問ユーザーログイン"""
 
     def test_auditor_login_success(self, client, db, auditor):
         resp = client.post("/login/auditor", data={

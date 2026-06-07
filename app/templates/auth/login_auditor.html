@@ -1,13 +1,13 @@
 {% extends "base.html" %}
-{% block title %}監査ログイン - いいかんじ™家計簿{% endblock %}
+{% block title %}顧問ログイン - いいかんじ™家計簿{% endblock %}
 
 {% block content %}
 <div class="row justify-content-center">
   <div class="col-md-5 col-lg-4">
     <div class="card shadow-sm mt-5">
       <div class="card-body p-4">
-        <h3 class="text-center mb-4"><i class="bi bi-shield-check"></i> 監査ログイン</h3>
-        <p class="text-center text-muted small mb-3">税理士・公認会計士向け</p>
+        <h3 class="text-center mb-4"><i class="bi bi-shield-check"></i> 顧問ログイン</h3>
+        <p class="text-center text-muted small mb-3">税理士等向け</p>
         <form method="POST">
           {{ form.hidden_tag() }}
           <div class="mb-3">
@@ -30,7 +30,7 @@
         {% if config.REGISTRATION_ENABLED %}
           {% if not config.REGISTRATION_INVITE_ONLY %}
           <div class="text-center mt-3">
-            <a href="{{ url_for('auth.register_auditor') }}">監査用アカウント登録</a>
+            <a href="{{ url_for('auth.register_auditor') }}">顧問用アカウント登録</a>
           </div>
           {% else %}
           <div class="text-center mt-3">

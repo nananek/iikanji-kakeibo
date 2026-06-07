@@ -4,7 +4,7 @@ from app.extensions import db
 
 
 class AuditGrant(db.Model):
-    """監査用アカウントへのアクセス付与"""
+    """顧問用アカウントへのアクセス付与"""
 
     __tablename__ = "audit_grants"
 
@@ -43,7 +43,7 @@ class AuditGrant(db.Model):
 
 
 class AuditGrantAccount(db.Model):
-    """Lv2監査で公開する科目"""
+    """Lv2顧問で公開する科目"""
 
     __tablename__ = "audit_grant_accounts"
 

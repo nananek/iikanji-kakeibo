@@ -53,7 +53,7 @@
          `plan_summary.active_features` のループ表示に置換する。 #}
       <p class="card-text text-muted small mb-0">
         billing コンテナを介さずに稼働しており、すべての有償機能 (自家ホスト
-        LLM・証憑保管・タイムスタンプ・監査枠) を制限なく利用できます。
+        LLM・証憑保管・タイムスタンプ・顧問枠) を制限なく利用できます。
       </p>
     {% elif plan_summary.mode == 'free_only' %}
       <h6 class="card-title mb-2">
@@ -62,7 +62,7 @@
       <p class="card-text text-muted small mb-0">
         本サイトでは現状、無償の基本機能 (出納帳・仕訳・取込・レポート・
         確定申告集計) のみ提供しています。自家ホスト LLM・証憑画像の
-        永続保管・監査者枠・タイムスタンプ等の有償機能は本サイトの
+        永続保管・顧問枠・タイムスタンプ等の有償機能は本サイトの
         運用範囲外です。
       </p>
     {% else %}
@@ -172,8 +172,8 @@
   <div class="col">
     <a href="{{ url_for('settings.audit') }}" class="card h-100 text-decoration-none shadow-sm">
       <div class="card-body">
-        <h6 class="card-title"><i class="bi bi-shield-check text-primary"></i> 監査アクセス管理</h6>
-        <p class="card-text text-muted small mb-0">税理士・会計士への閲覧権限の付与</p>
+        <h6 class="card-title"><i class="bi bi-shield-check text-primary"></i> 顧問アクセス管理</h6>
+        <p class="card-text text-muted small mb-0">税理士等への閲覧権限の付与</p>
       </div>
     </a>
   </div>
