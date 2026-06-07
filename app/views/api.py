@@ -680,42 +680,6 @@ def api_voucher_image(voucher_id):
         return jsonify({"error": "画像ファイルが見つかりません。"}), 404
 
 
-@bp.route("/vouchers/<int:voucher_id>/verify", methods=["GET"])
-@api_key_required(scope="journals:read")
-def api_voucher_verify(voucher_id):
-    """証憑ハッシュ検証 API"""
-    voucher = Voucher.active().filter_by(
-        id=voucher_id, user_id=g.api_user_id
-    ).first()
-    if not voucher:
-        return jsonify({"error": "証憑が見つかりません。"}), 404
-
-    if not voucher.file_hash:
-        return jsonify({"ok": True, "verified": None, "message": "ハッシュ未記録"})
-
-    try:
-        image_data = get_storage_backend().get(voucher.image_key)
-    except FileNotFoundError:
-        return jsonify({"error": "画像ファイルが見つかりません。"}), 404
-
-    computed = hashlib.sha256(image_data).hexdigest()
-    verified = computed == voucher.file_hash
-
-    db.session.add(VoucherAuditLog(
-        voucher_id=voucher.id,
-        user_id=g.api_user_id,
-        action="hash_verified" if verified else "hash_mismatch",
-    ))
-    db.session.commit()
-
-    return jsonify({
-        "ok": True,
-        "verified": verified,
-        "stored_hash": voucher.file_hash,
-        "computed_hash": computed,
-    })
-
-
 @bp.route("/vouchers/<int:voucher_id>/logs", methods=["GET"])
 @api_key_required(scope="journals:read")
 def api_voucher_logs(voucher_id):
