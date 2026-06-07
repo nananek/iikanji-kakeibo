@@ -67,7 +67,7 @@ jobs:
             --test tests/static/js/*.mjs
       - name: Upload coverage report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: js-crypto-coverage
           path: js-coverage.lcov
