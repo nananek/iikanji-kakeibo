@@ -51,6 +51,37 @@ body {
   font-weight: bold;
 }
 
+/*
+ * ナビバー: lg(992px)で横並び展開するが、項目数が多くフルラベルだと
+ * 約992〜1359pxで2行に折り返して崩れる。この帯ではラベルを隠して
+ * アイコンのみにし1行を維持する（意味はtitleツールチップで補助）。
+ * 1400px以上ではフルラベルを表示。992px未満は従来通りハンバーガー。
+ */
+@media (min-width: 992px) and (max-width: 1399.98px) {
+  .navbar-expand-lg .navbar-nav .nav-link .nav-label {
+    display: none;
+  }
+}
+
+/*
+ * ユーザー名は任意長になり得るため、フルラベル表示時はナビバーを
+ * 壊さないよう省略記号で頭打ちにする（フル名は title ツールチップ）。
+ * 横並びが詰まる帯では狭めに、十分広い画面では緩める。
+ */
+.navbar .nav-username {
+  display: inline-block;
+  max-width: 7rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+@media (min-width: 1600px) {
+  .navbar .nav-username {
+    max-width: 16rem;
+  }
+}
+
 .card {
   border: none;
   border-radius: 0.5rem;
