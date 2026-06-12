@@ -1,5 +1,5 @@
 # === Build stage ===
-FROM python:3.14.5-alpine AS build
+FROM python:3.15.0b2-alpine AS build
 
 WORKDIR /app
 
@@ -9,7 +9,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
 
 # === Base runtime (shared) ===
-FROM python:3.14.5-alpine AS base
+FROM python:3.15.0b2-alpine AS base
 
 WORKDIR /app
 
