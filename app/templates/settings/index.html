@@ -20,6 +20,12 @@
         <span class="badge bg-warning text-dark">80% 以上使用中</span>
       {% endif %}
     </div>
+    {% if storage_summary.unlimited %}
+    <div class="d-flex justify-content-between align-items-baseline mb-1">
+      <strong>{{ storage_summary.used_mb }} MB</strong>
+      <small class="text-muted">/ 無制限</small>
+    </div>
+    {% else %}
     <div class="d-flex justify-content-between align-items-baseline mb-1">
       <strong>{{ storage_summary.used_mb }} MB</strong>
       <small class="text-muted">/ {{ storage_summary.quota_mb }} MB ({{ [storage_summary.percentage, 100] | min }}%)</small>
@@ -35,6 +41,7 @@
     <p class="text-muted small mt-2 mb-0">
       不要な証憑を削除するか、上位プランへの変更をご検討ください。
     </p>
+    {% endif %}
     {% endif %}
   </div>
 </div>

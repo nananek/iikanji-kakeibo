@@ -114,7 +114,11 @@ class Config:
     # 証憑画像のストレージクオータ (バイト)。`voucher_storage` 有償プラン
     # 契約者の上限値。Phase 5 #70 のデフォルト 500 MB。セルフホスト運用
     # では `UnlimitedBillingClient` で entitlement が常に True を返すため
-    # この上限のみが効く。
-    STORAGE_QUOTA_BYTES_DEFAULT = int(
+    # この上限のみが効く。`0` 以下を設定すると無制限 (`None`) 扱いになる
+    # — セルフホストで容量上限自体を撤廃したい場合に使う。
+    _storage_quota_bytes = int(
         os.environ.get("STORAGE_QUOTA_BYTES_DEFAULT", str(500 * 1024 * 1024))
+    )
+    STORAGE_QUOTA_BYTES_DEFAULT = (
+        _storage_quota_bytes if _storage_quota_bytes > 0 else None
     )

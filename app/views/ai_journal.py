@@ -25,7 +25,7 @@ from app.services.storage import (
     store_image_with_thumbnail,
 )
 from app.services.storage_quota import (
-    QuotaExceededError, check_quota, get_quota_bytes, get_used_bytes,
+    QuotaExceededError, check_quota, is_over_quota,
     maybe_send_quota_warning, record_delete, record_upload,
 )
 from app.views.helpers import safe_user_error
@@ -164,7 +164,7 @@ def analyze():
     # TOCTOU 検証をスキップする。これをやらないと、別ユーザーが先に上限近く
     # まで埋めた状態で当該リクエストが超過判定 → record_delete で他ユーザー
     # の計上を誤減算する経路ができてしまう。
-    if record_upload_succeeded and get_used_bytes(owner) > get_quota_bytes(owner):
+    if record_upload_succeeded and is_over_quota(owner):
         from flask import current_app
         storage = get_storage_backend()
         for k in (key, make_thumbnail_key(key)):

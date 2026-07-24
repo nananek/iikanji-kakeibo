@@ -36,18 +36,17 @@ class QuotaExceededError(Exception):
         self.user_message = user_message
 
 
-def get_quota_bytes(user) -> int:
-    """ユーザーの容量上限 (bytes)。
+def get_quota_bytes(user) -> int | None:
+    """ユーザーの容量上限 (bytes)。`None` は無制限を意味する。
 
     現状は全ユーザー共通の `STORAGE_QUOTA_BYTES_DEFAULT` 値を返す。
     将来 `storage_extra` 等の追加プランで per-user 上限を実装する場合の
     拡張点として `user` 引数を保持している。
     """
-    return int(
-        current_app.config.get(
-            "STORAGE_QUOTA_BYTES_DEFAULT", 500 * 1024 * 1024
-        )
+    value = current_app.config.get(
+        "STORAGE_QUOTA_BYTES_DEFAULT", 500 * 1024 * 1024
     )
+    return int(value) if value is not None else None
 
 
 def get_used_bytes(user) -> int:
@@ -65,17 +64,33 @@ def get_storage_summary(user):
     `{% if storage_summary %}` でセクションごと非表示にする。
 
     返り値 (契約者向け):
-        - `used_bytes` / `quota_bytes`: 現在使用量 / 上限 (bytes)
-        - `used_mb` / `quota_mb`: 人間向け表示用 (小数 1 桁)
+        - `used_bytes` / `quota_bytes`: 現在使用量 / 上限 (bytes)。
+          `quota_bytes` は無制限設定時 `None`。
+        - `used_mb` / `quota_mb`: 人間向け表示用 (小数 1 桁)。`quota_mb` は
+          無制限設定時 `None`。
         - `percentage`: 通常 0〜100 の数値 (小数 1 桁)。TOCTOU 等で
           `used_bytes > quota_bytes` になった場合は 100 を超え得るため、
           テンプレート側で `[..., 100] | min` でキャップして表示する。
-        - `level`: `"ok"` (<80%) / `"warning"` (80–94.9%) / `"critical"` (≥95%)
+          無制限設定時は常に `0`。
+        - `level`: `"ok"` (<80%) / `"warning"` (80–94.9%) / `"critical"` (≥95%)。
+          無制限設定時は常に `"ok"`。
+        - `unlimited`: 容量上限が撤廃されているかどうか。
     """
     if not has_entitlement(user, "voucher_storage"):
         return None
     used = get_used_bytes(user)
     quota = get_quota_bytes(user)
+    mb = 1024 * 1024
+    if quota is None:
+        return {
+            "used_bytes": used,
+            "quota_bytes": None,
+            "used_mb": round(used / mb, 1),
+            "quota_mb": None,
+            "percentage": 0,
+            "level": "ok",
+            "unlimited": True,
+        }
     pct = round((used / quota) * 100, 1) if quota > 0 else 0
     if pct >= 95:
         level = "critical"
@@ -83,7 +98,6 @@ def get_storage_summary(user):
         level = "warning"
     else:
         level = "ok"
-    mb = 1024 * 1024
     return {
         "used_bytes": used,
         "quota_bytes": quota,
@@ -91,6 +105,7 @@ def get_storage_summary(user):
         "quota_mb": round(quota / mb, 1),
         "percentage": pct,
         "level": level,
+        "unlimited": False,
     }
 
 
@@ -110,14 +125,28 @@ def check_quota(user, incoming_size: int) -> None:
         raise QuotaExceededError(
             "証憑画像の永続保管には有償プラン (voucher_storage) が必要です。"
         )
-    used = get_used_bytes(user)
     quota = get_quota_bytes(user)
+    if quota is None:
+        return
+    used = get_used_bytes(user)
     if used + incoming_size > quota:
         raise QuotaExceededError(
             f"容量上限 ({quota // (1024 * 1024)} MB) を超えます。"
             f"現在 {used // (1024 * 1024)} MB / "
             f"{quota // (1024 * 1024)} MB 使用中。"
         )
+
+
+def is_over_quota(user) -> bool:
+    """TOCTOU 再検証用: 現在の使用量が上限を超えているか。
+
+    アップロード確定直前の楽観的再検証 (`get_used_bytes` > 上限) で使う。
+    無制限設定 (`get_quota_bytes` が `None`) の場合は常に `False`。
+    """
+    quota = get_quota_bytes(user)
+    if quota is None:
+        return False
+    return get_used_bytes(user) > quota
 
 
 def _upsert_storage_usage(user_id: int, delta: int) -> None:
@@ -211,7 +240,7 @@ def maybe_send_quota_warning(user) -> None:
     try:
         used = get_used_bytes(user)
         quota = get_quota_bytes(user)
-        if quota <= 0:
+        if quota is None or quota <= 0:
             return
         pct = (used / quota) * 100
         prev_level = user.last_quota_warning_level

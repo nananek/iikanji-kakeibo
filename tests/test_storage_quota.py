@@ -8,6 +8,7 @@ from app.services.storage_quota import (
     check_quota,
     get_quota_bytes,
     get_used_bytes,
+    is_over_quota,
     record_delete,
     record_upload,
 )
@@ -46,6 +47,11 @@ class TestGetQuotaBytes:
         monkeypatch.setitem(app.config, "STORAGE_QUOTA_BYTES_DEFAULT", 1024)
         with app.app_context():
             assert get_quota_bytes(user) == 1024
+
+    def test_none_config_means_unlimited(self, app, user, monkeypatch):
+        monkeypatch.setitem(app.config, "STORAGE_QUOTA_BYTES_DEFAULT", None)
+        with app.app_context():
+            assert get_quota_bytes(user) is None
 
 
 def _patch_entitlement(monkeypatch, *, has_voucher_storage: bool):
@@ -115,6 +121,51 @@ class TestCheckQuota:
         も True で扱われ、上限内なら通過する。"""
         with app.app_context():
             check_quota(user, incoming_size=10 * MB)
+
+    def test_unlimited_quota_passes_regardless_of_usage(
+        self, app, db, user, monkeypatch,
+    ):
+        """`STORAGE_QUOTA_BYTES_DEFAULT=None` (無制限) では既に大量使用
+        していても拒否されない。"""
+        monkeypatch.setitem(app.config, "STORAGE_QUOTA_BYTES_DEFAULT", None)
+        db.session.add(StorageUsage(user_id=user.id, used_bytes=10_000 * MB))
+        db.session.commit()
+        with app.app_context():
+            check_quota(user, incoming_size=10_000 * MB)
+
+    def test_unlimited_still_rejects_without_voucher_storage(
+        self, app, db, user, monkeypatch,
+    ):
+        """無制限設定でも `voucher_storage` entitlement 自体は依然として
+        必要 (無制限は上限撤廃であってプラン契約要件の撤廃ではない)。"""
+        monkeypatch.setitem(app.config, "STORAGE_QUOTA_BYTES_DEFAULT", None)
+        _patch_entitlement(monkeypatch, has_voucher_storage=False)
+        with app.app_context():
+            with pytest.raises(QuotaExceededError, match="有償プラン"):
+                check_quota(user, incoming_size=1)
+
+
+class TestIsOverQuota:
+    def test_false_under_quota(self, app, db, user):
+        db.session.add(StorageUsage(user_id=user.id, used_bytes=100 * MB))
+        db.session.commit()
+        with app.app_context():
+            assert is_over_quota(user) is False
+
+    def test_true_over_quota(self, app, db, user):
+        db.session.add(StorageUsage(user_id=user.id, used_bytes=600 * MB))
+        db.session.commit()
+        with app.app_context():
+            assert is_over_quota(user) is True
+
+    def test_false_when_unlimited_regardless_of_usage(
+        self, app, db, user, monkeypatch,
+    ):
+        monkeypatch.setitem(app.config, "STORAGE_QUOTA_BYTES_DEFAULT", None)
+        db.session.add(StorageUsage(user_id=user.id, used_bytes=10_000 * MB))
+        db.session.commit()
+        with app.app_context():
+            assert is_over_quota(user) is False
 
 
 class TestRecordUpload:
