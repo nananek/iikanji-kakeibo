@@ -17,12 +17,18 @@ permissions:
 jobs:
   claude-review:
     # Trigger conditions:
-    #   - any PR open/sync/reopen
+    #   - any PR open/sync/reopen **except Dependabot 起票分** ── Dependabot の
+    #     `pull_request` イベントには `CLAUDE_CODE_OAUTH_TOKEN` secret が渡らず
+    #     (GitHub が Dependabot 起票 workflow の secret を握る)、action が即失敗して
+    #     恒常的に偽 FAILURE check を出すため skip する。依存 bump の実ゲートは
+    #     ci / dependency-review が担う。人が `@claude` を付ければ issue_comment
+    #     経路 (下記、actor は人) で Dependabot PR でもレビュー可能。
     #   - PR review comment mentioning @claude (= 人による mention のみ、
     #     bot 投稿は除外して self-trigger spam を防ぐ)
     #   - issue/PR comment mentioning @claude (同上)
     if: >-
-      github.event_name == 'pull_request' ||
+      (github.event_name == 'pull_request' &&
+       github.actor != 'dependabot[bot]') ||
       (github.event_name == 'pull_request_review_comment' &&
        github.event.comment.user.type != 'Bot' &&
        contains(github.event.comment.body, '@claude')) ||
