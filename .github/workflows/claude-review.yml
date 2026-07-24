@@ -43,8 +43,24 @@ jobs:
           # `gh pr comment` を allow して Claude が直接 PR conversation に
           # 投稿できるようにする。default では Bash tool が制限されてて、
           # action 内蔵の buffered inline comment 経路を Claude が選ばない
-          # ため silent で終わる事案があった。
-          claude_args: '--allowed-tools Bash(gh pr comment:*),Bash(gh pr review:*),Bash(gh api:*)'
+          # ため silent で終わる事案があった (iikanji-kakeibo 由来の知見)。
+          #
+          # 値全体を **二重引用符で囲む** こと。`claude_args` は shell 風に
+          # トークン化されるため、`Bash(gh pr comment:*)` の内部スペースを
+          # 引用符で守らないと `Bash(gh` / `pr` / `comment:*)` に単語分割され、
+          # 渡される allowed-tools が壊れて `gh pr comment` が拒否される
+          # (= review は走るが verdict を post できず silent 終了。
+          # PR #439 で `permission_denials_count: 2` として実害を確認)。
+          # 引用符で囲めば 1 トークンとして `--allowed-tools` に渡り、CLI 側で
+          # comma 分割されてスペース入りパターンが保たれる。
+          #
+          # `gh pr diff` / `gh pr view` も allow する ── review には差分の読み出し
+          # が要る。従来は読み取りに `gh api` しか許可しておらず、かつ prompt が
+          # PR 番号を `gh pr list --head <branch>` で取れと指示していたが `gh pr
+          # list` は allowlist 外で拒否される。番号を得られないまま verdict を
+          # post せず silent 終了する事案があった。対策として PR 番号は prompt に
+          # `${{ }}` で直接注入し (下記 Output 節)、`gh pr list` 依存を消した。
+          claude_args: '--allowed-tools "Bash(gh pr comment:*),Bash(gh pr review:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh api:*)"'
           prompt: |
             この repo (`iikanji-kakeibo`) は Flask + PostgreSQL + Bootstrap 5
             の個人向け複式簿記家計簿アプリ。`server/` がサーバー本体、
@@ -141,18 +157,22 @@ jobs:
             - 依存ライブラリ追加時、GPL/AGPL/SSPL 系が混入していないか
 
             **Output (必須)**:
-            review summary を **必ず top-level PR comment として post** すること。
-            silent で終わらない。手順:
+            **対象 PR は #${{ github.event.pull_request.number || github.event.issue.number }}**。
+            この番号を以下すべての `gh` コマンドで使う ── **`gh pr list` で探さない**
+            (allowlist 外で拒否され、番号を得られず silent 終了する)。
 
-            1. Review 内容を markdown でまとめる (= verdict 行 + 検証項目別
-               の OK/NG 表 + 補足説明)
-            2. 投稿:
-               `gh pr comment <PR_NUMBER> --body "<review markdown>"`
-               (PR_NUMBER は `gh pr list --head <branch> --json number` で取得)
-            3. 1 行目に **verdict: approve / request-changes / block** の
+            手順 (**silent で終わらないこと**):
+
+            1. 差分を取得:
+               `gh pr diff ${{ github.event.pull_request.number || github.event.issue.number }}`
+            2. review を markdown でまとめる (= verdict 行 + 検証項目別の OK/NG 表
+               + 補足説明)
+            3. **top-level comment として post**:
+               `gh pr comment ${{ github.event.pull_request.number || github.event.issue.number }} --body "<review markdown>"`
+            4. 1 行目に **verdict: approve / request-changes / block** の
                いずれかを必ず入れる
-            4. 行依存の finding があれば追加で
-               `gh pr review <N> --comment --body "..."` で個別 line comment
-               (= 任意、無くてもよい)
+            5. 行依存の finding があれば追加で
+               `gh pr review ${{ github.event.pull_request.number || github.event.issue.number }} --comment --body "..."`
+               で個別 line comment (= 任意、無くてもよい)
 
             日本語で書くこと。
