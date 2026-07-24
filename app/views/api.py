@@ -23,7 +23,7 @@ from app.services.storage import (
     store_image_with_thumbnail,
 )
 from app.services.storage_quota import (
-    QuotaExceededError, check_quota, get_quota_bytes, get_used_bytes,
+    QuotaExceededError, check_quota, is_over_quota,
     maybe_send_quota_warning, record_delete, record_upload,
 )
 from app.services.voucher import create_voucher_from_draft
@@ -405,7 +405,7 @@ def ai_analyze():
     # スキップする。検証走ると別ユーザーが先に上限近くまで埋めた状況で
     # 超過判定 → record_delete で他ユーザーの計上を誤減算する経路が
     # できてしまう。
-    if record_upload_succeeded and get_used_bytes(owner) > get_quota_bytes(owner):
+    if record_upload_succeeded and is_over_quota(owner):
         from flask import current_app
         storage = get_storage_backend()
         for k in (key, make_thumbnail_key(key)):

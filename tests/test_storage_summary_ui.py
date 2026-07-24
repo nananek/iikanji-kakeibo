@@ -67,6 +67,19 @@ class TestGetStorageSummary:
             summary = get_storage_summary(user)
         assert summary["level"] == expected_level
 
+    def test_unlimited_quota(self, app, db, user, monkeypatch):
+        monkeypatch.setitem(app.config, "STORAGE_QUOTA_BYTES_DEFAULT", None)
+        db.session.add(StorageUsage(user_id=user.id, used_bytes=10_000 * MB))
+        db.session.commit()
+        with app.app_context():
+            summary = get_storage_summary(user)
+        assert summary["unlimited"] is True
+        assert summary["quota_bytes"] is None
+        assert summary["quota_mb"] is None
+        assert summary["percentage"] == 0
+        assert summary["level"] == "ok"
+        assert summary["used_mb"] == 10_000.0
+
 
 class TestSettingsPageStorageSection:
     """設定画面に使用容量セクションが描画される"""
@@ -121,6 +134,21 @@ class TestSettingsPageStorageSection:
         body = resp.get_data(as_text=True)
         assert "ストレージ使用量" not in body
         assert "MB / " not in body  # 「X.X MB / Y.Y MB」表示が出ない
+
+    def test_unlimited_shows_no_progress_bar_or_badge(
+        self, logged_in_client, user, db, app, monkeypatch,
+    ):
+        monkeypatch.setitem(app.config, "STORAGE_QUOTA_BYTES_DEFAULT", None)
+        db.session.add(StorageUsage(user_id=user.id, used_bytes=10_000 * MB))
+        db.session.commit()
+        resp = logged_in_client.get("/settings/")
+        assert resp.status_code == 200
+        body = resp.get_data(as_text=True)
+        assert "ストレージ使用量" in body
+        assert "無制限" in body
+        assert "progress" not in body
+        assert "残量わずか" not in body
+        assert "80% 以上使用中" not in body
 
     def test_section_hidden_when_billing_unimplemented(
         self, logged_in_client, user, app, monkeypatch

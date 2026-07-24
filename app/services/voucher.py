@@ -15,8 +15,7 @@ from app.services.storage import (
 from app.services.storage_quota import (
     QuotaExceededError,
     check_quota,
-    get_quota_bytes,
-    get_used_bytes,
+    is_over_quota,
     maybe_send_quota_warning,
     record_upload,
 )
@@ -107,7 +106,7 @@ def create_voucher_from_upload(
     db.session.flush()
 
     # 楽観的再検証: 並行アップロードで合算が上限超過なら全 DB 変更を rollback
-    if get_used_bytes(user) > get_quota_bytes(user):
+    if is_over_quota(user):
         from flask import current_app
         db.session.rollback()  # Voucher / AuditLog / StorageUsage 加算を全部巻き戻し
         # ストレージは別系統なので明示的に削除 (best-effort)
