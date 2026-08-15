@@ -547,3 +547,205 @@ class TestOAuthTokens:
     def test_get(self, logged_in_client, accounts):
         resp = logged_in_client.get("/settings/oauth-tokens")
         assert resp.status_code == 200
+
+
+# =====================================================================
+# カバレッジ改善タスクで追加したテスト
+# =====================================================================
+
+
+class TestTotpEdge:
+    def test_cancel_when_enabled_warns(self, db, logged_in_client, user, accounts):
+        """有効化済み TOTP のキャンセルは警告して拒否"""
+        from tests.conftest import totp_code_for
+        from app.services import totp as totp_svc
+        user.totp_secret_encrypted = totp_svc.encrypt_secret(
+            totp_svc.generate_secret()
+        )
+        user.totp_enabled = True
+        user.totp_confirmed_at = datetime.now(timezone.utc)
+        user.totp_last_used_step = None
+        db.session.commit()
+        resp = logged_in_client.post("/settings/totp/cancel")
+        assert resp.status_code in (302, 303)
+        db.session.refresh(user)
+        assert user.totp_enabled is True
+
+    def test_disable_when_not_enabled_redirects(self, logged_in_client, accounts):
+        """TOTP 未設定時の無効化は何もせずリダイレクト"""
+        resp = logged_in_client.post("/settings/totp/disable", data={"password": "password123"})
+        assert resp.status_code in (302, 303)
+
+
+class TestFiscalCloseErrors:
+    def test_close_already_closed_redirect(self, db, logged_in_client, user, accounts):
+        """確定済みの再確定はエラーフラッシュ付きでリダイレクト"""
+        db.session.add(FiscalClose(user_id=user.id, year=2026, closed_period=0))
+        db.session.commit()
+        resp = logged_in_client.post("/settings/fiscal/close", data={
+            "year": "2026", "period": "0",
+        })
+        assert resp.status_code in (302, 303)
+
+    def test_close_htmx_error(self, db, logged_in_client, user, accounts):
+        """HX リクエストで確定エラーは 422 + HX-Trigger"""
+        db.session.add(FiscalClose(user_id=user.id, year=2026, closed_period=0))
+        db.session.commit()
+        resp = logged_in_client.post(
+            "/settings/fiscal/close",
+            data={"year": "2026", "period": "0"},
+            headers={"HX-Request": "true"},
+        )
+        assert resp.status_code == 422
+        assert "HX-Trigger" in resp.headers
+
+    def test_close_htmx_success_refresh(self, db, logged_in_client, user, accounts):
+        """HX リクエストの確定成功は 200 + HX-Refresh"""
+        resp = logged_in_client.post(
+            "/settings/fiscal/close",
+            data={"year": "2026", "period": "0"},
+            headers={"HX-Request": "true"},
+        )
+        assert resp.status_code == 200
+        assert resp.headers.get("HX-Refresh") == "true"
+
+    def test_close_ajax_error(self, db, logged_in_client, user, accounts):
+        """AJAX リクエストの確定エラーは 400 JSON"""
+        db.session.add(FiscalClose(user_id=user.id, year=2026, closed_period=0))
+        db.session.commit()
+        resp = logged_in_client.post(
+            "/settings/fiscal/close",
+            data={"year": "2026", "period": "0"},
+            headers={"X-Requested-With": "XMLHttpRequest"},
+        )
+        assert resp.status_code == 400
+        assert resp.get_json()["ok"] is False
+
+    def test_close_ajax_success(self, db, logged_in_client, user, accounts):
+        resp = logged_in_client.post(
+            "/settings/fiscal/close",
+            data={"year": "2026", "period": "0"},
+            headers={"X-Requested-With": "XMLHttpRequest"},
+        )
+        assert resp.status_code == 200
+        assert resp.get_json()["ok"] is True
+
+    def test_reopen_not_closed_redirect(self, db, logged_in_client, user, accounts):
+        """未確定期間の解除はエラーフラッシュ付きでリダイレクト"""
+        db.session.add(FiscalClose(user_id=user.id, year=2026, closed_period=0))
+        db.session.commit()
+        resp = logged_in_client.post("/settings/fiscal/reopen", data={
+            "year": "2026", "period": "2",
+        })
+        assert resp.status_code in (302, 303)
+
+    def test_reopen_htmx_success(self, db, logged_in_client, user, accounts):
+        db.session.add(FiscalClose(user_id=user.id, year=2026, closed_period=2))
+        db.session.commit()
+        resp = logged_in_client.post(
+            "/settings/fiscal/reopen",
+            data={"year": "2026", "period": "2"},
+            headers={"HX-Request": "true"},
+        )
+        assert resp.status_code == 200
+        assert resp.headers.get("HX-Refresh") == "true"
+
+    def test_reopen_ajax_error(self, db, logged_in_client, user, accounts):
+        resp = logged_in_client.post(
+            "/settings/fiscal/reopen",
+            data={"year": "2026", "period": "2"},
+            headers={"X-Requested-With": "XMLHttpRequest"},
+        )
+        assert resp.status_code == 400
+        assert resp.get_json()["ok"] is False
+
+    def test_open_year_blocked_by_earliest_close(
+        self, db, logged_in_client, user, accounts
+    ):
+        """最古の開設年度の期首が確定済みならそれ以前は開設不可"""
+        db.session.add(FiscalClose(user_id=user.id, year=2023, closed_period=0))
+        db.session.commit()
+        resp = logged_in_client.post("/settings/fiscal/open-year", data={
+            "year": "2022",
+        })
+        assert resp.status_code in (302, 303)
+        assert FiscalClose.query.filter_by(user_id=user.id, year=2022).count() == 0
+
+
+class TestAuditSettingsExtra:
+    def test_add_grant_self_rejected(
+        self, db, logged_in_client, user, accounts
+    ):
+        """自分自身 (auditor 型でない) への付与は対象外メッセージで拒否"""
+        # 自分と同じ username の auditor がいない場合は「見つかりません」経路
+        resp = logged_in_client.post("/settings/audit/add", data={
+            "username": user.username,
+            "permission_level": "3",
+        })
+        assert resp.status_code in (302, 303)
+        assert AuditGrant.query.count() == 0
+
+
+class TestTaxFormExtra:
+    def test_bulk_create_no_fields(self, logged_in_client, accounts):
+        """欄未選択の一括作成は警告してリダイレクト"""
+        resp = logged_in_client.post("/settings/tax-form/bulk-create", data={
+            "form_type": "general",
+        })
+        assert resp.status_code in (302, 303)
+
+
+class TestAiUsageFilters:
+    def test_invalid_filters_default(self, logged_in_client, accounts):
+        """不正な start/end/page はデフォルト値に倒れる"""
+        resp = logged_in_client.get(
+            "/settings/ai-usage?start=bad&end=also-bad&page=abc&page=0",
+        )
+        assert resp.status_code == 200
+
+    def test_zero_page_defaults(self, logged_in_client, accounts):
+        resp = logged_in_client.get("/settings/ai-usage?page=0")
+        assert resp.status_code == 200
+
+
+class TestAiConfigUpdateToLlama:
+    def test_switch_to_llama_cpp_saves_dummy_key(
+        self, db, logged_in_client, user, accounts
+    ):
+        """既存設定を llama.cpp に切り替えてキー空 → ダミーキー保存"""
+        from app.services.ai_receipt import encrypt_api_key, decrypt_api_key
+        cfg = UserAIConfig(
+            user_id=user.id, provider="openai",
+            api_key_encrypted=encrypt_api_key("orig-key"),
+            model_name="gpt-4o",
+        )
+        db.session.add(cfg)
+        db.session.commit()
+        resp = logged_in_client.post("/settings/ai/save", data={
+            "provider": "llama_cpp",
+            "api_key": "",
+            "model_name": "default",
+            "custom_prompt": "",
+            "base_url": "",
+        })
+        assert resp.status_code in (302, 303)
+        db.session.refresh(cfg)
+        assert cfg.provider == "llama_cpp"
+        assert decrypt_api_key(cfg.api_key_encrypted) == "_"
+
+
+class TestDeleteAccountFailure:
+    def test_service_failure_keeps_user(
+        self, logged_in_client, db, user, accounts
+    ):
+        """退会サービス例外時はエラーフラッシュ + ユーザー残存"""
+        from app.models.user import User
+        from unittest.mock import patch
+        with patch("app.services.account_deletion.delete_user_account",
+                   side_effect=RuntimeError("db exploded")):
+            resp = logged_in_client.post("/settings/delete-account", data={
+                "password": "password123",
+                "confirm": "y",
+            })
+        assert resp.status_code in (302, 303)
+        assert db.session.get(User, user.id) is not None
