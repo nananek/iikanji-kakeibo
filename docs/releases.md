@@ -5,6 +5,32 @@ title: リリースノート
 
 # リリースノート
 
+## v4.1.0
+
+**マイナーリリース** — 外部 AI プロバイダーとして「OpenAI 互換 API」に対応。テストカバレッジ改善と、その過程で発見したバグ修正 3 件を含む。
+
+### OpenAI 互換 API プロバイダー (PR #443)
+
+- AI 証憑仕訳等の LLM 接続に **`openai_compatible` プロバイダーを追加**。OpenCode Go 等、OpenAI 互換のエンドポイントを **各ユーザーが自分のベースURL (エンドポイント) と API キー** を設定して利用できる (BYOK)
+- `user_ai_configs.base_url` カラムを復活 (マイグレーション `048_user_ai_base_url`、Ollama 時代の定義を踏襲)。既存行は空文字で非破壊
+- 設定画面 (`/settings/ai`) にベースURL入力欄を追加。保存時は WebDAV・Webhook と同じ `validate_external_url` で検証 (プライベート IP / localhost / 非 http(s) を拒否、SSRF 対策)
+- 画像・テキストの OpenAI 互換ハンドラを新設し、llama.cpp の呼び出しを共通コアへ委譲 (実装の重複を排除)
+- 外部 API キー (BYOK) は従来の openai / anthropic / google と同様、無償で利用可能 (llama.cpp の有償ゲートとは非連動)
+
+### 品質改善・バグ修正 (PR #444)
+
+テストカバレッジを **93% → 97%** に改善 (テスト 1838 → 1999 件、85% 未満のファイルゼロ)。カバレッジ計測は CI には組み込まず、ローカル計測で確認。
+
+計測の過程で発見したバグ 3 件を修正:
+
+- **Lv2 顧問の勘定科目変更ブロックを実エンドポイント名で判定** — `before_request` が実在しないエンドポイント名 (`new`/`edit`/`toggle`/`delete`/`api_add`) で判定しており、Lv2 顧問が JSON API 経由で勘定科目を変更できる状態だった。実エンドポイント (`api_create`/`api_update`) で判定するよう修正
+- **退会時の FK 違反 500 を修正** — `audit_grant_accounts` は `accounts` への FK (`fk_aga_account`、ondelete なし) を持つが、退会処理で Account 削除より後に AuditGrantAccount を削除していたため PostgreSQL で FK 違反が発生。削除順序を修正
+- **AI ドラフト削除のストレージ失敗を best-effort 化** — ドラフト削除時にストレージ削除が失敗すると 500 になっていた。失敗時は warning ログを残して処理を継続 (孤立ファイルは storage-audit バッチで回収)
+
+### その他
+
+- `.gitignore` に `tmp/` を追加 (作業用 plan ファイルの誤コミット防止)
+
 ## v4.0.0
 
 **正式版リリース** — v4.0.0-beta 公開後の追加開発を経て正式版へ。TOTP 2FA 導入・電帳法対応の全撤去など、認証・証憑管理まわりの大きな仕様変更を含む。
