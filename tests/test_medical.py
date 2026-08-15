@@ -36,6 +36,28 @@ class TestIndex:
         resp = logged_in_client.get("/medical/?year=2024")
         assert resp.status_code == 200
 
+    def test_shows_medical_expense_details(
+        self, db, logged_in_client, user, accounts, medical_account
+    ):
+        """MedicalExpense 紐付けがある行は詳細 (患者・病院名) が表示される"""
+        from tests.conftest import make_journal
+        entry = make_journal(db, user.id, "6010", "1010", 3000,
+                             entry_date=date(2026, 2, 15), source="cashbook",
+                             description="医療費: ○○病院")
+        db.session.add(MedicalExpense(
+            user_id=user.id, journal_entry_id=entry.id,
+            date=date(2026, 2, 15),
+            patient_name="本人", hospital_name="○○病院",
+            treatment_description="通院",
+            amount_paid=3000, insurance_reimbursement=500,
+        ))
+        db.session.commit()
+        resp = logged_in_client.get("/medical/")
+        assert resp.status_code == 200
+        body = resp.get_data(as_text=True)
+        assert "本人" in body
+        assert "○○病院" in body
+
 
 class TestNew:
     def test_unauthenticated(self, client):
@@ -74,6 +96,68 @@ class TestNew:
         # form 再表示
         assert resp.status_code == 200
         assert MedicalExpense.query.filter_by(user_id=user.id).count() == 0
+
+    def test_create_locked_period_redraws(self, db, logged_in_client, user, accounts, medical_account):
+        """確定済み期間への登録はフォーム再表示"""
+        from app.models.fiscal import FiscalClose
+        db.session.add(FiscalClose(user_id=user.id, year=2026, closed_period=2))
+        db.session.commit()
+        resp = logged_in_client.post("/medical/new", data={
+            "date": "2026-02-15",
+            "patient_name": "本人",
+            "hospital_name": "○○病院",
+            "treatment_description": "風邪",
+            "amount_paid": "5000",
+            "insurance_reimbursement": "0",
+            "payment_account_code": "1010",
+        })
+        assert resp.status_code == 200
+        assert MedicalExpense.query.filter_by(user_id=user.id).count() == 0
+
+    def test_create_locked_submitted_account_rejected(
+        self, db, logged_in_client, user, auditor, accounts, medical_account
+    ):
+        """提出済み公開科目 (6010) を使う登録は本人でも拒否される"""
+        from app.models.audit import AuditGrant, AuditGrantAccount
+        grant = AuditGrant(
+            owner_user_id=user.id, auditor_user_id=auditor.id,
+            permission_level=2, status="submitted",
+        )
+        db.session.add(grant)
+        db.session.flush()
+        db.session.add(AuditGrantAccount(
+            audit_grant_id=grant.id, account_user_id=user.id,
+            account_code="6010",
+        ))
+        db.session.commit()
+        resp = logged_in_client.post("/medical/new", data={
+            "date": "2026-02-15",
+            "patient_name": "本人",
+            "hospital_name": "○○病院",
+            "treatment_description": "風邪",
+            "amount_paid": "5000",
+            "insurance_reimbursement": "0",
+            "payment_account_code": "1010",
+        })
+        assert resp.status_code == 200
+        assert MedicalExpense.query.filter_by(user_id=user.id).count() == 0
+
+    def test_form_error_redraws_with_payment_name(
+        self, db, logged_in_client, user, accounts, medical_account
+    ):
+        """バリデーションエラー時の再表示に支払科目名が出る"""
+        resp = logged_in_client.post("/medical/new", data={
+            "date": "2026-02-15",
+            "patient_name": "",  # 必須
+            "hospital_name": "Y",
+            "treatment_description": "Z",
+            "amount_paid": "1000",
+            "insurance_reimbursement": "0",
+            "payment_account_code": "1010",
+        })
+        assert resp.status_code == 200
+        body = resp.get_data(as_text=True)
+        assert "現金" in body  # payment_account_name = 現金
 
 
 class TestEdit:
@@ -158,6 +242,26 @@ class TestEdit:
         assert e.patient_name == "更新後"
         assert e.insurance_reimbursement == 1000
 
+    def test_form_error_redraws_with_payment_name(
+        self, db, logged_in_client, user, accounts, medical_account
+    ):
+        """編集のバリデーションエラー時の再表示に支払科目名が出る"""
+        e = self._make_expense(db, user.id, medical_account)
+        resp = logged_in_client.post(f"/medical/{e.id}/edit", data={
+            "date": "2026-02-20",
+            "patient_name": "",
+            "hospital_name": "××病院",
+            "treatment_description": "別件",
+            "amount_paid": "5000",
+            "insurance_reimbursement": "0",
+            "payment_account_code": "1010",
+        })
+        assert resp.status_code == 200
+        body = resp.get_data(as_text=True)
+        assert "現金" in body
+        db.session.refresh(e)
+        assert e.patient_name == "本人"  # 更新されていない
+
 
 class TestDelete:
     def _make_expense(self, db, user_id, medical_account):
@@ -190,6 +294,64 @@ class TestDelete:
         resp = logged_in_client.post(f"/medical/{eid}/delete")
         assert resp.status_code in (302, 303)
         assert db.session.get(MedicalExpense, eid) is None
+
+    def test_delete_blocked_locked_for_owner(
+        self, db, logged_in_client, user, auditor, accounts, medical_account
+    ):
+        """提出済み公開科目 (6010) を含む伝票は削除できない"""
+        from app.models.audit import AuditGrant, AuditGrantAccount
+        e = self._make_expense(db, user.id, medical_account)
+        grant = AuditGrant(
+            owner_user_id=user.id, auditor_user_id=auditor.id,
+            permission_level=2, status="submitted",
+        )
+        db.session.add(grant)
+        db.session.flush()
+        db.session.add(AuditGrantAccount(
+            audit_grant_id=grant.id, account_user_id=user.id,
+            account_code="6010",
+        ))
+        db.session.commit()
+        resp = logged_in_client.post(f"/medical/{e.id}/delete")
+        assert resp.status_code in (302, 303)
+        assert db.session.get(MedicalExpense, e.id) is not None
+
+    def test_delete_blocked_locked_for_auditor(
+        self, db, logged_in_client, user, auditor, accounts, medical_account
+    ):
+        """Lv2 顧問は非公開科目 (事業主) を含む伝票を削除できない"""
+        from app.models.audit import AuditGrant, AuditGrantAccount
+        e = self._make_expense(db, user.id, medical_account)
+        grant = AuditGrant(
+            owner_user_id=user.id, auditor_user_id=auditor.id,
+            permission_level=2, status="active",
+        )
+        db.session.add(grant)
+        db.session.flush()
+        db.session.add(AuditGrantAccount(
+            audit_grant_id=grant.id, account_user_id=user.id,
+            account_code="6010",
+        ))
+        db.session.commit()
+        with logged_in_client.session_transaction() as sess:
+            sess["_user_id"] = str(auditor.id)
+            sess["acting_as_user_id"] = user.id
+            sess["acting_as_permission_level"] = 2
+        resp = logged_in_client.post(f"/medical/{e.id}/delete")
+        assert resp.status_code in (302, 303)
+        assert db.session.get(MedicalExpense, e.id) is not None
+
+    def test_delete_blocked_closed_period(
+        self, db, logged_in_client, user, accounts, medical_account
+    ):
+        """確定済み期間の伝票は削除できない"""
+        from app.models.fiscal import FiscalClose
+        e = self._make_expense(db, user.id, medical_account)  # 2026-02-15
+        db.session.add(FiscalClose(user_id=user.id, year=2026, closed_period=2))
+        db.session.commit()
+        resp = logged_in_client.post(f"/medical/{e.id}/delete")
+        assert resp.status_code in (302, 303)
+        assert db.session.get(MedicalExpense, e.id) is not None
 
 
 class TestApiGet:
