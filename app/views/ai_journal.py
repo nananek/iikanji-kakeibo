@@ -308,9 +308,18 @@ def drafts_delete(draft_id):
     size_to_release = draft.file_size or 0
     db.session.delete(draft)
     db.session.commit()
-    storage = get_storage_backend()
-    storage.delete(image_key)
-    storage.delete(make_thumbnail_key(image_key))
+    # ストレージ削除は best-effort (失敗しても DB 削除は完了済み)。
+    # 孤立ファイルは storage-audit バッチで回収する。
+    try:
+        storage = get_storage_backend()
+        storage.delete(image_key)
+        storage.delete(make_thumbnail_key(image_key))
+    except Exception as e:
+        from flask import current_app
+        current_app.logger.warning(
+            "ai_journal.drafts_delete: storage delete failed %s: %s",
+            image_key, e,
+        )
     if size_to_release > 0:
         owner = db.session.get(User, owner_id)
         if owner is not None:

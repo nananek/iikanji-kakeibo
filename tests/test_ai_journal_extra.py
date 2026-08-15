@@ -465,3 +465,138 @@ class TestUpdateDiscordDone:
             _update_discord_done(d, 99)
             # 例外を起こさず呼ばれる
             mock_upd.assert_called_once()
+
+
+# =====================================================================
+# カバレッジ改善タスクで追加したテスト
+# =====================================================================
+
+
+def _submitted_grant(db, user, auditor):
+    """提出済み Lv2 グラント (公開科目 5010) を設定"""
+    from app.models.audit import AuditGrant, AuditGrantAccount
+    grant = AuditGrant(
+        owner_user_id=user.id, auditor_user_id=auditor.id,
+        permission_level=2, status="submitted",
+    )
+    db.session.add(grant)
+    db.session.flush()
+    db.session.add(AuditGrantAccount(
+        audit_grant_id=grant.id, account_user_id=user.id,
+        account_code="5010",
+    ))
+    db.session.commit()
+
+
+class TestQuickAcceptExtra:
+    def test_locked_submitted_account_rejected(
+        self, db, logged_in_client, user, auditor, accounts
+    ):
+        """提出済み公開科目 (5010) を使う quick-accept は拒否される"""
+        d = _draft(db, user.id)  # 5010 を含む提案
+        _submitted_grant(db, user, auditor)
+        resp = logged_in_client.post(f"/ai-journal/drafts/{d.id}/quick-accept")
+        assert resp.status_code in (302, 303)
+        from app.models.journal import JournalEntry
+        assert JournalEntry.query.count() == 0
+
+    def test_value_error_handled(
+        self, db, logged_in_client, user, accounts
+    ):
+        """create_journal_entry の ValueError は hx_error で返る"""
+        d = _draft(db, user.id)
+        with patch("app.views.ai_journal.create_journal_entry",
+                   side_effect=ValueError("貸借が一致しません")):
+            resp = logged_in_client.post(
+                f"/ai-journal/drafts/{d.id}/quick-accept",
+                headers={"HX-Request": "true"},
+            )
+        assert resp.status_code == 422
+        assert "HX-Trigger" in resp.headers
+
+
+class TestDraftsDeleteExtra:
+    def test_storage_delete_failure_still_deletes(
+        self, db, logged_in_client, user, accounts
+    ):
+        """ストレージ削除失敗でも下書きは削除される"""
+        d = _draft(db, user.id)
+        did = d.id
+        with patch("app.views.ai_journal.get_storage_backend") as mock_b:
+            backend = mock_b.return_value
+            backend.delete.side_effect = Exception("storage down")
+            resp = logged_in_client.post(f"/ai-journal/drafts/{did}/delete")
+        assert resp.status_code in (302, 303)
+        assert db.session.get(AIDraft, did) is None
+
+
+class TestReviewExtra:
+    def _setup(self, db, logged_in_client, user, suggestions=None):
+        d = _draft(db, user.id, suggestions=suggestions)
+        with logged_in_client.session_transaction() as sess:
+            sess["ai_journal_draft_id"] = d.id
+        return d
+
+    def test_simple_locked_submitted_account_rejected(
+        self, db, logged_in_client, user, auditor, accounts
+    ):
+        """提出済み公開科目 (5010) を使う review 登録は拒否される"""
+        self._setup(db, logged_in_client, user)
+        _submitted_grant(db, user, auditor)
+        resp = logged_in_client.post("/ai-journal/review", data={
+            "mode": "simple",
+            "date": "2026-02-15",
+            "description": "ファミマ",
+            "amount": "300",
+            "category_account_code": "5010",
+            "payment_account_code": "1010",
+        })
+        assert resp.status_code == 200  # 再表示
+        from app.models.journal import JournalEntry
+        assert JournalEntry.query.count() == 0
+
+    def test_advanced_locked_submitted_account_rejected(
+        self, db, logged_in_client, user, auditor, accounts
+    ):
+        self._setup(db, logged_in_client, user)
+        _submitted_grant(db, user, auditor)
+        resp = logged_in_client.post("/ai-journal/review", data={
+            "mode": "advanced",
+            "date": "2026-02-15",
+            "description": "詳細",
+            "lines_json": json.dumps([
+                {"account_code": "5010", "debit_amount": 200, "credit_amount": 0},
+                {"account_code": "1010", "debit_amount": 0, "credit_amount": 200},
+            ]),
+        })
+        assert resp.status_code == 200
+        from app.models.journal import JournalEntry
+        assert JournalEntry.query.count() == 0
+
+    def test_value_error_handled(
+        self, db, logged_in_client, user, accounts
+    ):
+        """create_journal_entry の ValueError は flash + 再表示"""
+        self._setup(db, logged_in_client, user)
+        with patch("app.views.ai_journal.create_journal_entry",
+                   side_effect=ValueError("貸借が一致しません")):
+            resp = logged_in_client.post("/ai-journal/review", data={
+                "mode": "simple",
+                "date": "2026-02-15",
+                "description": "ファミマ",
+                "amount": "300",
+                "category_account_code": "5010",
+                "payment_account_code": "1010",
+            })
+        assert resp.status_code == 200
+
+
+class TestVoucherImageExtra:
+    def test_missing_file_404(self, db, logged_in_client, user, accounts):
+        """画像ファイルがストレージに無い場合は 404"""
+        from tests.conftest import make_voucher
+        v = make_voucher(db, user.id)
+        with patch("app.views.ai_journal.serve_image") as mock_serve:
+            mock_serve.side_effect = FileNotFoundError("missing")
+            resp = logged_in_client.get(f"/ai-journal/voucher/{v.id}/image")
+            assert resp.status_code == 404
