@@ -156,6 +156,101 @@ class TestDeleteUserAccountService:
         assert db.session.get(User, user_b_id) is not None
         assert db.session.get(Voucher, voucher_b_id) is not None
 
+    def test_unknown_user_raises(self, db, mock_storage):
+        from app.services.account_deletion import delete_user_account
+        with pytest.raises(ValueError, match="not found"):
+            delete_user_account(999999)
+
+    def test_storage_delete_failure_logs_and_continues(
+        self, db, mock_storage, user, accounts, caplog
+    ):
+        """ストレージ削除失敗時は warning ログ + 処理継続."""
+        from app.services.account_deletion import delete_user_account
+        from tests.conftest import make_journal, make_voucher
+
+        make_voucher(db, user.id, image_key="vouchers/1/fail.jpg")
+        with patch("app.services.account_deletion.get_storage_backend") as mock_b:
+            backend = mock_storage["backend"]
+            def raising_delete(key):
+                raise Exception("storage unavailable")
+            backend.delete = raising_delete
+            mock_b.return_value = backend
+            with caplog.at_level("WARNING"):
+                delete_user_account(user.id)
+        # 警告ログが出て、ユーザー削除は完了する
+        assert any("voucher storage delete failed" in r.message
+                   for r in caplog.records)
+        assert db.session.get(User, user.id) is None
+
+    def test_draft_storage_delete_failure_logs_and_continues(
+        self, db, mock_storage, user, caplog
+    ):
+        """AIDraft のストレージ削除失敗時も warning ログ + 処理継続."""
+        from app.models.ai_draft import AIDraft
+        from app.services.account_deletion import delete_user_account
+
+        db.session.add(AIDraft(
+            user_id=user.id, image_key="drafts/1/fail.jpg",
+            image_mime="image/jpeg", status="analyzed",
+        ))
+        db.session.commit()
+        with patch("app.services.account_deletion.get_storage_backend") as mock_b:
+            backend = mock_storage["backend"]
+            backend.delete = lambda k: (_ for _ in ()).throw(
+                Exception("draft storage unavailable")
+            )
+            mock_b.return_value = backend
+            with caplog.at_level("WARNING"):
+                delete_user_account(user.id)
+        assert any("draft storage delete failed" in r.message
+                   for r in caplog.records)
+        assert db.session.get(User, user.id) is None
+
+    def test_audit_grants_deleted(self, db, mock_storage, user, auditor, accounts):
+        """AuditGrant + AuditGrantAccount (Lv2 公開科目) も削除される."""
+        from app.models.audit import AuditGrant, AuditGrantAccount
+        from app.services.account_deletion import delete_user_account
+
+        # user が owner の grant (Lv2, submitted) + 公開科目レコード
+        grant = AuditGrant(
+            owner_user_id=user.id, auditor_user_id=auditor.id,
+            permission_level=2, status="submitted",
+        )
+        db.session.add(grant)
+        db.session.flush()
+        db.session.add(AuditGrantAccount(
+            audit_grant_id=grant.id,
+            account_user_id=user.id,
+            account_code="5010",
+        ))
+        db.session.commit()
+
+        delete_user_account(user.id)
+
+        assert db.session.get(User, user.id) is None
+        assert AuditGrant.query.filter_by(owner_user_id=user.id).count() == 0
+        assert AuditGrantAccount.query.filter_by(
+            audit_grant_id=grant.id,
+        ).count() == 0
+
+    def test_audit_grants_deleted_when_user_is_auditor(
+        self, db, mock_storage, user, auditor, accounts
+    ):
+        """auditor_user_id 側の grant も削除される."""
+        from app.models.audit import AuditGrant
+        from app.services.account_deletion import delete_user_account
+
+        db.session.add(AuditGrant(
+            owner_user_id=auditor.id, auditor_user_id=user.id,
+            permission_level=1, status="active",
+        ))
+        db.session.commit()
+
+        delete_user_account(user.id)
+
+        assert db.session.get(User, user.id) is None
+        assert AuditGrant.query.filter_by(auditor_user_id=user.id).count() == 0
+
 
 class TestDeleteAccountView:
     """`/settings/delete-account` エンドポイント."""
