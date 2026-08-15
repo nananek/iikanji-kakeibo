@@ -25,7 +25,7 @@ iPhone の **ショートカット** アプリで、レシートを撮影する�
 
 | 項目 | 例 |
 |------|-----|
-| プロバイダー | OpenAI / Gemini / Claude / Ollama |
+| プロバイダー | OpenAI / Gemini / Claude / llama.cpp / OpenAI互換API |
 | API キー | プロバイダーの API キー |
 | モデル | `gpt-4o` / `gemini-2.0-flash` 等 |
 

@@ -5,6 +5,7 @@
 """
 
 from datetime import datetime, timezone
+from unittest.mock import patch
 
 import pytest
 
@@ -127,6 +128,90 @@ class TestAiConfig:
         })
         assert resp.status_code in (302, 303)
         assert UserAIConfig.query.filter_by(user_id=user.id).first() is None
+
+    def test_save_new_openai_compatible(self, db, logged_in_client, user, accounts):
+        with patch("socket.getaddrinfo") as mock_dns:
+            mock_dns.return_value = [(2, 1, 6, '', ('8.8.8.8', 0))]
+            resp = logged_in_client.post("/settings/ai/save", data={
+                "provider": "openai_compatible",
+                "api_key": "sk-test",
+                "model_name": "gpt-4o",
+                "custom_prompt": "",
+                "base_url": "https://api.opencode.go",
+            })
+        assert resp.status_code in (302, 303)
+        cfg = UserAIConfig.query.filter_by(user_id=user.id).first()
+        assert cfg is not None
+        assert cfg.provider == "openai_compatible"
+        assert cfg.base_url == "https://api.opencode.go"
+
+    def test_save_openai_compatible_without_base_url_blocked(self, db, logged_in_client, user, accounts):
+        resp = logged_in_client.post("/settings/ai/save", data={
+            "provider": "openai_compatible", "api_key": "sk-test", "base_url": "",
+        })
+        assert resp.status_code in (302, 303)
+        assert UserAIConfig.query.filter_by(user_id=user.id).first() is None
+
+    def test_save_openai_compatible_bad_scheme_blocked(self, db, logged_in_client, user, accounts):
+        resp = logged_in_client.post("/settings/ai/save", data={
+            "provider": "openai_compatible", "api_key": "sk-test",
+            "base_url": "ftp://example.com/v1",
+        })
+        assert resp.status_code in (302, 303)
+        assert UserAIConfig.query.filter_by(user_id=user.id).first() is None
+
+    def test_save_openai_compatible_localhost_blocked(self, db, logged_in_client, user, accounts):
+        with patch("socket.getaddrinfo") as mock_dns:
+            mock_dns.return_value = [(2, 1, 6, '', ('127.0.0.1', 0))]
+            resp = logged_in_client.post("/settings/ai/save", data={
+                "provider": "openai_compatible", "api_key": "sk-test",
+                "base_url": "https://localhost/v1",
+            })
+        assert resp.status_code in (302, 303)
+        assert UserAIConfig.query.filter_by(user_id=user.id).first() is None
+
+    def test_save_update_to_openai_compatible(self, db, logged_in_client, user, accounts):
+        from app.services.ai_receipt import encrypt_api_key
+        cfg = UserAIConfig(
+            user_id=user.id, provider="openai",
+            api_key_encrypted=encrypt_api_key("orig"), model_name="gpt-4o",
+        )
+        db.session.add(cfg)
+        db.session.commit()
+        with patch("socket.getaddrinfo") as mock_dns:
+            mock_dns.return_value = [(2, 1, 6, '', ('8.8.8.8', 0))]
+            resp = logged_in_client.post("/settings/ai/save", data={
+                "provider": "openai_compatible",
+                "api_key": "",  # 空のときは既存キー保持
+                "model_name": "gpt-4o",
+                "custom_prompt": "",
+                "base_url": "https://api.opencode.go",
+            })
+        assert resp.status_code in (302, 303)
+        db.session.refresh(cfg)
+        assert cfg.provider == "openai_compatible"
+        assert cfg.base_url == "https://api.opencode.go"
+
+    def test_save_openai_compatible_no_key_blocked(self, db, logged_in_client, user, accounts):
+        with patch("socket.getaddrinfo") as mock_dns:
+            mock_dns.return_value = [(2, 1, 6, '', ('8.8.8.8', 0))]
+            resp = logged_in_client.post("/settings/ai/save", data={
+                "provider": "openai_compatible", "api_key": "",
+                "base_url": "https://api.opencode.go",
+            })
+        assert resp.status_code in (302, 303)
+        assert UserAIConfig.query.filter_by(user_id=user.id).first() is None
+
+    def test_save_llama_cpp_ignores_base_url(self, db, logged_in_client, user, accounts):
+        """他 provider 保存時は base_url を保存しない (393d7fa の設計)"""
+        resp = logged_in_client.post("/settings/ai/save", data={
+            "provider": "llama_cpp", "api_key": "",
+            "base_url": "https://api.opencode.go",
+        })
+        assert resp.status_code in (302, 303)
+        cfg = UserAIConfig.query.filter_by(user_id=user.id).first()
+        assert cfg.provider == "llama_cpp"
+        assert cfg.base_url == ""
 
     def test_delete(self, db, logged_in_client, user, accounts):
         from app.services.ai_receipt import encrypt_api_key

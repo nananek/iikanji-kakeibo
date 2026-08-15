@@ -18,6 +18,7 @@ class UserAIConfig(db.Model):
     api_key_encrypted = db.Column(db.LargeBinary, nullable=False)
     model_name = db.Column(db.String(100), nullable=False, default="")
     custom_prompt = db.Column(db.Text, nullable=False, default="")
+    base_url = db.Column(db.String(500), nullable=False, default="")
     compliance_check = db.Column(db.Boolean, nullable=False, default=False)
     created_at = db.Column(
         db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc)
