@@ -5,6 +5,22 @@ title: リリースノート
 
 # リリースノート
 
+## v4.1.1
+
+**パッチリリース** — 依存関係の更新のみ (機能・仕様の変更なし)。オープン中の Dependabot PR 9 件を 1 本にまとめて適用 (PR #445)。ローカル・CI とも全テスト (1999 件) が pass していることを確認済み。
+
+### 依存関係の更新 (PR #445)
+
+- **Python 依存** (requirements.txt):
+  - SQLAlchemy 2.0.50 → 2.0.51
+  - alembic 1.18.4 → 1.18.5
+  - webauthn >=2.7.1 → >=2.8.0
+  - pyotp >=2.9.0 → >=2.10.0
+  - boto3 >=1.43.28 → >=1.43.33
+  - cryptography >=48.0.1 → >=49.0.0
+- **コンテナ** (Dockerfile): python 3.14.5-alpine → 3.14.7-alpine
+- **GitHub Actions**: actions/checkout v6 → v7、actions/setup-python v6 → v7、actions/setup-node v6 → v7
+
 ## v4.1.0
 
 **マイナーリリース** — 外部 AI プロバイダーとして「OpenAI 互換 API」に対応。テストカバレッジ改善と、その過程で発見したバグ修正 3 件を含む。
