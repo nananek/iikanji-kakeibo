@@ -33,3 +33,6 @@ test-results/
 .coverage
 .pytest_cache/
 playwright-report/
+
+# 一時ファイル (plan 等)
+tmp/
