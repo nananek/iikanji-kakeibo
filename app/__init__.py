@@ -141,8 +141,10 @@ def create_app(config_class=Config):
                 from flask import flash
                 flash("この権限レベルではこの機能を使用できません。", "warning")
                 return redirect(url_for("dashboard.index"))
-            # accounts: block modification (new, edit, toggle, delete)
-            if endpoint in ("accounts.new", "accounts.edit", "accounts.toggle", "accounts.delete", "accounts.api_add"):
+            # accounts: block modification (JSON API の新規作成・更新)
+            # (旧名 new/edit/toggle/delete/api_add は実在しないため、
+            #  実際のエンドポイント名 api_create / api_update で判定する)
+            if endpoint in ("accounts.api_create", "accounts.api_update"):
                 from flask import flash
                 flash("この権限レベルでは勘定科目を変更できません。", "warning")
                 return redirect(url_for("accounts.index"))
