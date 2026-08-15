@@ -84,6 +84,7 @@ PROVIDER_DEFAULTS = {
     "google": "gemini-2.0-flash",
     "anthropic": "claude-sonnet-4-20250514",
     "llama_cpp": "default",
+    "openai_compatible": "gpt-4o",
 }
 
 PROVIDER_LABELS = {
@@ -91,6 +92,7 @@ PROVIDER_LABELS = {
     "google": "Google Gemini",
     "anthropic": "Anthropic Claude",
     "llama_cpp": "llama.cpp (サーバー提供)",
+    "openai_compatible": "OpenAI 互換 API (カスタムエンドポイント)",
 }
 
 
@@ -106,6 +108,7 @@ def get_available_provider_labels(app_config=None) -> dict:
     """UI で表示すべきプロバイダー候補を返す。
 
     llama.cpp はサーバー設定 (LLAMA_CPP_URL) があるときのみ含める。
+    openai_compatible はユーザー自由設定のため常に含める。
     """
     labels = {k: v for k, v in PROVIDER_LABELS.items() if k != "llama_cpp"}
     if is_llama_cpp_available(app_config):
@@ -400,15 +403,17 @@ def _call_anthropic(api_key: str, model: str, image_bytes: bytes,
     return _extract_json(content), _usage_anthropic_style(data)
 
 
-def _call_llama_cpp(api_key: str, model: str, image_bytes: bytes,
-                    mime_type: str, prompt: str = RECEIPT_PROMPT,
-                    max_tokens: int = 500, *, base_url: str = ""):
-    """llama.cpp (llama-server) の OpenAI 互換エンドポイントを呼ぶ。
+def _call_openai_compatible(api_key: str, model: str, image_bytes: bytes,
+                            mime_type: str, prompt: str = RECEIPT_PROMPT,
+                            max_tokens: int = 500, *, base_url: str = "",
+                            timeout: float = 60.0):
+    """OpenAI 互換 API (カスタムエンドポイント) を呼ぶ。
 
-    デフォルトポートは 8080。マルチモーダル対応モデル (LLaVA など) が必要。
+    ユーザー指定の base_url (OpenCode Go 等) に対応。API キーはユーザー各自
+    (BYOK) が指定する。llama.cpp もこの実装へ委譲する。
     戻り値: (parsed_json, usage_dict)
     """
-    url = (base_url.rstrip("/") if base_url else "http://localhost:8080")
+    url = base_url.rstrip("/")
     b64_image = base64.b64encode(image_bytes).decode()
     headers = {"Content-Type": "application/json"}
     if api_key:
@@ -434,7 +439,7 @@ def _call_llama_cpp(api_key: str, model: str, image_bytes: bytes,
             ],
             "max_tokens": max_tokens,
         },
-        timeout=120.0,
+        timeout=timeout,
     )
     response.raise_for_status()
     data = response.json()
@@ -442,11 +447,27 @@ def _call_llama_cpp(api_key: str, model: str, image_bytes: bytes,
     return _extract_json(content), _usage_openai_style(data)
 
 
+def _call_llama_cpp(api_key: str, model: str, image_bytes: bytes,
+                    mime_type: str, prompt: str = RECEIPT_PROMPT,
+                    max_tokens: int = 500, *, base_url: str = ""):
+    """llama.cpp (llama-server) の OpenAI 互換エンドポイントを呼ぶ。
+
+    デフォルトポートは 8080。マルチモーダル対応モデル (LLaVA など) が必要。
+    OpenAI 互換 API の共通コア (_call_openai_compatible) へ委譲する。
+    戻り値: (parsed_json, usage_dict)
+    """
+    return _call_openai_compatible(
+        api_key, model, image_bytes, mime_type, prompt, max_tokens,
+        base_url=(base_url or "http://localhost:8080"), timeout=120.0,
+    )
+
+
 _PROVIDER_HANDLERS = {
     "openai": _call_openai,
     "google": _call_google,
     "anthropic": _call_anthropic,
     "llama_cpp": _call_llama_cpp,
+    "openai_compatible": _call_openai_compatible,
 }
 
 
@@ -520,13 +541,15 @@ def _call_anthropic_text(api_key: str, model: str, prompt: str,
     return _extract_json(content), _usage_anthropic_style(data)
 
 
-def _call_llama_cpp_text(api_key: str, model: str, prompt: str,
-                         max_tokens: int = 2000, *, base_url: str = ""):
-    """llama.cpp (llama-server) のテキスト専用 OpenAI 互換呼び出し。
+def _call_openai_compatible_text(api_key: str, model: str, prompt: str,
+                                 max_tokens: int = 2000, *, base_url: str = "",
+                                 timeout: float = 60.0):
+    """OpenAI 互換 API (カスタムエンドポイント) のテキスト専用呼び出し。
 
+    llama.cpp のテキスト呼び出しもこの実装へ委譲する。
     戻り値: (parsed_json, usage_dict)
     """
-    url = (base_url.rstrip("/") if base_url else "http://localhost:8080")
+    url = base_url.rstrip("/")
     headers = {"Content-Type": "application/json"}
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
@@ -538,7 +561,7 @@ def _call_llama_cpp_text(api_key: str, model: str, prompt: str,
             "messages": [{"role": "user", "content": prompt}],
             "max_tokens": max_tokens,
         },
-        timeout=120.0,
+        timeout=timeout,
     )
     response.raise_for_status()
     data = response.json()
@@ -546,11 +569,25 @@ def _call_llama_cpp_text(api_key: str, model: str, prompt: str,
     return _extract_json(content), _usage_openai_style(data)
 
 
+def _call_llama_cpp_text(api_key: str, model: str, prompt: str,
+                         max_tokens: int = 2000, *, base_url: str = ""):
+    """llama.cpp (llama-server) のテキスト専用 OpenAI 互換呼び出し。
+
+    OpenAI 互換 API の共通コア (_call_openai_compatible_text) へ委譲する。
+    戻り値: (parsed_json, usage_dict)
+    """
+    return _call_openai_compatible_text(
+        api_key, model, prompt, max_tokens,
+        base_url=(base_url or "http://localhost:8080"), timeout=120.0,
+    )
+
+
 _TEXT_PROVIDER_HANDLERS = {
     "openai": _call_openai_text,
     "google": _call_google_text,
     "anthropic": _call_anthropic_text,
     "llama_cpp": _call_llama_cpp_text,
+    "openai_compatible": _call_openai_compatible_text,
 }
 
 
@@ -676,6 +713,7 @@ def _get_ai_config(user_id: int):
     llama.cpp はサーバー管理者が用意する任意機能。エンドポイント URL は
     アプリ config の `LLAMA_CPP_URL` から取得する。未設定なら llama.cpp 設定
     の既存ユーザーには「サーバー管理者が提供を停止した」と明確にエラーを返す。
+    openai_compatible はユーザー設定の `base_url` を使う (未設定ならエラー)。
     """
     config = UserAIConfig.query.filter_by(user_id=user_id).first()
     if not config:
@@ -715,6 +753,16 @@ def _get_ai_config(user_id: int):
                 "利用する場合は無償で継続できます。"
             )
         extra_kwargs["base_url"] = url
+    elif provider == "openai_compatible":
+        base_url = (getattr(config, "base_url", "") or "").strip()
+        if not base_url:
+            raise ValueError(
+                "OpenAI 互換 API のベースURLが設定されていません。"
+                "AI 設定画面でエンドポイントを入力してください。"
+            )
+        # BYOK の外部プロバイダー (openai / anthropic / google と同様) のため
+        # 有償エンタイトルメントは不要。
+        extra_kwargs["base_url"] = base_url
 
     return api_key, provider, model, handler, custom_prompt, extra_kwargs
 

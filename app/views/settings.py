@@ -311,11 +311,24 @@ def ai_config_save():
     api_key = request.form.get("api_key", "").strip()
     model_name = request.form.get("model_name", "").strip()
     custom_prompt = request.form.get("custom_prompt", "").strip()
+    base_url = request.form.get("base_url", "").strip()
 
     available_labels = get_available_provider_labels()
     if provider not in available_labels:
         flash("無効なプロバイダーです。", "danger")
         return redirect(url_for("settings.ai_config"))
+
+    if provider == "openai_compatible":
+        if not base_url:
+            flash("ベースURLを入力してください。", "danger")
+            return redirect(url_for("settings.ai_config"))
+        # SSRF 対策: プライベート IP / ループバック / 非 http(s) を拒否
+        # (WebDAV・Webhook URL 設定と同じ共通バリデーション)。
+        from app.services.sources import validate_external_url
+        ok, err = validate_external_url(base_url)
+        if not ok:
+            flash(f"ベースURLが不正です: {err}", "danger")
+            return redirect(url_for("settings.ai_config"))
 
     # llama.cpp は API キー不要、それ以外は新規時に必須
     is_local = provider == "llama_cpp"
@@ -327,6 +340,8 @@ def ai_config_save():
         config.provider = provider
         config.model_name = model_name
         config.custom_prompt = custom_prompt
+        if provider == "openai_compatible":
+            config.base_url = base_url
         if api_key:
             config.api_key_encrypted = encrypt_api_key(api_key)
         elif is_local and not api_key:
@@ -342,6 +357,7 @@ def ai_config_save():
             api_key_encrypted=encrypt_api_key(effective_key),
             model_name=model_name,
             custom_prompt=custom_prompt,
+            base_url=(base_url if provider == "openai_compatible" else ""),
         )
         db.session.add(config)
 

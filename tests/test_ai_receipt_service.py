@@ -29,6 +29,8 @@ from app.services.ai_receipt import (
     _call_llama_cpp,
     _call_llama_cpp_text,
     _call_openai,
+    _call_openai_compatible,
+    _call_openai_compatible_text,
     _call_openai_text,
     _extract_json,
     _get_account_list_text,
@@ -40,6 +42,7 @@ from app.services.ai_receipt import (
     analyze_voucher_for_attachment,
     decrypt_api_key,
     encrypt_api_key,
+    get_available_provider_labels,
     match_account,
     parse_web_text,
     suggest_categories_by_ai,
@@ -70,6 +73,18 @@ def _llama_cpp_config(db, user_id):
         user_id=user_id, provider="llama_cpp",
         api_key_encrypted=encrypt_api_key("_"),  # llama.cpp はダミーキー
         model_name="default",
+    )
+    db.session.add(cfg)
+    db.session.commit()
+    return cfg
+
+
+def _openai_compatible_config(db, user_id, base_url="https://api.example.com"):
+    cfg = UserAIConfig(
+        user_id=user_id, provider="openai_compatible",
+        api_key_encrypted=encrypt_api_key("test-key"),
+        model_name="gpt-4o",
+        base_url=base_url,
     )
     db.session.add(cfg)
     db.session.commit()
@@ -177,6 +192,46 @@ class TestProviderHandlers:
             url = mock_post.call_args.args[0]
             assert "localhost:8080" in url
 
+    def test_openai_compatible(self):
+        with patch("httpx.post") as mock_post:
+            mock_post.return_value = _mock_post({
+                "choices": [{"message": {"content": '{"amount": 40}'}}],
+                "usage": {"prompt_tokens": 10, "completion_tokens": 20},
+            })
+            result, usage = _call_openai_compatible(
+                "k", "gpt-4o", b"img", "image/jpeg",
+                base_url="https://api.opencode.go",
+            )
+            assert result["amount"] == 40
+            assert usage == {"input_tokens": 10, "output_tokens": 20}
+            sent = mock_post.call_args
+            assert sent.args[0] == "https://api.opencode.go/v1/chat/completions"
+            assert sent.kwargs["headers"]["Authorization"] == "Bearer k"
+            payload = sent.kwargs["json"]
+            assert "data:image/jpeg;base64," in payload["messages"][0]["content"][1]["image_url"]["url"]
+
+    def test_openai_compatible_trailing_slash(self):
+        with patch("httpx.post") as mock_post:
+            mock_post.return_value = _mock_post({
+                "choices": [{"message": {"content": '{"amount": 0}'}}],
+            })
+            _call_openai_compatible("k", "m", b"img", "image/png",
+                                    base_url="https://api.example.com/")
+            url = mock_post.call_args.args[0]
+            assert url == "https://api.example.com/v1/chat/completions"
+
+    def test_openai_compatible_timeout_default(self):
+        """openai_compatible は 60s、llama.cpp 委譲時は 120s"""
+        with patch("httpx.post") as mock_post:
+            mock_post.return_value = _mock_post({
+                "choices": [{"message": {"content": '{"amount": 0}'}}],
+            })
+            _call_openai_compatible("k", "m", b"img", "image/png",
+                                    base_url="https://api.example.com")
+            assert mock_post.call_args.kwargs["timeout"] == 60.0
+            _call_llama_cpp("", "default", b"img", "image/png")
+            assert mock_post.call_args.kwargs["timeout"] == 120.0
+
 
 class TestTextHandlers:
     def test_openai_text(self):
@@ -217,6 +272,22 @@ class TestTextHandlers:
             result, usage = _call_llama_cpp_text("", "default", "p", base_url="http://x:8080")
             assert result == {"x": 3}
             assert usage == {"input_tokens": None, "output_tokens": None}
+
+    def test_openai_compatible_text(self):
+        with patch("httpx.post") as mock_post:
+            mock_post.return_value = _mock_post({
+                "choices": [{"message": {"content": '{"x": 4}'}}],
+                "usage": {"prompt_tokens": 5, "completion_tokens": 6},
+            })
+            result, usage = _call_openai_compatible_text(
+                "k", "gpt-4o", "p", base_url="https://api.opencode.go",
+            )
+            assert result == {"x": 4}
+            assert usage == {"input_tokens": 5, "output_tokens": 6}
+            sent = mock_post.call_args
+            assert sent.args[0] == "https://api.opencode.go/v1/chat/completions"
+            assert sent.kwargs["headers"]["Authorization"] == "Bearer k"
+            assert sent.kwargs["json"]["messages"][0]["content"] == "p"
 
 
 class TestGetAiConfig:
@@ -285,6 +356,47 @@ class TestGetAiConfig:
         db.session.commit()
         _, _, model, _, _, _ = _get_ai_config(user.id)
         assert model == PROVIDER_DEFAULTS["openai"]
+
+    def test_openai_compatible_config(self, db, user, accounts):
+        """ユーザー設定の base_url がそのまま注入される。"""
+        _openai_compatible_config(db, user.id)
+        api_key, provider, model, handler, custom, extra = _get_ai_config(user.id)
+        assert api_key == "test-key"  # llama.cpp の "_" ダミーとは異なりそのまま復号
+        assert provider == "openai_compatible"
+        assert handler is _call_openai_compatible
+        assert model == "gpt-4o"
+        assert extra == {"base_url": "https://api.example.com"}
+
+    def test_openai_compatible_without_base_url_raises(self, db, user, accounts):
+        _openai_compatible_config(db, user.id, base_url="")
+        with pytest.raises(ValueError, match="ベースURL"):
+            _get_ai_config(user.id)
+
+    def test_openai_compatible_no_entitlement_gate(self, db, user, accounts, app):
+        """BYOK 外部プロバイダーは paid_llm 不要 (llama.cpp と対照)"""
+        _openai_compatible_config(db, user.id)
+        original = app.config.get("BILLING_BACKEND")
+        app.config["BILLING_BACKEND"] = "free_only"
+        try:
+            api_key, provider, _, _, _, extra = _get_ai_config(user.id)
+            assert provider == "openai_compatible"
+            assert extra == {"base_url": "https://api.example.com"}
+        finally:
+            app.config["BILLING_BACKEND"] = original
+
+
+class TestProviderLabels:
+    def test_openai_compatible_always_included(self, app):
+        """openai_compatible はユーザー自由設定のため常に選択肢に出る。"""
+        with app.app_context():
+            labels = get_available_provider_labels()
+            assert "openai_compatible" in labels
+
+    def test_openai_compatible_included_without_llama_cpp(self):
+        """llama.cpp は条件付きのまま (openai_compatible と対称でない)"""
+        labels = get_available_provider_labels({})
+        assert "openai_compatible" in labels
+        assert "llama_cpp" not in labels
 
 
 class TestCallAi:
@@ -450,6 +562,31 @@ class TestParseWebText:
             mock_call.side_effect = ValueError("bad")
             with pytest.raises(RuntimeError):
                 parse_web_text(user.id, "x", "y")
+
+
+class TestAnalyzeReceiptOpenAiCompatible:
+    def test_success_with_base_url(self, db, user, accounts):
+        """openai_compatible で base_url 付きハンドラが呼ばれる。"""
+        _openai_compatible_config(db, user.id)
+        mock_call = MagicMock()
+        with patch.dict("app.services.ai_receipt._PROVIDER_HANDLERS", {"openai_compatible": mock_call}):
+            mock_call.return_value = _h({
+                "date": "2026-02-15", "description": "セブン",
+                "amount": 500, "category": "食費",
+            })
+            r = analyze_receipt(user.id, b"img", "image/jpeg")
+            assert r.amount == 500
+            assert mock_call.call_args.kwargs["base_url"] == "https://api.example.com"
+
+
+class TestParseWebTextOpenAiCompatible:
+    def test_success_with_base_url(self, db, user, accounts):
+        _openai_compatible_config(db, user.id)
+        mock_call = MagicMock()
+        with patch.dict("app.services.ai_receipt._TEXT_PROVIDER_HANDLERS", {"openai_compatible": mock_call}):
+            mock_call.return_value = _h({"transactions": []})
+            parse_web_text(user.id, "txt", "口座")
+            assert mock_call.call_args.kwargs["base_url"] == "https://api.example.com"
 
 
 class TestSuggestCategoriesByAi:

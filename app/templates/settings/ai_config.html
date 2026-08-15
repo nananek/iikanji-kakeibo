@@ -75,6 +75,27 @@
             </div>
           </div>
 
+          <div class="mb-3" id="openaiCompatibleNote" style="display:none;">
+            <div class="alert alert-info small mb-0">
+              <i class="bi bi-info-circle"></i>
+              エンドポイントと API キーはご自身で用意してください（例: OpenCode Go 等）。
+              API キーは暗号化して保存されます。
+            </div>
+          </div>
+
+          <div class="mb-3" id="baseUrlGroup" style="display:none;">
+            <label class="form-label" for="baseUrlInput">ベースURL（エンドポイント）</label>
+            <input type="url" class="form-control" name="base_url" id="baseUrlInput"
+                   value="{{ config.base_url if config else '' }}"
+                   placeholder="https://api.opencode.go"
+                   {% if not config %}required{% endif %}>
+            <div class="form-text">
+              OpenAI 互換 API のエンドポイントを入力してください（例: OpenCode Go 等）。
+              末尾に <code>/v1/chat/completions</code> が自動的に付加されます。
+              プライベート IP や localhost は利用できません。
+            </div>
+          </div>
+
           <div class="mb-3">
             <label class="form-label" for="apiKeyInput">
               APIキー<span id="apiKeyOptional" style="display:none;" class="text-muted">（省略可）</span>
@@ -160,6 +181,14 @@
           外部プロバイダーにデータを送らずに済むのが利点です。
         </p>
         {% endif %}
+        {% if "openai_compatible" in provider_labels %}
+        <h6>OpenAI 互換 API (カスタムエンドポイント)</h6>
+        <p class="small">
+          OpenCode Go 等、OpenAI 互換の API を提供するサービスでアカウントを
+          作成し、API キーとエンドポイント (ベースURL) を取得してください。
+          取得したエンドポイントと API キーをこの画面で設定すると利用できます。
+        </p>
+        {% endif %}
       </div>
     </div>
   </div>
@@ -172,17 +201,24 @@ const defaults = {{ provider_defaults | tojson }};
 const select = document.getElementById('providerSelect');
 const hint = document.getElementById('defaultModelHint');
 const llamaCppNote = document.getElementById('llamaCppNote');
+const openaiCompatibleNote = document.getElementById('openaiCompatibleNote');
+const baseUrlGroup = document.getElementById('baseUrlGroup');
+const baseUrlInput = document.getElementById('baseUrlInput');
 const apiKeyInput = document.getElementById('apiKeyInput');
 const apiKeyOptional = document.getElementById('apiKeyOptional');
 
 function updateProvider() {
   const isLocal = select.value === 'llama_cpp';
+  const showBaseUrl = select.value === 'openai_compatible';
   hint.textContent = 'デフォルト: ' + (defaults[select.value] || '');
   llamaCppNote.style.display = isLocal ? '' : 'none';
+  openaiCompatibleNote.style.display = showBaseUrl ? '' : 'none';
+  baseUrlGroup.style.display = showBaseUrl ? '' : 'none';
   apiKeyOptional.style.display = isLocal ? '' : 'none';
   // 新規登録時のみ required 制御（既存設定時は常に optional）
   {% if not config %}
   apiKeyInput.required = !isLocal;
+  baseUrlInput.required = showBaseUrl;
   {% endif %}
 }
 select.addEventListener('change', updateProvider);
