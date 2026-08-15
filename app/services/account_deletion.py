@@ -107,6 +107,11 @@ def delete_user_account(user_id: int) -> None:
     db.session.flush()
 
     # 5. user_id を持つ各テーブルを削除
+    # AuditGrantAccount は accounts(user_id, code) への FK (ondelete なし)
+    # を持つため、Account を消す前に先に削除しておく (削除順序バグ対策:
+    # 旧実装では Account 削除後に AuditGrant を消していたため FK 違反)。
+    AuditGrantAccount.query.filter_by(account_user_id=user_id).delete()
+    db.session.flush()
     for model in (
         UserAIConfig, AIUsageLog, APIKey,
         AutoImportSource, BalanceCache, CsvColumnProfile,
