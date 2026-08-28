@@ -18,4 +18,4 @@ ofxparse>=0.21
 Flask-Limiter>=4.1.1,<5.0
 boto3>=1.43.75,<2.0
 Pillow>=12.3.0,<13.0
-gunicorn>=26.0.0,<27.0
+gunicorn>=26.2.0,<27.0
