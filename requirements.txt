@@ -11,7 +11,7 @@ email-validator==2.3.0
 python-dotenv==1.2.3
 webauthn>=3.0.0,<4.0
 httpx>=0.28.1,<1.0
-cryptography>=50.0.0
+cryptography>=50.0.1
 pyotp>=2.10.0
 qrcode>=8.2,<9.0
 ofxparse>=0.21
