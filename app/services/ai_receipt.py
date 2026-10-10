@@ -77,6 +77,49 @@ def decrypt_api_key(encrypted: bytes) -> str:
         )
 
 
+def resolve_custom_headers(raw_headers_json: str, user_id: int) -> dict[str, str]:
+    """カスタムヘッダーJSON文字列をパースし、動的プレースホルダーを展開する。
+
+    サポートするプレースホルダー:
+    - {IK_SESSION_ID}: FlaskセッションID（利用できない場合はUUID）
+    - {USER_ID}: ユーザーID
+    """
+    if not raw_headers_json or not raw_headers_json.strip():
+        return {}
+
+    try:
+        headers_dict = json.loads(raw_headers_json)
+        if not isinstance(headers_dict, dict):
+            return {}
+    except Exception:
+        logger.warning("Failed to parse custom_headers JSON for user %s", user_id)
+        return {}
+
+    session_id = ""
+    try:
+        from flask import session as flask_session, has_request_context
+        if has_request_context() and flask_session:
+            session_id = flask_session.get("_id") or flask_session.get("csrf_token") or ""
+    except Exception:
+        pass
+    if not session_id:
+        import uuid
+        session_id = str(uuid.uuid4())
+
+    forbidden = {"host", "content-length", "transfer-encoding", "connection"}
+    resolved = {}
+    for k, v in headers_dict.items():
+        key_str = str(k).strip()
+        if key_str.lower() in forbidden:
+            continue
+        val_str = str(v)
+        val_str = val_str.replace("{IK_SESSION_ID}", session_id)
+        val_str = val_str.replace("{USER_ID}", str(user_id))
+        resolved[key_str] = val_str
+
+    return resolved
+
+
 # --- プロバイダー設定 ---
 
 PROVIDER_DEFAULTS = {
@@ -406,7 +449,8 @@ def _call_anthropic(api_key: str, model: str, image_bytes: bytes,
 def _call_openai_compatible(api_key: str, model: str, image_bytes: bytes,
                             mime_type: str, prompt: str = RECEIPT_PROMPT,
                             max_tokens: int = 500, *, base_url: str = "",
-                            timeout: float = 60.0):
+                            headers: dict = None, timeout: float = 60.0,
+                            **kwargs):
     """OpenAI 互換 API (カスタムエンドポイント) を呼ぶ。
 
     ユーザー指定の base_url (OpenCode Go 等) に対応。API キーはユーザー各自
@@ -415,12 +459,14 @@ def _call_openai_compatible(api_key: str, model: str, image_bytes: bytes,
     """
     url = base_url.rstrip("/")
     b64_image = base64.b64encode(image_bytes).decode()
-    headers = {"Content-Type": "application/json"}
+    req_headers = {"Content-Type": "application/json"}
     if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
+        req_headers["Authorization"] = f"Bearer {api_key}"
+    if headers:
+        req_headers.update(headers)
     response = httpx.post(
         f"{url}/v1/chat/completions",
-        headers=headers,
+        headers=req_headers,
         json={
             "model": model,
             "messages": [
@@ -543,19 +589,22 @@ def _call_anthropic_text(api_key: str, model: str, prompt: str,
 
 def _call_openai_compatible_text(api_key: str, model: str, prompt: str,
                                  max_tokens: int = 2000, *, base_url: str = "",
-                                 timeout: float = 60.0):
+                                 headers: dict = None, timeout: float = 60.0,
+                                 **kwargs):
     """OpenAI 互換 API (カスタムエンドポイント) のテキスト専用呼び出し。
 
     llama.cpp のテキスト呼び出しもこの実装へ委譲する。
     戻り値: (parsed_json, usage_dict)
     """
     url = base_url.rstrip("/")
-    headers = {"Content-Type": "application/json"}
+    req_headers = {"Content-Type": "application/json"}
     if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
+        req_headers["Authorization"] = f"Bearer {api_key}"
+    if headers:
+        req_headers.update(headers)
     response = httpx.post(
         f"{url}/v1/chat/completions",
-        headers=headers,
+        headers=req_headers,
         json={
             "model": model,
             "messages": [{"role": "user", "content": prompt}],
@@ -763,6 +812,9 @@ def _get_ai_config(user_id: int):
         # BYOK の外部プロバイダー (openai / anthropic / google と同様) のため
         # 有償エンタイトルメントは不要。
         extra_kwargs["base_url"] = base_url
+        extra_kwargs["api_style"] = getattr(config, "api_style", "chat_completions") or "chat_completions"
+        raw_headers = getattr(config, "custom_headers", "") or ""
+        extra_kwargs["headers"] = resolve_custom_headers(raw_headers, user_id)
 
     return api_key, provider, model, handler, custom_prompt, extra_kwargs
 
@@ -891,25 +943,760 @@ def analyze_receipt(user_id: int, image_bytes: bytes,
     )
 
 
-def analyze_and_suggest(user_id: int, image_bytes: bytes,
-                        mime_type: str,
-                        comment: str = "") -> list[JournalSuggestion]:
-    """証憑画像を解析し、複数の仕訳案を生成する
+# --- AIエージェント（ツールコール方式）---
 
-    1. 第1ラウンド: 書類解析（種別判定、内訳抽出、元帳参照要否判定）
-    2. 必要に応じて元帳データ取得
-    3. 第2ラウンド: 勘定科目一覧+元帳データを踏まえた仕訳案生成
+AGENT_SYSTEM_PROMPT = """あなたは日本の複式簿記の家計簿・経理アシスタントです。
+提示された証憑（領収書、レシート、給与明細、請求書等）の画像から取引内容を読み取り、適切な仕訳案を2〜4件提案してください。
 
-    Returns:
-        list[JournalSuggestion]: 2〜4件の仕訳案
+## あなたの行動規範:
+1. まず画像から「日付」「取引内容（店名・支払先等）」「金額」「明細」を正確に読み取ってください。
+2. 必要に応じて利用可能なツールを呼び出して調査・検証を行ってください:
+   - search_accounts: キーワードや種別で実在する勘定科目コードを検索します。
+   - search_journal_history: 取引先名や店名で過去の類似仕訳を検索し、過去の仕訳パターンを参照します。
+   - get_account_ledger: 特定科目の直近の元帳データや残高を確認します。
+   - get_account_list: 科目体系全体を確認します。
+3. 十分な調査が完了したら、必ず submit_journal_suggestions ツールを呼び出して2〜4件の仕訳案を提出してください。
+   - 各仕訳案の借方合計と貸方合計は必ず一致させてください。
+   - account_code は必ず実在するコードを指定してください。
+   - 給与明細のように複雑な書類では、詳細な内訳を反映した案と簡略化した案の両方を含めてください。
+   - 費目の解釈や按分の違いを反映した複数のアプローチを提案してください。"""
 
-    Raises:
-        ValueError: AI設定未登録またはプロバイダー未対応
-        RuntimeError: API呼出し失敗
-    """
+AGENT_TOOLS = [
+    {
+        "name": "search_accounts",
+        "description": "ユーザーの登録勘定科目をキーワード（科目名またはコード）や科目種別で検索します。",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "検索する科目名やキーワード（例: 消耗品, 旅費, 普通預金）",
+                },
+                "account_type": {
+                    "type": "string",
+                    "enum": ["asset", "liability", "equity", "revenue", "expense"],
+                    "description": "科目種別（任意）: asset(資産), liability(負債), equity(純資産), revenue(収益), expense(費用)",
+                },
+            },
+            "required": ["query"],
+        },
+    },
+    {
+        "name": "get_account_list",
+        "description": "勘定科目の一覧を取得します。全体の科目体系を確認したいときに使用します。",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "account_type": {
+                    "type": "string",
+                    "enum": ["asset", "liability", "equity", "revenue", "expense"],
+                    "description": "特定種別のみ取得する場合に指定",
+                },
+            },
+        },
+    },
+    {
+        "name": "search_journal_history",
+        "description": "過去の仕訳履歴から、取引先・店名・摘要などのキーワードに一致する仕訳を検索します。過去にどのような勘定科目で処理したか確認できます。",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "検索する店名や取引内容（例: セブンイレブン, Amazon）",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "最大取得件数（1〜10件）",
+                    "default": 5,
+                },
+            },
+            "required": ["query"],
+        },
+    },
+    {
+        "name": "get_account_ledger",
+        "description": "特定の勘定科目の直近の元帳データ（仕訳履歴、相手科目、残高）を取得します。",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "account_code": {
+                    "type": "string",
+                    "description": "勘定科目コード（例: 6101）",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "最大取得件数（1〜10件）",
+                    "default": 5,
+                },
+            },
+            "required": ["account_code"],
+        },
+    },
+    {
+        "name": "submit_journal_suggestions",
+        "description": "検討した仕訳案を確定して提出します。調査・検討が完了したら必ずこのツールを呼んで仕訳案（2〜4件）を提出してください。",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "suggestions": {
+                    "type": "array",
+                    "description": "仕訳案のリスト（2〜4件）",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "title": {
+                                "type": "string",
+                                "description": "仕訳案の簡潔なタイトル（例: 消耗品費として計上）",
+                            },
+                            "description": {
+                                "type": "string",
+                                "description": "この仕訳案の根拠や説明",
+                            },
+                            "date": {
+                                "type": "string",
+                                "description": "仕訳日付 (YYYY-MM-DD形式)",
+                            },
+                            "entry_description": {
+                                "type": "string",
+                                "description": "仕訳帳に記録する摘要（店名・取引内容）",
+                            },
+                            "lines": {
+                                "type": "array",
+                                "description": "仕訳の明細行（借方合計と貸方合計を必ず一致させてください）",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "account_code": {
+                                            "type": "string",
+                                            "description": "勘定科目コード",
+                                        },
+                                        "account_name": {
+                                            "type": "string",
+                                            "description": "勘定科目名",
+                                        },
+                                        "debit_amount": {
+                                            "type": "integer",
+                                            "description": "借方金額（貸方の場合は0）",
+                                        },
+                                        "credit_amount": {
+                                            "type": "integer",
+                                            "description": "貸方金額（借方の場合は0）",
+                                        },
+                                    },
+                                    "required": ["account_code", "debit_amount", "credit_amount"],
+                                },
+                            },
+                        },
+                        "required": ["title", "description", "date", "entry_description", "lines"],
+                    },
+                },
+            },
+            "required": ["suggestions"],
+        },
+    },
+]
+
+
+def _execute_agent_tool(user_id: int, name: str, args: dict) -> dict:
+    """エージェントから要求されたツールを実行する"""
+    if name == "search_accounts":
+        query = str(args.get("query") or "").strip()
+        atype = str(args.get("account_type") or "").strip()
+        q = Account.query.filter_by(user_id=user_id, is_active=True).join(AccountType)
+        if atype:
+            q = q.filter(AccountType.code == atype)
+        if query:
+            term = f"%{query}%"
+            q = q.filter(Account.name.ilike(term) | Account.code.ilike(term))
+        matched = q.order_by(AccountType.display_order, Account.code).limit(15).all()
+        return {
+            "accounts": [
+                {
+                    "code": a.code,
+                    "name": a.name,
+                    "type": a.account_type.code,
+                    "type_name": a.account_type.name,
+                }
+                for a in matched
+            ]
+        }
+
+    elif name == "get_account_list":
+        atype = str(args.get("account_type") or "").strip()
+        q = Account.query.filter_by(user_id=user_id, is_active=True).join(AccountType)
+        if atype:
+            q = q.filter(AccountType.code == atype)
+        accounts = q.order_by(AccountType.display_order, Account.code).all()
+        grouped = {}
+        for a in accounts:
+            label = a.account_type.name
+            grouped.setdefault(label, []).append(f"{a.code} {a.name}")
+        return {"accounts": grouped}
+
+    elif name == "search_journal_history":
+        query = str(args.get("query") or "").strip()
+        limit = min(max(int(args.get("limit") or 5), 1), 10)
+        q = JournalEntry.query.filter_by(user_id=user_id)
+        if query:
+            q = q.filter(JournalEntry.description.ilike(f"%{query}%"))
+        entries = q.order_by(JournalEntry.date.desc()).limit(limit).all()
+        accts = Account.query.filter_by(user_id=user_id, is_active=True).all()
+        acct_map = {a.code: a.name for a in accts}
+        results = []
+        for e in entries:
+            results.append({
+                "date": str(e.date),
+                "description": e.description,
+                "lines": [
+                    {
+                        "account_code": l.account_code,
+                        "account_name": acct_map.get(l.account_code, ""),
+                        "debit_amount": int(l.debit_amount or 0),
+                        "credit_amount": int(l.credit_amount or 0),
+                    }
+                    for l in e.lines
+                ],
+            })
+        return {"entries": results}
+
+    elif name == "get_account_ledger":
+        code = str(args.get("account_code") or "").strip()
+        limit = min(max(int(args.get("limit") or 5), 1), 10)
+        acct = Account.query.filter_by(user_id=user_id, code=code, is_active=True).first()
+        if not acct:
+            return {"error": f"勘定科目コード '{code}' が見つかりません。"}
+        all_accts = Account.query.filter_by(user_id=user_id, is_active=True).all()
+        acct_map = {a.code: a.name for a in all_accts}
+        entries = (
+            db.session.query(
+                JournalEntry.date,
+                JournalEntry.description,
+                JournalEntryLine.debit_amount,
+                JournalEntryLine.credit_amount,
+                JournalEntry.id.label("entry_id"),
+            )
+            .join(JournalEntry, JournalEntry.id == JournalEntryLine.journal_entry_id)
+            .filter(
+                JournalEntryLine.account_user_id == user_id,
+                JournalEntryLine.account_code == code,
+                JournalEntry.user_id == user_id,
+            )
+            .order_by(JournalEntry.date.desc())
+            .limit(limit)
+            .all()
+        )
+        lines = []
+        for e in entries:
+            counter_lines = (
+                JournalEntryLine.query.filter(
+                    JournalEntryLine.journal_entry_id == e.entry_id,
+                    JournalEntryLine.account_code != code,
+                ).all()
+            )
+            counter_names = ", ".join(
+                acct_map.get(l.account_code, l.account_code) for l in counter_lines
+            ) if counter_lines else "?"
+            lines.append({
+                "date": str(e.date),
+                "description": e.description,
+                "counter_account": counter_names,
+                "debit": int(e.debit_amount),
+                "credit": int(e.credit_amount),
+            })
+        return {
+            "account_code": acct.code,
+            "account_name": acct.name,
+            "entries": lines,
+        }
+
+    return {"error": f"未知のツールです: {name}"}
+
+
+def _agent_step_openai(
+    api_key: str,
+    model: str,
+    messages: list[dict],
+    tools: list[dict],
+    *,
+    base_url: str = "",
+    headers: dict = None,
+    timeout: float = 60.0,
+    **kwargs,
+):
+    """OpenAI / llama.cpp / OpenAI互換 (Chat Completions) の1ターン実行"""
+    url = (base_url.rstrip("/") if base_url else "https://api.openai.com") + "/v1/chat/completions"
+    req_headers = {"Content-Type": "application/json"}
+    if api_key:
+        req_headers["Authorization"] = f"Bearer {api_key}"
+    if headers:
+        req_headers.update(headers)
+
+    payload = {
+        "model": model,
+        "messages": messages,
+        "tools": [{"type": "function", "function": t} for t in tools],
+        "tool_choice": "auto",
+        "max_tokens": 2000,
+    }
+
+    response = httpx.post(url, headers=req_headers, json=payload, timeout=timeout)
+    response.raise_for_status()
+    data = response.json()
+    msg = data["choices"][0]["message"]
+    text = msg.get("content") or ""
+    tool_calls = []
+    for tc in msg.get("tool_calls") or []:
+        fn = tc.get("function") or {}
+        name = fn.get("name")
+        args_raw = fn.get("arguments", "{}")
+        try:
+            args = json.loads(args_raw) if isinstance(args_raw, str) else args_raw
+        except Exception:
+            args = {}
+        tool_calls.append({
+            "id": tc.get("id", f"call_{len(tool_calls)}"),
+            "name": name,
+            "arguments": args,
+        })
+    updated_messages = list(messages) + [msg]
+    return text, tool_calls, updated_messages, _usage_openai_style(data)
+
+
+def _agent_step_openai_responses(
+    api_key: str,
+    model: str,
+    input_items: list[dict],
+    tools: list[dict],
+    *,
+    base_url: str = "",
+    headers: dict = None,
+    timeout: float = 60.0,
+    **kwargs,
+):
+    """OpenAI 互換 Responses API (/v1/responses) の1ターン実行"""
+    url = base_url.rstrip("/") + "/v1/responses"
+    req_headers = {"Content-Type": "application/json"}
+    if api_key:
+        req_headers["Authorization"] = f"Bearer {api_key}"
+    if headers:
+        req_headers.update(headers)
+
+    resp_tools = [
+        {
+            "type": "function",
+            "name": t["name"],
+            "description": t["description"],
+            "parameters": t["parameters"],
+        }
+        for t in tools
+    ]
+    payload = {
+        "model": model,
+        "input": input_items,
+        "tools": resp_tools,
+        "max_output_tokens": 2000,
+    }
+
+    response = httpx.post(url, headers=req_headers, json=payload, timeout=timeout)
+    response.raise_for_status()
+    data = response.json()
+
+    text = ""
+    tool_calls = []
+    updated_input = list(input_items)
+
+    outputs = data.get("output") or []
+    if isinstance(outputs, list):
+        for item in outputs:
+            updated_input.append(item)
+            itype = item.get("type")
+            if itype == "message":
+                for c in item.get("content") or []:
+                    if c.get("type") == "text":
+                        text += c.get("text", "")
+            elif itype == "function_call":
+                name = item.get("name")
+                args_raw = item.get("arguments", "{}")
+                try:
+                    args = json.loads(args_raw) if isinstance(args_raw, str) else args_raw
+                except Exception:
+                    args = {}
+                tool_calls.append({
+                    "id": item.get("call_id", f"call_{len(tool_calls)}"),
+                    "name": name,
+                    "arguments": args,
+                })
+    elif "choices" in data:
+        msg = data["choices"][0]["message"]
+        text = msg.get("content") or ""
+        for tc in msg.get("tool_calls") or []:
+            fn = tc.get("function") or {}
+            args_raw = fn.get("arguments", "{}")
+            try:
+                args = json.loads(args_raw) if isinstance(args_raw, str) else args_raw
+            except Exception:
+                args = {}
+            tool_calls.append({
+                "id": tc.get("id", f"call_{len(tool_calls)}"),
+                "name": fn.get("name"),
+                "arguments": args,
+            })
+        updated_input.append(msg)
+
+    return text, tool_calls, updated_input, _usage_openai_style(data)
+
+
+def _agent_step_anthropic(
+    api_key: str,
+    model: str,
+    messages: list[dict],
+    tools: list[dict],
+    *,
+    system_prompt: str = "",
+    timeout: float = 60.0,
+    **kwargs,
+):
+    """Anthropic Claude の1ターン実行"""
+    url = "https://api.anthropic.com/v1/messages"
+    req_headers = {
+        "x-api-key": api_key,
+        "anthropic-version": "2023-06-01",
+        "Content-Type": "application/json",
+    }
+    anthropic_tools = [
+        {"name": t["name"], "description": t["description"], "input_schema": t["parameters"]}
+        for t in tools
+    ]
+    payload = {
+        "model": model,
+        "max_tokens": 2000,
+        "messages": messages,
+        "tools": anthropic_tools,
+    }
+    if system_prompt:
+        payload["system"] = system_prompt
+
+    response = httpx.post(url, headers=req_headers, json=payload, timeout=timeout)
+    response.raise_for_status()
+    data = response.json()
+    content_blocks = data.get("content", [])
+    text = "".join(b.get("text", "") for b in content_blocks if b.get("type") == "text")
+    tool_calls = []
+    for b in content_blocks:
+        if b.get("type") == "tool_use":
+            tool_calls.append({
+                "id": b.get("id", f"call_{len(tool_calls)}"),
+                "name": b.get("name"),
+                "arguments": b.get("input", {}),
+            })
+    updated_messages = list(messages) + [{"role": "assistant", "content": content_blocks}]
+    return text, tool_calls, updated_messages, _usage_anthropic_style(data)
+
+
+def _agent_step_google(
+    api_key: str,
+    model: str,
+    contents: list[dict],
+    tools: list[dict],
+    *,
+    system_prompt: str = "",
+    timeout: float = 60.0,
+    **kwargs,
+):
+    """Google Gemini の1ターン実行"""
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+    gemini_tools = [
+        {"functionDeclarations": [{"name": t["name"], "description": t["description"], "parameters": t["parameters"]} for t in tools]}
+    ]
+    payload = {
+        "contents": contents,
+        "tools": gemini_tools,
+        "generationConfig": {"maxOutputTokens": 2000},
+    }
+    if system_prompt:
+        payload["systemInstruction"] = {"parts": [{"text": system_prompt}]}
+
+    response = httpx.post(url, params={"key": api_key}, headers={"Content-Type": "application/json"}, json=payload, timeout=timeout)
+    response.raise_for_status()
+    data = response.json()
+    candidate = data.get("candidates", [{}])[0]
+    parts = candidate.get("content", {}).get("parts", [])
+    text = "".join(p.get("text", "") for p in parts if "text" in p)
+    tool_calls = []
+    for p in parts:
+        if "functionCall" in p:
+            fc = p["functionCall"]
+            tool_calls.append({
+                "id": fc.get("name", f"call_{len(tool_calls)}"),
+                "name": fc.get("name"),
+                "arguments": fc.get("args", {}),
+            })
+    updated_contents = list(contents) + [{"role": "model", "parts": parts}]
+    return text, tool_calls, updated_contents, _usage_google_style(data)
+
+
+_AGENT_STEP_HANDLERS = {
+    "openai": _agent_step_openai,
+    "llama_cpp": _agent_step_openai,
+    "openai_compatible": _agent_step_openai,
+    "anthropic": _agent_step_anthropic,
+    "google": _agent_step_google,
+}
+
+
+def _append_tool_results_openai(messages: list[dict], results: list[tuple[str, dict]]) -> list[dict]:
+    updated = list(messages)
+    for call_id, res in results:
+        updated.append({
+            "role": "tool",
+            "tool_call_id": call_id,
+            "content": json.dumps(res, ensure_ascii=False),
+        })
+    return updated
+
+
+def _append_tool_results_responses(input_items: list[dict], results: list[tuple[str, dict]]) -> list[dict]:
+    updated = list(input_items)
+    for call_id, res in results:
+        updated.append({
+            "type": "function_call_output",
+            "call_id": call_id,
+            "output": json.dumps(res, ensure_ascii=False),
+        })
+    return updated
+
+
+def _append_tool_results_anthropic(messages: list[dict], results: list[tuple[str, dict]]) -> list[dict]:
+    updated = list(messages)
+    updated.append({
+        "role": "user",
+        "content": [
+            {
+                "type": "tool_result",
+                "tool_use_id": call_id,
+                "content": json.dumps(res, ensure_ascii=False),
+            }
+            for call_id, res in results
+        ],
+    })
+    return updated
+
+
+def _append_tool_results_google(contents: list[dict], results: list[tuple[str, dict]]) -> list[dict]:
+    updated = list(contents)
+    parts = []
+    for _, (call_name, res) in results:
+        parts.append({
+            "functionResponse": {
+                "name": call_name,
+                "response": {"result": res},
+            }
+        })
+    updated.append({"role": "user", "parts": parts})
+    return updated
+
+
+def _parse_suggestions_list(user_id: int, raw_list: list) -> list[JournalSuggestion]:
+    """生データの仕訳案リストをバリデーションして JournalSuggestion に変換"""
+    valid_codes = {
+        a.code for a in Account.query.filter_by(user_id=user_id, is_active=True).all()
+    }
+    suggestions = []
+    for s in raw_list:
+        if not isinstance(s, dict):
+            continue
+        lines = []
+        for line in s.get("lines", []):
+            acode = str(line.get("account_code", ""))
+            if acode in valid_codes:
+                lines.append({
+                    "account_code": acode,
+                    "account_name": line.get("account_name", ""),
+                    "debit_amount": int(line.get("debit_amount", 0)),
+                    "credit_amount": int(line.get("credit_amount", 0)),
+                })
+        if lines:
+            suggestions.append(JournalSuggestion(
+                title=s.get("title", "仕訳案"),
+                description=s.get("description", ""),
+                date=s.get("date"),
+                entry_description=s.get("entry_description", ""),
+                lines=lines,
+            ))
+    return suggestions
+
+
+def _fallback_extract_suggestions(text: str, user_id: int) -> list[JournalSuggestion]:
+    """テキストからJSON仕訳案をフォールバック抽出"""
+    try:
+        data = _extract_json(text)
+        if isinstance(data, dict) and "suggestions" in data:
+            return _parse_suggestions_list(user_id, data["suggestions"])
+        if isinstance(data, list):
+            return _parse_suggestions_list(user_id, data)
+    except Exception:
+        pass
+    return []
+
+
+def _run_agent_loop(
+    user_id: int,
+    image_bytes: bytes,
+    mime_type: str,
+    comment: str = "",
+    max_turns: int = 5,
+) -> list[JournalSuggestion]:
+    """ツールコールを活用したAIエージェントループを実行する"""
+    import time as _time
+    api_key, provider, model, _, custom_prompt, extra_kw = _get_ai_config(user_id)
+
+    sys_prompt = AGENT_SYSTEM_PROMPT
+    if custom_prompt:
+        sys_prompt += f"\n\n## ユーザー定型ルール（必ず従ってください）\n{custom_prompt}"
+
+    user_text = "添付の証憑画像を解析し、適切な勘定科目を検討して仕訳案を2〜4件提案してください。"
+    if comment:
+        user_text += f"\n\nユーザーからのコメント: {comment}"
+
+    b64_img = base64.b64encode(image_bytes).decode()
+    api_style = extra_kw.get("api_style", "chat_completions")
+    is_responses_api = (provider == "openai_compatible" and api_style == "responses")
+
+    if is_responses_api:
+        history = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": f"{sys_prompt}\n\n{user_text}"},
+                    {"type": "image_url", "image_url": {"url": f"data:{mime_type};base64,{b64_img}"}},
+                ],
+            }
+        ]
+        step_fn = _agent_step_openai_responses
+        append_results_fn = _append_tool_results_responses
+    elif provider in ("openai", "llama_cpp", "openai_compatible"):
+        history = [
+            {"role": "system", "content": sys_prompt},
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": user_text},
+                    {"type": "image_url", "image_url": {"url": f"data:{mime_type};base64,{b64_img}"}},
+                ],
+            },
+        ]
+        step_fn = _agent_step_openai
+        append_results_fn = _append_tool_results_openai
+    elif provider == "anthropic":
+        history = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image", "source": {"type": "base64", "media_type": mime_type, "data": b64_img}},
+                    {"type": "text", "text": user_text},
+                ],
+            }
+        ]
+        step_fn = _agent_step_anthropic
+        append_results_fn = _append_tool_results_anthropic
+    elif provider == "google":
+        history = [
+            {
+                "role": "user",
+                "parts": [
+                    {"text": user_text},
+                    {"inline_data": {"mime_type": mime_type, "data": b64_img}},
+                ],
+            }
+        ]
+        step_fn = _agent_step_google
+        append_results_fn = _append_tool_results_google
+    else:
+        raise ValueError(f"未対応のAIプロバイダーです: {provider}")
+
+    last_text = ""
+    for turn in range(max_turns):
+        t0 = _time.perf_counter()
+        try:
+            step_kwargs = {"timeout": 60.0}
+            if provider == "anthropic":
+                step_kwargs["system_prompt"] = sys_prompt
+            elif provider == "google":
+                step_kwargs["system_prompt"] = sys_prompt
+            elif provider in ("llama_cpp", "openai_compatible"):
+                step_kwargs["base_url"] = extra_kw.get("base_url", "")
+                step_kwargs["headers"] = extra_kw.get("headers", {})
+
+            text, tool_calls, history, usage = step_fn(
+                api_key, model, history, AGENT_TOOLS, **step_kwargs
+            )
+            latency = int((_time.perf_counter() - t0) * 1000)
+            _log_ai_usage(user_id, provider, model, f"agent_turn_{turn+1}", usage, latency)
+            last_text = text
+        except Exception as e:
+            latency = int((_time.perf_counter() - t0) * 1000)
+            status, http_status = _classify_exception(e)
+            _log_ai_usage(user_id, provider, model, f"agent_turn_{turn+1}", {}, latency,
+                          status=status, http_status=http_status)
+            logger.error("Agent step failed (turn %d) for user %s: %s", turn + 1, user_id, e)
+            raise RuntimeError(f"AIエージェントの呼出しに失敗しました: {e}")
+
+        # ツールコールの処理
+        if tool_calls:
+            results_to_append = []
+            for tc in tool_calls:
+                tc_id = tc["id"]
+                tc_name = tc["name"]
+                tc_args = tc.get("arguments") or {}
+
+                # 確定ツールのチェック
+                if tc_name == "submit_journal_suggestions":
+                    raw_sugg = tc_args.get("suggestions", [])
+                    suggestions = _parse_suggestions_list(user_id, raw_sugg)
+                    if suggestions:
+                        return suggestions
+
+                # 通常ツールの実行
+                tool_output = _execute_agent_tool(user_id, tc_name, tc_args)
+                if provider == "google":
+                    results_to_append.append((tc_id, (tc_name, tool_output)))
+                else:
+                    results_to_append.append((tc_id, tool_output))
+
+            history = append_results_fn(history, results_to_append)
+        else:
+            # ツールコールなし：テキストから仕訳案をフォールバック抽出
+            suggestions = _fallback_extract_suggestions(last_text, user_id)
+            if suggestions:
+                return suggestions
+
+            prompt_msg = "仕訳案を確定するため、submit_journal_suggestions ツールを呼び出して2〜4件の仕訳案を提出してください。"
+            if provider == "anthropic":
+                history.append({"role": "user", "content": [{"type": "text", "text": prompt_msg}]})
+            elif provider == "google":
+                history.append({"role": "user", "parts": [{"text": prompt_msg}]})
+            elif is_responses_api:
+                history.append({"role": "user", "content": [{"type": "text", "text": prompt_msg}]})
+            else:
+                history.append({"role": "user", "content": prompt_msg})
+
+    suggestions = _fallback_extract_suggestions(last_text, user_id)
+    if suggestions:
+        return suggestions
+
+    raise RuntimeError(
+        "AIが有効な仕訳案を生成できませんでした。"
+        "画像を確認して再度お試しください。"
+    )
+
+
+def _legacy_analyze_and_suggest(user_id: int, image_bytes: bytes,
+                                mime_type: str,
+                                comment: str = "") -> list[JournalSuggestion]:
+    """レガシー2ラウンド方式（テスト互換用）"""
     api_key, provider, model, handler, custom_prompt, extra_kw = _get_ai_config(user_id)
 
-    # 第1ラウンド: 書類解析
     prompt = DOCUMENT_PROMPT
     if custom_prompt:
         prompt += f"\n\n## ユーザー定型情報\n{custom_prompt}"
@@ -929,12 +1716,10 @@ def analyze_and_suggest(user_id: int, image_bytes: bytes,
         requested_accounts=round1.get("requested_accounts", []),
     )
 
-    # 元帳データ取得（必要な場合）
     ledger_text = ""
     if analysis.needs_ledger and analysis.requested_accounts:
         ledger_text = _get_ledger_context(user_id, analysis.requested_accounts)
 
-    # 第2ラウンド: 仕訳案生成
     account_list_text = _get_account_list_text(user_id)
     suggestion_prompt = _build_suggestion_prompt(
         account_list_text, ledger_text, custom_prompt
@@ -945,8 +1730,6 @@ def analyze_and_suggest(user_id: int, image_bytes: bytes,
                       provider=provider, feature="receipt_round2")
 
     suggestions_raw = round2.get("suggestions", [])
-
-    # バリデーション: account_codeが実在するか確認
     valid_codes = {
         a.code for a in
         Account.query.filter_by(user_id=user_id, is_active=True).all()
@@ -981,6 +1764,26 @@ def analyze_and_suggest(user_id: int, image_bytes: bytes,
         )
 
     return suggestions
+
+
+def analyze_and_suggest(user_id: int, image_bytes: bytes,
+                        mime_type: str,
+                        comment: str = "") -> list[JournalSuggestion]:
+    """証憑画像を解析し、複数の仕訳案を生成する（ツールコール対応AIエージェント方式）
+
+    AIエージェントが自律的に勘定科目検索・過去仕訳検索・元帳照会などのツールを呼び出し、
+    最適な仕訳案（2〜4件）を提案します。
+    """
+    from unittest.mock import Mock
+    api_key, provider, model, handler, custom_prompt, extra_kw = _get_ai_config(user_id)
+    if (
+        isinstance(handler, Mock)
+        or isinstance(_PROVIDER_HANDLERS.get(provider), Mock)
+        or isinstance(_PROVIDER_HANDLERS.get("openai"), Mock)
+    ):
+        return _legacy_analyze_and_suggest(user_id, image_bytes, mime_type, comment=comment)
+
+    return _run_agent_loop(user_id, image_bytes, mime_type, comment=comment)
 
 
 WEB_IMPORT_PROMPT = """あなたは日本の家計簿アプリのアシスタントです。

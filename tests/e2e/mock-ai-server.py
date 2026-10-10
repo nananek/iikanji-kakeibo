@@ -91,21 +91,65 @@ def wrap_openai(data):
     }
 
 
+def wrap_openai_tool_call(tool_name, tool_args):
+    return {
+        "id": "mock-tool-1",
+        "object": "chat.completion",
+        "choices": [
+            {
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": "call_mock_1",
+                            "type": "function",
+                            "function": {
+                                "name": tool_name,
+                                "arguments": json.dumps(tool_args, ensure_ascii=False) if isinstance(tool_args, dict) else tool_args,
+                            },
+                        }
+                    ],
+                },
+                "finish_reason": "tool_calls",
+            }
+        ],
+    }
+
+
+def wrap_responses_tool_call(tool_name, tool_args):
+    return {
+        "id": "resp-mock-1",
+        "output": [
+            {
+                "type": "function_call",
+                "call_id": "call_mock_1",
+                "name": tool_name,
+                "arguments": json.dumps(tool_args, ensure_ascii=False) if isinstance(tool_args, dict) else tool_args,
+            }
+        ],
+    }
+
+
 class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
-        if self.path == "/v1/chat/completions":
+        if self.path in ("/v1/chat/completions", "/v1/responses"):
             length = int(self.headers.get("Content-Length", 0))
-            body = self.rfile.read(length).decode()
+            body = self.rfile.read(length).decode() if length > 0 else "{}"
 
+            has_tools = False
             is_round2 = False
             is_csv_detect = False
             try:
                 parsed = json.loads(body)
-                for msg in parsed.get("messages", []):
+                if parsed.get("tools"):
+                    has_tools = True
+                for msg in parsed.get("messages", []) if "messages" in parsed else parsed.get("input", []):
                     content = msg.get("content", "")
                     if isinstance(content, list):
                         content = " ".join(
-                            c.get("text", "") for c in content if c.get("type") == "text"
+                            c.get("text", "") for c in content if isinstance(c, dict) and c.get("type") == "text"
                         )
                     if "列マッピングを推定" in content:
                         is_csv_detect = True
@@ -116,19 +160,27 @@ class Handler(BaseHTTPRequestHandler):
             except json.JSONDecodeError:
                 pass
 
-            if is_csv_detect:
-                data = csv_column_detect_response()
+            if has_tools:
+                if self.path == "/v1/responses":
+                    res_obj = wrap_responses_tool_call("submit_journal_suggestions", round2_response())
+                else:
+                    res_obj = wrap_openai_tool_call("submit_journal_suggestions", round2_response())
+                label = "Agent Tool Call"
+            elif is_csv_detect:
+                res_obj = wrap_openai(csv_column_detect_response())
+                label = "CSV Detect"
             elif is_round2:
-                data = round2_response()
+                res_obj = wrap_openai(round2_response())
+                label = "Round 2"
             else:
-                data = round1_response()
-            response = json.dumps(wrap_openai(data), ensure_ascii=False)
+                res_obj = wrap_openai(round1_response())
+                label = "Round 1"
 
+            response = json.dumps(res_obj, ensure_ascii=False)
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
             self.wfile.write(response.encode())
-            label = "CSV Detect" if is_csv_detect else ("Round 2" if is_round2 else "Round 1")
             print(f"[mock-ai] {label} response sent", flush=True)
         else:
             self.send_response(404)

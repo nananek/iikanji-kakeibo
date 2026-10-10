@@ -145,6 +145,37 @@ class TestAiConfig:
         assert cfg.provider == "openai_compatible"
         assert cfg.base_url == "https://api.opencode.go"
 
+    def test_save_new_openai_compatible_with_api_style_and_headers(self, db, logged_in_client, user, accounts):
+        with patch("socket.getaddrinfo") as mock_dns:
+            mock_dns.return_value = [(2, 1, 6, '', ('8.8.8.8', 0))]
+            resp = logged_in_client.post("/settings/ai/save", data={
+                "provider": "openai_compatible",
+                "api_key": "sk-test",
+                "model_name": "gpt-4o",
+                "custom_prompt": "",
+                "base_url": "https://api.opencode.go",
+                "api_style": "responses",
+                "custom_headers": '{"x-session-id": "{IK_SESSION_ID}"}',
+            })
+        assert resp.status_code in (302, 303)
+        cfg = UserAIConfig.query.filter_by(user_id=user.id).first()
+        assert cfg is not None
+        assert cfg.api_style == "responses"
+        assert cfg.custom_headers == '{"x-session-id": "{IK_SESSION_ID}"}'
+
+    def test_save_openai_compatible_bad_headers_blocked(self, db, logged_in_client, user, accounts):
+        with patch("socket.getaddrinfo") as mock_dns:
+            mock_dns.return_value = [(2, 1, 6, '', ('8.8.8.8', 0))]
+            resp = logged_in_client.post("/settings/ai/save", data={
+                "provider": "openai_compatible",
+                "api_key": "sk-test",
+                "model_name": "gpt-4o",
+                "base_url": "https://api.opencode.go",
+                "custom_headers": "not-a-json",
+            })
+        assert resp.status_code in (302, 303)
+        assert UserAIConfig.query.filter_by(user_id=user.id).first() is None
+
     def test_save_openai_compatible_without_base_url_blocked(self, db, logged_in_client, user, accounts):
         resp = logged_in_client.post("/settings/ai/save", data={
             "provider": "openai_compatible", "api_key": "sk-test", "base_url": "",

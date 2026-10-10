@@ -91,8 +91,34 @@
                    {% if not config %}required{% endif %}>
             <div class="form-text">
               OpenAI 互換 API のエンドポイントを入力してください（例: OpenCode Go 等）。
-              末尾に <code>/v1/chat/completions</code> が自動的に付加されます。
               プライベート IP や localhost は利用できません。
+            </div>
+          </div>
+
+          <div class="mb-3" id="apiStyleGroup" style="display:none;">
+            <label class="form-label" for="apiStyleSelect">API形式（エンドポイント種別）</label>
+            <select class="form-select" name="api_style" id="apiStyleSelect">
+              <option value="chat_completions"
+                {% if not config or config.api_style != 'responses' %}selected{% endif %}>
+                Chat Completions API (/v1/chat/completions)
+              </option>
+              <option value="responses"
+                {% if config and config.api_style == 'responses' %}selected{% endif %}>
+                Responses API (/v1/responses)
+              </option>
+            </select>
+            <div class="form-text">
+              ご利用のエンドポイント仕様に合わせて選択してください。
+            </div>
+          </div>
+
+          <div class="mb-3" id="customHeadersGroup" style="display:none;">
+            <label class="form-label" for="customHeadersInput">カスタムHTTPヘッダー（JSON形式・省略可）</label>
+            <textarea class="form-control font-monospace" name="custom_headers" id="customHeadersInput"
+                      rows="3" placeholder='{"x-session-id": "{IK_SESSION_ID}"}'>{{ config.custom_headers if config else '' }}</textarea>
+            <div class="form-text">
+              リクエスト時に付与する追加ヘッダーをJSON形式で指定します。<br>
+              利用可能なプレースホルダー: <code>{IK_SESSION_ID}</code>（現在のセッションID）、<code>{USER_ID}</code>（ユーザーID）
             </div>
           </div>
 
@@ -204,6 +230,8 @@ const llamaCppNote = document.getElementById('llamaCppNote');
 const openaiCompatibleNote = document.getElementById('openaiCompatibleNote');
 const baseUrlGroup = document.getElementById('baseUrlGroup');
 const baseUrlInput = document.getElementById('baseUrlInput');
+const apiStyleGroup = document.getElementById('apiStyleGroup');
+const customHeadersGroup = document.getElementById('customHeadersGroup');
 const apiKeyInput = document.getElementById('apiKeyInput');
 const apiKeyOptional = document.getElementById('apiKeyOptional');
 
@@ -214,6 +242,8 @@ function updateProvider() {
   llamaCppNote.style.display = isLocal ? '' : 'none';
   openaiCompatibleNote.style.display = showBaseUrl ? '' : 'none';
   baseUrlGroup.style.display = showBaseUrl ? '' : 'none';
+  if (apiStyleGroup) apiStyleGroup.style.display = showBaseUrl ? '' : 'none';
+  if (customHeadersGroup) customHeadersGroup.style.display = showBaseUrl ? '' : 'none';
   apiKeyOptional.style.display = isLocal ? '' : 'none';
   // 新規登録時のみ required 制御（既存設定時は常に optional）
   {% if not config %}

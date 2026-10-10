@@ -312,6 +312,10 @@ def ai_config_save():
     model_name = request.form.get("model_name", "").strip()
     custom_prompt = request.form.get("custom_prompt", "").strip()
     base_url = request.form.get("base_url", "").strip()
+    api_style = request.form.get("api_style", "chat_completions").strip()
+    if api_style not in ("chat_completions", "responses"):
+        api_style = "chat_completions"
+    custom_headers = request.form.get("custom_headers", "").strip()
 
     available_labels = get_available_provider_labels()
     if provider not in available_labels:
@@ -330,6 +334,20 @@ def ai_config_save():
             flash(f"ベースURLが不正です: {err}", "danger")
             return redirect(url_for("settings.ai_config"))
 
+    if custom_headers:
+        try:
+            parsed_headers = json.loads(custom_headers)
+            if not isinstance(parsed_headers, dict):
+                flash("カスタムヘッダーはJSONオブジェクト形式（例: {\"x-custom\": \"val\"}）で指定してください。", "danger")
+                return redirect(url_for("settings.ai_config"))
+            for k, v in parsed_headers.items():
+                if not isinstance(k, str) or not isinstance(v, (str, int, float, bool)):
+                    flash("カスタムヘッダーのキーと値は文字列で指定してください。", "danger")
+                    return redirect(url_for("settings.ai_config"))
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            flash("カスタムヘッダーのJSON形式が不正です。", "danger")
+            return redirect(url_for("settings.ai_config"))
+
     # llama.cpp は API キー不要、それ以外は新規時に必須
     is_local = provider == "llama_cpp"
     effective_key = api_key or ("_" if is_local else "")
@@ -342,6 +360,11 @@ def ai_config_save():
         config.custom_prompt = custom_prompt
         if provider == "openai_compatible":
             config.base_url = base_url
+            config.api_style = api_style
+            config.custom_headers = custom_headers
+        else:
+            config.api_style = "chat_completions"
+            config.custom_headers = ""
         if api_key:
             config.api_key_encrypted = encrypt_api_key(api_key)
         elif is_local and not api_key:
@@ -358,6 +381,8 @@ def ai_config_save():
             model_name=model_name,
             custom_prompt=custom_prompt,
             base_url=(base_url if provider == "openai_compatible" else ""),
+            api_style=(api_style if provider == "openai_compatible" else "chat_completions"),
+            custom_headers=(custom_headers if provider == "openai_compatible" else ""),
         )
         db.session.add(config)
 
