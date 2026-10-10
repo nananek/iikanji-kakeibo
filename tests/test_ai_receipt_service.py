@@ -46,6 +46,14 @@ from app.services.ai_receipt import (
     match_account,
     parse_web_text,
     suggest_categories_by_ai,
+    resolve_custom_headers,
+    AGENT_TOOLS,
+    _execute_agent_tool,
+    _agent_step_openai,
+    _agent_step_openai_responses,
+    _agent_step_anthropic,
+    _agent_step_google,
+    _run_agent_loop,
 )
 
 
@@ -770,3 +778,160 @@ class TestAnalyzeVoucherForAttachment:
             )
             assert result["consistency"]["status"] == "warn"
             assert result["consistency"]["date_match"] is False
+
+
+class TestResolveCustomHeaders:
+    def test_empty(self):
+        assert resolve_custom_headers("", 1) == {}
+        assert resolve_custom_headers("{}", 1) == {}
+
+    def test_placeholders(self, app):
+        with app.test_request_context():
+            from flask import session
+            session["_id"] = "sess-12345"
+            raw = json.dumps({"x-session-id": "{IK_SESSION_ID}", "x-user": "{USER_ID}"})
+            res = resolve_custom_headers(raw, 42)
+            assert res["x-session-id"] == "sess-12345"
+            assert res["x-user"] == "42"
+
+    def test_forbidden_headers_ignored(self):
+        raw = json.dumps({"host": "evil.com", "content-length": "100", "x-ok": "yes"})
+        res = resolve_custom_headers(raw, 1)
+        assert "host" not in res
+        assert "content-length" not in res
+        assert res["x-ok"] == "yes"
+
+    def test_invalid_json(self):
+        assert resolve_custom_headers("not-json", 1) == {}
+
+
+class TestAgentToolsExecution:
+    def test_search_accounts(self, db, user, accounts):
+        res = _execute_agent_tool(user.id, "search_accounts", {"query": "現金"})
+        assert "accounts" in res
+        assert any(a["name"] == "現金" for a in res["accounts"])
+
+    def test_get_account_list(self, db, user, accounts):
+        res = _execute_agent_tool(user.id, "get_account_list", {})
+        assert "accounts" in res
+
+    def test_search_journal_history(self, db, user, accounts):
+        from app.services.accounting import create_journal_entry
+        create_journal_entry(
+            user_id=user.id,
+            date_str="2026-02-10",
+            description="セブンイレブンでおにぎり",
+            lines=[
+                {"account_code": "5010", "debit_amount": 300, "credit_amount": 0},
+                {"account_code": "1010", "debit_amount": 0, "credit_amount": 300},
+            ],
+        )
+        res = _execute_agent_tool(user.id, "search_journal_history", {"query": "セブンイレブン"})
+        assert len(res["entries"]) == 1
+        assert "セブンイレブン" in res["entries"][0]["description"]
+
+    def test_get_account_ledger(self, db, user, accounts):
+        res = _execute_agent_tool(user.id, "get_account_ledger", {"account_code": "1010"})
+        assert res["account_code"] == "1010"
+        assert "entries" in res
+
+    def test_get_account_ledger_unknown(self, db, user, accounts):
+        res = _execute_agent_tool(user.id, "get_account_ledger", {"account_code": "9999"})
+        assert "error" in res
+
+
+class TestAgentStepHandlers:
+    def test_agent_step_openai_tool_calls(self):
+        with patch("httpx.post") as mock_post:
+            mock_post.return_value = _mock_post({
+                "choices": [{
+                    "message": {
+                        "role": "assistant",
+                        "content": None,
+                        "tool_calls": [{
+                            "id": "call_123",
+                            "type": "function",
+                            "function": {
+                                "name": "search_accounts",
+                                "arguments": '{"query": "消耗品"}',
+                            },
+                        }],
+                    }
+                }],
+                "usage": {"prompt_tokens": 10, "completion_tokens": 20},
+            })
+            text, tcs, msgs, usage = _agent_step_openai("key", "gpt-4o", [], AGENT_TOOLS)
+            assert len(tcs) == 1
+            assert tcs[0]["name"] == "search_accounts"
+            assert tcs[0]["arguments"]["query"] == "消耗品"
+            assert usage["input_tokens"] == 10
+
+    def test_agent_step_openai_responses_output(self):
+        with patch("httpx.post") as mock_post:
+            mock_post.return_value = _mock_post({
+                "output": [
+                    {
+                        "type": "function_call",
+                        "call_id": "resp_call_1",
+                        "name": "search_journal_history",
+                        "arguments": '{"query": "カフェ"}',
+                    }
+                ],
+                "usage": {"prompt_tokens": 15, "completion_tokens": 25},
+            })
+            text, tcs, inp, usage = _agent_step_openai_responses(
+                "key", "gpt-4o", [], AGENT_TOOLS, base_url="https://api.example.com",
+            )
+            assert len(tcs) == 1
+            assert tcs[0]["name"] == "search_journal_history"
+            assert tcs[0]["arguments"]["query"] == "カフェ"
+
+    def test_agent_step_anthropic(self):
+        with patch("httpx.post") as mock_post:
+            mock_post.return_value = _mock_post({
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": "toolu_1",
+                        "name": "search_accounts",
+                        "input": {"query": "旅費"},
+                    }
+                ],
+                "usage": {"input_tokens": 10, "output_tokens": 15},
+            })
+            text, tcs, msgs, usage = _agent_step_anthropic("key", "claude-sonnet-4-20250514", [], AGENT_TOOLS)
+            assert len(tcs) == 1
+            assert tcs[0]["name"] == "search_accounts"
+            assert tcs[0]["arguments"]["query"] == "旅費"
+
+
+class TestRunAgentLoop:
+    def test_single_turn_submit(self, db, user, accounts):
+        _ai_config(db, user.id, provider="openai")
+        with patch("app.services.ai_receipt._agent_step_openai") as mock_step:
+            mock_step.return_value = (
+                "",
+                [{
+                    "id": "c1",
+                    "name": "submit_journal_suggestions",
+                    "arguments": {
+                        "suggestions": [{
+                            "title": "食費計上",
+                            "description": "...",
+                            "date": "2026-02-15",
+                            "entry_description": "昼食代",
+                            "lines": [
+                                {"account_code": "5010", "account_name": "食費", "debit_amount": 800, "credit_amount": 0},
+                                {"account_code": "1010", "account_name": "現金", "debit_amount": 0, "credit_amount": 800},
+                            ],
+                        }]
+                    },
+                }],
+                [],
+                {"input_tokens": 10, "output_tokens": 20},
+            )
+            results = _run_agent_loop(user.id, b"img", "image/jpeg")
+            assert len(results) == 1
+            assert results[0].title == "食費計上"
+            assert results[0].lines[0]["debit_amount"] == 800
+
