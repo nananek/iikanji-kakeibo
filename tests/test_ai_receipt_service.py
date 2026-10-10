@@ -947,3 +947,146 @@ class TestRunAgentLoop:
             assert results[0].title == "食費計上"
             assert results[0].lines[0]["debit_amount"] == 800
 
+    def test_multiturn_search_ledger_then_submit(self, db, user, accounts):
+        """元帳参照フロー: search_accounts → get_account_ledger → submit。
+
+        httpx レベルでモックAIサーバーの多ターン応答を再現し、
+        ツール結果が次ターンの履歴に載って最終仕訳が出ることを検証する。
+        """
+        from tests.conftest import make_journal
+        make_journal(db, user.id, "5010", "1010", 1500,
+                     description="セブンイレブンで昼食")
+        _ai_config(db, user.id, provider="openai")
+        sent_payloads = []
+        progress = []
+
+        def _tool_call_response(call_id, name, args):
+            return _mock_post({
+                "choices": [{
+                    "message": {
+                        "role": "assistant",
+                        "content": None,
+                        "tool_calls": [{
+                            "id": call_id,
+                            "type": "function",
+                            "function": {
+                                "name": name,
+                                "arguments": json.dumps(args, ensure_ascii=False),
+                            },
+                        }],
+                    }
+                }],
+                "usage": {"prompt_tokens": 10, "completion_tokens": 20},
+            })
+
+        def fake_post(*args, **kwargs):
+            payload = kwargs.get("json") or {}
+            sent_payloads.append(json.loads(json.dumps(payload, ensure_ascii=False)))
+            n = len(sent_payloads)
+            if n == 1:
+                return _tool_call_response(
+                    "c1", "search_accounts", {"query": "食費"})
+            if n == 2:
+                return _tool_call_response(
+                    "c2", "get_account_ledger",
+                    {"account_code": "5010", "limit": 5})
+            return _tool_call_response(
+                "c3", "submit_journal_suggestions", {
+                    "suggestions": [{
+                        "title": "食費計上",
+                        "description": "元帳の過去仕訳を参照して計上",
+                        "date": "2026-02-15",
+                        "entry_description": "セブンイレブン",
+                        "lines": [
+                            {"account_code": "5010", "account_name": "食費",
+                             "debit_amount": 1500, "credit_amount": 0},
+                            {"account_code": "1010", "account_name": "現金",
+                             "debit_amount": 0, "credit_amount": 1500},
+                        ],
+                    }]
+                })
+
+        with patch("app.services.ai_receipt.httpx.post",
+                   side_effect=fake_post):
+            results = _run_agent_loop(
+                user.id, b"img", "image/jpeg",
+                progress_cb=lambda stage, detail: progress.append((stage, detail)),
+            )
+
+        assert len(results) == 1
+        assert results[0].lines[0]["account_code"] == "5010"
+        assert results[0].lines[1]["account_code"] == "1010"
+        assert len(sent_payloads) == 3
+        # 3ターン目の送信履歴に元帳ツール結果が含まれていること
+        third_dump = json.dumps(sent_payloads[2], ensure_ascii=False)
+        assert "5010" in third_dump
+        assert "セブンイレブン" in third_dump
+        assert [stage for stage, _ in progress] == [
+            "reading", "thinking", "search", "thinking", "ledger",
+            "thinking", "composing",
+        ]
+
+    def test_invalid_submit_then_retry(self, db, user, accounts):
+        """無効コードの確定→検証エラー→再提出で成功すること。
+
+        修正前は「未知のツールです」が返り、LLMが修正できず
+        「有効な仕訳案を生成できませんでした」に至っていた。
+        """
+        _ai_config(db, user.id, provider="openai")
+        bad_submit = (
+            "",
+            [{
+                "id": "c1",
+                "name": "submit_journal_suggestions",
+                "arguments": {
+                    "suggestions": [{
+                        "title": "誤案",
+                        "description": "...",
+                        "date": "2026-02-15",
+                        "entry_description": "昼食代",
+                        "lines": [
+                            {"account_code": "9999", "account_name": "不明",
+                             "debit_amount": 800, "credit_amount": 0},
+                            {"account_code": "8888", "account_name": "不明",
+                             "debit_amount": 0, "credit_amount": 800},
+                        ],
+                    }],
+                },
+            }],
+            [],
+            {"input_tokens": 10, "output_tokens": 20},
+        )
+        good_submit = (
+            "",
+            [{
+                "id": "c2",
+                "name": "submit_journal_suggestions",
+                "arguments": {
+                    "suggestions": [{
+                        "title": "食費計上",
+                        "description": "...",
+                        "date": "2026-02-15",
+                        "entry_description": "昼食代",
+                        "lines": [
+                            {"account_code": "5010", "account_name": "食費",
+                             "debit_amount": 800, "credit_amount": 0},
+                            {"account_code": "1010", "account_name": "現金",
+                             "debit_amount": 0, "credit_amount": 800},
+                        ],
+                    }],
+                },
+            }],
+            [],
+            {"input_tokens": 10, "output_tokens": 20},
+        )
+        with patch("app.services.ai_receipt._agent_step_openai") as mock_step:
+            mock_step.side_effect = [bad_submit, good_submit]
+            results = _run_agent_loop(user.id, b"img", "image/jpeg")
+            assert len(results) == 1
+            assert results[0].lines[0]["account_code"] == "5010"
+            assert mock_step.call_count == 2
+            # 2ターン目の履歴に検証エラーが載っていること
+            retry_messages = mock_step.call_args_list[1].args[2]
+            retry_dump = json.dumps(retry_messages, ensure_ascii=False)
+            assert "無効な勘定科目コード" in retry_dump
+            assert "9999" in retry_dump

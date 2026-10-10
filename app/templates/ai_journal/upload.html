@@ -147,10 +147,11 @@
   var suggestionsArea = document.getElementById('suggestionsArea');
   var suggestionsContainer = document.getElementById('suggestionsContainer');
   var reviewUrl = "{{ url_for('ai_journal.review') }}";
-  var analyzeUrl = "{{ url_for('ai_journal.analyze') }}";
+  var analyzeUrl = "{{ url_for('ai_journal.analyze_stream') }}";
   var saveDraftUrl = "{{ url_for('ai_journal.drafts_save') }}";
   var draftsUrl = "{{ url_for('ai_journal.drafts') }}";
   var csrfToken = "{{ csrf_token() }}";
+  var currentDraftId = null;
 
   // 画像プレビュー
   fileInput.addEventListener('change', function(e) {
@@ -170,8 +171,6 @@
     errorAlert.classList.add('d-none');
   });
 
-  // ローディングステップの進行
-  var stepTimers = [];
   function startLoadingSteps() {
     var steps = [
       document.getElementById('loadingStep1'),
@@ -189,28 +188,34 @@
       }
     });
 
-    // Step 2: 5秒後
-    stepTimers.push(setTimeout(function() {
-      steps[0].classList.remove('active');
-      steps[0].classList.add('done');
-      steps[0].querySelector('.step-icon').innerHTML = '<i class="bi bi-check-circle-fill"></i>';
-      steps[1].classList.add('active');
-      steps[1].querySelector('.step-icon').innerHTML = '<span class="spinner-border spinner-border-sm" role="status"></span>';
-    }, 5000));
-
-    // Step 3: 12秒後
-    stepTimers.push(setTimeout(function() {
-      steps[1].classList.remove('active');
-      steps[1].classList.add('done');
-      steps[1].querySelector('.step-icon').innerHTML = '<i class="bi bi-check-circle-fill"></i>';
-      steps[2].classList.add('active');
-      steps[2].querySelector('.step-icon').innerHTML = '<span class="spinner-border spinner-border-sm" role="status"></span>';
-    }, 12000));
   }
 
   function stopLoadingSteps() {
-    stepTimers.forEach(function(t) { clearTimeout(t); });
-    stepTimers = [];
+    document.querySelectorAll('.ai-loading-step').forEach(function(s) {
+      s.classList.remove('active');
+    });
+  }
+
+  function updateProgress(evt) {
+    var steps = [
+      document.getElementById('loadingStep1'),
+      document.getElementById('loadingStep2'),
+      document.getElementById('loadingStep3')
+    ];
+    var index = evt.stage === 'reading' ? 0 :
+      (['search', 'ledger', 'history'].indexOf(evt.stage) >= 0 ? 1 : 2);
+    steps.forEach(function(s, i) {
+      s.classList.toggle('active', i === index);
+      s.classList.toggle('done', i < index);
+      if (i === index) {
+        s.querySelector('.step-icon').innerHTML =
+          '<span class="spinner-border spinner-border-sm" role="status"></span>';
+      } else if (i < index) {
+        s.querySelector('.step-icon').innerHTML = '<i class="bi bi-check-circle-fill"></i>';
+      }
+    });
+    var active = steps[index].querySelector('span:last-child');
+    if (active) active.textContent = evt.detail || '処理中...';
   }
 
   // フォーム送信（AJAX）
@@ -230,29 +235,40 @@
       method: 'POST',
       body: formData,
     })
-    .then(function(resp) {
-      return resp.json().then(function(data) {
-        return { ok: resp.ok, data: data };
-      });
+    .then(async function(resp) {
+      if (!resp.ok || !resp.body) throw new Error('通信エラーが発生しました。');
+      var reader = resp.body.getReader();
+      var decoder = new TextDecoder('utf-8');
+      var buffer = '';
+      while (true) {
+        var part = await reader.read();
+        buffer += decoder.decode(part.value || new Uint8Array(), {stream: !part.done});
+        var chunks = buffer.split('\n\n');
+        buffer = chunks.pop();
+        chunks.forEach(function(chunk) {
+          var line = chunk.split('\n').find(function(l) { return l.indexOf('data:') === 0; });
+          if (!line) return;
+          var evt = JSON.parse(line.slice(5).trim());
+          if (evt.stage === 'error') throw new Error(evt.detail || '解析に失敗しました。');
+          if (evt.stage === 'done') {
+            currentDraftId = evt.draft_id || null;
+            renderSuggestions(evt.suggestions || []);
+          }
+          else updateProgress(evt);
+        });
+        if (part.done) break;
+      }
     })
-    .then(function(result) {
+    .then(function() {
       stopLoadingSteps();
       loadingOverlay.classList.add('d-none');
       submitBtn.disabled = false;
-
-      if (!result.ok || result.data.error) {
-        errorAlert.textContent = result.data.error || 'エラーが発生しました。';
-        errorAlert.classList.remove('d-none');
-        return;
-      }
-
-      renderSuggestions(result.data.suggestions);
     })
     .catch(function(err) {
       stopLoadingSteps();
       loadingOverlay.classList.add('d-none');
       submitBtn.disabled = false;
-      errorAlert.textContent = '通信エラーが発生しました。もう一度お試しください。';
+      errorAlert.textContent = err.message || '通信エラーが発生しました。もう一度お試しください。';
       errorAlert.classList.remove('d-none');
     });
   });
@@ -305,7 +321,9 @@
             '</div>' +
           '</div>' +
           '<div class="card-footer text-center">' +
-            '<a href="' + reviewUrl + '?idx=' + idx + '" class="btn btn-primary btn-sm">' +
+            '<a href="' + reviewUrl + '?idx=' + idx +
+              (currentDraftId ? '&draft_id=' + encodeURIComponent(currentDraftId) : '') +
+              '" class="btn btn-primary btn-sm">' +
               '<i class="bi bi-check-lg"></i> この仕訳を使う' +
             '</a>' +
           '</div>' +
