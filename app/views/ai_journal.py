@@ -134,8 +134,6 @@ def analyze_stream():
                 break
             if event.get("stage") == "done" and event.get("draft_id"):
                 session["ai_journal_draft_id"] = event["draft_id"]
-                event = dict(event)
-                event.pop("draft_id", None)
             yield _sse_event(event)
 
     response = Response(stream(), mimetype="text/event-stream")
@@ -570,7 +568,9 @@ def drafts_review(draft_id):
 @login_required
 def review():
     """仕訳案の確認・編集・保存"""
-    draft_id = session.get("ai_journal_draft_id")
+    # SSE解析ではレスポンス開始後にセッションCookieを更新できないため、
+    # 完了イベントから渡された draft_id をURL経由でも受け取る。
+    draft_id = request.args.get("draft_id", type=int) or session.get("ai_journal_draft_id")
     draft = None
     if draft_id:
         draft = AIDraft.query.get(draft_id)

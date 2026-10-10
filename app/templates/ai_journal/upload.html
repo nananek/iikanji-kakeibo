@@ -151,6 +151,7 @@
   var saveDraftUrl = "{{ url_for('ai_journal.drafts_save') }}";
   var draftsUrl = "{{ url_for('ai_journal.drafts') }}";
   var csrfToken = "{{ csrf_token() }}";
+  var currentDraftId = null;
 
   // 画像プレビュー
   fileInput.addEventListener('change', function(e) {
@@ -249,7 +250,10 @@
           if (!line) return;
           var evt = JSON.parse(line.slice(5).trim());
           if (evt.stage === 'error') throw new Error(evt.detail || '解析に失敗しました。');
-          if (evt.stage === 'done') renderSuggestions(evt.suggestions || []);
+          if (evt.stage === 'done') {
+            currentDraftId = evt.draft_id || null;
+            renderSuggestions(evt.suggestions || []);
+          }
           else updateProgress(evt);
         });
         if (part.done) break;
@@ -317,7 +321,9 @@
             '</div>' +
           '</div>' +
           '<div class="card-footer text-center">' +
-            '<a href="' + reviewUrl + '?idx=' + idx + '" class="btn btn-primary btn-sm">' +
+            '<a href="' + reviewUrl + '?idx=' + idx +
+              (currentDraftId ? '&draft_id=' + encodeURIComponent(currentDraftId) : '') +
+              '" class="btn btn-primary btn-sm">' +
               '<i class="bi bi-check-lg"></i> この仕訳を使う' +
             '</a>' +
           '</div>' +
