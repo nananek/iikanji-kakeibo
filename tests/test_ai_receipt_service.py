@@ -373,7 +373,11 @@ class TestGetAiConfig:
         assert provider == "openai_compatible"
         assert handler is _call_openai_compatible
         assert model == "gpt-4o"
-        assert extra == {"base_url": "https://api.example.com"}
+        assert extra == {
+            "base_url": "https://api.example.com",
+            "api_style": "chat_completions",
+            "headers": {},
+        }
 
     def test_openai_compatible_without_base_url_raises(self, db, user, accounts):
         _openai_compatible_config(db, user.id, base_url="")
@@ -388,7 +392,11 @@ class TestGetAiConfig:
         try:
             api_key, provider, _, _, _, extra = _get_ai_config(user.id)
             assert provider == "openai_compatible"
-            assert extra == {"base_url": "https://api.example.com"}
+            assert extra == {
+                "base_url": "https://api.example.com",
+                "api_style": "chat_completions",
+                "headers": {},
+            }
         finally:
             app.config["BILLING_BACKEND"] = original
 
@@ -819,9 +827,9 @@ class TestAgentToolsExecution:
         from app.services.accounting import create_journal_entry
         create_journal_entry(
             user_id=user.id,
-            date_str="2026-02-10",
+            date="2026-02-10",
             description="セブンイレブンでおにぎり",
-            lines=[
+            lines_data=[
                 {"account_code": "5010", "debit_amount": 300, "credit_amount": 0},
                 {"account_code": "1010", "debit_amount": 0, "credit_amount": 300},
             ],
