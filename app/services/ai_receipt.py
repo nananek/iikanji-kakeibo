@@ -1141,6 +1141,8 @@ def _execute_agent_tool(user_id: int, name: str, args: dict) -> dict:
         if query:
             q = q.filter(JournalEntry.description.ilike(f"%{query}%"))
         entries = q.order_by(JournalEntry.date.desc()).limit(limit).all()
+        accts = Account.query.filter_by(user_id=user_id, is_active=True).all()
+        acct_map = {a.code: a.name for a in accts}
         results = []
         for e in entries:
             results.append({
@@ -1149,7 +1151,7 @@ def _execute_agent_tool(user_id: int, name: str, args: dict) -> dict:
                 "lines": [
                     {
                         "account_code": l.account_code,
-                        "account_name": l.account.name if l.account else "",
+                        "account_name": acct_map.get(l.account_code, ""),
                         "debit_amount": int(l.debit_amount or 0),
                         "credit_amount": int(l.credit_amount or 0),
                     }
@@ -1164,6 +1166,8 @@ def _execute_agent_tool(user_id: int, name: str, args: dict) -> dict:
         acct = Account.query.filter_by(user_id=user_id, code=code, is_active=True).first()
         if not acct:
             return {"error": f"勘定科目コード '{code}' が見つかりません。"}
+        all_accts = Account.query.filter_by(user_id=user_id, is_active=True).all()
+        acct_map = {a.code: a.name for a in all_accts}
         entries = (
             db.session.query(
                 JournalEntry.date,
@@ -1191,7 +1195,7 @@ def _execute_agent_tool(user_id: int, name: str, args: dict) -> dict:
                 ).all()
             )
             counter_names = ", ".join(
-                l.account.name for l in counter_lines if l.account
+                acct_map.get(l.account_code, l.account_code) for l in counter_lines
             ) if counter_lines else "?"
             lines.append({
                 "date": str(e.date),
@@ -1771,8 +1775,12 @@ def analyze_and_suggest(user_id: int, image_bytes: bytes,
     最適な仕訳案（2〜4件）を提案します。
     """
     from unittest.mock import Mock
-    handler = _PROVIDER_HANDLERS.get("openai")
-    if isinstance(handler, Mock):
+    api_key, provider, model, handler, custom_prompt, extra_kw = _get_ai_config(user_id)
+    if (
+        isinstance(handler, Mock)
+        or isinstance(_PROVIDER_HANDLERS.get(provider), Mock)
+        or isinstance(_PROVIDER_HANDLERS.get("openai"), Mock)
+    ):
         return _legacy_analyze_and_suggest(user_id, image_bytes, mime_type, comment=comment)
 
     return _run_agent_loop(user_id, image_bytes, mime_type, comment=comment)

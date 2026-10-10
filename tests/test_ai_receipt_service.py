@@ -824,10 +824,11 @@ class TestAgentToolsExecution:
         assert "accounts" in res
 
     def test_search_journal_history(self, db, user, accounts):
+        from datetime import date
         from app.services.accounting import create_journal_entry
         create_journal_entry(
             user_id=user.id,
-            date="2026-02-10",
+            date=date(2026, 2, 10),
             description="セブンイレブンでおにぎり",
             lines_data=[
                 {"account_code": "5010", "debit_amount": 300, "credit_amount": 0},
@@ -837,11 +838,14 @@ class TestAgentToolsExecution:
         res = _execute_agent_tool(user.id, "search_journal_history", {"query": "セブンイレブン"})
         assert len(res["entries"]) == 1
         assert "セブンイレブン" in res["entries"][0]["description"]
+        assert res["entries"][0]["lines"][0]["account_name"] == accounts["5010"].name
 
     def test_get_account_ledger(self, db, user, accounts):
         res = _execute_agent_tool(user.id, "get_account_ledger", {"account_code": "1010"})
         assert res["account_code"] == "1010"
         assert "entries" in res
+        if res["entries"]:
+            assert res["entries"][0]["counter_account"] != ""
 
     def test_get_account_ledger_unknown(self, db, user, accounts):
         res = _execute_agent_tool(user.id, "get_account_ledger", {"account_code": "9999"})
