@@ -5,6 +5,36 @@ title: リリースノート
 
 # リリースノート
 
+## v4.2.0
+
+**マイナーリリース** — AI 証憑仕訳をツールコール型自律エージェント方式へ刷新。依存関係の更新と、それに伴う PostgreSQL ドライバ変更対応 (日付フィルタ修正) を含む。pytest 2017 件 + E2E 65 件が CI で pass。
+
+### AI 証憑仕訳のエージェント化 (PR #462)
+
+- `analyze_and_suggest` を最大 5 ターンの自律エージェントループ (ReAct) に移行。AI が必要に応じてツールを呼び出し、科目・履歴を調べてから仕訳案を確定する
+- 提供ツール: 勘定科目検索 (`search_accounts` / `get_account_list`)、過去仕訳履歴検索 (`search_journal_history`)、元帳照会 (`get_account_ledger`)、仕訳案確定 (`submit_journal_suggestions`)
+- OpenAI / llama.cpp / Anthropic / Google Gemini のマルチプロバイダー Tool Calling に対応
+- OpenAI 互換 API 向けに API 形式 (Chat Completions / Responses) の選択肢を追加
+- カスタム HTTP ヘッダー設定と動的プレースホルダー (`{IK_SESSION_ID}`, `{USER_ID}`) 展開に対応
+- マイグレーション `049_ai_config_api_style_headers`: `user_ai_configs` に `api_style` / `custom_headers` カラムを追加 (server_default 付きの非破壊変更、コンテナ再作成で自動適用)
+- REST API (`/api/v1`) の変更なし。クライアントの更新は不要
+
+### 依存関係の更新 (Dependabot #451 #454 #456 #460 #461 を commit 330cd27 で一括適用)
+
+- **コンテナ** (Dockerfile): python 3.14.7-alpine → 3.14.8-alpine
+- **Python 依存** (requirements.txt):
+  - SQLAlchemy 2.0.52 → 2.1.3 / alembic 1.19.1 → 1.20.0 / psycopg2-binary 2.9.12 → 2.9.13 / Werkzeug 3.1.8 → 3.1.9 / python-dotenv 1.2.3 → 1.2.4
+  - boto3 >=1.43.75 → >=1.43.89 / cryptography >=50.0.0 → >=50.0.1 / gunicorn >=26.0.0 → >=26.2.0
+  - psycopg[binary] >=3.3.6,<4.0 を新規追加 (下記ドライバ変更対応、commit 6c18bc8)
+
+### PostgreSQL ドライバ変更対応 (psycopg2 → psycopg v3)
+
+- SQLAlchemy 2.1 で `postgresql://` の既定ドライバが psycopg2 → psycopg (v3) に変更。これに伴う修正:
+  - 仕訳帳・出納帳・証憑一覧の日付フィルタ (`date_from` / `date_to`) を `date` オブジェクト比較に修正。文字列のまま比較すると `operator does not exist: date >= character varying` で 500 になっていた (CI e2e で検出、実機 Postgres で再現・修正確認)
+  - 不正な日付文字列はフィルタ無視 (従来は 500) に改善
+- `DATABASE_URL` のスキーム変更は不要 (`postgresql://` のまま psycopg v3 が使われる)。`psycopg2-binary` は後方互換のため温存
+- 回帰テスト 3 件追加 (仕訳帳・出納帳・証憑一覧の不正日付フィルタ)
+
 ## v4.1.2
 
 **パッチリリース** — 依存関係の更新のみ (機能・仕様の変更なし)。オープン中の Dependabot PR 5 件 (#446〜#450) を適用。CI 全テスト pass を確認済み。
