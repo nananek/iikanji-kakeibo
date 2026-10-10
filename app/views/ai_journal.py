@@ -7,8 +7,11 @@ from datetime import date as date_type
 
 from flask import (
     Blueprint, render_template, redirect, url_for, flash, request, session,
-    jsonify, make_response,
+    jsonify, make_response, Response, stream_with_context,
+    copy_current_request_context,
 )
+import queue
+import threading
 from flask_login import login_required, current_user
 
 from app.extensions import db
@@ -37,6 +40,108 @@ bp = Blueprint("ai_journal", __name__, url_prefix="/ai-journal")
 
 MAX_IMAGE_SIZE = 10 * 1024 * 1024  # 10MB
 ALLOWED_MIME_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
+
+
+def _sse_event(payload):
+    return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
+
+@bp.route("/analyze/stream", methods=["POST"])
+@login_required
+def analyze_stream():
+    """証憑解析をSSEで実行し、実際のエージェント進捗を通知する。"""
+    config = UserAIConfig.query.filter_by(user_id=get_effective_user_id()).first()
+    if not config:
+        return Response(_sse_event({"stage": "error", "detail": "AI API設定が登録されていません。先に設定してください。"}),
+                        mimetype="text/event-stream")
+
+    image_file = request.files.get("image_file")
+    if not image_file or not image_file.filename:
+        return Response(_sse_event({"stage": "error", "detail": "画像ファイルを選択してください。"}),
+                        mimetype="text/event-stream")
+    image_bytes = image_file.read()
+    if len(image_bytes) > MAX_IMAGE_SIZE:
+        return Response(_sse_event({"stage": "error", "detail": "ファイルサイズが大きすぎます（上限10MB）。"}),
+                        mimetype="text/event-stream")
+    mime_type = image_file.content_type
+    if mime_type not in ALLOWED_MIME_TYPES:
+        return Response(_sse_event({"stage": "error", "detail": "対応していないファイル形式です。JPEG/PNG/WebP/GIF を使用してください。"}),
+                        mimetype="text/event-stream")
+
+    user_id = get_effective_user_id()
+    owner = db.session.get(User, user_id)
+    if owner is None:
+        return Response(_sse_event({"stage": "error", "detail": "ユーザーが見つかりません。"}),
+                        mimetype="text/event-stream")
+    try:
+        check_quota(owner, len(image_bytes))
+    except QuotaExceededError as exc:
+        return Response(_sse_event({"stage": "error", "detail": exc.user_message}),
+                        mimetype="text/event-stream")
+
+    comment = request.form.get("comment", "").strip()
+    events = queue.Queue()
+    done = object()
+
+    def progress(stage, detail):
+        events.put({"stage": stage, "detail": detail})
+
+    @copy_current_request_context
+    def worker():
+        try:
+            # SQLAlchemyのscoped sessionはスレッド単位。親スレッドのORM
+            # オブジェクトを持ち込まず、ワーカースレッドで再取得する。
+            worker_owner = db.session.get(User, user_id)
+            suggestions = analyze_and_suggest(
+                user_id, image_bytes, mime_type, comment=comment,
+                progress_cb=progress,
+            )
+            file_hash = hashlib.sha256(image_bytes).hexdigest()
+            draft = AIDraft(
+                user_id=user_id, image_key="", image_mime=mime_type,
+                file_hash=file_hash, file_size=len(image_bytes), comment=comment,
+                suggestions_json=json.dumps([asdict(s) for s in suggestions], ensure_ascii=False),
+                status="temp",
+            )
+            db.session.add(draft)
+            db.session.flush()
+            key = make_storage_key(draft.user_id, draft.id, mime_type)
+            store_image_with_thumbnail(key, image_bytes, mime_type)
+            draft.image_key = key
+            db.session.commit()
+            record_upload(worker_owner, len(image_bytes))
+            maybe_send_quota_warning(worker_owner)
+            events.put({"stage": "done", "draft_id": draft.id,
+                        "suggestions": [asdict(s) for s in suggestions]})
+        except (ValueError, RuntimeError) as exc:
+            db.session.rollback()
+            events.put({"stage": "error", "detail": safe_user_error(exc)})
+        except Exception:
+            db.session.rollback()
+            from flask import current_app
+            current_app.logger.exception("stream analyze failed")
+            events.put({"stage": "error", "detail": "解析中にエラーが発生しました。もう一度お試しください。"})
+        finally:
+            events.put(done)
+
+    threading.Thread(target=worker, daemon=True).start()
+
+    @stream_with_context
+    def stream():
+        while True:
+            event = events.get()
+            if event is done:
+                break
+            if event.get("stage") == "done" and event.get("draft_id"):
+                session["ai_journal_draft_id"] = event["draft_id"]
+                event = dict(event)
+                event.pop("draft_id", None)
+            yield _sse_event(event)
+
+    response = Response(stream(), mimetype="text/event-stream")
+    response.headers["Cache-Control"] = "no-cache"
+    response.headers["X-Accel-Buffering"] = "no"
+    return response
 
 
 @bp.route("/", methods=["GET"])

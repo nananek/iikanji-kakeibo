@@ -1540,14 +1540,41 @@ def _fallback_extract_suggestions(text: str, user_id: int) -> list[JournalSugges
     return []
 
 
+def _tool_progress(name: str, args: dict) -> tuple[str, str]:
+    """エージェントのツール呼び出しを進捗イベント (stage, detail) に変換する"""
+    if name == "search_accounts":
+        query = str((args or {}).get("query") or "")
+        return ("search", f"勘定科目を検索中{f' ({query})' if query else ''}")
+    if name in ("get_account_ledger", "get_account_list"):
+        return ("ledger", "元帳を参照中")
+    if name == "search_journal_history":
+        return ("history", "過去の仕訳を検索中")
+    return ("thinking", "調査中")
+
+
 def _run_agent_loop(
     user_id: int,
     image_bytes: bytes,
     mime_type: str,
     comment: str = "",
     max_turns: int = 5,
+    progress_cb=None,
 ) -> list[JournalSuggestion]:
-    """ツールコールを活用したAIエージェントループを実行する"""
+    """ツールコールを活用したAIエージェントループを実行する
+
+    progress_cb が与えられた場合、(stage, detail) の進捗イベントを
+    通知する。stage は "reading" / "thinking" / "search" / "ledger" /
+    "history" / "composing" / "retry" のいずれか。コールバックの例外は
+    解析本体に波及させない。
+    """
+    def _emit(stage: str, detail: str) -> None:
+        if progress_cb is None:
+            return
+        try:
+            progress_cb(stage, detail)
+        except Exception:
+            logger.exception("progress callback failed (stage=%s)", stage)
+
     import time as _time
     api_key, provider, model, _, custom_prompt, extra_kw = _get_ai_config(user_id)
 
@@ -1616,7 +1643,9 @@ def _run_agent_loop(
         raise ValueError(f"未対応のAIプロバイダーです: {provider}")
 
     last_text = ""
+    _emit("reading", "証憑画像を読み取り中")
     for turn in range(max_turns):
+        _emit("thinking", f"仕訳を検討中 ({turn + 1}/{max_turns})")
         t0 = _time.perf_counter()
         try:
             step_kwargs = {"timeout": 60.0}
@@ -1655,9 +1684,42 @@ def _run_agent_loop(
                     raw_sugg = tc_args.get("suggestions", [])
                     suggestions = _parse_suggestions_list(user_id, raw_sugg)
                     if suggestions:
+                        _emit("composing", "仕訳案をまとめ中")
                         return suggestions
+                    # 無効な確定は検証エラーをLLMに返して再提出させる。
+                    # _execute_agent_tool に落とすと「未知のツール」と嘘の
+                    # 結果になり、LLMが修正できず5ターン枯渇→
+                    # 「有効な仕訳案を生成できませんでした」に至る。
+                    if isinstance(raw_sugg, list) and raw_sugg:
+                        valid_codes = {
+                            a.code for a in Account.query.filter_by(
+                                user_id=user_id, is_active=True).all()
+                        }
+                        invalid = sorted({
+                            str(line.get("account_code", ""))
+                            for s in raw_sugg if isinstance(s, dict)
+                            for line in s.get("lines", [])
+                            if isinstance(line, dict)
+                        } - valid_codes)
+                        tool_output = {
+                            "error": "仕訳案に無効な勘定科目コードが含まれています。"
+                                     "有効なコードのみで再提出してください。",
+                            "invalid_codes": invalid,
+                        }
+                    else:
+                        tool_output = {
+                            "error": "仕訳案が空です。2〜4件の仕訳案を"
+                                     "submit_journal_suggestionsで再提出してください。",
+                        }
+                    if provider == "google":
+                        results_to_append.append((tc_id, (tc_name, tool_output)))
+                    else:
+                        results_to_append.append((tc_id, tool_output))
+                    _emit("retry", "仕訳案を修正中")
+                    continue
 
                 # 通常ツールの実行
+                _emit(*_tool_progress(tc_name, tc_args))
                 tool_output = _execute_agent_tool(user_id, tc_name, tc_args)
                 if provider == "google":
                     results_to_append.append((tc_id, (tc_name, tool_output)))
@@ -1669,7 +1731,10 @@ def _run_agent_loop(
             # ツールコールなし：テキストから仕訳案をフォールバック抽出
             suggestions = _fallback_extract_suggestions(last_text, user_id)
             if suggestions:
+                _emit("composing", "仕訳案をまとめ中")
                 return suggestions
+
+            _emit("composing", "仕訳案の確定を要求中")
 
             prompt_msg = "仕訳案を確定するため、submit_journal_suggestions ツールを呼び出して2〜4件の仕訳案を提出してください。"
             if provider == "anthropic":
@@ -1693,10 +1758,20 @@ def _run_agent_loop(
 
 def _legacy_analyze_and_suggest(user_id: int, image_bytes: bytes,
                                 mime_type: str,
-                                comment: str = "") -> list[JournalSuggestion]:
-    """レガシー2ラウンド方式（テスト互換用）"""
+                                comment: str = "",
+                                progress_cb=None) -> list[JournalSuggestion]:
+    """レガシー2ラウンド方式（テスト互換用、progress_cb 対応）"""
+    def _emit(stage: str, detail: str) -> None:
+        if progress_cb is None:
+            return
+        try:
+            progress_cb(stage, detail)
+        except Exception:
+            logger.exception("progress callback failed (stage=%s)", stage)
+
     api_key, provider, model, handler, custom_prompt, extra_kw = _get_ai_config(user_id)
 
+    _emit("reading", "証憑画像を読み取り中")
     prompt = DOCUMENT_PROMPT
     if custom_prompt:
         prompt += f"\n\n## ユーザー定型情報\n{custom_prompt}"
@@ -1718,6 +1793,7 @@ def _legacy_analyze_and_suggest(user_id: int, image_bytes: bytes,
 
     ledger_text = ""
     if analysis.needs_ledger and analysis.requested_accounts:
+        _emit("ledger", "元帳を参照中")
         ledger_text = _get_ledger_context(user_id, analysis.requested_accounts)
 
     account_list_text = _get_account_list_text(user_id)
@@ -1725,6 +1801,7 @@ def _legacy_analyze_and_suggest(user_id: int, image_bytes: bytes,
         account_list_text, ledger_text, custom_prompt
     )
 
+    _emit("composing", "仕訳案を作成中")
     round2 = _call_ai(handler, api_key, model, image_bytes, mime_type,
                       suggestion_prompt, 2000, user_id, extra_kw,
                       provider=provider, feature="receipt_round2")
@@ -1768,11 +1845,13 @@ def _legacy_analyze_and_suggest(user_id: int, image_bytes: bytes,
 
 def analyze_and_suggest(user_id: int, image_bytes: bytes,
                         mime_type: str,
-                        comment: str = "") -> list[JournalSuggestion]:
+                        comment: str = "",
+                        progress_cb=None) -> list[JournalSuggestion]:
     """証憑画像を解析し、複数の仕訳案を生成する（ツールコール対応AIエージェント方式）
 
     AIエージェントが自律的に勘定科目検索・過去仕訳検索・元帳照会などのツールを呼び出し、
     最適な仕訳案（2〜4件）を提案します。
+    progress_cb を渡すと (stage, detail) の進捗イベントを受け取れる。
     """
     from unittest.mock import Mock
     api_key, provider, model, handler, custom_prompt, extra_kw = _get_ai_config(user_id)
@@ -1781,9 +1860,13 @@ def analyze_and_suggest(user_id: int, image_bytes: bytes,
         or isinstance(_PROVIDER_HANDLERS.get(provider), Mock)
         or isinstance(_PROVIDER_HANDLERS.get("openai"), Mock)
     ):
-        return _legacy_analyze_and_suggest(user_id, image_bytes, mime_type, comment=comment)
+        return _legacy_analyze_and_suggest(
+            user_id, image_bytes, mime_type, comment=comment,
+            progress_cb=progress_cb,
+        )
 
-    return _run_agent_loop(user_id, image_bytes, mime_type, comment=comment)
+    return _run_agent_loop(user_id, image_bytes, mime_type, comment=comment,
+                           progress_cb=progress_cb)
 
 
 WEB_IMPORT_PROMPT = """あなたは日本の家計簿アプリのアシスタントです。
