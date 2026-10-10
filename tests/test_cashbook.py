@@ -86,6 +86,15 @@ class TestIndex:
         body = resp.get_data(as_text=True)
         assert "2,000" in body or "2000" in body
 
+    def test_invalid_date_filter_ignored(self, db, logged_in_client, user, accounts):
+        # 不正な日付文字列でも 500 にせずフィルタを無視する (psycopg v3 対応)
+        make_journal(db, user.id, "5010", "1010", 2000,
+                     entry_date=date(2026, 2, 15), source="cashbook")
+        resp = logged_in_client.get("/cashbook/?date_from=bad&date_to=bad")
+        assert resp.status_code == 200
+        body = resp.get_data(as_text=True)
+        assert "2,000" in body or "2000" in body
+
     def test_pagination(self, db, logged_in_client, user, accounts):
         for i in range(25):
             make_journal(db, user.id, "5010", "1010", 100 + i,

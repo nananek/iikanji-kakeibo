@@ -21,7 +21,7 @@ from app.services.audit import (
     is_entry_locked_for_owner, is_entry_locked_for_auditor,
     is_acting_as_auditor,
 )
-from app.views.helpers import get_grouped_accounts
+from app.views.helpers import get_grouped_accounts, parse_iso_date
 
 bp = Blueprint("cashbook", __name__, url_prefix="/cashbook")
 
@@ -59,9 +59,13 @@ def index():
         )
 
     if date_from:
-        query = query.filter(JournalEntry.date >= date_from)
+        d = parse_iso_date(date_from)
+        if d is not None:
+            query = query.filter(JournalEntry.date >= d)
     if date_to:
-        query = query.filter(JournalEntry.date <= date_to)
+        d = parse_iso_date(date_to)
+        if d is not None:
+            query = query.filter(JournalEntry.date <= d)
 
     entries = query.paginate(page=page, per_page=20, error_out=False)
     return render_template(

@@ -18,7 +18,7 @@ from app.services.audit import (
     is_acting_as_auditor, get_permission_level,
     get_proprietor_account_code, mask_account_name,
 )
-from app.views.helpers import get_grouped_accounts, is_safe_internal_path, safe_user_error
+from app.views.helpers import get_grouped_accounts, is_safe_internal_path, safe_user_error, parse_iso_date
 
 bp = Blueprint("journal", __name__, url_prefix="/journal")
 
@@ -52,9 +52,13 @@ def index():
         )
 
     if date_from:
-        query = query.filter(JournalEntry.date >= date_from)
+        d = parse_iso_date(date_from)
+        if d is not None:
+            query = query.filter(JournalEntry.date >= d)
     if date_to:
-        query = query.filter(JournalEntry.date <= date_to)
+        d = parse_iso_date(date_to)
+        if d is not None:
+            query = query.filter(JournalEntry.date <= d)
     if search:
         query = query.filter(JournalEntry.description.ilike(f"%{search}%"))
 

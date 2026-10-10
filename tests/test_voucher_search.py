@@ -87,6 +87,14 @@ class TestVoucherDateFilter:
         assert "2025/01/10" in html
         assert "2025/02/20" not in html
 
+    def test_invalid_date_filter_ignored(self, db, logged_in_client, user, accounts):
+        # 不正な日付文字列でも 500 にせずフィルタを無視する (psycopg v3 対応)
+        self._create_voucher_with_date(db, user, accounts, date(2025, 2, 20))
+
+        resp = logged_in_client.get("/vouchers/?date_from=bad&date_to=bad")
+        assert resp.status_code == 200
+        assert "2025/02/20" in resp.data.decode()
+
 
 class TestVoucherAmountFilter:
     """金額フィルタのテスト"""

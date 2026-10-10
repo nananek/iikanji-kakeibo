@@ -4,6 +4,7 @@ import json
 import os
 import tempfile
 import uuid
+from datetime import date
 from urllib.parse import urlparse
 
 from app.models.account import Account, AccountType
@@ -35,6 +36,22 @@ def safe_user_error(exc: Exception, fallback: str = "処理に失敗しました
     if any(tok in msg for tok in _UNSAFE_ERROR_TOKENS):
         return fallback
     return msg
+
+
+def parse_iso_date(value):
+    """'YYYY-MM-DD' 文字列を date に変換する。不正・空なら None。
+
+    Date カラムとの比較は date オブジェクトで行うこと。文字列のまま
+    比較すると psycopg (v3) ドライバでは `operator does not exist:
+    date >= character varying` で 500 になる (SQLAlchemy 2.1 以降の
+    既定ドライバが psycopg のため)。
+    """
+    if not value or not isinstance(value, str):
+        return None
+    try:
+        return date.fromisoformat(value.strip())
+    except ValueError:
+        return None
 
 
 def is_safe_internal_path(target) -> bool:

@@ -74,6 +74,16 @@ class TestIndex:
         assert "FEB" in body
         assert "JAN" not in body
 
+    def test_invalid_date_filter_ignored(self, db, logged_in_client, user, accounts):
+        # 不正な日付文字列でも 500 にせずフィルタを無視する
+        # (psycopg v3 では Date >= 文字列比較が UndefinedFunction エラーになるため)
+        make_journal(db, user.id, "5010", "1010", 1000,
+                     entry_date=date(2026, 2, 15), source="journal",
+                     description="ABC")
+        resp = logged_in_client.get("/journal/?date_from=not-a-date&date_to=xx")
+        assert resp.status_code == 200
+        assert "ABC" in resp.get_data(as_text=True)
+
 
 class TestNew:
     def test_unauthenticated(self, client):

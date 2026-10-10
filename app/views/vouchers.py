@@ -14,6 +14,7 @@ from app.models.voucher import Voucher
 from app.models.ai_config import UserAIConfig
 from app.models.journal import JournalEntry, JournalEntryLine
 from app.services.audit import get_effective_user_id
+from app.views.helpers import parse_iso_date
 from app.services.storage import get_storage_backend, make_thumbnail_key
 from app.services.storage_quota import QuotaExceededError, record_delete
 from app.services.voucher import create_voucher_from_upload
@@ -45,25 +46,29 @@ def index():
 
     # 日付フィルタ
     if date_from:
-        query = query.filter(
-            db.or_(
-                JournalEntry.date >= date_from,
-                db.and_(
-                    Voucher.journal_entry_id.is_(None),
-                    func.date(Voucher.uploaded_at) >= date_from,
-                ),
+        d = parse_iso_date(date_from)
+        if d is not None:
+            query = query.filter(
+                db.or_(
+                    JournalEntry.date >= d,
+                    db.and_(
+                        Voucher.journal_entry_id.is_(None),
+                        func.date(Voucher.uploaded_at) >= d,
+                    ),
+                )
             )
-        )
     if date_to:
-        query = query.filter(
-            db.or_(
-                JournalEntry.date <= date_to,
-                db.and_(
-                    Voucher.journal_entry_id.is_(None),
-                    func.date(Voucher.uploaded_at) <= date_to,
-                ),
+        d = parse_iso_date(date_to)
+        if d is not None:
+            query = query.filter(
+                db.or_(
+                    JournalEntry.date <= d,
+                    db.and_(
+                        Voucher.journal_entry_id.is_(None),
+                        func.date(Voucher.uploaded_at) <= d,
+                    ),
+                )
             )
-        )
 
     # 摘要フィルタ
     if search:

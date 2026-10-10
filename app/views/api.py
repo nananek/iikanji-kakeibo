@@ -575,7 +575,7 @@ def list_vouchers():
                 db.or_(
                     JournalEntry.date >= d,
                     db.and_(Voucher.journal_entry_id.is_(None),
-                            func.date(Voucher.uploaded_at) >= date_from),
+                            func.date(Voucher.uploaded_at) >= d),
                 )
             )
         except ValueError:
@@ -589,7 +589,7 @@ def list_vouchers():
                 db.or_(
                     JournalEntry.date <= d,
                     db.and_(Voucher.journal_entry_id.is_(None),
-                            func.date(Voucher.uploaded_at) <= date_to),
+                            func.date(Voucher.uploaded_at) <= d),
                 )
             )
         except ValueError:
