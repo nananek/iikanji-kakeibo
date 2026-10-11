@@ -290,12 +290,55 @@ def _build_suggestion_prompt(account_list_text, ledger_text="",
 
 
 def _usage_openai_style(data: dict) -> dict:
-    """OpenAI 互換 (OpenAI / llama.cpp) のレスポンスから usage を正規化。"""
+    """OpenAI 互換 (OpenAI / llama.cpp) のレスポンスから usage を正規化。
+
+    Chat Completions は prompt_tokens / completion_tokens、Responses API は
+    input_tokens / output_tokens を返すため、両方を吸収する。
+    """
     usage = data.get("usage") or {}
     return {
-        "input_tokens": usage.get("prompt_tokens"),
-        "output_tokens": usage.get("completion_tokens"),
+        "input_tokens": usage.get("prompt_tokens", usage.get("input_tokens")),
+        "output_tokens": usage.get("completion_tokens", usage.get("output_tokens")),
     }
+
+
+def _raise_for_status(response) -> None:
+    """HTTP エラー時にレスポンス本文をメッセージへ含める raise_for_status。
+
+    400 等のクライアントエラーは API 側の説明本文に原因が書かれていることが
+    多いが、httpx の既定メッセージには含まれない。診断のため本文を添えて
+    同じ HTTPStatusError を投げ直す（呼び出し側の status_code 分類は維持）。
+    """
+    try:
+        response.raise_for_status()
+    except httpx.HTTPStatusError as e:
+        body = " ".join((e.response.text or "").split())[:500]
+        if not body:
+            raise
+        raise httpx.HTTPStatusError(
+            f"{e} — response body: {body}",
+            request=e.request,
+            response=e.response,
+        ) from None
+
+
+def _extract_responses_text(data: dict) -> str:
+    """Responses API のレスポンスから生成テキストを抽出する。
+
+    `output_text` ショートハンドがあればそれを優先し、なければ output の
+    message アイテム（content は output_text 型）を連結する。
+    """
+    text = data.get("output_text")
+    if isinstance(text, str) and text:
+        return text
+    parts = []
+    for item in data.get("output") or []:
+        if not isinstance(item, dict) or item.get("type") != "message":
+            continue
+        for c in item.get("content") or []:
+            if isinstance(c, dict) and c.get("type") in ("output_text", "text"):
+                parts.append(c.get("text", "") or "")
+    return "".join(parts)
 
 
 def _usage_anthropic_style(data: dict) -> dict:
@@ -450,11 +493,12 @@ def _call_openai_compatible(api_key: str, model: str, image_bytes: bytes,
                             mime_type: str, prompt: str = RECEIPT_PROMPT,
                             max_tokens: int = 500, *, base_url: str = "",
                             headers: dict = None, timeout: float = 60.0,
-                            **kwargs):
+                            api_style: str = "chat_completions", **kwargs):
     """OpenAI 互換 API (カスタムエンドポイント) を呼ぶ。
 
     ユーザー指定の base_url (OpenCode Go 等) に対応。API キーはユーザー各自
     (BYOK) が指定する。llama.cpp もこの実装へ委譲する。
+    api_style が "responses" の場合は Responses API (/v1/responses) を使う。
     戻り値: (parsed_json, usage_dict)
     """
     url = base_url.rstrip("/")
@@ -464,6 +508,33 @@ def _call_openai_compatible(api_key: str, model: str, image_bytes: bytes,
         req_headers["Authorization"] = f"Bearer {api_key}"
     if headers:
         req_headers.update(headers)
+
+    if api_style == "responses":
+        response = httpx.post(
+            f"{url}/v1/responses",
+            headers=req_headers,
+            json={
+                "model": model,
+                "input": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "input_text", "text": prompt},
+                            {
+                                "type": "input_image",
+                                "image_url": f"data:{mime_type};base64,{b64_image}",
+                            },
+                        ],
+                    }
+                ],
+                "max_output_tokens": max_tokens,
+            },
+            timeout=timeout,
+        )
+        _raise_for_status(response)
+        data = response.json()
+        return _extract_json(_extract_responses_text(data)), _usage_openai_style(data)
+
     response = httpx.post(
         f"{url}/v1/chat/completions",
         headers=req_headers,
@@ -590,10 +661,11 @@ def _call_anthropic_text(api_key: str, model: str, prompt: str,
 def _call_openai_compatible_text(api_key: str, model: str, prompt: str,
                                  max_tokens: int = 2000, *, base_url: str = "",
                                  headers: dict = None, timeout: float = 60.0,
-                                 **kwargs):
+                                 api_style: str = "chat_completions", **kwargs):
     """OpenAI 互換 API (カスタムエンドポイント) のテキスト専用呼び出し。
 
     llama.cpp のテキスト呼び出しもこの実装へ委譲する。
+    api_style が "responses" の場合は Responses API (/v1/responses) を使う。
     戻り値: (parsed_json, usage_dict)
     """
     url = base_url.rstrip("/")
@@ -602,6 +674,27 @@ def _call_openai_compatible_text(api_key: str, model: str, prompt: str,
         req_headers["Authorization"] = f"Bearer {api_key}"
     if headers:
         req_headers.update(headers)
+
+    if api_style == "responses":
+        response = httpx.post(
+            f"{url}/v1/responses",
+            headers=req_headers,
+            json={
+                "model": model,
+                "input": [
+                    {
+                        "role": "user",
+                        "content": [{"type": "input_text", "text": prompt}],
+                    }
+                ],
+                "max_output_tokens": max_tokens,
+            },
+            timeout=timeout,
+        )
+        _raise_for_status(response)
+        data = response.json()
+        return _extract_json(_extract_responses_text(data)), _usage_openai_style(data)
+
     response = httpx.post(
         f"{url}/v1/chat/completions",
         headers=req_headers,
@@ -1241,7 +1334,7 @@ def _agent_step_openai(
     }
 
     response = httpx.post(url, headers=req_headers, json=payload, timeout=timeout)
-    response.raise_for_status()
+    _raise_for_status(response)
     data = response.json()
     msg = data["choices"][0]["message"]
     text = msg.get("content") or ""
@@ -1299,10 +1392,10 @@ def _agent_step_openai_responses(
     }
 
     response = httpx.post(url, headers=req_headers, json=payload, timeout=timeout)
-    response.raise_for_status()
+    _raise_for_status(response)
     data = response.json()
 
-    text = ""
+    text = _extract_responses_text(data)
     tool_calls = []
     updated_input = list(input_items)
 
@@ -1311,11 +1404,7 @@ def _agent_step_openai_responses(
         for item in outputs:
             updated_input.append(item)
             itype = item.get("type")
-            if itype == "message":
-                for c in item.get("content") or []:
-                    if c.get("type") == "text":
-                        text += c.get("text", "")
-            elif itype == "function_call":
+            if itype == "function_call":
                 name = item.get("name")
                 args_raw = item.get("arguments", "{}")
                 try:
@@ -1595,8 +1684,11 @@ def _run_agent_loop(
             {
                 "role": "user",
                 "content": [
-                    {"type": "text", "text": f"{sys_prompt}\n\n{user_text}"},
-                    {"type": "image_url", "image_url": {"url": f"data:{mime_type};base64,{b64_img}"}},
+                    {"type": "input_text", "text": f"{sys_prompt}\n\n{user_text}"},
+                    {
+                        "type": "input_image",
+                        "image_url": f"data:{mime_type};base64,{b64_img}",
+                    },
                 ],
             }
         ]
@@ -1742,7 +1834,7 @@ def _run_agent_loop(
             elif provider == "google":
                 history.append({"role": "user", "parts": [{"text": prompt_msg}]})
             elif is_responses_api:
-                history.append({"role": "user", "content": [{"type": "text", "text": prompt_msg}]})
+                history.append({"role": "user", "content": [{"type": "input_text", "text": prompt_msg}]})
             else:
                 history.append({"role": "user", "content": prompt_msg})
 

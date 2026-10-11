@@ -149,7 +149,8 @@ class Handler(BaseHTTPRequestHandler):
                     content = msg.get("content", "")
                     if isinstance(content, list):
                         content = " ".join(
-                            c.get("text", "") for c in content if isinstance(c, dict) and c.get("type") == "text"
+                            c.get("text", "") for c in content
+                            if isinstance(c, dict) and c.get("type") in ("text", "input_text")
                         )
                     if "列マッピングを推定" in content:
                         is_csv_detect = True
