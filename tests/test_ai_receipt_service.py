@@ -19,6 +19,7 @@ from app.services.ai_receipt import (
     DocumentAnalysis,
     JournalSuggestion,
     PROVIDER_DEFAULTS,
+    RECEIPT_PROMPT,
     ReceiptData,
     _build_suggestion_prompt,
     _call_ai,
@@ -240,6 +241,38 @@ class TestProviderHandlers:
             _call_llama_cpp("", "default", b"img", "image/png")
             assert mock_post.call_args.kwargs["timeout"] == 120.0
 
+    def test_openai_compatible_responses(self):
+        """api_style=responses では /v1/responses へ input_text / input_image で送る。
+
+        Chat Completions 形式の type="text" / image_url オブジェクトを送ると
+        Responses API は 400 Bad Request を返すため、その回帰テスト。
+        """
+        with patch("httpx.post") as mock_post:
+            mock_post.return_value = _mock_post({
+                "output": [{
+                    "type": "message",
+                    "content": [{"type": "output_text", "text": '{"amount": 55}'}],
+                }],
+                "usage": {"input_tokens": 7, "output_tokens": 9},
+            })
+            result, usage = _call_openai_compatible(
+                "k", "gpt-4o", b"img", "image/jpeg",
+                base_url="https://api.opencode.go",
+                api_style="responses",
+            )
+            assert result["amount"] == 55
+            assert usage == {"input_tokens": 7, "output_tokens": 9}
+            sent = mock_post.call_args
+            assert sent.args[0] == "https://api.opencode.go/v1/responses"
+            assert sent.kwargs["headers"]["Authorization"] == "Bearer k"
+            payload = sent.kwargs["json"]
+            assert payload["max_output_tokens"] == 500
+            content = payload["input"][0]["content"]
+            assert content[0] == {"type": "input_text", "text": RECEIPT_PROMPT}
+            assert content[1]["type"] == "input_image"
+            # Responses API の image_url は文字列 (Chat Completions の {"url": ...} ではない)
+            assert content[1]["image_url"].startswith("data:image/jpeg;base64,")
+
 
 class TestTextHandlers:
     def test_openai_text(self):
@@ -296,6 +329,30 @@ class TestTextHandlers:
             assert sent.args[0] == "https://api.opencode.go/v1/chat/completions"
             assert sent.kwargs["headers"]["Authorization"] == "Bearer k"
             assert sent.kwargs["json"]["messages"][0]["content"] == "p"
+
+    def test_openai_compatible_text_responses(self):
+        """api_style=responses のテキスト呼び出しは /v1/responses へ送る。"""
+        with patch("httpx.post") as mock_post:
+            mock_post.return_value = _mock_post({
+                "output": [{
+                    "type": "message",
+                    "content": [{"type": "output_text", "text": '{"x": 5}'}],
+                }],
+                "usage": {"input_tokens": 3, "output_tokens": 4},
+            })
+            result, usage = _call_openai_compatible_text(
+                "k", "gpt-4o", "p",
+                base_url="https://api.opencode.go", api_style="responses",
+            )
+            assert result == {"x": 5}
+            assert usage == {"input_tokens": 3, "output_tokens": 4}
+            sent = mock_post.call_args
+            assert sent.args[0] == "https://api.opencode.go/v1/responses"
+            payload = sent.kwargs["json"]
+            assert payload["input"][0]["content"] == [
+                {"type": "input_text", "text": "p"}
+            ]
+            assert payload["max_output_tokens"] == 2000
 
 
 class TestGetAiConfig:
@@ -898,6 +955,43 @@ class TestAgentStepHandlers:
             assert tcs[0]["name"] == "search_journal_history"
             assert tcs[0]["arguments"]["query"] == "カフェ"
 
+    def test_agent_step_openai_responses_message_text_and_usage(self):
+        """output の message(output_text) をテキスト抽出し、
+        Responses API の usage (input_tokens/output_tokens) を正規化する。"""
+        with patch("httpx.post") as mock_post:
+            mock_post.return_value = _mock_post({
+                "output": [
+                    {
+                        "type": "message",
+                        "content": [{"type": "output_text", "text": "調査結果です"}],
+                    }
+                ],
+                "usage": {"input_tokens": 15, "output_tokens": 25},
+            })
+            text, tcs, inp, usage = _agent_step_openai_responses(
+                "key", "gpt-4o", [], AGENT_TOOLS, base_url="https://api.example.com",
+            )
+            assert text == "調査結果です"
+            assert tcs == []
+            assert usage == {"input_tokens": 15, "output_tokens": 25}
+
+    def test_http_error_includes_response_body(self):
+        """HTTP エラー時にレスポンス本文がメッセージへ含まれる (診断用)。"""
+        import httpx as _httpx
+        request = _httpx.Request("POST", "https://api.example.com/v1/responses")
+        response = _httpx.Response(
+            400, request=request,
+            json={"error": {"message": "Invalid value: 'text'"}},
+        )
+        with patch("httpx.post", return_value=response):
+            with pytest.raises(_httpx.HTTPStatusError) as excinfo:
+                _agent_step_openai_responses(
+                    "key", "gpt-4o", [], AGENT_TOOLS,
+                    base_url="https://api.example.com",
+                )
+        assert "Invalid value" in str(excinfo.value)
+        assert excinfo.value.response.status_code == 400
+
     def test_agent_step_anthropic(self):
         with patch("httpx.post") as mock_post:
             mock_post.return_value = _mock_post({
@@ -1090,3 +1184,53 @@ class TestRunAgentLoop:
             retry_dump = json.dumps(retry_messages, ensure_ascii=False)
             assert "無効な勘定科目コード" in retry_dump
             assert "9999" in retry_dump
+
+    def test_responses_api_uses_input_text_and_input_image(self, db, user, accounts):
+        """openai_compatible + api_style=responses の初回リクエストが
+        Responses API 形式 (input_text / input_image, image_url は文字列) で
+        送られること。Chat Completions 形式 (type="text" /
+        image_url オブジェクト) を送ると Responses API は 400 を返す回帰テスト。
+        """
+        cfg = _openai_compatible_config(db, user.id)
+        cfg.api_style = "responses"
+        db.session.commit()
+        sent = []
+
+        def fake_post(url, **kwargs):
+            sent.append({"url": url, "json": kwargs.get("json")})
+            return _mock_post({
+                "output": [{
+                    "type": "function_call",
+                    "call_id": "c1",
+                    "name": "submit_journal_suggestions",
+                    "arguments": json.dumps({
+                        "suggestions": [{
+                            "title": "食費計上",
+                            "description": "...",
+                            "date": "2026-02-15",
+                            "entry_description": "昼食代",
+                            "lines": [
+                                {"account_code": "5010", "account_name": "食費",
+                                 "debit_amount": 800, "credit_amount": 0},
+                                {"account_code": "1010", "account_name": "現金",
+                                 "debit_amount": 0, "credit_amount": 800},
+                            ],
+                        }]
+                    }, ensure_ascii=False),
+                }],
+                "usage": {"input_tokens": 10, "output_tokens": 20},
+            })
+
+        with patch("app.services.ai_receipt.httpx.post", side_effect=fake_post):
+            results = _run_agent_loop(user.id, b"img", "image/jpeg")
+
+        assert len(results) == 1
+        assert sent[0]["url"] == "https://api.example.com/v1/responses"
+        content = sent[0]["json"]["input"][0]["content"]
+        assert content[0]["type"] == "input_text"
+        assert content[1]["type"] == "input_image"
+        assert content[1]["image_url"].startswith("data:image/jpeg;base64,")
+        # Chat Completions 形式が混入していないこと
+        dumped = json.dumps(sent[0]["json"], ensure_ascii=False)
+        assert '"type": "text"' not in dumped
+        assert '"type": "image_url"' not in dumped
