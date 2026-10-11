@@ -1038,6 +1038,33 @@ def analyze_receipt(user_id: int, image_bytes: bytes,
 
 # --- AIエージェント（ツールコール方式）---
 
+DEFAULT_MAX_TURNS = 10
+MIN_MAX_TURNS = 1
+MAX_MAX_TURNS = 50
+
+# 決定的フォールバックで使う既定科目の優先名。
+# 前方一致で探し、無ければ同種別の先頭科目に落ちる。
+_FALLBACK_EXPENSE_PREFERRED = ("雑費", "消耗品費", "日用品費")
+_FALLBACK_PAYMENT_PREFERRED = ("現金", "普通預金")
+
+
+def _clamp_max_turns(value) -> int:
+    """設定値を [MIN_MAX_TURNS, MAX_MAX_TURNS] に丸める。不正値は既定値。"""
+    try:
+        turns = int(value)
+    except (TypeError, ValueError):
+        return DEFAULT_MAX_TURNS
+    return min(max(turns, MIN_MAX_TURNS), MAX_MAX_TURNS)
+
+
+def _resolve_max_turns(user_id: int) -> int:
+    """ユーザー設定のエージェント最大ターン数を返す (未設定は既定値)。"""
+    config = UserAIConfig.query.filter_by(user_id=user_id).first()
+    if config is None:
+        return DEFAULT_MAX_TURNS
+    return _clamp_max_turns(getattr(config, "max_turns", None))
+
+
 AGENT_SYSTEM_PROMPT = """あなたは日本の複式簿記の家計簿・経理アシスタントです。
 提示された証憑（領収書、レシート、給与明細、請求書等）の画像から取引内容を読み取り、適切な仕訳案を2〜4件提案してください。
 
@@ -1046,13 +1073,14 @@ AGENT_SYSTEM_PROMPT = """あなたは日本の複式簿記の家計簿・経理�
 2. 必要に応じて利用可能なツールを呼び出して調査・検証を行ってください:
    - search_accounts: キーワードや種別で実在する勘定科目コードを検索します。
    - search_journal_history: 取引先名や店名で過去の類似仕訳を検索し、過去の仕訳パターンを参照します。
-   - get_account_ledger: 特定科目の直近の元帳データや残高を確認します。
+   - get_account_ledger: 指定した複数科目の直近の元帳データや残高をまとめて確認します。
    - get_account_list: 科目体系全体を確認します。
 3. 十分な調査が完了したら、必ず submit_journal_suggestions ツールを呼び出して2〜4件の仕訳案を提出してください。
    - 各仕訳案の借方合計と貸方合計は必ず一致させてください。
    - account_code は必ず実在するコードを指定してください。
    - 給与明細のように複雑な書類では、詳細な内訳を反映した案と簡略化した案の両方を含めてください。
-   - 費目の解釈や按分の違いを反映した複数のアプローチを提案してください。"""
+   - 費目の解釈や按分の違いを反映した複数のアプローチを提案してください。
+4. 調査は手早く済ませ、ターンを使い切る前に必ず仕訳案を提出してください。"""
 
 AGENT_TOOLS = [
     {
@@ -1109,21 +1137,22 @@ AGENT_TOOLS = [
     },
     {
         "name": "get_account_ledger",
-        "description": "特定の勘定科目の直近の元帳データ（仕訳履歴、相手科目、残高）を取得します。",
+        "description": "指定した複数の勘定科目の直近の元帳データ（仕訳履歴、相手科目、残高）をまとめて取得します。",
         "parameters": {
             "type": "object",
             "properties": {
-                "account_code": {
-                    "type": "string",
-                    "description": "勘定科目コード（例: 6101）",
+                "account_codes": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "勘定科目コードのリスト（例: [\"6101\", \"1010\"]）。複数科目をまとめて確認できます。",
                 },
                 "limit": {
                     "type": "integer",
-                    "description": "最大取得件数（1〜10件）",
+                    "description": "科目ごとの最大取得件数（1〜10件）",
                     "default": 5,
                 },
             },
-            "required": ["account_code"],
+            "required": ["account_codes"],
         },
     },
     {
@@ -1254,54 +1283,81 @@ def _execute_agent_tool(user_id: int, name: str, args: dict) -> dict:
         return {"entries": results}
 
     elif name == "get_account_ledger":
-        code = str(args.get("account_code") or "").strip()
+        # account_codes (複数) を主とし、後方互換で account_code (単一) も受ける。
+        raw_codes = args.get("account_codes")
+        if raw_codes is None:
+            single = args.get("account_code")
+            raw_codes = [single] if single else []
+        if isinstance(raw_codes, str):
+            raw_codes = [raw_codes]
+        codes = []
+        for c in raw_codes or []:
+            code = str(c).strip()
+            if code and code not in codes:
+                codes.append(code)
+        if not codes:
+            return {"error": "account_codes を指定してください。"}
+
         limit = min(max(int(args.get("limit") or 5), 1), 10)
-        acct = Account.query.filter_by(user_id=user_id, code=code, is_active=True).first()
-        if not acct:
-            return {"error": f"勘定科目コード '{code}' が見つかりません。"}
         all_accts = Account.query.filter_by(user_id=user_id, is_active=True).all()
         acct_map = {a.code: a.name for a in all_accts}
-        entries = (
-            db.session.query(
-                JournalEntry.date,
-                JournalEntry.description,
-                JournalEntryLine.debit_amount,
-                JournalEntryLine.credit_amount,
-                JournalEntry.id.label("entry_id"),
+
+        accounts_out = []
+        not_found = []
+        for code in codes:
+            if code not in acct_map:
+                not_found.append(code)
+                continue
+            entries = (
+                db.session.query(
+                    JournalEntry.date,
+                    JournalEntry.description,
+                    JournalEntryLine.debit_amount,
+                    JournalEntryLine.credit_amount,
+                    JournalEntry.id.label("entry_id"),
+                )
+                .join(JournalEntry, JournalEntry.id == JournalEntryLine.journal_entry_id)
+                .filter(
+                    JournalEntryLine.account_user_id == user_id,
+                    JournalEntryLine.account_code == code,
+                    JournalEntry.user_id == user_id,
+                )
+                .order_by(JournalEntry.date.desc())
+                .limit(limit)
+                .all()
             )
-            .join(JournalEntry, JournalEntry.id == JournalEntryLine.journal_entry_id)
-            .filter(
-                JournalEntryLine.account_user_id == user_id,
-                JournalEntryLine.account_code == code,
-                JournalEntry.user_id == user_id,
-            )
-            .order_by(JournalEntry.date.desc())
-            .limit(limit)
-            .all()
-        )
-        lines = []
-        for e in entries:
-            counter_lines = (
-                JournalEntryLine.query.filter(
-                    JournalEntryLine.journal_entry_id == e.entry_id,
-                    JournalEntryLine.account_code != code,
-                ).all()
-            )
-            counter_names = ", ".join(
-                acct_map.get(l.account_code, l.account_code) for l in counter_lines
-            ) if counter_lines else "?"
-            lines.append({
-                "date": str(e.date),
-                "description": e.description,
-                "counter_account": counter_names,
-                "debit": int(e.debit_amount),
-                "credit": int(e.credit_amount),
+            lines = []
+            for e in entries:
+                counter_lines = (
+                    JournalEntryLine.query.filter(
+                        JournalEntryLine.journal_entry_id == e.entry_id,
+                        JournalEntryLine.account_code != code,
+                    ).all()
+                )
+                counter_names = ", ".join(
+                    acct_map.get(l.account_code, l.account_code) for l in counter_lines
+                ) if counter_lines else "?"
+                lines.append({
+                    "date": str(e.date),
+                    "description": e.description,
+                    "counter_account": counter_names,
+                    "debit": int(e.debit_amount),
+                    "credit": int(e.credit_amount),
+                })
+            accounts_out.append({
+                "account_code": code,
+                "account_name": acct_map[code],
+                "entries": lines,
             })
-        return {
-            "account_code": acct.code,
-            "account_name": acct.name,
-            "entries": lines,
-        }
+
+        result = {"accounts": accounts_out}
+        if not_found:
+            result["not_found"] = not_found
+        if not accounts_out:
+            result["error"] = (
+                "指定された勘定科目コードが見つかりません: " + ", ".join(not_found)
+            )
+        return result
 
     return {"error": f"未知のツールです: {name}"}
 
@@ -1315,6 +1371,7 @@ def _agent_step_openai(
     base_url: str = "",
     headers: dict = None,
     timeout: float = 60.0,
+    force_tool: str | None = None,
     **kwargs,
 ):
     """OpenAI / llama.cpp / OpenAI互換 (Chat Completions) の1ターン実行"""
@@ -1325,11 +1382,14 @@ def _agent_step_openai(
     if headers:
         req_headers.update(headers)
 
+    tool_choice = "auto"
+    if force_tool:
+        tool_choice = {"type": "function", "function": {"name": force_tool}}
     payload = {
         "model": model,
         "messages": messages,
         "tools": [{"type": "function", "function": t} for t in tools],
-        "tool_choice": "auto",
+        "tool_choice": tool_choice,
         "max_tokens": 2000,
     }
 
@@ -1365,6 +1425,7 @@ def _agent_step_openai_responses(
     base_url: str = "",
     headers: dict = None,
     timeout: float = 60.0,
+    force_tool: str | None = None,
     **kwargs,
 ):
     """OpenAI 互換 Responses API (/v1/responses) の1ターン実行"""
@@ -1390,6 +1451,8 @@ def _agent_step_openai_responses(
         "tools": resp_tools,
         "max_output_tokens": 2000,
     }
+    if force_tool:
+        payload["tool_choice"] = {"type": "function", "name": force_tool}
 
     response = httpx.post(url, headers=req_headers, json=payload, timeout=timeout)
     _raise_for_status(response)
@@ -1444,6 +1507,7 @@ def _agent_step_anthropic(
     *,
     system_prompt: str = "",
     timeout: float = 60.0,
+    force_tool: str | None = None,
     **kwargs,
 ):
     """Anthropic Claude の1ターン実行"""
@@ -1465,6 +1529,8 @@ def _agent_step_anthropic(
     }
     if system_prompt:
         payload["system"] = system_prompt
+    if force_tool:
+        payload["tool_choice"] = {"type": "tool", "name": force_tool}
 
     response = httpx.post(url, headers=req_headers, json=payload, timeout=timeout)
     response.raise_for_status()
@@ -1491,6 +1557,7 @@ def _agent_step_google(
     *,
     system_prompt: str = "",
     timeout: float = 60.0,
+    force_tool: str | None = None,
     **kwargs,
 ):
     """Google Gemini の1ターン実行"""
@@ -1505,6 +1572,13 @@ def _agent_step_google(
     }
     if system_prompt:
         payload["systemInstruction"] = {"parts": [{"text": system_prompt}]}
+    if force_tool:
+        payload["toolConfig"] = {
+            "functionCallingConfig": {
+                "mode": "ANY",
+                "allowedFunctionNames": [force_tool],
+            }
+        }
 
     response = httpx.post(url, params={"key": api_key}, headers={"Content-Type": "application/json"}, json=payload, timeout=timeout)
     response.raise_for_status()
@@ -1634,11 +1708,161 @@ def _tool_progress(name: str, args: dict) -> tuple[str, str]:
     if name == "search_accounts":
         query = str((args or {}).get("query") or "")
         return ("search", f"勘定科目を検索中{f' ({query})' if query else ''}")
-    if name in ("get_account_ledger", "get_account_list"):
+    if name == "get_account_ledger":
+        raw_codes = (args or {}).get("account_codes")
+        if raw_codes is None:
+            single = (args or {}).get("account_code")
+            raw_codes = [single] if single else []
+        if isinstance(raw_codes, str):
+            raw_codes = [raw_codes]
+        count = len([c for c in raw_codes if str(c).strip()])
+        suffix = f" ({count}科目)" if count > 1 else ""
+        return ("ledger", f"元帳を参照中{suffix}")
+    if name == "get_account_list":
         return ("ledger", "元帳を参照中")
     if name == "search_journal_history":
         return ("history", "過去の仕訳を検索中")
     return ("thinking", "調査中")
+
+
+def _select_default_account(user_id: int, preferred_names, type_codes):
+    """決定的フォールバック用の既定科目を選ぶ。
+
+    type_codes の優先順に種別を走査し、preferred_names に完全一致する科目 →
+    部分一致 → 同種別の先頭科目、の順で 1 件返す。見つからなければ None。
+    """
+    for type_code in type_codes:
+        atype = AccountType.query.filter_by(code=type_code).first()
+        if atype is None:
+            continue
+        accounts = (
+            Account.query
+            .filter_by(user_id=user_id, is_active=True)
+            .filter(Account.account_type_id == atype.id)
+            .order_by(Account.code)
+            .all()
+        )
+        if not accounts:
+            continue
+        for pref in preferred_names:
+            for a in accounts:
+                if a.name == pref:
+                    return a
+        for pref in preferred_names:
+            for a in accounts:
+                if pref in a.name or a.name in pref:
+                    return a
+        return accounts[0]
+    return None
+
+
+def _build_fallback_suggestion(user_id: int, date_str, description, amount):
+    """抽出済みの金額と既定科目から仕訳案を機械的に組み立てる。
+
+    金額が取れない、または費目・支払元科目が 1 つも見つからない場合は
+    空リストを返す (仕訳として成立しないため)。
+    """
+    try:
+        amount = int(amount or 0)
+    except (TypeError, ValueError):
+        amount = 0
+    if amount <= 0:
+        return []
+
+    expense = _select_default_account(
+        user_id, _FALLBACK_EXPENSE_PREFERRED, ["expense"]
+    )
+    payment = _select_default_account(
+        user_id, _FALLBACK_PAYMENT_PREFERRED, ["asset", "liability"]
+    )
+    if expense is None or payment is None:
+        return []
+
+    return [JournalSuggestion(
+        title="自動計上（要確認）",
+        description=(
+            "AIが仕訳案を確定できなかったため、証憑から読み取った金額をもとに"
+            "既定の勘定科目で自動生成しました。内容を確認してから登録してください。"
+        ),
+        date=date_str,
+        entry_description=(description or "AI自動仕訳").strip(),
+        lines=[
+            {
+                "account_code": expense.code,
+                "account_name": expense.name,
+                "debit_amount": amount,
+                "credit_amount": 0,
+            },
+            {
+                "account_code": payment.code,
+                "account_name": payment.name,
+                "debit_amount": 0,
+                "credit_amount": amount,
+            },
+        ],
+    )]
+
+
+def _extract_document_basics(image_bytes, mime_type, comment, last_text,
+                             api_key, provider, model, handler, extra_kw, user_id):
+    """日付・摘要・金額を best-effort で抽出する。
+
+    まずエージェントの最終応答テキストから JSON を拾い、金額が取れなければ
+    ツールを使わない 1 回限りの抽出呼出しにフォールバックする。
+    """
+    info = {}
+    if last_text:
+        try:
+            parsed = _extract_json(last_text)
+            if isinstance(parsed, dict):
+                info = parsed
+        except Exception:
+            info = {}
+
+    def _amount_of(d):
+        try:
+            return int(d.get("amount") or 0)
+        except (TypeError, ValueError, AttributeError):
+            return 0
+
+    if _amount_of(info) > 0:
+        return info
+
+    prompt = DOCUMENT_PROMPT
+    if comment:
+        prompt += f"\n\nユーザーからのコメント: {comment}"
+    try:
+        parsed = _call_ai(
+            handler, api_key, model, image_bytes, mime_type, prompt, 1000,
+            user_id, extra_kw, provider=provider,
+            feature="receipt_fallback_extract",
+        )
+        if isinstance(parsed, dict):
+            return parsed
+    except Exception:
+        logger.warning(
+            "fallback document extraction failed for user %s", user_id,
+            exc_info=True,
+        )
+    return info
+
+
+def _deterministic_fallback_suggestion(user_id, image_bytes, mime_type, comment,
+                                       api_key, provider, model, handler,
+                                       extra_kw, last_text):
+    """エージェントが確定できなかったときの最終手段 (無出力で落とさない)。"""
+    import datetime as _dt
+    info = _extract_document_basics(
+        image_bytes, mime_type, comment, last_text,
+        api_key, provider, model, handler, extra_kw, user_id,
+    )
+    if not info:
+        return []
+    date_str = info.get("date") or _dt.date.today().isoformat()
+    description = info.get("description") or comment or "AI自動仕訳"
+    return _build_fallback_suggestion(
+        user_id, date_str, description, info.get("amount")
+    )
 
 
 def _run_agent_loop(
@@ -1646,7 +1870,7 @@ def _run_agent_loop(
     image_bytes: bytes,
     mime_type: str,
     comment: str = "",
-    max_turns: int = 5,
+    max_turns: int | None = None,
     progress_cb=None,
 ) -> list[JournalSuggestion]:
     """ツールコールを活用したAIエージェントループを実行する
@@ -1655,7 +1879,18 @@ def _run_agent_loop(
     通知する。stage は "reading" / "thinking" / "search" / "ledger" /
     "history" / "composing" / "retry" のいずれか。コールバックの例外は
     解析本体に波及させない。
+
+    max_turns が None の場合はユーザー設定 (UserAIConfig.max_turns) を使う。
+    最終ターンでは submit_journal_suggestions を tool_choice で強制し、
+    それでも確定できない場合は決定的フォールバックで最低 1 件の仕訳案を
+    返す。無出力のままエラーにするのは、金額が読み取れず仕訳として
+    成立しない場合に限る。
     """
+    if max_turns is None:
+        max_turns = _resolve_max_turns(user_id)
+    else:
+        max_turns = _clamp_max_turns(max_turns)
+
     def _emit(stage: str, detail: str) -> None:
         if progress_cb is None:
             return
@@ -1665,7 +1900,7 @@ def _run_agent_loop(
             logger.exception("progress callback failed (stage=%s)", stage)
 
     import time as _time
-    api_key, provider, model, _, custom_prompt, extra_kw = _get_ai_config(user_id)
+    api_key, provider, model, handler, custom_prompt, extra_kw = _get_ai_config(user_id)
 
     sys_prompt = AGENT_SYSTEM_PROMPT
     if custom_prompt:
@@ -1737,17 +1972,19 @@ def _run_agent_loop(
     last_text = ""
     _emit("reading", "証憑画像を読み取り中")
     for turn in range(max_turns):
+        is_last_turn = (turn == max_turns - 1)
         _emit("thinking", f"仕訳を検討中 ({turn + 1}/{max_turns})")
         t0 = _time.perf_counter()
         try:
             step_kwargs = {"timeout": 60.0}
-            if provider == "anthropic":
-                step_kwargs["system_prompt"] = sys_prompt
-            elif provider == "google":
+            if provider in ("anthropic", "google"):
                 step_kwargs["system_prompt"] = sys_prompt
             elif provider in ("llama_cpp", "openai_compatible"):
                 step_kwargs["base_url"] = extra_kw.get("base_url", "")
                 step_kwargs["headers"] = extra_kw.get("headers", {})
+            if is_last_turn:
+                # 最終ターンは submit ツール呼び出しを強制し、確実に確定させる。
+                step_kwargs["force_tool"] = "submit_journal_suggestions"
 
             text, tool_calls, history, usage = step_fn(
                 api_key, model, history, AGENT_TOOLS, **step_kwargs
@@ -1760,6 +1997,15 @@ def _run_agent_loop(
             status, http_status = _classify_exception(e)
             _log_ai_usage(user_id, provider, model, f"agent_turn_{turn+1}", {}, latency,
                           status=status, http_status=http_status)
+            if is_last_turn and step_kwargs.get("force_tool"):
+                # tool_choice 強制に未対応のプロバイダー等では最終ターンだけが
+                # 失敗しうる。ここで落とさず決定的フォールバックへ回す。
+                logger.warning(
+                    "Forced final turn failed (turn %d) for user %s; "
+                    "falling back to deterministic suggestion: %s",
+                    turn + 1, user_id, e,
+                )
+                break
             logger.error("Agent step failed (turn %d) for user %s: %s", turn + 1, user_id, e)
             raise RuntimeError(f"AIエージェントの呼出しに失敗しました: {e}")
 
@@ -1780,7 +2026,7 @@ def _run_agent_loop(
                         return suggestions
                     # 無効な確定は検証エラーをLLMに返して再提出させる。
                     # _execute_agent_tool に落とすと「未知のツール」と嘘の
-                    # 結果になり、LLMが修正できず5ターン枯渇→
+                    # 結果になり、LLMが修正できずターン枯渇→
                     # 「有効な仕訳案を生成できませんでした」に至る。
                     if isinstance(raw_sugg, list) and raw_sugg:
                         valid_codes = {
@@ -1840,7 +2086,18 @@ def _run_agent_loop(
 
     suggestions = _fallback_extract_suggestions(last_text, user_id)
     if suggestions:
+        _emit("composing", "仕訳案をまとめ中")
         return suggestions
+
+    # 決定的フォールバック: 日付・摘要・金額を抽出し、既定科目で機械的に
+    # 1 件の仕訳案を組み立てる。これで「何も出さずに落ちる」経路を塞ぐ。
+    _emit("composing", "代替の仕訳案を生成中")
+    fallback = _deterministic_fallback_suggestion(
+        user_id, image_bytes, mime_type, comment,
+        api_key, provider, model, handler, extra_kw, last_text,
+    )
+    if fallback:
+        return fallback
 
     raise RuntimeError(
         "AIが有効な仕訳案を生成できませんでした。"

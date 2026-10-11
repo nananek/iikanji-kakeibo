@@ -163,6 +163,38 @@ class TestAiConfig:
         assert cfg.api_style == "responses"
         assert cfg.custom_headers == '{"x-session-id": "{IK_SESSION_ID}"}'
 
+    def test_save_max_turns(self, db, logged_in_client, user, accounts):
+        resp = logged_in_client.post("/settings/ai/save", data={
+            "provider": "openai",
+            "api_key": "sk-test",
+            "model_name": "gpt-4",
+            "max_turns": "15",
+        })
+        assert resp.status_code in (302, 303)
+        cfg = UserAIConfig.query.filter_by(user_id=user.id).first()
+        assert cfg.max_turns == 15
+
+    def test_save_max_turns_clamped(self, db, logged_in_client, user, accounts):
+        resp = logged_in_client.post("/settings/ai/save", data={
+            "provider": "openai",
+            "api_key": "sk-test",
+            "model_name": "gpt-4",
+            "max_turns": "999",
+        })
+        assert resp.status_code in (302, 303)
+        cfg = UserAIConfig.query.filter_by(user_id=user.id).first()
+        assert cfg.max_turns == 50
+
+    def test_save_max_turns_default_when_missing(self, db, logged_in_client, user, accounts):
+        resp = logged_in_client.post("/settings/ai/save", data={
+            "provider": "openai",
+            "api_key": "sk-test",
+            "model_name": "gpt-4",
+        })
+        assert resp.status_code in (302, 303)
+        cfg = UserAIConfig.query.filter_by(user_id=user.id).first()
+        assert cfg.max_turns == 10
+
     def test_save_openai_compatible_bad_headers_blocked(self, db, logged_in_client, user, accounts):
         with patch("socket.getaddrinfo") as mock_dns:
             mock_dns.return_value = [(2, 1, 6, '', ('8.8.8.8', 0))]

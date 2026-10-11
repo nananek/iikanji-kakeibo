@@ -898,14 +898,53 @@ class TestAgentToolsExecution:
         assert res["entries"][0]["lines"][0]["account_name"] == accounts["5010"].name
 
     def test_get_account_ledger(self, db, user, accounts):
-        res = _execute_agent_tool(user.id, "get_account_ledger", {"account_code": "1010"})
-        assert res["account_code"] == "1010"
-        assert "entries" in res
-        if res["entries"]:
-            assert res["entries"][0]["counter_account"] != ""
+        res = _execute_agent_tool(user.id, "get_account_ledger",
+                                  {"account_codes": ["1010"]})
+        assert res["accounts"][0]["account_code"] == "1010"
+        assert "entries" in res["accounts"][0]
+        if res["accounts"][0]["entries"]:
+            assert res["accounts"][0]["entries"][0]["counter_account"] != ""
+
+    def test_get_account_ledger_multiple_codes(self, db, user, accounts):
+        """複数科目を 1 回のツール呼び出しでまとめて取得できること。"""
+        from tests.conftest import make_journal
+        make_journal(db, user.id, "5010", "1010", 1200, description="まとめ確認")
+        res = _execute_agent_tool(
+            user.id, "get_account_ledger",
+            {"account_codes": ["5010", "1010"], "limit": 5},
+        )
+        assert "error" not in res
+        codes = [a["account_code"] for a in res["accounts"]]
+        assert codes == ["5010", "1010"]
+        assert all("entries" in a for a in res["accounts"])
+        # 5010（費用）には作成した仕訳が載る
+        assert res["accounts"][0]["entries"]
+
+    def test_get_account_ledger_backward_compatible_single(self, db, user, accounts):
+        """旧形式の account_code (単一) 指定も受け付けること。"""
+        res = _execute_agent_tool(user.id, "get_account_ledger",
+                                  {"account_code": "1010"})
+        assert "error" not in res
+        assert res["accounts"][0]["account_code"] == "1010"
 
     def test_get_account_ledger_unknown(self, db, user, accounts):
-        res = _execute_agent_tool(user.id, "get_account_ledger", {"account_code": "9999"})
+        res = _execute_agent_tool(user.id, "get_account_ledger",
+                                  {"account_codes": ["9999"]})
+        assert "error" in res
+        assert res["not_found"] == ["9999"]
+
+    def test_get_account_ledger_partial_unknown(self, db, user, accounts):
+        """存在する科目と存在しない科目の混在時、有効な科目は返すこと。"""
+        res = _execute_agent_tool(
+            user.id, "get_account_ledger",
+            {"account_codes": ["1010", "9999"]},
+        )
+        assert [a["account_code"] for a in res["accounts"]] == ["1010"]
+        assert res["not_found"] == ["9999"]
+        assert "error" not in res
+
+    def test_get_account_ledger_no_codes(self, db, user, accounts):
+        res = _execute_agent_tool(user.id, "get_account_ledger", {})
         assert "error" in res
 
 
@@ -934,6 +973,59 @@ class TestAgentStepHandlers:
             assert tcs[0]["name"] == "search_accounts"
             assert tcs[0]["arguments"]["query"] == "消耗品"
             assert usage["input_tokens"] == 10
+
+    def test_agent_step_openai_force_tool_choice(self):
+        with patch("httpx.post") as mock_post:
+            mock_post.return_value = _mock_post({
+                "choices": [{"message": {"role": "assistant", "content": None}}],
+                "usage": {},
+            })
+            _agent_step_openai("key", "gpt-4o", [], AGENT_TOOLS,
+                               force_tool="submit_journal_suggestions")
+        payload = mock_post.call_args.kwargs["json"]
+        assert payload["tool_choice"] == {
+            "type": "function",
+            "function": {"name": "submit_journal_suggestions"},
+        }
+
+    def test_agent_step_openai_responses_force_tool_choice(self):
+        with patch("httpx.post") as mock_post:
+            mock_post.return_value = _mock_post({"output": [], "usage": {}})
+            _agent_step_openai_responses(
+                "key", "gpt-4o", [], AGENT_TOOLS,
+                base_url="https://api.example.com",
+                force_tool="submit_journal_suggestions",
+            )
+        payload = mock_post.call_args.kwargs["json"]
+        assert payload["tool_choice"] == {
+            "type": "function", "name": "submit_journal_suggestions",
+        }
+
+    def test_agent_step_anthropic_force_tool_choice(self):
+        with patch("httpx.post") as mock_post:
+            mock_post.return_value = _mock_post({"content": [], "usage": {}})
+            _agent_step_anthropic("key", "claude", [], AGENT_TOOLS,
+                                  force_tool="submit_journal_suggestions")
+        payload = mock_post.call_args.kwargs["json"]
+        assert payload["tool_choice"] == {
+            "type": "tool", "name": "submit_journal_suggestions",
+        }
+
+    def test_agent_step_google_force_tool_choice(self):
+        with patch("httpx.post") as mock_post:
+            mock_post.return_value = _mock_post({
+                "candidates": [{"content": {"parts": []}}],
+                "usage": {},
+            })
+            _agent_step_google("key", "gemini-2.0", [], AGENT_TOOLS,
+                               force_tool="submit_journal_suggestions")
+        payload = mock_post.call_args.kwargs["json"]
+        assert payload["toolConfig"] == {
+            "functionCallingConfig": {
+                "mode": "ANY",
+                "allowedFunctionNames": ["submit_journal_suggestions"],
+            }
+        }
 
     def test_agent_step_openai_responses_output(self):
         with patch("httpx.post") as mock_post:
@@ -1234,3 +1326,132 @@ class TestRunAgentLoop:
         dumped = json.dumps(sent[0]["json"], ensure_ascii=False)
         assert '"type": "text"' not in dumped
         assert '"type": "image_url"' not in dumped
+
+    def test_last_turn_forces_submit_tool_choice(self, db, user, accounts):
+        """最終ターンだけ force_tool が渡され、仕訳案の確定が強制されること。"""
+        cfg = _ai_config(db, user.id, provider="openai")
+        cfg.max_turns = 3
+        db.session.commit()
+
+        forced_flags = []
+
+        def fake_step(*args, **kwargs):
+            forced_flags.append(kwargs.get("force_tool"))
+            if len(forced_flags) < 3:
+                return ("調査を続けます", [], [], {"input_tokens": 1, "output_tokens": 1})
+            return (
+                "",
+                [{
+                    "id": "c3",
+                    "name": "submit_journal_suggestions",
+                    "arguments": {"suggestions": [{
+                        "title": "強制確定",
+                        "description": "...",
+                        "date": "2026-02-15",
+                        "entry_description": "昼食代",
+                        "lines": [
+                            {"account_code": "5010", "account_name": "食費",
+                             "debit_amount": 800, "credit_amount": 0},
+                            {"account_code": "1010", "account_name": "現金",
+                             "debit_amount": 0, "credit_amount": 800},
+                        ],
+                    }]},
+                }],
+                [],
+                {"input_tokens": 1, "output_tokens": 1},
+            )
+
+        with patch("app.services.ai_receipt._agent_step_openai", side_effect=fake_step):
+            results = _run_agent_loop(user.id, b"img", "image/jpeg")
+
+        assert len(results) == 1
+        assert forced_flags == [None, None, "submit_journal_suggestions"]
+
+    def test_deterministic_fallback_when_never_submits(self, db, user, accounts):
+        """全ターン枯渇しても決定的フォールバックで必ず 1 件返すこと。"""
+        cfg = _ai_config(db, user.id, provider="openai")
+        cfg.max_turns = 2
+        db.session.commit()
+
+        def fake_step(*args, **kwargs):
+            return ("仕訳案は出せません", [], [], {"input_tokens": 1, "output_tokens": 1})
+
+        with patch("app.services.ai_receipt._agent_step_openai",
+                   side_effect=fake_step) as mock_step, \
+             patch("app.services.ai_receipt._call_ai",
+                   return_value={"date": "2026-02-15",
+                                 "description": "セブンイレブン",
+                                 "amount": 780}) as mock_extract:
+            results = _run_agent_loop(user.id, b"img", "image/jpeg")
+
+        assert mock_step.call_count == 2
+        assert len(results) == 1
+        s = results[0]
+        assert s.date == "2026-02-15"
+        assert s.entry_description == "セブンイレブン"
+        codes = {l["account_code"] for l in s.lines}
+        # 費用の既定科目(食費) + 資産の既定科目(現金)
+        assert codes == {"5010", "1010"}
+        assert sum(l["debit_amount"] for l in s.lines) == 780
+        assert sum(l["credit_amount"] for l in s.lines) == 780
+        # 金額を抽出するため 1 回だけ抽出呼出しにフォールバックした
+        assert mock_extract.call_args.kwargs.get("feature") == "receipt_fallback_extract"
+
+    def test_deterministic_fallback_from_last_text(self, db, user, accounts):
+        """最終応答に JSON があれば API 再呼出しせずフォールバック生成すること。"""
+        cfg = _ai_config(db, user.id, provider="openai")
+        cfg.max_turns = 1
+        db.session.commit()
+
+        def fake_step(*args, **kwargs):
+            return (json.dumps({"date": "2026-03-01", "description": "カフェ",
+                                "amount": 500}, ensure_ascii=False),
+                    [], [], {"input_tokens": 1, "output_tokens": 1})
+
+        with patch("app.services.ai_receipt._agent_step_openai", side_effect=fake_step), \
+             patch("app.services.ai_receipt._call_ai") as mock_extract:
+            results = _run_agent_loop(user.id, b"img", "image/jpeg")
+
+        assert len(results) == 1
+        assert results[0].date == "2026-03-01"
+        assert results[0].entry_description == "カフェ"
+        mock_extract.assert_not_called()
+
+    def test_no_amount_still_raises(self, db, user, accounts):
+        """金額が読み取れない場合は仕訳として成立しないためエラーにすること。"""
+        cfg = _ai_config(db, user.id, provider="openai")
+        cfg.max_turns = 1
+        db.session.commit()
+
+        def fake_step(*args, **kwargs):
+            return ("金額不明", [], [], {"input_tokens": 1, "output_tokens": 1})
+
+        with patch("app.services.ai_receipt._agent_step_openai", side_effect=fake_step), \
+             patch("app.services.ai_receipt._call_ai", return_value={}):
+            with pytest.raises(RuntimeError):
+                _run_agent_loop(user.id, b"img", "image/jpeg")
+
+
+class TestAgentTurnConfig:
+    def test_clamp_max_turns(self):
+        from app.services.ai_receipt import _clamp_max_turns, DEFAULT_MAX_TURNS
+
+        assert _clamp_max_turns(10) == 10
+        assert _clamp_max_turns("7") == 7
+        assert _clamp_max_turns(0) == 1
+        assert _clamp_max_turns(999) == 50
+        assert _clamp_max_turns(None) == DEFAULT_MAX_TURNS
+        assert _clamp_max_turns("abc") == DEFAULT_MAX_TURNS
+
+    def test_resolve_max_turns_from_config(self, db, user):
+        from app.services.ai_receipt import _resolve_max_turns
+
+        cfg = UserAIConfig(
+            user_id=user.id, provider="openai",
+            api_key_encrypted=encrypt_api_key("k"), model_name="gpt-4o",
+        )
+        db.session.add(cfg)
+        db.session.commit()
+        cfg.max_turns = 12
+        db.session.commit()
+        assert _resolve_max_turns(user.id) == 12

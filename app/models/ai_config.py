@@ -23,6 +23,8 @@ class UserAIConfig(db.Model):
         db.String(30), nullable=False, default="chat_completions"
     )
     custom_headers = db.Column(db.Text, nullable=False, default="")
+    # AI証憑仕訳エージェントの最大ターン数 (1〜50)。既定は 10。
+    max_turns = db.Column(db.Integer, nullable=False, default=10)
     compliance_check = db.Column(db.Boolean, nullable=False, default=False)
     created_at = db.Column(
         db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc)
