@@ -5,6 +5,24 @@ title: リリースノート
 
 # リリースノート
 
+## v4.2.2
+
+**パッチリリース** — OpenAI 互換 Responses API (`/v1/responses`) へのリクエスト形式誤りによる 400 Bad Request を修正。AI 証憑仕訳の解析進捗テキストがスピナー内で回転表示される UI 不具合も修正。
+
+### OpenAI 互換 Responses API の修正 (PR #464)
+
+- **400 Bad Request の解消**: Responses API へ Chat Completions 形式 (`type="text"` / `image_url` オブジェクト) を送っていたため 400 になっていた。Responses API 仕様の `input_text` / `input_image` (`image_url` は文字列) へ修正
+- **適用範囲の拡大**: エージェントループだけでなく画像・テキストの `openai_compatible` ハンドラ全体で `api_style=responses` を尊重するよう修正
+- **usage 正規化**: Responses API の `input_tokens` / `output_tokens` に対応 (Chat Completions の `prompt_tokens` / `completion_tokens` と両対応)
+- **テキスト抽出の共通化**: `output_text` (message) からのテキスト抽出を共通化
+- **診断性向上**: HTTP エラー時にレスポンス本文をメッセージへ含め原因を特定しやすく
+- E2E モックサーバーが `input_text` も解釈するよう更新
+
+### 解析進捗 UI の修正 (PR #464)
+
+- `updateProgress` が `span:last-child` でラベルを取得していたが、`.step-icon` 内の `.spinner-border` にマッチし進捗テキストが回転するスピナー内に描画されていた。ラベルに `.step-label` クラスを付与し正しく選択するよう修正
+- REST API (`/api/v1`) の変更なし。クライアントの更新は不要
+
 ## v4.2.1
 
 **パッチリリース** — AI 証憑仕訳の解析進捗を Server-Sent Events (SSE) でリアルタイム表示する機能を追加。エージェントループのツール呼び出しエラー時の再試行耐性を改善。
