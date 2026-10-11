@@ -116,15 +116,15 @@
         <span class="step-icon">
           <span class="spinner-border spinner-border-sm" role="status"></span>
         </span>
-        <span>画像を読み取り中...</span>
+        <span class="step-label">画像を読み取り中...</span>
       </div>
       <div class="ai-loading-step" id="loadingStep2">
         <span class="step-icon"><i class="bi bi-book"></i></span>
-        <span>関連する元帳を参照中...</span>
+        <span class="step-label">関連する元帳を参照中...</span>
       </div>
       <div class="ai-loading-step" id="loadingStep3">
         <span class="step-icon"><i class="bi bi-pencil-square"></i></span>
-        <span>仕訳案を作成中...</span>
+        <span class="step-label">仕訳案を作成中...</span>
       </div>
     </div>
     <div class="text-muted mt-3" style="font-size: 0.85rem;">
@@ -214,7 +214,7 @@
         s.querySelector('.step-icon').innerHTML = '<i class="bi bi-check-circle-fill"></i>';
       }
     });
-    var active = steps[index].querySelector('span:last-child');
+    var active = steps[index].querySelector('.step-label');
     if (active) active.textContent = evt.detail || '処理中...';
   }
 
