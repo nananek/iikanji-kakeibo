@@ -151,6 +151,18 @@
             </div>
           </div>
 
+          <div class="mb-3">
+            <label class="form-label" for="maxTurnsInput">AI解析の最大ターン数</label>
+            <input type="number" class="form-control" name="max_turns" id="maxTurnsInput"
+                   value="{{ config.max_turns if config else 10 }}"
+                   min="1" max="50" step="1">
+            <div class="form-text">
+              証憑解析エージェントが勘定科目・元帳・過去仕訳を調べられる最大回数です（1〜50、既定10）。
+              最終ターンでは必ず仕訳案の確定を試み、確定できない場合は既定科目で自動生成します。
+              大きくすると精度が上がる可能性がありますが、API利用量も増えます。
+            </div>
+          </div>
+
           <button type="submit" class="btn btn-primary">
             <i class="bi bi-check-lg"></i> 保存
           </button>
