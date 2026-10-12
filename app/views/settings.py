@@ -18,6 +18,7 @@ from app.models.auto_import import AutoImportSource, WebhookConfig
 from app.services.ai_receipt import (
     encrypt_api_key, PROVIDER_DEFAULTS, PROVIDER_LABELS,
     get_available_provider_labels, is_llama_cpp_available,
+    _clamp_max_turns,
 )
 from app.views.accounts import TAX_CATEGORIES
 from app.models.fiscal import FiscalClose
@@ -316,6 +317,7 @@ def ai_config_save():
     if api_style not in ("chat_completions", "responses"):
         api_style = "chat_completions"
     custom_headers = request.form.get("custom_headers", "").strip()
+    max_turns = _clamp_max_turns(request.form.get("max_turns"))
 
     available_labels = get_available_provider_labels()
     if provider not in available_labels:
@@ -358,6 +360,7 @@ def ai_config_save():
         config.provider = provider
         config.model_name = model_name
         config.custom_prompt = custom_prompt
+        config.max_turns = max_turns
         if provider == "openai_compatible":
             config.base_url = base_url
             config.api_style = api_style
@@ -383,6 +386,7 @@ def ai_config_save():
             base_url=(base_url if provider == "openai_compatible" else ""),
             api_style=(api_style if provider == "openai_compatible" else "chat_completions"),
             custom_headers=(custom_headers if provider == "openai_compatible" else ""),
+            max_turns=max_turns,
         )
         db.session.add(config)
 
