@@ -1,5 +1,7 @@
 from datetime import date
 
+from app.services.clock import today as app_today
+
 from flask import Blueprint, render_template, redirect, url_for, flash, request, jsonify
 from flask_login import login_required, current_user
 from app.extensions import db
@@ -29,7 +31,7 @@ def _get_medical_account(user_id):
 @bp.route("/")
 @login_required
 def index():
-    year = request.args.get("year", date.today().year, type=int)
+    year = request.args.get("year", app_today().year, type=int)
     start = date(year, 1, 1)
     end = date(year + 1, 1, 1)
 
@@ -109,7 +111,7 @@ def new():
     allowed_codes = get_allowed_account_codes()
 
     if not form.date.data:
-        form.date.data = date.today()
+        form.date.data = app_today()
 
     if form.validate_on_submit():
         user_id = get_effective_user_id()

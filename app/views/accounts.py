@@ -1,6 +1,8 @@
 import re
 from datetime import date
 
+from app.services.clock import today as app_today
+
 from flask import Blueprint, render_template, redirect, url_for, flash, request, jsonify
 from flask_login import login_required, current_user
 from sqlalchemy import func
@@ -245,7 +247,7 @@ def api_update(account_code):
                     from_code, to_code = transfer_to.code, account.code
                 create_transfer_entry(
                     user_id=get_effective_user_id(),
-                    date=date.today(),
+                    date=app_today(),
                     from_account_code=from_code,
                     to_account_code=to_code,
                     amount=abs(balance),
@@ -258,13 +260,13 @@ def api_update(account_code):
                     from_code, to_code = account.code, transfer_to.code
                 create_transfer_entry(
                     user_id=get_effective_user_id(),
-                    date=date.today(),
+                    date=app_today(),
                     from_account_code=from_code,
                     to_account_code=to_code,
                     amount=abs(balance),
                     description=f"科目無効化振替: {account.name} → {transfer_to.name}",
                 )
-        account.deactivated_year = date.today().year
+        account.deactivated_year = app_today().year
 
     # 無効→有効 の場合: deactivated_year クリア
     if not account.is_active and new_is_active:

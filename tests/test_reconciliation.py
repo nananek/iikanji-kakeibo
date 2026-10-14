@@ -805,6 +805,7 @@ class TestPendingCardUnreceived:
             def today(cls):
                 return today
         monkeypatch.setattr(recon_mod, "date", _FakeDate)
+        monkeypatch.setattr(recon_mod, "app_today", lambda: today)
 
         make_journal(db, user.id, "5010", cc_account.code, 1500,
                      entry_date=old_date, source="ai_receipt")
@@ -825,6 +826,7 @@ class TestPendingCardUnreceived:
             def today(cls):
                 return today
         monkeypatch.setattr(recon_mod, "date", _FakeDate)
+        monkeypatch.setattr(recon_mod, "app_today", lambda: today)
 
         make_journal(db, user.id, "5010", cc_account.code, 1500,
                      entry_date=old_date, source="ai_receipt")

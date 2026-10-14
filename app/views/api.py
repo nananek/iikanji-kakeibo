@@ -16,6 +16,7 @@ from app.models.ai_draft import AIDraft
 from app.models.journal import JournalEntry
 from app.services.accounting import create_journal_entry
 from app.services.audit import get_submitted_account_codes, is_entry_locked_for_owner
+from app.services.clock import today as app_today
 from app.services.fiscal import check_period_open_for_new, check_entry_modifiable
 from app.services.image import serve_image
 from app.services.storage import (
@@ -687,7 +688,7 @@ def api_trial_balance():
     """
     from app.services.reports import compute_trial_balance
 
-    year = request.args.get("year", type=int) or date_type.today().year
+    year = request.args.get("year", type=int) or app_today().year
     pf = request.args.get("period_from", 0, type=int)
     pt = request.args.get("period_to", 15, type=int)
 
@@ -710,7 +711,7 @@ def api_income_statement():
     """
     from app.services.reports import compute_income_statement
 
-    year = request.args.get("year", type=int) or date_type.today().year
+    year = request.args.get("year", type=int) or app_today().year
     month = request.args.get("month", type=int)
     if month is not None and not (1 <= month <= 12):
         return jsonify({"error": "month は 1-12 で指定してください。"}), 400
@@ -728,7 +729,7 @@ def api_monthly_comparison():
     """
     from app.services.tax import get_monthly_comparison
 
-    year = request.args.get("year", type=int) or date_type.today().year
+    year = request.args.get("year", type=int) or app_today().year
     data = get_monthly_comparison(g.api_user_id, year)
     return jsonify({
         "ok": True,
@@ -749,7 +750,7 @@ def api_tax_summary():
     """
     from app.services.tax import get_tax_summary, get_medical_summary
 
-    year = request.args.get("year", type=int) or date_type.today().year
+    year = request.args.get("year", type=int) or app_today().year
     tax = get_tax_summary(g.api_user_id, year)
     medical = get_medical_summary(g.api_user_id, year)
 

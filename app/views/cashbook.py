@@ -1,9 +1,9 @@
-from datetime import date
-
 import json
 
 from flask import Blueprint, render_template, redirect, url_for, flash, request, make_response
 from flask_login import login_required, current_user
+
+from app.services.clock import today as app_today
 
 from app.extensions import db
 from app.models.account import Account
@@ -86,7 +86,7 @@ def new():
     restricted_before = get_restricted_before_year(user_id)
 
     if not form.date.data:
-        form.date.data = date.today()
+        form.date.data = app_today()
 
     if form.validate_on_submit():
         # 本人側: ロック科目チェック

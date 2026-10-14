@@ -20,6 +20,7 @@ from app.services.audit import (
     find_disallowed_write_codes,
 )
 from app.views.helpers import get_grouped_accounts, is_safe_internal_path, safe_user_error, parse_iso_date
+from app.services.clock import today as app_today
 
 bp = Blueprint("journal", __name__, url_prefix="/journal")
 
@@ -93,7 +94,7 @@ def new():
     restricted_before = get_restricted_before_year(user_id)
 
     if not form.date.data:
-        form.date.data = date.today()
+        form.date.data = app_today()
 
     if request.method == "POST" and form.validate_on_submit():
         lines_json = request.form.get("lines_json", "[]")

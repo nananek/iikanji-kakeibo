@@ -517,7 +517,11 @@ class TestGetMonthProjection:
         db.session.commit()
         comparison = self._make_comparison(db, user, accounts)
 
-        with patch("app.services.tax.date") as mock_date:
+        with (
+            patch("app.services.tax.date") as mock_date,
+            patch("app.services.tax.app_today",
+                  side_effect=lambda: mock_date.today.return_value),
+        ):
             mock_date.today.return_value = date(2026, 2, 15)
             mock_date.side_effect = lambda *a, **kw: date(*a, **kw)
             result = get_month_projection(user.id, 2026, 2, comparison)
@@ -531,7 +535,11 @@ class TestGetMonthProjection:
         db.session.commit()
         comparison = self._make_comparison(db, user, accounts)
 
-        with patch("app.services.tax.date") as mock_date:
+        with (
+            patch("app.services.tax.date") as mock_date,
+            patch("app.services.tax.app_today",
+                  side_effect=lambda: mock_date.today.return_value),
+        ):
             mock_date.today.return_value = date(2026, 2, 14)
             mock_date.side_effect = lambda *a, **kw: date(*a, **kw)
             result = get_month_projection(user.id, 2026, 2, comparison)
@@ -545,7 +553,11 @@ class TestGetMonthProjection:
         """随時費は実績をそのまま採用"""
         comparison = self._make_comparison(db, user, accounts)
 
-        with patch("app.services.tax.date") as mock_date:
+        with (
+            patch("app.services.tax.date") as mock_date,
+            patch("app.services.tax.app_today",
+                  side_effect=lambda: mock_date.today.return_value),
+        ):
             mock_date.today.return_value = date(2026, 2, 15)
             mock_date.side_effect = lambda *a, **kw: date(*a, **kw)
             result = get_month_projection(user.id, 2026, 2, comparison)
@@ -558,7 +570,11 @@ class TestGetMonthProjection:
         """着地予想のメタデータ"""
         comparison = self._make_comparison(db, user, accounts)
 
-        with patch("app.services.tax.date") as mock_date:
+        with (
+            patch("app.services.tax.date") as mock_date,
+            patch("app.services.tax.app_today",
+                  side_effect=lambda: mock_date.today.return_value),
+        ):
             mock_date.today.return_value = date(2026, 2, 20)
             mock_date.side_effect = lambda *a, **kw: date(*a, **kw)
             result = get_month_projection(user.id, 2026, 2, comparison)
@@ -571,13 +587,21 @@ class TestGetMonthProjection:
         """戻り値に method が含まれる"""
         comparison = self._make_comparison(db, user, accounts)
 
-        with patch("app.services.tax.date") as mock_date:
+        with (
+            patch("app.services.tax.date") as mock_date,
+            patch("app.services.tax.app_today",
+                  side_effect=lambda: mock_date.today.return_value),
+        ):
             mock_date.today.return_value = date(2026, 2, 15)
             mock_date.side_effect = lambda *a, **kw: date(*a, **kw)
             result = get_month_projection(user.id, 2026, 2, comparison)
         assert result["method"] == "pro_rata"
 
-        with patch("app.services.tax.date") as mock_date:
+        with (
+            patch("app.services.tax.date") as mock_date,
+            patch("app.services.tax.app_today",
+                  side_effect=lambda: mock_date.today.return_value),
+        ):
             mock_date.today.return_value = date(2026, 2, 15)
             mock_date.side_effect = lambda *a, **kw: date(*a, **kw)
             result = get_month_projection(user.id, 2026, 2, comparison, method="rolling28")
@@ -602,7 +626,11 @@ class TestRolling28Projection:
 
         comparison = get_monthly_comparison(user.id, 2026)
 
-        with patch("app.services.tax.date") as mock_date:
+        with (
+            patch("app.services.tax.date") as mock_date,
+            patch("app.services.tax.app_today",
+                  side_effect=lambda: mock_date.today.return_value),
+        ):
             mock_date.today.return_value = date(2026, 3, 2)
             mock_date.side_effect = lambda *a, **kw: date(*a, **kw)
             result = get_month_projection(user.id, 2026, 3, comparison, method="rolling28")
@@ -622,7 +650,11 @@ class TestRolling28Projection:
         make_journal(db, user.id, "5010", "1010", 40000, entry_date=date(2026, 3, 15))
         comparison = get_monthly_comparison(user.id, 2026)
 
-        with patch("app.services.tax.date") as mock_date:
+        with (
+            patch("app.services.tax.date") as mock_date,
+            patch("app.services.tax.app_today",
+                  side_effect=lambda: mock_date.today.return_value),
+        ):
             mock_date.today.return_value = date(2026, 3, 15)
             mock_date.side_effect = lambda *a, **kw: date(*a, **kw)
             result = get_month_projection(user.id, 2026, 3, comparison, method="rolling28")
@@ -648,7 +680,11 @@ class TestDow28Projection:
 
         comparison = get_monthly_comparison(user.id, 2026)
 
-        with patch("app.services.tax.date") as mock_date:
+        with (
+            patch("app.services.tax.date") as mock_date,
+            patch("app.services.tax.app_today",
+                  side_effect=lambda: mock_date.today.return_value),
+        ):
             mock_date.today.return_value = date(2026, 3, 2)
             mock_date.side_effect = lambda *a, **kw: date(*a, **kw)
             result = get_month_projection(user.id, 2026, 3, comparison, method="dow28")
@@ -677,7 +713,11 @@ class TestDow28Projection:
 
         comparison = get_monthly_comparison(user.id, 2026)
 
-        with patch("app.services.tax.date") as mock_date:
+        with (
+            patch("app.services.tax.date") as mock_date,
+            patch("app.services.tax.app_today",
+                  side_effect=lambda: mock_date.today.return_value),
+        ):
             mock_date.today.return_value = date(2026, 3, 2)  # 月曜日
             mock_date.side_effect = lambda *a, **kw: date(*a, **kw)
             result = get_month_projection(user.id, 2026, 3, comparison, method="dow28")
@@ -700,7 +740,11 @@ class TestDow28Projection:
         make_journal(db, user.id, "5010", "1010", 40000, entry_date=date(2026, 3, 15))
         comparison = get_monthly_comparison(user.id, 2026)
 
-        with patch("app.services.tax.date") as mock_date:
+        with (
+            patch("app.services.tax.date") as mock_date,
+            patch("app.services.tax.app_today",
+                  side_effect=lambda: mock_date.today.return_value),
+        ):
             mock_date.today.return_value = date(2026, 3, 15)
             mock_date.side_effect = lambda *a, **kw: date(*a, **kw)
             result = get_month_projection(user.id, 2026, 3, comparison, method="dow28")
@@ -719,7 +763,11 @@ class TestProjectionMethodUnaffected:
         comparison = get_monthly_comparison(user.id, 2026)
 
         for m in ("pro_rata", "rolling28", "dow28"):
-            with patch("app.services.tax.date") as mock_date:
+            with (
+                patch("app.services.tax.date") as mock_date,
+                patch("app.services.tax.app_today",
+                      side_effect=lambda: mock_date.today.return_value),
+            ):
                 mock_date.today.return_value = date(2026, 2, 15)
                 mock_date.side_effect = lambda *a, **kw: date(*a, **kw)
                 result = get_month_projection(user.id, 2026, 2, comparison, method=m)
@@ -732,7 +780,11 @@ class TestProjectionMethodUnaffected:
         comparison = get_monthly_comparison(user.id, 2026)
 
         for m in ("pro_rata", "rolling28", "dow28"):
-            with patch("app.services.tax.date") as mock_date:
+            with (
+                patch("app.services.tax.date") as mock_date,
+                patch("app.services.tax.app_today",
+                      side_effect=lambda: mock_date.today.return_value),
+            ):
                 mock_date.today.return_value = date(2026, 2, 15)
                 mock_date.side_effect = lambda *a, **kw: date(*a, **kw)
                 result = get_month_projection(user.id, 2026, 2, comparison, method=m)

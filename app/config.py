@@ -10,6 +10,11 @@ class Config:
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     WTF_CSRF_ENABLED = True
 
+    # アプリ基準のタイムゾーン。日付の初期値や当月判定に使う
+    # (app/services/clock.py)。プロセスの TZ に依存せず日付ズレを防ぐ。
+    # 既定は Asia/Tokyo。
+    APP_TIMEZONE = os.environ.get("APP_TIMEZONE") or "Asia/Tokyo"
+
     # セッション永続化（明示的ログアウトまで維持）
     REMEMBER_COOKIE_DURATION = timedelta(days=365)
     REMEMBER_COOKIE_HTTPONLY = True
