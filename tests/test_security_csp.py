@@ -39,7 +39,9 @@ class TestCspHeader:
         html = resp.get_data(as_text=True)
         assert f'nonce="{nonce}"' in html
         # すべての <script> タグに nonce が付いている
-        for tag in re.findall(r"<script\b[^>]*>", html):
+        # (CodeQL py/bad-tag-filter 対策: HTML のタグ名は大文字小文字を
+        #  区別しないため IGNORECASE で <SCRIPT> 等も検査する)
+        for tag in re.findall(r"<script\b[^>]*>", html, flags=re.IGNORECASE):
             assert "nonce=" in tag, tag
 
     def test_nonce_differs_per_request(self, client):
