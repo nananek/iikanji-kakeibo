@@ -96,7 +96,7 @@
 - 認証は **API キー** または **OAuth 2.0 Device Flow** (RFC 8628) の Bearer トークン
 - OAuth トークンは「全権限」または **「読み取り専用」** で承認可能。読取専用トークンは仕訳作成・削除・AI 解析が構造的に拒否される
 - Python クライアント [`iikanji`](https://github.com/nananek/iikanji-kakeibo-client-py) (CLI/SDK) と TUI クライアント [`iikanji-tui`](https://github.com/nananek/iikanji-kakeibo-client-tui) を提供
-- **MCP サーバー** [`iikanji-mcp`](https://github.com/nananek/iikanji-kakeibo-client-mcp) — Claude Desktop 等の MCP クライアントから財務分析を実行
+- **MCP サーバー** — サーバーに `/mcp` (Streamable HTTP) を内蔵。MCP 仕様の OAuth 2.1 (動的クライアント登録 + PKCE) で接続し、承認時に権限をスコープ単位で絞り込み可能。別リポジトリの stdio 版 [`iikanji-mcp`](https://github.com/nananek/iikanji-kakeibo-client-mcp) も利用可
 
 ### 公開運用 (SaaS) 向け機能
 

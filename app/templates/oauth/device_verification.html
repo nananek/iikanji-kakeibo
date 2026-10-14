@@ -78,8 +78,28 @@
         <form method="POST" action="{{ url_for('oauth.device_authorize') }}" class="d-flex flex-wrap gap-2">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <input type="hidden" name="user_code" value="{{ device.user_code }}">
+          <div class="w-100 mb-2">
+            <div class="form-check form-check-inline">
+              <input class="form-check-input" type="checkbox" id="dev-scope-all"
+                     data-action-change="toggleAllCheckboxes" data-target="#device-scope-list input">
+              <label class="form-check-label" for="dev-scope-all">
+                <small>すべて選択 / 解除</small>
+              </label>
+            </div>
+          </div>
+          <div id="device-scope-list" class="w-100 mb-2">
+            {% for s in all_scopes %}
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" name="scope"
+                     value="{{ s }}" id="dscope-{{ loop.index }}" checked>
+              <label class="form-check-label" for="dscope-{{ loop.index }}">
+                {{ scope_labels.get(s, s) }}
+              </label>
+            </div>
+            {% endfor %}
+          </div>
           <button type="submit" name="decision" value="approve" class="btn btn-primary">
-            <i class="bi bi-check-circle"></i> 全権限で承認
+            <i class="bi bi-check-circle"></i> 選択した権限で承認
           </button>
           <button type="submit" name="decision" value="approve_readonly" class="btn btn-outline-primary">
             <i class="bi bi-eye"></i> 読み取り専用で承認
@@ -89,6 +109,7 @@
           </button>
         </form>
         <p class="form-text mt-2">
+          承認時に付与する権限を選べます。チェックを外した権限は付与されません。
           <strong>読み取り専用</strong>: 仕訳・証憑の閲覧・分析のみ可能。新規作成や削除はできません。
         </p>
       </div>

@@ -8,7 +8,9 @@ from app.models.audit import AuditGrant, AuditGrantAccount
 from app.models.ai_draft import AIDraft
 from app.models.voucher import Voucher
 from app.models.api_key import APIKey
-from app.models.oauth import OAuthDevice, OAuthToken
+from app.models.oauth import (
+    OAuthDevice, OAuthToken, OAuthClient, OAuthAuthorizationCode,
+)
 from app.models.auto_import import WebhookConfig
 from app.models.csv_column_profile import CsvColumnProfile
 from app.models.tax_form import TaxFormField, TaxFormMapping
@@ -32,6 +34,8 @@ __all__ = [
     "APIKey",
     "OAuthDevice",
     "OAuthToken",
+    "OAuthClient",
+    "OAuthAuthorizationCode",
     "WebhookConfig",
     "CsvColumnProfile",
     "TaxFormField",
