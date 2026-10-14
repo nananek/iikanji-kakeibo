@@ -461,6 +461,7 @@ def ai_usage_export_csv():
     from app.services.ai_usage import (
         iter_logs_for_export, FEATURE_LABELS, STATUS_LABELS,
     )
+    from app.views.helpers import csv_safe
     start, end, provider, feature, _page = _parse_usage_filters()
     items = iter_logs_for_export(
         current_user.id, start=start, end=end,
@@ -477,14 +478,14 @@ def ai_usage_export_csv():
     for log in items:
         writer.writerow([
             log.created_at.isoformat(),
-            log.provider,
-            log.model,
-            FEATURE_LABELS.get(log.feature, log.feature),
+            csv_safe(log.provider),
+            csv_safe(log.model),
+            csv_safe(FEATURE_LABELS.get(log.feature, log.feature)),
             log.input_tokens if log.input_tokens is not None else "",
             log.output_tokens if log.output_tokens is not None else "",
             log.total_tokens if log.total_tokens is not None else "",
             log.latency_ms if log.latency_ms is not None else "",
-            STATUS_LABELS.get(log.status, log.status),
+            csv_safe(STATUS_LABELS.get(log.status, log.status)),
             log.http_status if log.http_status is not None else "",
         ])
     return Response(

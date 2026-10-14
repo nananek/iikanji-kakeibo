@@ -21,6 +21,30 @@ MIME_TO_EXT = {
     "image/gif": "gif",
 }
 
+# マジックバイトによる画像形式判定 (Content-Type 偽装対策)。
+# 先頭バイト列のみで判定する軽量チェック。
+_IMAGE_SIGNATURES = (
+    (b"\xff\xd8\xff", "image/jpeg"),
+    (b"\x89PNG\r\n\x1a\n", "image/png"),
+    (b"GIF87a", "image/gif"),
+    (b"GIF89a", "image/gif"),
+)
+
+
+def sniff_image_mime(data: bytes) -> str | None:
+    """画像バイト列の先頭から実際の形式を判定する。不明なら None。"""
+    for sig, mime in _IMAGE_SIGNATURES:
+        if data.startswith(sig):
+            return mime
+    if len(data) >= 12 and data[0:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp"
+    return None
+
+
+def is_declared_image_valid(data: bytes, declared_mime: str) -> bool:
+    """申告された Content-Type が実際の画像形式と一致するか検証する。"""
+    return sniff_image_mime(data) == declared_mime
+
 
 def make_storage_key(user_id: int, draft_id: int, mime_type: str) -> str:
     """ストレージキーを生成する。

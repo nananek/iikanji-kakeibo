@@ -18,7 +18,7 @@ from flask_login import current_user as _current_user
 from app.services.audit import get_effective_user_id, get_allowed_account_codes, mask_account_name, is_entry_locked_for_owner
 from app.services.fiscal import check_entry_modifiable, period_range_filter, get_closed_period
 from app.services.balance_cache import get_cached_balances
-from app.views.helpers import get_grouped_accounts
+from app.views.helpers import get_grouped_accounts, csv_safe
 
 bp = Blueprint("reports", __name__, url_prefix="/reports")
 
@@ -472,8 +472,8 @@ def medical_csv():
     for e in medical_summary["expenses"]:
         pt = e["provider_type"]
         writer.writerow([
-            e["patient_name"],
-            e["hospital_name"],
+            csv_safe(e["patient_name"]),
+            csv_safe(e["hospital_name"]),
             "該当する" if pt == "hospital" or not pt else "",
             "該当する" if pt == "pharmacy" else "",
             "該当する" if pt == "nursing" else "",

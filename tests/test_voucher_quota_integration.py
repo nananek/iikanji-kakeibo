@@ -213,7 +213,8 @@ class TestLv2AuditorBlockedFromAttach:
         resp = client.post(
             f"/vouchers/attach/{entry.id}",
             data={
-                "image": (io.BytesIO(b"x" * 100), "test.png", "image/png"),
+                "image": (io.BytesIO(b"\x89PNG\r\n\x1a\n" + b"x" * 92),
+                          "test.png", "image/png"),
             },
             content_type="multipart/form-data",
             follow_redirects=False,
@@ -235,7 +236,8 @@ class TestAttachEndpointQuota:
         resp = logged_in_client.post(
             f"/vouchers/attach/{entry.id}",
             data={
-                "image": (io.BytesIO(b"x" * 100), "test.png", "image/png"),
+                "image": (io.BytesIO(b"\x89PNG\r\n\x1a\n" + b"x" * 92),
+                          "test.png", "image/png"),
             },
             content_type="multipart/form-data",
         )
