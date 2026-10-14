@@ -54,6 +54,21 @@ def parse_iso_date(value):
         return None
 
 
+def csv_safe(value) -> str:
+    """CSV 数式インジェクション対策。危険な先頭文字を無害化する。
+
+    Excel / Google Sheets が数式として解釈しうる先頭文字 (= + - @ TAB CR LF)
+    を持つセルは、先頭にシングルクォートを付けて文字列として扱わせる。
+    数値セルには使わないこと (負数の符号を壊す)。
+    """
+    if value is None:
+        return ""
+    s = str(value)
+    if s and s[0] in ("=", "+", "-", "@", "\t", "\r", "\n"):
+        return "'" + s
+    return s
+
+
 def is_safe_internal_path(target) -> bool:
     """target がアプリ内部の相対パス（'/foo/bar'）であれば True を返す。
 

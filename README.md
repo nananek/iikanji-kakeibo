@@ -260,7 +260,7 @@ app/
 │   ├── audit.py         #   AuditGrant, AuditGrantAccount
 │   ├── api_key.py       #   APIKey (REST API 認証)
 │   ├── ai_config.py     #   UserAIConfig (定型プロンプト・base_url含む)
-│   ├── auto_import.py   #   AutoImportSource, ProcessedFile, WebhookConfig
+│   ├── auto_import.py   #   WebhookConfig
 │   ├── voucher.py       #   Voucher (証憑画像・仕訳紐付け・SHA-256ハッシュ)
 │   ├── voucher_audit_log.py # VoucherAuditLog (改ざん防止ログ)
 │   └── webauthn.py      #   WebAuthnCredential
@@ -296,9 +296,8 @@ app/
 │   ├── notify.py        #   Webhook 通知 (Discord 等)
 │   ├── voucher.py       #   ドラフト→証憑移行ヘルパー
 │   ├── storage.py       #   ストレージ抽象レイヤー (local/S3)
-│   ├── auto_import.py   #   自動取込オーケストレーター（内部利用）
-│   └── sources/         #   外部ソースプロバイダー
-│       └── webdav.py    #     WebDAV (Nextcloud 等)
+│   └── sources/         #   外部 URL 検証 (SSRF 対策)
+│       └── __init__.py  #     validate_external_url
 ├── forms/               # Flask-WTF フォーム
 ├── templates/           # Jinja2 テンプレート
 └── static/              # CSS / JS

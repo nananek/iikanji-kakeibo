@@ -40,7 +40,7 @@
             {% else %}
             <form method="POST" action="{{ url_for('journal.delete_batch', batch_id=batch.batch_id) }}"
                   style="display:inline;"
-                  onsubmit="return confirm('このインポート（{{ batch.count }}件）をすべて削除しますか？この操作は取り消せません。');">
+                  data-confirm="このインポート（{{ batch.count }}件）をすべて削除しますか？この操作は取り消せません。">
               <button type="submit" class="btn btn-outline-danger btn-sm">
                 <i class="bi bi-trash"></i> 取消
               </button>

@@ -133,6 +133,27 @@ def get_proprietor_account_code(user_id):
     return account.code if account else None
 
 
+def find_disallowed_write_codes(
+    account_codes, allowed_account_codes, proprietor_code=None
+):
+    """Lv2 顧問が書き込みを許されない科目コードの集合を返す。
+
+    `allowed_account_codes` が None (Lv2 代理閲覧でない) なら空集合。
+    事業主科目 (`proprietor_code`) は非公開行の集約先として表示される
+    ため、明示的に許容する。
+
+    フォーム/JSON API いずれの書き込み経路でも、クライアントから渡された
+    科目コードが公開科目の範囲に収まっているかを必ず検証するために使う。
+    """
+    if allowed_account_codes is None:
+        return set()
+    return {
+        code
+        for code in account_codes
+        if code not in allowed_account_codes and code != proprietor_code
+    }
+
+
 def check_auditor_redirect():
     """Lv1顧問がtax以外にアクセスしたときリダイレクト用URLを返す。不要ならNone"""
     from flask import request

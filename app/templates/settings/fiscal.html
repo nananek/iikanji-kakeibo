@@ -7,7 +7,7 @@
 
 <form class="row g-3 mb-4 mt-2" method="GET" id="yearForm">
   <div class="col-auto">
-    <select name="year" class="form-select" onchange="document.getElementById('yearForm').submit()">
+    <select name="year" class="form-select" data-action-change="submitFormById" data-target="yearForm">
       {% for y in range(year - 2, year + 2) %}
       <option value="{{ y }}" {% if y == year %}selected{% endif %}>{{ y }}年度</option>
       {% endfor %}

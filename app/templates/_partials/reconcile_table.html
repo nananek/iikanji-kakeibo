@@ -77,7 +77,7 @@
                   <span><i class="bi bi-check-circle-fill"></i> 一致</span>
                 </template>
                 <template x-if="summaryTotals.diff_amount !== 0">
-                  <span x-text="(summaryTotals.diff_amount > 0 ? 'CSV+' : '仕訳+') + '\u00a5' + Math.abs(summaryTotals.diff_amount).toLocaleString()"></span>
+                  <span x-text="(summaryTotals.diff_amount > 0 ? 'CSV+' : '仕訳+') + '\u00a5' + absAmount(summaryTotals.diff_amount).toLocaleString()"></span>
                 </template>
                 <template x-if="summaryTotals.diff_amount === 0 && summaryTotals.diff_count !== 0">
                   <span>件数差 <span x-text="summaryTotals.diff_count > 0 ? '+' + summaryTotals.diff_count : summaryTotals.diff_count"></span></span>
@@ -95,10 +95,7 @@
            style="z-index: 1050; width: 600px; right: 0; top: 0;">
         <div class="card-header py-1 px-2 d-flex justify-content-between">
           <small class="fw-bold" x-text="hoveredDay"></small>
-          <small class="text-muted" x-text="'差額: ¥' + Math.abs(
-            (getDayDiff(hoveredDay).csv.reduce(function(s,r){return s+r.amount},0)) -
-            (getDayDiff(hoveredDay).journal.reduce(function(s,r){return s+r.amount},0))
-          ).toLocaleString()"></small>
+          <small class="text-muted" x-text="'差額: ¥' + hoveredDiffAbs().toLocaleString()"></small>
         </div>
         <div class="card-body p-0" style="font-size: 0.8rem; max-height: 300px; overflow-y: auto;">
           <div class="row g-0">
@@ -338,7 +335,7 @@
                         <span class="text-muted" x-text="row.matchInfo.description"></span>
                         <span class="badge bg-light text-dark" x-text="row.matchInfo.category_name"></span>
                         <span class="badge" :class="row.matchInfo.confidence >= 0.7 ? 'bg-success' : 'bg-warning text-dark'"
-                              x-text="Math.round(row.matchInfo.confidence * 100) + '%'"></span>
+                              x-text="confidencePct(row.matchInfo.confidence) + '%'"></span>
                         <span class="text-muted small" x-text="row.matchInfo.reason"></span>
                       </div>
                     </template>
@@ -347,7 +344,7 @@
                     <template x-if="row.status === 'multiple'">
                       <div>
                         <select class="form-select form-select-sm"
-                                @change="selectMatch(index, parseInt($event.target.value))">
+                                @change="selectMatch(index, $event.target.value)">
                           <option value="-1" :selected="row.selectedMatchIndex === -1">-- 新規取込 --</option>
                           <template x-for="(m, mi) in row.matches" :key="m.entry_id">
                             <option :value="mi" :selected="row.selectedMatchIndex === mi"

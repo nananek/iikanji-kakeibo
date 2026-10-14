@@ -7,44 +7,19 @@
 <div class="card shadow-sm mt-4">
   <div class="card-body">
     <form method="POST"
-      x-data="{
+      x-data="cashbookForm({
         tab: '{{ form.transaction_type.data or 'expense' }}',
         paymentCode: '{{ form.payment_account_code.data or '' }}',
         paymentName: '{{ payment_account_name or '' }}',
         categoryCode: '{{ form.category_account_code.data or '' }}',
-        categoryName: '{{ category_account_name or '' }}',
-
-        get field1Label() {
-          return this.tab === 'income' ? '入金先' : (this.tab === 'transfer' ? '移動元' : '支払元');
-        },
-        get field2Label() {
-          return this.tab === 'expense' ? '支出先' : (this.tab === 'income' ? '収入源' : '移動先');
-        },
-        get field2Filter() {
-          return this.tab === 'expense' ? 'expense' : (this.tab === 'income' ? 'revenue' : 'payment');
-        },
-        get field2ActiveTab() {
-          return this.tab === 'transfer' ? 'bs' : 'pl';
-        },
-        get field2ExcludeCode() {
-          return this.tab === 'transfer' ? this.paymentCode : null;
-        },
-        get sameAccountWarning() {
-          return this.tab === 'transfer' && this.paymentCode && this.categoryCode && this.paymentCode === this.categoryCode;
-        },
-
-        switchTab(newTab) {
-          this.tab = newTab;
-          this.categoryCode = '';
-          this.categoryName = '';
-        }
-      }">
+        categoryName: '{{ category_account_name or '' }}'
+      })">
       {{ form.hidden_tag() }}
       <input type="hidden" name="transaction_type" :value="tab">
       <input type="hidden" name="payment_account_code" :value="paymentCode">
       <input type="hidden" name="category_account_code" :value="categoryCode">
 
-      <script>
+      <script nonce="{{ csp_nonce }}">
         var _closedPeriods = {{ (closed_periods or {})|tojson }};
         var _restrictedBefore = {{ restricted_before_year|tojson }};
       </script>
@@ -89,7 +64,7 @@
         <div class="col-md-4">
           <label class="form-label" x-text="field1Label"></label>
           <button type="button" class="form-control text-start"
-                  @click="openAccountSelector((code, name) => { paymentCode = code; paymentName = name }, {filter: 'payment', activeTab: 'bs', currentCode: paymentCode})">
+                  @click="pickPayment">
             <span :class="paymentName ? '' : 'text-muted'" x-text="paymentName || '-- 選択 --'"></span>
           </button>
           {% for error in form.payment_account_code.errors %}
@@ -99,7 +74,7 @@
         <div class="col-md-4">
           <label class="form-label" x-text="field2Label"></label>
           <button type="button" class="form-control text-start"
-                  @click="openAccountSelector((code, name) => { categoryCode = code; categoryName = name }, {filter: field2Filter, activeTab: field2ActiveTab, excludeCode: field2ExcludeCode, currentCode: categoryCode})">
+                  @click="pickCategory">
             <span :class="categoryName ? '' : 'text-muted'" x-text="categoryName || '-- 選択 --'"></span>
           </button>
           {% for error in form.category_account_code.errors %}

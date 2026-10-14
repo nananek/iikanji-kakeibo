@@ -20,7 +20,7 @@
             <label class="form-label">取込先の口座</label>
             <input type="hidden" name="payment_account_code" id="paymentAccountCode" value="">
             <button type="button" class="form-control text-start" id="paymentAccountBtn"
-                    onclick="openAccountSelector(onPaymentSelected, {filter: 'payment', currentCode: document.getElementById('paymentAccountCode').value})">
+                    data-action="openPaymentSelector">
               <span id="paymentAccountName" class="text-muted">-- 選択してください --</span>
             </button>
             <div class="form-text">
@@ -62,7 +62,7 @@
 {% endblock %}
 
 {% block scripts %}
-<script>
+<script nonce="{{ csp_nonce }}">
 function onPaymentSelected(code, name) {
   document.getElementById('paymentAccountCode').value = code;
   var span = document.getElementById('paymentAccountName');

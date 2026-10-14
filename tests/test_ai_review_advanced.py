@@ -325,7 +325,8 @@ class TestReviewButtons:
         resp = logged_in_client.get("/ai-journal/review")
         html = resp.data.decode()
         assert "やり直す" in html
-        assert "confirm(" in html
+        # CSP 対応でインライン confirm() から data-confirm 属性に変更
+        assert "data-confirm=" in html
 
     def test_saved_draft_shows_back_to_list(self, db, logged_in_client, user, accounts):
         """analyzed ドラフトのレビュー画面に「一覧に戻る」が表示される（下書き保存なし）"""

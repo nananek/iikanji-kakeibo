@@ -25,6 +25,11 @@ services:
       # 未設定なら UI から llama.cpp 選択肢が消える。
       # - LLAMA_CPP_URL=http://llama-server:8080
     volumes:
+      # 証憑画像。コンテナは非 root (alpine の app ユーザー, uid 100) で
+      # 動作する。新規ボリュームはイメージの所有者を引き継ぐが、既存の
+      # root 所有ボリュームを引き継ぐ場合は一度 chown が必要:
+      #   docker run --rm -v iikanji-kakeibo_vouchers:/v alpine \
+      #     chown -R 100:101 /v
       - vouchers:/app/data/vouchers
     env_file:
       - .env

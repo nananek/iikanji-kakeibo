@@ -67,3 +67,87 @@ function renderVoucherPreview(container, vouchers, baseUrl) {
   container.innerHTML = html;
   container.classList.remove('d-none');
 }
+
+/**
+ * CSP 対応: インラインイベントハンドラ (onclick 等) の代替。
+ * インライン属性は nonce を付けられず CSP で禁止されるため、外部スクリプト
+ * から委譲処理する。属性:
+ *   data-confirm        確認ダイアログ (form は submit 時、それ以外は click 時)
+ *   data-action         グローバル関数を名前で呼ぶ
+ *   data-action-change  change イベント版
+ *   data-args           JSON 配列で引数を渡す
+ *   data-self           要素自身を最後の引数に渡す
+ *   data-prevent        preventDefault する
+ */
+(function () {
+  function runAction(el, extra) {
+    var name = el.getAttribute('data-action') || el.getAttribute('data-action-change');
+    var fn = window[name];
+    if (typeof fn !== 'function') return;
+    var args = [];
+    var raw = el.getAttribute('data-args');
+    if (raw) { try { args = JSON.parse(raw); } catch (e) { args = []; } }
+    if (el.hasAttribute('data-self')) args.push(el);
+    if (extra !== undefined) args.push(extra);
+    return fn.apply(null, args);
+  }
+
+  document.addEventListener('click', function (e) {
+    if (!e.target || !e.target.closest) return;
+    var c = e.target.closest('[data-confirm]');
+    if (c && c.tagName !== 'FORM') {
+      if (!window.confirm(c.getAttribute('data-confirm'))) {
+        e.preventDefault(); e.stopImmediatePropagation(); return;
+      }
+    }
+    var el = e.target.closest('[data-action]');
+    if (el) {
+      var r = runAction(el);
+      if (r === false || el.hasAttribute('data-prevent')) e.preventDefault();
+    }
+  }, true);
+
+  document.addEventListener('submit', function (e) {
+    var msg = e.target && e.target.getAttribute && e.target.getAttribute('data-confirm');
+    if (msg && !window.confirm(msg)) {
+      e.preventDefault(); e.stopImmediatePropagation();
+    }
+  }, true);
+
+  document.addEventListener('change', function (e) {
+    if (!e.target || !e.target.closest) return;
+    var el = e.target.closest('[data-action-change]');
+    if (el) runAction(el, e);
+  }, true);
+
+  // 汎用アクション (旧インライン JS の置換)
+  window.submitFormById = function (el) {
+    var id = el.getAttribute('data-target');
+    var form = id ? document.getElementById(id) : el.form;
+    if (form) form.submit();
+  };
+  window.toggleAllCheckboxes = function (el) {
+    var sel = el.getAttribute('data-target');
+    if (!sel) return;
+    document.querySelectorAll(sel).forEach(function (cb) {
+      if (!cb.disabled) cb.checked = !cb.checked;
+    });
+  };
+  window.removeRowAndUpdate = function (el) {
+    var tr = el.closest('tr');
+    if (tr) tr.remove();
+    if (typeof window.modalUpdateTotals === 'function') window.modalUpdateTotals();
+  };
+  window.showBookmarkletHint = function () {
+    alert('このボタンをブックマークバーにドラッグしてください。');
+    return false;
+  };
+  window.openPaymentSelector = function () {
+    if (typeof window.openAccountSelector !== 'function') return;
+    var el = document.getElementById('paymentAccountCode');
+    window.openAccountSelector(window.onPaymentSelected, {
+      filter: 'payment',
+      currentCode: el ? el.value : '',
+    });
+  };
+})();

@@ -1,5 +1,4 @@
 import json
-import re
 from datetime import date, datetime, timezone
 
 from flask import Blueprint, render_template, redirect, url_for, flash, request, jsonify, make_response, current_app, session as flask_session
@@ -14,7 +13,7 @@ from app.models.ai_config import UserAIConfig
 from app.models.api_key import APIKey, ALL_SCOPES, SCOPE_LABELS, SCOPE_DEPENDENCIES
 from app.models.oauth import OAuthToken
 from app.models.audit import AuditGrant, AuditGrantAccount
-from app.models.auto_import import AutoImportSource, WebhookConfig
+from app.models.auto_import import WebhookConfig
 from app.services.ai_receipt import (
     encrypt_api_key, PROVIDER_DEFAULTS, PROVIDER_LABELS,
     get_available_provider_labels, is_llama_cpp_available,
@@ -26,22 +25,8 @@ from app.services.mail import send_email
 from app.services.fiscal import (
     PERIOD_LABELS, get_closed_period, close_period, reopen_period, is_year_open,
 )
-from app.views.helpers import safe_user_error
 
 bp = Blueprint("settings", __name__, url_prefix="/settings")
-
-# HTTP ステータスコード形式のエラーはそのまま返し、
-# それ以外の内部例外メッセージは隠蔽する
-_HTTP_STATUS_RE = re.compile(r"^HTTP \d{3}$")
-
-
-def _safe_connection_error(err: str | None) -> str:
-    """接続テストのエラーメッセージを安全な形に変換する。"""
-    if not err:
-        return "不明なエラー"
-    if _HTTP_STATUS_RE.match(err):
-        return err
-    return "サーバーに接続できませんでした。URL・認証情報を確認してください。"
 
 
 @bp.route("/")
@@ -329,7 +314,7 @@ def ai_config_save():
             flash("ベースURLを入力してください。", "danger")
             return redirect(url_for("settings.ai_config"))
         # SSRF 対策: プライベート IP / ループバック / 非 http(s) を拒否
-        # (WebDAV・Webhook URL 設定と同じ共通バリデーション)。
+        # (Webhook URL 設定と同じ共通バリデーション)。
         from app.services.sources import validate_external_url
         ok, err = validate_external_url(base_url)
         if not ok:
@@ -476,6 +461,7 @@ def ai_usage_export_csv():
     from app.services.ai_usage import (
         iter_logs_for_export, FEATURE_LABELS, STATUS_LABELS,
     )
+    from app.views.helpers import csv_safe
     start, end, provider, feature, _page = _parse_usage_filters()
     items = iter_logs_for_export(
         current_user.id, start=start, end=end,
@@ -492,14 +478,14 @@ def ai_usage_export_csv():
     for log in items:
         writer.writerow([
             log.created_at.isoformat(),
-            log.provider,
-            log.model,
-            FEATURE_LABELS.get(log.feature, log.feature),
+            csv_safe(log.provider),
+            csv_safe(log.model),
+            csv_safe(FEATURE_LABELS.get(log.feature, log.feature)),
             log.input_tokens if log.input_tokens is not None else "",
             log.output_tokens if log.output_tokens is not None else "",
             log.total_tokens if log.total_tokens is not None else "",
             log.latency_ms if log.latency_ms is not None else "",
-            STATUS_LABELS.get(log.status, log.status),
+            csv_safe(STATUS_LABELS.get(log.status, log.status)),
             log.http_status if log.http_status is not None else "",
         ])
     return Response(
@@ -1130,163 +1116,17 @@ def tax_form_bulk_create():
 @bp.route("/auto-import")
 @login_required
 def auto_import():
-    """自動取込設定ページ"""
-    sources = (
-        AutoImportSource.query
-        .filter_by(user_id=current_user.id)
-        .order_by(AutoImportSource.created_at.desc())
-        .all()
-    )
+    """通知 (Webhook) 設定ページ"""
     webhooks = (
         WebhookConfig.query
         .filter_by(user_id=current_user.id)
         .order_by(WebhookConfig.created_at.desc())
         .all()
     )
-    # config_json をパースして表示用に展開
-    for s in sources:
-        s._config = json.loads(s.config_json)
     return render_template(
         "settings/auto_import.html",
-        sources=sources,
         webhooks=webhooks,
     )
-
-
-@bp.route("/auto-import/sources/add", methods=["GET", "POST"])
-@login_required
-def auto_import_source_add():
-    """インポート元の追加"""
-    if request.method == "POST":
-        from app.services.auto_import import encrypt_credentials
-
-        name = request.form.get("name", "").strip()
-        provider = request.form.get("provider", "webdav")
-        url = request.form.get("url", "").strip()
-        username = request.form.get("username", "").strip()
-        password = request.form.get("password", "").strip()
-        folder_path = request.form.get("folder_path", "/").strip()
-
-        if not all([name, url, username, password]):
-            flash("必須項目を入力してください。", "danger")
-            return render_template("settings/auto_import_source_form.html")
-
-        if len(name) > 100 or len(url) > 500 or len(username) > 100:
-            flash("入力値が長すぎます。", "danger")
-            return render_template("settings/auto_import_source_form.html")
-
-        # SSRF 対策: URL バリデーション
-        from app.services.sources import validate_external_url
-        ok, err = validate_external_url(url)
-        if not ok:
-            flash(f"URL が不正です: {err}", "danger")
-            return render_template("settings/auto_import_source_form.html")
-
-        # 接続テスト
-        from app.services.sources.webdav import WebDAVProvider
-        test_provider = WebDAVProvider(url, username, password)
-        ok, err = test_provider.test_connection()
-        if not ok:
-            flash(f"接続テストに失敗しました: {err}", "danger")
-            return render_template("settings/auto_import_source_form.html")
-
-        config = {
-            "url": url,
-            "username": username,
-            "folder_path": folder_path,
-            "file_extensions": ["jpg", "jpeg", "png", "webp"],
-        }
-
-        source = AutoImportSource(
-            user_id=current_user.id,
-            name=name,
-            provider=provider,
-            config_json=json.dumps(config, ensure_ascii=False),
-            credentials_encrypted=encrypt_credentials({"password": password}),
-        )
-        db.session.add(source)
-        db.session.commit()
-
-        flash(f"インポート元「{name}」を追加しました。", "success")
-        return redirect(url_for("settings.auto_import"))
-
-    return render_template("settings/auto_import_source_form.html")
-
-
-@bp.route("/auto-import/sources/test", methods=["POST"])
-@login_required
-def auto_import_source_test():
-    """フォーム入力値で接続テスト（AJAX）"""
-    url = request.form.get("url", "").strip()
-    username = request.form.get("username", "").strip()
-    password = request.form.get("password", "").strip()
-
-    if not all([url, username, password]):
-        return jsonify({"ok": False, "message": "必須項目を入力してください。"}), 400
-
-    from app.services.sources import validate_external_url
-    ok, err = validate_external_url(url)
-    if not ok:
-        return jsonify({"ok": False, "message": f"URL が不正です: {err}"}), 400
-
-    from app.services.sources.webdav import WebDAVProvider
-    provider = WebDAVProvider(url, username, password)
-    ok, err = provider.test_connection()
-    if ok:
-        files = provider.list_files()
-        return jsonify({"ok": True, "message": f"接続成功（{len(files)}件のファイルを検出）"})
-    return jsonify({"ok": False, "message": f"接続失敗: {_safe_connection_error(err)}"}), 400
-
-
-@bp.route("/auto-import/sources/<int:source_id>/test", methods=["POST"])
-@login_required
-def auto_import_source_test_existing(source_id):
-    """既存ソースの接続テスト（AJAX）"""
-    source = AutoImportSource.query.filter_by(
-        id=source_id, user_id=current_user.id
-    ).first_or_404()
-
-    from app.services.auto_import import _build_provider
-    try:
-        provider = _build_provider(source)
-    except ValueError as e:
-        from flask import current_app
-        current_app.logger.exception("_build_provider failed")
-        return jsonify({"ok": False, "message": safe_user_error(e)}), 400
-
-    ok, err = provider.test_connection()
-    if ok:
-        files = provider.list_files()
-        return jsonify({"ok": True, "message": f"接続成功（{len(files)}件のファイルを検出）"})
-    return jsonify({"ok": False, "message": f"接続失敗: {_safe_connection_error(err)}"}), 400
-
-
-@bp.route("/auto-import/sources/<int:source_id>/toggle", methods=["POST"])
-@login_required
-def auto_import_source_toggle(source_id):
-    """インポート元の有効/無効切り替え"""
-    source = AutoImportSource.query.filter_by(
-        id=source_id, user_id=current_user.id
-    ).first_or_404()
-    source.is_active = not source.is_active
-    db.session.commit()
-    status = "有効" if source.is_active else "無効"
-    flash(f"「{source.name}」を{status}にしました。", "success")
-    return redirect(url_for("settings.auto_import"))
-
-
-@bp.route("/auto-import/sources/<int:source_id>/delete", methods=["POST"])
-@login_required
-def auto_import_source_delete(source_id):
-    """インポート元の削除"""
-    source = AutoImportSource.query.filter_by(
-        id=source_id, user_id=current_user.id
-    ).first_or_404()
-    name = source.name
-    db.session.delete(source)
-    db.session.commit()
-    flash(f"インポート元「{name}」を削除しました。", "success")
-    return redirect(url_for("settings.auto_import"))
 
 
 @bp.route("/auto-import/webhooks/add", methods=["GET", "POST"])

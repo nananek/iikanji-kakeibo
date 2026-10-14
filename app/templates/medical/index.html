@@ -94,7 +94,7 @@
         <td class="text-end">&yen;{{ "{:,}".format(e.amount - e.insurance_reimbursement) }}</td>
         <td>
           <button type="button" class="btn btn-outline-secondary btn-sm" title="詳細編集"
-                  onclick="openMedicalModal({{ e.entry_id }})">
+                  data-action="openMedicalModal" data-args="[{{ e.entry_id }}]">
             <i class="bi bi-pencil"></i>
           </button>
         </td>
@@ -160,7 +160,7 @@
       </div>
       <div class="modal-footer">
         <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">キャンセル</button>
-        <button type="button" class="btn btn-primary" id="medSaveBtn" onclick="saveMedical()">
+        <button type="button" class="btn btn-primary" id="medSaveBtn" data-action="saveMedical">
           <span class="spinner-border spinner-border-sm d-none" id="medSpinner"></span>
           保存
         </button>
@@ -171,7 +171,7 @@
 {% endblock %}
 
 {% block scripts %}
-<script>
+<script nonce="{{ csp_nonce }}">
 (function() {
   var editingEntryId = null;
   var modal = null;

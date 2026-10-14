@@ -421,10 +421,11 @@ test.describe("AI証憑仕訳 — 下書き保存・やり直し確認", () => {
     ).toBeVisible();
 
     // やり直すボタンにも確認ダイアログが付いている
+    // (CSP 対応で onclick から data-confirm + 委譲ハンドラへ置換済み)
     const retryBtn = page.locator("a", { hasText: "やり直す" }).first();
     await expect(retryBtn).toBeVisible();
-    const onclick = await retryBtn.getAttribute("onclick");
-    expect(onclick).toContain("confirm(");
+    const confirmMsg = await retryBtn.getAttribute("data-confirm");
+    expect(confirmMsg).toContain("よろしいですか");
   });
 
   test("saved ドラフトには一覧に戻るボタンが表示される", async ({ page }) => {

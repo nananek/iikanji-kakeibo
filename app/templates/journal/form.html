@@ -8,7 +8,7 @@
 
 <div class="card shadow-sm mt-4">
   <div class="card-body">
-    <script>
+    <script nonce="{{ csp_nonce }}">
       var _existingLines = {{ existing_lines | tojson if existing_lines is defined else '[]' }};
       var _closedPeriods = {{ (closed_periods or {})|tojson }};
       var _restrictedBefore = {{ restricted_before_year|tojson }};
@@ -137,7 +137,7 @@
 
 {% block scripts %}
 {% if is_edit and entry and entry.vouchers %}
-<script>
+<script nonce="{{ csp_nonce }}">
 renderVoucherPreview(
   document.getElementById('voucherPreview'),
   {{ entry.vouchers | map(attribute='id') | list | tojson }}.map(function(id) { return {id: id}; })

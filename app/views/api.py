@@ -20,7 +20,7 @@ from app.services.fiscal import check_period_open_for_new, check_entry_modifiabl
 from app.services.image import serve_image
 from app.services.storage import (
     get_storage_backend, make_storage_key, make_thumbnail_key,
-    store_image_with_thumbnail,
+    store_image_with_thumbnail, is_declared_image_valid,
 )
 from app.services.storage_quota import (
     QuotaExceededError, check_quota, is_over_quota,
@@ -344,6 +344,8 @@ def ai_analyze():
         return jsonify({
             "error": "対応していないファイル形式です。JPEG/PNG/WebP/GIF を使用してください。"
         }), 400
+    if not is_declared_image_valid(image_bytes, mime_type):
+        return jsonify({"error": "画像ファイルの内容が形式と一致しません。"}), 400
 
     # Phase 5 #70: AIDraft 段階で StorageUsage に計上 (ai_journal.analyze と同等)
     size = len(image_bytes)

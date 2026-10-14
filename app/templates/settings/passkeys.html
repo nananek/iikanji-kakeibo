@@ -89,8 +89,8 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="{{ url_for('static', filename='js/webauthn.js') }}"></script>
-<script>
+<script nonce="{{ csp_nonce }}" src="{{ url_for('static', filename='js/webauthn.js') }}"></script>
+<script nonce="{{ csp_nonce }}">
 // 二段階認証 (TOTP) 未設定時は登録 UI 自体を描画しないため、ボタンが無ければ何もしない
 const registerBtn = document.getElementById("btn-register-passkey");
 if (registerBtn) {
