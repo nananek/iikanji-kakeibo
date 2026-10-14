@@ -14,7 +14,7 @@
       <div class="input-group mt-2">
         <input type="text" class="form-control font-monospace" id="newKeyValue"
                value="{{ new_key }}" readonly>
-        <button class="btn btn-outline-secondary" type="button" onclick="copyKey()">
+        <button class="btn btn-outline-secondary" type="button" data-action="copyKey">
           <i class="bi bi-clipboard"></i> コピー
         </button>
       </div>
@@ -133,7 +133,7 @@
 {% endblock %}
 
 {% block scripts %}
-<script>
+<script nonce="{{ csp_nonce }}">
 {% if new_key %}
 function copyKey() {
   var input = document.getElementById('newKeyValue');

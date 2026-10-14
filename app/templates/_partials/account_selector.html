@@ -68,7 +68,7 @@
   </div>
 </div>
 
-<script>
+<script nonce="{{ csp_nonce }}">
 var _acctSelectorData = {{ grouped_accounts | tojson }};
 var _isMobile = window.innerWidth <= 576;
 window._acctNameByCode = function(code, full) {

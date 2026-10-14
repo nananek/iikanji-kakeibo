@@ -1,6 +1,7 @@
 import os
+import secrets
 
-from flask import Flask
+from flask import Flask, g
 
 from app.config import Config
 from app.extensions import db, migrate, login_manager, csrf, limiter
@@ -87,6 +88,11 @@ def create_app(config_class=Config):
     from app.views.oauth import device_authorization, token as oauth_token_view
     csrf.exempt(device_authorization)
     csrf.exempt(oauth_token_view)
+
+    # Before-request hook: CSP nonce を払い出す (インライン script 用)。
+    @app.before_request
+    def csp_nonce():
+        g.csp_nonce = secrets.token_urlsafe(16)
 
     # Before-request hook for terms acceptance check
     @app.before_request
@@ -217,6 +223,11 @@ def create_app(config_class=Config):
     def inject_dev_flag():
         return {"is_dev": app.debug}
 
+    # Context processor for CSP nonce (インライン script タグに付与する)
+    @app.context_processor
+    def inject_csp_nonce():
+        return {"csp_nonce": getattr(g, "csp_nonce", "")}
+
     # Context processor for CAPTCHA
     @app.context_processor
     def inject_captcha_config():
@@ -271,10 +282,34 @@ def create_app(config_class=Config):
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "SAMEORIGIN"
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
-        # CSP は defense-in-depth。インライン script/style や CDN を壊さない
-        # 範囲で、危険なオブジェクト埋め込み・base タグ乗っ取り・
-        # フレーミングのみを禁止する。
+        # CSP: script-src から 'unsafe-inline' を排除し、インライン script は
+        # nonce、外部 script はホスト allowlist で許可する。インライン
+        # イベントハンドラは data-* + 委譲ハンドラ (static/js/app.js) に置換済み。
+        #
+        # 'unsafe-eval' は Alpine 標準ビルドが Function コンストラクタを使う
+        # ため現状必要 (CSP ビルドへの移行は x-data 設定のグローバル参照を
+        # 全廃する大規模リファクタが必要なため別タスク)。
+        #
+        # style-src は既存のインライン style 属性 (119箇所) のため
+        # 'unsafe-inline' を許容する (script 実行とは独立)。
+        nonce = getattr(g, "csp_nonce", "")
         response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; "
+            f"script-src 'self' 'nonce-{nonce}' 'unsafe-eval' "
+            "https://cdn.jsdelivr.net "
+            "https://js.hcaptcha.com https://www.google.com "
+            "https://www.gstatic.com https://challenges.cloudflare.com; "
+            "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net "
+            "https://fonts.googleapis.com; "
+            "font-src 'self' https://cdn.jsdelivr.net "
+            "https://fonts.gstatic.com data:; "
+            "img-src 'self' data: blob:; "
+            "connect-src 'self' https://js.hcaptcha.com "
+            "https://www.google.com https://www.gstatic.com "
+            "https://challenges.cloudflare.com; "
+            "frame-src https://js.hcaptcha.com https://www.google.com "
+            "https://challenges.cloudflare.com; "
+            "form-action 'self'; "
             "object-src 'none'; base-uri 'self'; frame-ancestors 'self'"
         )
         response.headers["Permissions-Policy"] = (

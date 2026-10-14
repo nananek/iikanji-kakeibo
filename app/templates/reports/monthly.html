@@ -340,8 +340,8 @@
 
 {% set need_charts = (expense_grand > 0) or (income_grand > 0) %}
 {% if need_charts %}
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
-<script>
+<script nonce="{{ csp_nonce }}" src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+<script nonce="{{ csp_nonce }}">
 (function() {
   var monthLabels = ['1月','2月','3月','4月','5月','6月','7月','8月','9月','10月','11月','12月'];
   var tooltipCb = {

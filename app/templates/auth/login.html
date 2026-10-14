@@ -62,8 +62,8 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="{{ url_for('static', filename='js/webauthn.js') }}"></script>
-<script>
+<script nonce="{{ csp_nonce }}" src="{{ url_for('static', filename='js/webauthn.js') }}"></script>
+<script nonce="{{ csp_nonce }}">
 // WebAuthn が使えるブラウザ＋セキュアコンテキストでのみ表示
 if (window.PublicKeyCredential && navigator.credentials) {
   document.getElementById("passkey-section").classList.remove("d-none");

@@ -107,7 +107,7 @@
 {% endblock %}
 
 {% block scripts %}
-<script>
+<script nonce="{{ csp_nonce }}">
 // 列選択時にプレビューテーブルの該当列をハイライト
 document.querySelectorAll('#dateCol, #descCol, #depositCol, #withdrawalCol').forEach(sel => {
   sel.addEventListener('change', highlightColumns);

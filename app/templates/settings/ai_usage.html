@@ -184,7 +184,7 @@
           コンソール側の利用量と突合できなくなるためご注意ください。
         </p>
         <form method="POST" action="{{ url_for('settings.ai_usage_clear') }}"
-              onsubmit="return confirm('本当に全履歴を削除しますか？元には戻せません。');">
+              data-confirm="本当に全履歴を削除しますか？元には戻せません。">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <div class="input-group input-group-sm" style="max-width:500px">
             <span class="input-group-text">確認のため「DELETE」と入力</span>
@@ -202,8 +202,8 @@
 
 {% block scripts %}
 {% if summary %}
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
-<script>
+<script nonce="{{ csp_nonce }}" src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<script nonce="{{ csp_nonce }}">
 (function() {
   var rows = {{ summary | tojson }};
   // 月降順で受け取っているので、グラフは時系列昇順に並べ替え

@@ -32,7 +32,7 @@
 
 {% if entries.items %}
 <form id="bulkForm" method="POST" action="{{ url_for('journal.bulk_delete') }}"
-      x-data="bulkSelect" @submit="if (!confirmBulkDelete()) $event.preventDefault()"
+      x-data="bulkSelect" @submit="onSubmit"
       @drag-select-update="updateCount()">
   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 
@@ -83,7 +83,7 @@
             {% elif entry.source == 'ai_receipt' %}
             <span class="badge bg-success">AI</span>
             {% if entry.vouchers %}
-            <a href="#" onclick="openImagePreview('{{ url_for('ai_journal.voucher_image', voucher_id=entry.vouchers[0].id) }}');return false"
+            <a href="#" data-action="openImagePreview" data-args='["{{ url_for('ai_journal.voucher_image', voucher_id=entry.vouchers[0].id) }}"]' data-prevent
                title="証憑画像" class="text-success"><i class="bi bi-image"></i></a>
             {% endif %}
             {% elif entry.source == 'csv' %}
@@ -170,8 +170,8 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="{{ url_for('static', filename='js/drag_select.js') }}"></script>
-<script>
+<script nonce="{{ csp_nonce }}" src="{{ url_for('static', filename='js/drag_select.js') }}"></script>
+<script nonce="{{ csp_nonce }}">
 var bulkForm = document.getElementById('bulkForm');
 if (bulkForm) {
   initDragSelect('.table', '.entry-cb', function() {

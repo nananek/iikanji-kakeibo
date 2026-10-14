@@ -153,8 +153,8 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
-<script>
+<script nonce="{{ csp_nonce }}" src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+<script nonce="{{ csp_nonce }}">
 const data = {{ monthly_trend | tojson }};
 const ctx = document.getElementById('monthlyChart').getContext('2d');
 new Chart(ctx, {

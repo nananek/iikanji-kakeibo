@@ -79,7 +79,7 @@
                 <i class="bi bi-plus-lg"></i> 選択した欄の科目を作成
               </button>
               <button type="button" class="btn btn-outline-secondary btn-sm"
-                      onclick="document.querySelectorAll('#bulkCreatePanel input[type=checkbox]:not(:disabled)').forEach(c => c.checked = !c.checked)">
+                      data-action="toggleAllCheckboxes" data-target="#bulkCreatePanel input[type=checkbox]:not(:disabled)">
                 選択反転
               </button>
             </div>

@@ -225,7 +225,7 @@
 {% endblock %}
 
 {% block scripts %}
-<script>
+<script nonce="{{ csp_nonce }}">
 (function() {
   var bar = document.getElementById('periodBar');
   var btns = bar.querySelectorAll('.period-btn');

@@ -60,33 +60,17 @@
       </li>
     </ul>
 
-    <script>
+    <script nonce="{{ csp_nonce }}">
       var _closedPeriods = {{ (closed_periods or {})|tojson }};
       var _restrictedBefore = {{ restricted_before_year|tojson }};
     </script>
     <div class="tab-content">
       <!-- かんたんモード -->
       <div class="tab-pane fade {{ 'show active' if active_tab != 'advanced' }}" id="simpleMode" role="tabpanel">
-        <div x-data="{
+        <div x-data="aiSimpleForm({
           categoryCode: '{{ selected.lines[0].account_code if selected.lines else '' }}',
-          categoryName: '',
-          paymentCode: '{{ selected.lines[1].account_code if selected.lines|length > 1 else '' }}',
-          paymentName: '',
-          init: function() {
-            if (this.categoryCode) this.categoryName = _acctNameByCode(this.categoryCode) || '';
-            if (this.paymentCode) this.paymentName = _acctNameByCode(this.paymentCode) || '';
-          },
-          selectCategory: function() {
-            var self = this;
-            openAccountSelector(function(code, name) { self.categoryCode = code; self.categoryName = name; },
-              {filter: 'category', activeTab: 'pl', currentCode: this.categoryCode});
-          },
-          selectPayment: function() {
-            var self = this;
-            openAccountSelector(function(code, name) { self.paymentCode = code; self.paymentName = name; },
-              {filter: 'payment', activeTab: 'bs', currentCode: this.paymentCode});
-          }
-        }">
+          paymentCode: '{{ selected.lines[1].account_code if selected.lines|length > 1 else '' }}'
+        })">
         <form method="POST" id="simpleForm"
               x-data="fiscalPeriodChecker({
                 closedPeriods: _closedPeriods,
@@ -154,11 +138,11 @@
               <i class="bi bi-archive"></i> 一覧に戻る
             </a>
             {% else %}
-            <button type="button" class="btn btn-outline-secondary" onclick="saveDraftFromReview(this)">
+            <button type="button" class="btn btn-outline-secondary" data-action="saveDraftFromReview" data-self>
               <i class="bi bi-archive"></i> 下書き保存
             </button>
             <a href="{{ url_for('ai_journal.upload') }}" class="btn btn-outline-secondary"
-               onclick="return confirm('AI解析結果が削除され、アップロードからやり直しになります。よろしいですか？')">
+               data-confirm="AI解析結果が削除され、アップロードからやり直しになります。よろしいですか？">
               やり直す
             </a>
             {% endif %}
@@ -168,7 +152,7 @@
       </div>
 
       <!-- 仕訳モード -->
-      <script>var _advancedLines = {{ selected.lines | tojson if selected.lines else '[]' }};</script>
+      <script nonce="{{ csp_nonce }}">var _advancedLines = {{ selected.lines | tojson if selected.lines else '[]' }};</script>
       <div class="tab-pane fade {{ 'show active' if active_tab == 'advanced' }}" id="advancedMode" role="tabpanel">
         <form method="POST" id="advancedForm"
               x-data="journalLines({ lines: _advancedLines })"
@@ -273,11 +257,11 @@
               <i class="bi bi-archive"></i> 一覧に戻る
             </a>
             {% else %}
-            <button type="button" class="btn btn-outline-secondary" onclick="saveDraftFromReview(this)">
+            <button type="button" class="btn btn-outline-secondary" data-action="saveDraftFromReview" data-self>
               <i class="bi bi-archive"></i> 下書き保存
             </button>
             <a href="{{ url_for('ai_journal.upload') }}" class="btn btn-outline-secondary"
-               onclick="return confirm('AI解析結果が削除され、アップロードからやり直しになります。よろしいですか？')">
+               data-confirm="AI解析結果が削除され、アップロードからやり直しになります。よろしいですか？">
               やり直す
             </a>
             {% endif %}
@@ -292,7 +276,7 @@
 {% include "_partials/account_selector.html" %}
 
 {% if suggestions|length > 1 %}
-<script>
+<script nonce="{{ csp_nonce }}">
 document.addEventListener('shown.bs.tab', function(e) {
   var tab = e.target.dataset.bsTarget === '#advancedMode' ? 'advanced' : '';
   document.querySelectorAll('.suggestion-link').forEach(function(a) {
@@ -304,7 +288,7 @@ document.addEventListener('shown.bs.tab', function(e) {
 </script>
 {% endif %}
 {% if not draft_id %}
-<script>
+<script nonce="{{ csp_nonce }}">
 function saveDraftFromReview(btn) {
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> 保存中...';
