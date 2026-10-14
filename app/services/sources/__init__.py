@@ -1,42 +1,15 @@
-"""外部ファイルソースの抽象化"""
+"""外部 URL の安全性検証 (SSRF 対策)"""
 
 import ipaddress
 import socket
-from dataclasses import dataclass
-from typing import Protocol
 from urllib.parse import urlparse
-
-
-@dataclass
-class SourceFile:
-    """ソースから取得したファイルのメタデータ"""
-
-    path: str
-    etag: str | None
-    size: int
-    mime_type: str | None
-
-
-class FileSourceProvider(Protocol):
-    """ファイルソースプロバイダーのプロトコル"""
-
-    def list_files(self) -> list[SourceFile]:
-        """ファイル一覧を取得"""
-        ...
-
-    def download_file(self, path: str) -> bytes:
-        """ファイルをダウンロード"""
-        ...
-
-    def test_connection(self) -> tuple[bool, str | None]:
-        """接続テスト。(成功, エラーメッセージ) を返す"""
-        ...
 
 
 def validate_external_url(url: str) -> tuple[bool, str | None]:
     """SSRF 対策: 外部 URL の安全性を検証する。
 
     プライベート IP、ループバック、リンクローカルへのアクセスを拒否する。
+    外部 AI の base_url、Webhook URL の検証に使う。
     """
     try:
         parsed = urlparse(url)

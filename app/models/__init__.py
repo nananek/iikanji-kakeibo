@@ -9,7 +9,7 @@ from app.models.ai_draft import AIDraft
 from app.models.voucher import Voucher
 from app.models.api_key import APIKey
 from app.models.oauth import OAuthDevice, OAuthToken
-from app.models.auto_import import AutoImportSource, ProcessedFile, WebhookConfig
+from app.models.auto_import import WebhookConfig
 from app.models.csv_column_profile import CsvColumnProfile
 from app.models.tax_form import TaxFormField, TaxFormMapping
 from app.models.ai_usage_log import AIUsageLog
@@ -32,8 +32,6 @@ __all__ = [
     "APIKey",
     "OAuthDevice",
     "OAuthToken",
-    "AutoImportSource",
-    "ProcessedFile",
     "WebhookConfig",
     "CsvColumnProfile",
     "TaxFormField",
