@@ -35,6 +35,14 @@ class TestSecurityHeaders:
         assert resp.headers.get("X-Frame-Options") == "SAMEORIGIN"
         assert resp.headers.get("Referrer-Policy") == "strict-origin-when-cross-origin"
 
+    def test_content_security_policy(self, client):
+        """CSP が付与され、危険なオブジェクト/base を制限していること。"""
+        resp = client.get("/login")
+        csp = resp.headers.get("Content-Security-Policy")
+        assert csp is not None
+        assert "object-src 'none'" in csp
+        assert "base-uri 'self'" in csp
+
 
 class TestHSTS:
     """HSTS ヘッダーの debug モード条件分岐"""

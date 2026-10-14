@@ -533,7 +533,14 @@ class TestEditLockChecks:
         ]
         db.session.add(entry)
         db.session.commit()
-        _setup_lv2_acting(db, logged_in_client, user, auditor)
+        grant = _setup_lv2_acting(db, logged_in_client, user, auditor)
+        # 4010 も公開科目に追加（公開行のみ差し替えの検証用）
+        from app.models.audit import AuditGrantAccount
+        db.session.add(AuditGrantAccount(
+            audit_grant_id=grant.id, account_user_id=user.id,
+            account_code="4010",
+        ))
+        db.session.commit()
         # 公開行: 5010 debit 900 / 4010 credit 100 → 非公開 credit 800 と合わせて
         # 借方 900 = 貸方 900 でバランス
         resp = _post_edit(logged_in_client, entry.id, description="Lv2更新", lines=[
@@ -562,9 +569,9 @@ class TestEditLockChecks:
                              source="journal", description="ORIG")
         _setup_lv2_acting(db, logged_in_client, user, auditor)
         resp = _post_edit(logged_in_client, entry.id, lines=[
+            # 公開行 (5010) のみ 500 で送る。非公開 1010 credit 1000 と
+            # 合わず貸借不一致 → フォーム再表示。
             {"account_code": "5010", "debit_amount": 500, "credit_amount": 0,
-             "description": ""},
-            {"account_code": "1010", "debit_amount": 0, "credit_amount": 0,
              "description": ""},
         ])
         # 既存 1010 credit 1000 + 公開 500 → 貸借不一致でフォーム再表示
@@ -692,8 +699,9 @@ class TestEditApiLockChecks:
         resp = logged_in_client.post(f"/journal/{entry.id}/edit-api", json={
             "date": "2026-02-15", "description": "x", "fiscal_period": "16",
             "lines": [
+                # 1010 は非公開科目なので送らない (非公開 credit 1000 と
+                # 合わせて貸借が一致する)。公開行 5010 debit 1000 のみ送る。
                 {"account_code": "5010", "debit_amount": 1000, "credit_amount": 0},
-                {"account_code": "1010", "debit_amount": 0, "credit_amount": 0},
             ],
         })
         assert resp.status_code == 400

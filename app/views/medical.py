@@ -13,6 +13,7 @@ from app.services.audit import (
     get_effective_user_id, get_allowed_account_codes,
     get_submitted_account_codes, is_entry_locked_for_owner,
     is_entry_locked_for_auditor, is_acting_as_auditor,
+    find_disallowed_write_codes,
 )
 from app.views.helpers import get_grouped_accounts
 
@@ -105,6 +106,7 @@ def index():
 @login_required
 def new():
     form = MedicalExpenseForm()
+    allowed_codes = get_allowed_account_codes()
 
     if not form.date.data:
         form.date.data = date.today()
@@ -122,7 +124,6 @@ def new():
                     used.add(medical_account.code)
                 if used & locked_codes:
                     flash("提出済みの税務科目を含むため登録できません。", "danger")
-                    allowed_codes = get_allowed_account_codes()
                     grouped_accounts = get_grouped_accounts(user_id, allowed_codes)
                     return render_template(
                         "medical/form.html", form=form, is_edit=False,
@@ -135,7 +136,7 @@ def new():
         )
         if err:
             flash(err, "danger")
-            grouped_accounts = get_grouped_accounts(user_id)
+            grouped_accounts = get_grouped_accounts(user_id, allowed_codes)
             return render_template(
                 "medical/form.html", form=form, is_edit=False,
                 grouped_accounts=grouped_accounts,
@@ -144,7 +145,19 @@ def new():
         medical_account = _get_medical_account(user_id)
         if not medical_account:
             flash("医療費の勘定科目が見つかりません。", "danger")
-            grouped_accounts = get_grouped_accounts(get_effective_user_id())
+            grouped_accounts = get_grouped_accounts(user_id, allowed_codes)
+            return render_template(
+                "medical/form.html", form=form, is_edit=False,
+                grouped_accounts=grouped_accounts,
+            )
+
+        # Lv2: 書き込み先の科目が公開範囲内か検証する
+        if find_disallowed_write_codes(
+            {form.payment_account_code.data, medical_account.code},
+            allowed_codes,
+        ):
+            flash("使用できない科目が含まれています。", "danger")
+            grouped_accounts = get_grouped_accounts(user_id, allowed_codes)
             return render_template(
                 "medical/form.html", form=form, is_edit=False,
                 grouped_accounts=grouped_accounts,
@@ -176,7 +189,7 @@ def new():
         flash("医療費を登録しました。", "success")
         return redirect(url_for("medical.index"))
 
-    grouped_accounts = get_grouped_accounts(get_effective_user_id())
+    grouped_accounts = get_grouped_accounts(get_effective_user_id(), allowed_codes)
     payment_account_name = None
     if form.payment_account_code.data:
         a = Account.query.filter_by(code=form.payment_account_code.data, user_id=get_effective_user_id()).first()
@@ -196,6 +209,7 @@ def edit(expense_id):
     ).first_or_404()
 
     form = MedicalExpenseForm()
+    allowed_codes = get_allowed_account_codes()
 
     if form.validate_on_submit():
         expense.date = form.date.data
@@ -216,7 +230,7 @@ def edit(expense_id):
         form.amount_paid.data = expense.amount_paid
         form.insurance_reimbursement.data = expense.insurance_reimbursement
 
-    grouped_accounts = get_grouped_accounts(get_effective_user_id())
+    grouped_accounts = get_grouped_accounts(get_effective_user_id(), allowed_codes)
     payment_account_name = None
     if form.payment_account_code.data:
         a = Account.query.filter_by(code=form.payment_account_code.data, user_id=get_effective_user_id()).first()

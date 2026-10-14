@@ -15,6 +15,24 @@ class Config:
     REMEMBER_COOKIE_HTTPONLY = True
     REMEMBER_COOKIE_SAMESITE = "Lax"
 
+    # セッション Cookie のセキュリティ属性。
+    # `SESSION_COOKIE_SECURE` / `REMEMBER_COOKIE_SECURE` は create_app() で
+    # `PREFERRED_URL_SCHEME` (https のとき有効) を見て自動決定し、
+    # 環境変数 `SESSION_COOKIE_SECURE` で明示上書きできる。
+    SESSION_COOKIE_HTTPONLY = True
+    SESSION_COOKIE_SAMESITE = os.environ.get("SESSION_COOKIE_SAMESITE", "Lax")
+    SESSION_COOKIE_SECURE = False
+    REMEMBER_COOKIE_SECURE = False
+
+    # 絶対 URL 生成・Cookie の Secure 判定に使う。公開運用では https を指定。
+    PREFERRED_URL_SCHEME = os.environ.get("PREFERRED_URL_SCHEME", "http")
+
+    # リクエストボディの最大サイズ (バイト)。未設定なら 25 MiB。
+    # 上限がないと巨大アップロードでメモリを枯渇させられる (DoS)。
+    MAX_CONTENT_LENGTH = int(
+        os.environ.get("MAX_CONTENT_LENGTH", str(25 * 1024 * 1024))
+    )
+
     # CAPTCHA (optional)
     CAPTCHA_PROVIDER = os.environ.get("CAPTCHA_PROVIDER")       # hcaptcha|recaptcha|turnstile|mcaptcha
     CAPTCHA_SITE_KEY = os.environ.get("CAPTCHA_SITE_KEY")

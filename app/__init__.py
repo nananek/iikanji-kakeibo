@@ -1,12 +1,59 @@
+import os
+
 from flask import Flask
 
 from app.config import Config
 from app.extensions import db, migrate, login_manager, csrf, limiter
 
 
+# SECRET_KEY に設定されていたら本番起動を拒否する既知の安全でない値。
+_INSECURE_SECRET_KEYS = {
+    "",
+    "dev-secret-key",
+    "change-me-to-a-random-secret-key",
+    "changeme",
+    "secret",
+    "changethis",
+}
+
+
+def _is_insecure_secret(secret) -> bool:
+    if not isinstance(secret, str):
+        return True
+    if secret in _INSECURE_SECRET_KEYS:
+        return True
+    if secret.startswith("change-me"):
+        return True
+    # 短すぎる鍵 (総当たり可能) も本番では拒否する
+    return len(secret) < 16
+
+
 def create_app(config_class=Config):
     app = Flask(__name__)
     app.config.from_object(config_class)
+
+    # セッション Cookie の Secure 属性を決定する。
+    # 1. 環境変数 SESSION_COOKIE_SECURE が明示されていればそれに従う
+    # 2. そうでなければ PREFERRED_URL_SCHEME が https のときだけ有効化
+    env_secure = os.environ.get("SESSION_COOKIE_SECURE")
+    if env_secure is not None:
+        cookie_secure = env_secure.strip().lower() in ("1", "true", "yes", "on")
+    else:
+        cookie_secure = str(
+            app.config.get("PREFERRED_URL_SCHEME", "http")
+        ).lower() == "https"
+    app.config["SESSION_COOKIE_SECURE"] = cookie_secure
+    app.config["REMEMBER_COOKIE_SECURE"] = cookie_secure
+
+    # SECRET_KEY が既定値/空/短すぎるまま本番起動しないよう fail-fast する。
+    # そのまま起動するとセッション・CSRF・remember-me トークンが偽造可能。
+    # テスト (TESTING) と debug は対象外。
+    if not app.debug and not app.config.get("TESTING"):
+        if _is_insecure_secret(app.config.get("SECRET_KEY")):
+            raise RuntimeError(
+                "SECRET_KEY が未設定・既定値・または短すぎます。環境変数 "
+                "SECRET_KEY に十分な長さのランダム値を設定してください。"
+            )
 
     # Extensions
     db.init_app(app)
@@ -216,6 +263,15 @@ def create_app(config_class=Config):
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "SAMEORIGIN"
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        # CSP は defense-in-depth。インライン script/style や CDN を壊さない
+        # 範囲で、危険なオブジェクト埋め込み・base タグ乗っ取り・
+        # フレーミングのみを禁止する。
+        response.headers["Content-Security-Policy"] = (
+            "object-src 'none'; base-uri 'self'; frame-ancestors 'self'"
+        )
+        response.headers["Permissions-Policy"] = (
+            "geolocation=(), microphone=(), camera=()"
+        )
         if not app.debug:
             response.headers["Strict-Transport-Security"] = (
                 "max-age=31536000; includeSubDomains"
