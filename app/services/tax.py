@@ -1,6 +1,8 @@
 """確定申告・年末調整の集計サービス"""
 
 from datetime import date
+
+from app.services.clock import today as app_today
 from decimal import Decimal
 
 from sqlalchemy import func
@@ -379,7 +381,7 @@ def get_month_projection(user_id, year, month, comparison, method="pro_rata"):
     import calendar
     from datetime import timedelta
 
-    today = date.today()
+    today = app_today()
     days_elapsed = today.day
     days_in_month = calendar.monthrange(year, month)[1]
     m_idx = month - 1

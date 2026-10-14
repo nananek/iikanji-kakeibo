@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}接続エラー - いいかんじ™家計簿{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-lg-6 col-md-8">
+    <h2><i class="bi bi-exclamation-octagon"></i> 接続できません</h2>
+    <div class="alert alert-danger">{{ error }}</div>
+    <p class="text-muted">
+      クライアントアプリ側で、サーバー URL やリダイレクト URI の登録を
+      確認してください。
+    </p>
+    <a href="{{ url_for('dashboard.index') }}" class="btn btn-secondary">
+      <i class="bi bi-house"></i> ホームへ
+    </a>
+  </div>
+</div>
+{% endblock %}

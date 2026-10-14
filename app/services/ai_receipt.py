@@ -1851,14 +1851,14 @@ def _deterministic_fallback_suggestion(user_id, image_bytes, mime_type, comment,
                                        api_key, provider, model, handler,
                                        extra_kw, last_text):
     """エージェントが確定できなかったときの最終手段 (無出力で落とさない)。"""
-    import datetime as _dt
+    from app.services.clock import today as _app_today
     info = _extract_document_basics(
         image_bytes, mime_type, comment, last_text,
         api_key, provider, model, handler, extra_kw, user_id,
     )
     if not info:
         return []
-    date_str = info.get("date") or _dt.date.today().isoformat()
+    date_str = info.get("date") or _app_today().isoformat()
     description = info.get("description") or comment or "AI自動仕訳"
     return _build_fallback_suggestion(
         user_id, date_str, description, info.get("amount")

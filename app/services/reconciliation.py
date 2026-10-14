@@ -3,6 +3,8 @@
 from collections import defaultdict
 from datetime import date, timedelta
 
+from app.services.clock import today as app_today
+
 from app.extensions import db
 from app.models.account import Account
 from app.models.journal import JournalEntry, JournalEntryLine
@@ -295,7 +297,7 @@ def find_matches(user_id, payment_account_code, csv_rows):
         for m in r["matches"]:
             referenced_line_ids.add(m.get("_line_id"))
 
-    today = date.today()
+    today = app_today()
     journal_only = []
     for c in line_candidates:
         if c["_line_id"] in referenced_line_ids:

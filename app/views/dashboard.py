@@ -1,9 +1,8 @@
-from datetime import date
-
 from flask import Blueprint, render_template
 from flask_login import login_required, current_user
 
 from app.services.audit import get_effective_user_id
+from app.services.clock import today as app_today
 from app.services.tax import get_income_expense_summary
 
 bp = Blueprint("dashboard", __name__)
@@ -12,7 +11,7 @@ bp = Blueprint("dashboard", __name__)
 @bp.route("/")
 @login_required
 def index():
-    today = date.today()
+    today = app_today()
     year = today.year
     month = today.month
 

@@ -10,6 +10,18 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 
 /**
+ * Date を端末のローカルタイムゾーンで 'YYYY-MM-DD' にする。
+ * `new Date().toISOString()` は UTC 基準で日付を返すため、日本時間の
+ * 0:00〜8:59 に前日の日付になる。日付初期値には必ず本関数を使う。
+ */
+function formatLocalDate(d) {
+  d = d || new Date();
+  var mm = String(d.getMonth() + 1).padStart(2, '0');
+  var dd = String(d.getDate()).padStart(2, '0');
+  return d.getFullYear() + '-' + mm + '-' + dd;
+}
+
+/**
  * 証憑画像をモーダルでプレビュー表示（PWA対応）
  */
 function openImagePreview(url) {

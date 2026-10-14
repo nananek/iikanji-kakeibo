@@ -35,7 +35,20 @@ RFC 8628 OAuth 2.0 Device Authorization Grant に対応。CLI / TUI / MCP サー
 2. ユーザーは `verification_uri_complete` をブラウザで開き、ログインして **「全権限で承認」** または **「読み取り専用で承認」** を選択
 3. クライアントは `POST /oauth/token` をポーリングしてアクセストークン (`ikt_*`) を取得
 
-OAuth トークンは API キーのスコープチェックを暗黙にスキップします (全スコープ相当)。ただし **読み取り専用** で承認したトークンは、書き込み系エンドポイント (`POST /journals`, `DELETE /journals/:id`, `POST /ai/analyze`, `DELETE /ai/drafts/:id`) を呼ぶと **403** で拒否されます。
+### OAuth 2.1 (MCP クライアント)
+
+MCP クライアント (Claude カスタムコネクタ等) 向けに、動的クライアント登録
+(RFC 7591) + Authorization Code + PKCE (`S256`) に対応しています。
+`POST /oauth/register` でクライアント登録 → `GET /oauth/authorize` で同意
+(このとき付与するスコープを選択可能) → `POST /oauth/token` で
+`authorization_code` / `refresh_token` を交換、という流れです。
+詳細は [MCP サーバー](../mcp.html) を参照してください。
+
+OAuth トークン (`ikt_*`) は付与されたスコープの範囲でのみ API を呼べます
+(スコープが未設定の従来トークンは全スコープ相当)。**読み取り専用** で
+承認したトークンは、書き込み系エンドポイント (`POST /journals`,
+`DELETE /journals/:id`, `POST /ai/analyze`, `DELETE /ai/drafts/:id`) を
+呼ぶと **403** で拒否されます。
 
 ## スコープ (API キーのみ)
 

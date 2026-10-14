@@ -674,8 +674,8 @@ function copyEntry() {
   document.getElementById('modalTitleText').textContent = '伝票複写';
   document.getElementById('modalEntryNum').textContent = '(新規)';
 
-  // 日付を今日に変更
-  document.getElementById('modalDate').value = new Date().toISOString().slice(0, 10);
+  // 日付を今日に変更（端末ローカル日付。UTC の toISOString は使わない）
+  document.getElementById('modalDate').value = formatLocalDate();
   document.getElementById('modalDate').disabled = false;
   document.getElementById('modalDesc').disabled = false;
 

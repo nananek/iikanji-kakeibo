@@ -1,6 +1,8 @@
 import csv
 import io
 from datetime import date, timedelta
+
+from app.services.clock import today as app_today
 from decimal import Decimal
 
 from flask import Blueprint, render_template, request, Response
@@ -35,11 +37,11 @@ def balance():
     """残高試算表（期間範囲指定対応）"""
     from app.services.fiscal import PERIOD_LABELS
 
-    year = request.args.get("year", date.today().year, type=int)
+    year = request.args.get("year", app_today().year, type=int)
     if "pf" not in request.args and "pt" not in request.args:
         pref = _current_user.get_pref("reports_default_period", "all")
         if pref == "current_month":
-            pf = pt = date.today().month
+            pf = pt = app_today().month
         else:
             pf, pt = 0, 15
     else:
@@ -221,7 +223,7 @@ def balance():
 @login_required
 def bs():
     """貸借対照表"""
-    year = request.args.get("year", date.today().year, type=int)
+    year = request.args.get("year", app_today().year, type=int)
     user_id = get_effective_user_id()
     start_of_year = date(year, 1, 1)
     end_of_year = date(year + 1, 1, 1)
@@ -355,7 +357,7 @@ def pl():
     """損益計算書"""
     from app.services.tax_form import get_business_account_codes, get_business_income
 
-    year = request.args.get("year", date.today().year, type=int)
+    year = request.args.get("year", app_today().year, type=int)
     month = request.args.get("month", 0, type=int)
     user_id = get_effective_user_id()
 
@@ -434,7 +436,7 @@ def pl():
 @login_required
 def tax():
     """確定申告用集計"""
-    year = request.args.get("year", date.today().year, type=int)
+    year = request.args.get("year", app_today().year, type=int)
 
     tax_summary = get_tax_summary(get_effective_user_id(), year)
     medical_summary = get_medical_summary(get_effective_user_id(), year)
@@ -451,7 +453,7 @@ def tax():
 @login_required
 def medical_csv():
     """医療費集計フォーム Ver 3.1 準拠CSVダウンロード"""
-    year = request.args.get("year", date.today().year, type=int)
+    year = request.args.get("year", app_today().year, type=int)
     medical_summary = get_medical_summary(get_effective_user_id(), year)
 
     output = io.StringIO()
@@ -503,11 +505,11 @@ def ledger():
     from app.services.fiscal import PERIOD_LABELS
     from sqlalchemy import case
 
-    year = request.args.get("year", date.today().year, type=int)
+    year = request.args.get("year", app_today().year, type=int)
     if "pf" not in request.args and "pt" not in request.args:
         pref = _current_user.get_pref("reports_default_period", "all")
         if pref == "current_month":
-            pf = pt = date.today().month
+            pf = pt = app_today().month
         else:
             pf, pt = 0, 15
     else:
@@ -755,7 +757,7 @@ def tax_form_report():
     """青色申告決算書レポート"""
     from app.services.tax_form import get_tax_form_report
 
-    year = request.args.get("year", date.today().year, type=int)
+    year = request.args.get("year", app_today().year, type=int)
     form_type = request.args.get("form_type", "general")
     if form_type not in ("general", "real_estate"):
         form_type = "general"
@@ -787,7 +789,7 @@ def monthly():
     """月次比較レポート"""
     from app.services.tax_form import get_business_account_codes
 
-    year = request.args.get("year", date.today().year, type=int)
+    year = request.args.get("year", app_today().year, type=int)
     user_id = get_effective_user_id()
     comparison = get_monthly_comparison(user_id, year)
 
@@ -798,7 +800,7 @@ def monthly():
         biz_monthly = _collapse_business_accounts(comparison, biz_codes)
 
     projection = None
-    today = date.today()
+    today = app_today()
     if year == today.year and today.day <= \
             __import__("calendar").monthrange(year, today.month)[1]:
         method = current_user.get_pref("projection_method", "pro_rata")

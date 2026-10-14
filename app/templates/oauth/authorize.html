@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% block title %}接続の承認 - いいかんじ™家計簿{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-lg-6 col-md-8">
+    <h2><i class="bi bi-shield-lock"></i> 接続の承認</h2>
+    <p class="text-muted">
+      以下のアプリがあなたの家計簿データへのアクセスを求めています。
+      許可する権限だけを選んで承認してください。
+    </p>
+
+    <div class="card">
+      <div class="card-body">
+        <dl class="row mb-3">
+          <dt class="col-sm-4">クライアント</dt>
+          <dd class="col-sm-8">{{ client.client_name or '不明なクライアント' }}</dd>
+          <dt class="col-sm-4">リダイレクト先</dt>
+          <dd class="col-sm-8 text-break"><small class="text-muted">{{ redirect_uri }}</small></dd>
+        </dl>
+
+        <form method="POST" action="{{ url_for('oauth.authorize_decision') }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <input type="hidden" name="client_id" value="{{ client.client_id }}">
+          <input type="hidden" name="redirect_uri" value="{{ redirect_uri }}">
+          <input type="hidden" name="response_type" value="code">
+          <input type="hidden" name="state" value="{{ state }}">
+          <input type="hidden" name="code_challenge" value="{{ code_challenge }}">
+          <input type="hidden" name="code_challenge_method" value="{{ code_challenge_method }}">
+          <input type="hidden" name="resource" value="{{ resource }}">
+          {% for s in requested_scopes %}
+          <input type="hidden" name="requested_scope" value="{{ s }}">
+          {% endfor %}
+
+          <fieldset class="mb-3">
+            <legend class="fs-6">許可する権限</legend>
+            {% for s in requested_scopes %}
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" name="scope"
+                     value="{{ s }}" id="scope-{{ loop.index }}" checked>
+              <label class="form-check-label" for="scope-{{ loop.index }}">
+                {{ scope_labels.get(s, s) }}
+                <small class="text-muted">({{ s }})</small>
+              </label>
+            </div>
+            {% endfor %}
+            <div class="form-text">
+              チェックを外した権限はこのクライアントに付与されません。
+              すべて外すと（読み取り専用の閲覧も含め）何もできなくなります。
+            </div>
+          </fieldset>
+
+          <div class="alert alert-warning small">
+            <i class="bi bi-exclamation-triangle"></i>
+            承認すると、このクライアントは選択した権限で長期間アクセスできます。
+            見覚えがない場合は拒否してください。
+          </div>
+
+          <div class="d-flex flex-wrap gap-2">
+            <button type="submit" name="decision" value="approve" class="btn btn-primary">
+              <i class="bi bi-check-circle"></i> 選択した権限で承認
+            </button>
+            <button type="submit" name="decision" value="deny" class="btn btn-outline-danger">
+              <i class="bi bi-x-circle"></i> 拒否
+            </button>
+          </div>
+        </form>
+
+        <p class="form-text mt-3">
+          発行されたトークンは <a href="{{ url_for('settings.oauth_tokens') }}">設定 &gt;
+          接続アプリ</a> からいつでも取り消せます。
+        </p>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

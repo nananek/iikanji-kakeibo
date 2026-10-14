@@ -1,6 +1,8 @@
 import json
 from datetime import date, datetime, timezone
 
+from app.services.clock import today as app_today
+
 from flask import Blueprint, render_template, redirect, url_for, flash, request, jsonify, make_response, current_app, session as flask_session
 from flask_login import login_required, logout_user, current_user
 
@@ -647,7 +649,7 @@ def oauth_token_revoke(token_id):
 @login_required
 def fiscal():
     """月次確定管理ページ"""
-    year = request.args.get("year", date.today().year, type=int)
+    year = request.args.get("year", app_today().year, type=int)
     user_id = get_effective_user_id()
     year_open = is_year_open(user_id, year)
     closed = get_closed_period(user_id, year)

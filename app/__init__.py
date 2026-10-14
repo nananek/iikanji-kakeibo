@@ -83,11 +83,19 @@ def create_app(config_class=Config):
     csrf.exempt(webauthn_bp)
     from app.views.api import bp as api_bp
     csrf.exempt(api_bp)
+    # MCP (Streamable HTTP) は Bearer トークンで認証するため CSRF 免除
+    from app.views.mcp import bp as mcp_bp
+    csrf.exempt(mcp_bp)
     # OAuth Device Flow のクライアント向けエンドポイントは CSRF 免除
     # (ブラウザ向けの authorize エンドポイントは CSRF 保護を維持)
     from app.views.oauth import device_authorization, token as oauth_token_view
     csrf.exempt(device_authorization)
     csrf.exempt(oauth_token_view)
+    # MCP 向け動的クライアント登録・トークン失効もマシン向けで CSRF 免除
+    from app.views.oauth import register as oauth_register_view
+    from app.views.oauth import revoke as oauth_revoke_view
+    csrf.exempt(oauth_register_view)
+    csrf.exempt(oauth_revoke_view)
 
     # Before-request hook: CSP nonce を払い出す (インライン script 用)。
     @app.before_request
@@ -159,6 +167,10 @@ def create_app(config_class=Config):
             or endpoint.startswith("auth.")
             or endpoint.startswith("api.")
             or endpoint.startswith("legal.")
+            # OAuth 同意/デバイス接続フローは顧問権限の対象外
+            # (クライアント連携はアカウント本人の操作)
+            or endpoint.startswith("oauth.")
+            or endpoint.startswith("mcp.")
         ):
             return
         # Auditor exit: always allow

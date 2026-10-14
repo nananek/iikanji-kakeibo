@@ -63,7 +63,8 @@
 | auditor | `/auditor` | 顧問ダッシュボード・代理閲覧 |
 | vouchers | `/vouchers` | 証憑一覧（日付・金額・取引先で検索） |
 | api | `/api/v1` | REST API（仕訳CRUD・AI証憑仕訳・Bearer認証） |
-| oauth | `/oauth` | OAuth 2.0 Device Authorization Grant (RFC 8628) |
+| oauth | `/oauth` | OAuth 2.0 Device Flow (RFC 8628) + MCP向け OAuth 2.1 (Authorization Code + PKCE / 動的クライアント登録) |
+| mcp | `/mcp` | MCP リモートサーバー (Streamable HTTP / JSON-RPC) + OAuth ディスカバリ (`/.well-known/...`) |
 
 ### モデル (`app/models/`)
 
@@ -85,13 +86,18 @@
 | BalanceCache | balance_caches | user_id, year, period, account_code, cumulative_debit, cumulative_credit |
 | WebAuthnCredential | webauthn_credentials | credential_id, credential_public_key, current_sign_count |
 | OAuthDevice | oauth_devices | device_code_hash, user_code, user_id, status (pending/approved/denied/expired/consumed), expires_at |
-| OAuthToken | oauth_tokens | user_id, name, token_hash, token_prefix, is_active, last_used_at, revoked_at |
+| OAuthToken | oauth_tokens | user_id, name, token_hash, token_prefix, is_active, last_used_at, revoked_at, read_only, scopes, expires_at, client_id, refresh_token_hash, refresh_expires_at |
+| OAuthClient | oauth_clients | client_id, client_secret_hash, client_name, redirect_uris_json, token_endpoint_auth_method |
+| OAuthAuthorizationCode | oauth_authorization_codes | code_hash, client_id, user_id, redirect_uri, scopes, code_challenge, resource, expires_at, used_at |
 
 ### サービス (`app/services/`)
 
 | ファイル | 責務 |
 |---------|------|
 | accounting.py | 仕訳自動生成（出納帳→仕訳変換、振替、直接仕訳） |
+| api_ops.py | REST API / MCP 共通の業務操作（仕訳・証憑・レポート、request 非依存） |
+| clock.py | アプリ基準タイムゾーン (`APP_TIMEZONE`) の today()/now() |
+| oauth_scopes.py | OAuth / MCP 共通のスコープ定義・正規化 |
 | fiscal.py | 月次確定・年度オープン判定・期間チェック・元入金科目取得 |
 | audit.py | 顧問権限・代理閲覧・科目隠蔽・提出ロック |
 | csv_import.py | CSVパース（エンコーディング自動判定・日付/金額パース） |
@@ -103,6 +109,7 @@
 | notify.py | Webhook 通知（Discord等） |
 | voucher.py | ドラフト→証憑移行ヘルパー (create_voucher_from_draft) |
 | storage.py | 証憑画像ストレージ抽象化（Local/S3）・サムネイル生成 |
+| urls.py | 外部公開 URL の基点 (`PUBLIC_BASE_URL`/`SERVER_NAME`/`WEBAUTHN_ORIGIN`) |
 | image.py | 画像配信ヘルパー（キャッシュ・ETag/304・send_file・S3 presigned URL） |
 | seed.py | 標準科目の初期データ・system_role定義 |
 
@@ -200,7 +207,7 @@
 - `tests/conftest.py` に SQLite in-memory のフィクスチャあり
 - pytest で実行: `docker exec -w /app server-web-1 python -m pytest tests/ -v`
 - GitHub Actions (`.github/workflows/test.yml`) で push/PR 時に自動実行
-- 445テスト: accounting(16), api(27), audit(43), balance_cache(15), compliance(14), csv_import(53), fiscal(26), models(12), monthly_report(8), ofx_import(15), settings(7), storage(25), tax(45), security_auth(27), security_idor(12), security_input(12), security_csrf(9), security_headers(7), security_ratelimit(3), voucher(23), voucher_search(14), voucher_tamper(15), timestamp(12)
+- 2047テスト: accounting(16), api(27), audit(43), balance_cache(15), compliance(14), csv_import(53), fiscal(26), models(12), monthly_report(8), ofx_import(15), settings(7), storage(25), tax(45), security_auth(27), security_idor(12), security_input(12), security_csrf(9), security_headers(7), security_ratelimit(3), voucher(23), voucher_search(14), voucher_tamper(15), timestamp(12), timezone(6), mcp(26), oauth_authorization_code(21)
 - E2Eテスト (Playwright/Firefox): `npx playwright test tests/e2e/` — 設定画面の表示・遷移(10), ドラッグ選択(15)。CIでも自動実行
 - 税務集計・プライバシー権限は重点テスト項目
 

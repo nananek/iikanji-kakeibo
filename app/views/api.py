@@ -4,7 +4,7 @@ import functools
 import hashlib
 import json
 from dataclasses import asdict
-from datetime import date as date_type, datetime, timezone
+from datetime import datetime, timezone
 
 from flask import Blueprint, jsonify, request, g
 
@@ -13,10 +13,8 @@ from app.models.api_key import APIKey
 from app.models.oauth import OAuthToken
 from app.models.ai_config import UserAIConfig
 from app.models.ai_draft import AIDraft
-from app.models.journal import JournalEntry
-from app.services.accounting import create_journal_entry
-from app.services.audit import get_submitted_account_codes, is_entry_locked_for_owner
-from app.services.fiscal import check_period_open_for_new, check_entry_modifiable
+from app.services import api_ops
+from app.services.api_ops import ApiError
 from app.services.image import serve_image
 from app.services.storage import (
     get_storage_backend, make_storage_key, make_thumbnail_key,
@@ -34,63 +32,98 @@ from app.views.helpers import safe_user_error
 bp = Blueprint("api", __name__, url_prefix="/api/v1")
 
 
+class BearerPrincipal:
+    """Bearer トークンから解決した主体 (ユーザー + 権限)。"""
+
+    def __init__(self, *, user_id, scopes, read_only, kind):
+        self.user_id = user_id
+        self.scopes = scopes          # None = 全スコープ (従来互換)
+        self.read_only = read_only
+        self.kind = kind              # "oauth" | "api_key"
+
+    def has_scope(self, scope: str) -> bool:
+        return self.scopes is None or scope in self.scopes
+
+
+def resolve_bearer_principal():
+    """Authorization: Bearer ヘッダーを解決する。
+
+    API キー (``ik_*``) と OAuth トークン (``ikt_*``) の両方を受け入れる。
+
+    Returns:
+        ``(principal, None)`` または ``(None, (response, status))``
+    """
+    auth = request.headers.get("Authorization", "")
+    if not auth.startswith("Bearer "):
+        return None, (jsonify({"error": "Authorization ヘッダーが必要です。"}), 401)
+
+    raw = auth[7:]
+    now = datetime.now(timezone.utc)
+
+    # OAuth トークン
+    if raw.startswith("ikt_"):
+        token = OAuthToken.query.filter_by(
+            token_hash=OAuthToken.hash_token(raw), is_active=True
+        ).first()
+        if not token:
+            return None, (jsonify({"error": "無効なトークンです。"}), 401)
+        if token.is_expired():
+            return None, (
+                jsonify({"error": "トークンの有効期限が切れています。"}), 401
+            )
+        token.last_used_at = now
+        db.session.commit()
+        return BearerPrincipal(
+            user_id=token.user_id, scopes=token.scope_set(),
+            read_only=token.read_only, kind="oauth",
+        ), None
+
+    # 従来のAPIキー
+    api_key = APIKey.query.filter_by(
+        key_hash=APIKey.hash_key(raw), is_active=True
+    ).first()
+    if not api_key:
+        return None, (jsonify({"error": "無効な API キーです。"}), 401)
+
+    api_key.last_used_at = now
+    db.session.commit()
+    return BearerPrincipal(
+        user_id=api_key.user_id, scopes=set(api_key.scope_list),
+        read_only=False, kind="api_key",
+    ), None
+
+
 def api_key_required(scope=None, write=False):
     """Authorization: Bearer <token> ヘッダーで認証するデコレータ
 
-    APIキー (ik_*) と OAuth Device Flow トークン (ikt_*) の両方を受け入れる。
-    OAuthToken は全スコープを暗黙的に持つ。
-    scope を指定すると、API キーにそのスコープがあるか追加チェックする。
+    APIキー (ik_*) と OAuth トークン (ikt_*) の両方を受け入れる。
+    OAuth トークンはスコープ集合を持ち (未設定トークンは全スコープ)、
+    scope を指定すると保持スコープを追加チェックする。
     write=True を指定したエンドポイントは、read_only な OAuth トークンからは拒否される。
     """
 
     def decorator(f):
         @functools.wraps(f)
         def decorated(*args, **kwargs):
-            auth = request.headers.get("Authorization", "")
-            if not auth.startswith("Bearer "):
-                return jsonify({"error": "Authorization ヘッダーが必要です。"}), 401
+            principal, err = resolve_bearer_principal()
+            if err is not None:
+                return err
 
-            raw = auth[7:]
-            now = datetime.now(timezone.utc)
+            if scope and not principal.has_scope(scope):
+                if principal.kind == "api_key":
+                    msg = f"この API キーには {scope} 権限がありません。"
+                else:
+                    msg = f"このトークンには {scope} 権限がありません。"
+                return jsonify({"error": msg}), 403
 
-            # OAuth Device Flow トークン
-            if raw.startswith("ikt_"):
-                token_hash = OAuthToken.hash_token(raw)
-                token = OAuthToken.query.filter_by(
-                    token_hash=token_hash, is_active=True
-                ).first()
-                if not token:
-                    return jsonify({"error": "無効なトークンです。"}), 401
-                if write and token.read_only:
-                    return (
-                        jsonify(
-                            {"error": "このトークンは読み取り専用です。"}
-                        ),
-                        403,
-                    )
-                token.last_used_at = now
-                db.session.commit()
-                g.api_user_id = token.user_id
-                return f(*args, **kwargs)
-
-            # 従来のAPIキー
-            key_hash = APIKey.hash_key(raw)
-            api_key = APIKey.query.filter_by(key_hash=key_hash, is_active=True).first()
-            if not api_key:
-                return jsonify({"error": "無効な API キーです。"}), 401
-
-            if scope and not api_key.has_scope(scope):
+            if write and principal.read_only:
                 return (
-                    jsonify(
-                        {"error": f"この API キーには {scope} 権限がありません。"}
-                    ),
+                    jsonify({"error": "このトークンは読み取り専用です。"}),
                     403,
                 )
 
-            api_key.last_used_at = now
-            db.session.commit()
-
-            g.api_user_id = api_key.user_id
+            g.api_user_id = principal.user_id
+            g.api_principal = principal
             return f(*args, **kwargs)
 
         return decorated
@@ -106,66 +139,14 @@ def api_key_required(scope=None, write=False):
 def create_journal():
     """仕訳起票 API"""
     data = request.get_json(silent=True)
-    if not data:
-        return jsonify({"error": "JSON ボディが必要です。"}), 400
-
-    # バリデーション
-    date_str = data.get("date")
-    description = (data.get("description") or "").strip()
-    lines = data.get("lines")
-    source = data.get("source", "api")
-
-    if not date_str:
-        return jsonify({"error": "date は必須です。"}), 400
-    if not description:
-        return jsonify({"error": "description は必須です。"}), 400
-    if not lines or not isinstance(lines, list):
-        return jsonify({"error": "lines は必須です（配列）。"}), 400
-
-    try:
-        entry_date = date_type.fromisoformat(date_str)
-    except ValueError:
-        return jsonify({"error": "date の形式が不正です（YYYY-MM-DD）。"}), 400
-
     user_id = g.api_user_id
 
-    # 確定済み期間チェック
-    err = check_period_open_for_new(user_id, entry_date.year, entry_date.month)
-    if err:
-        return jsonify({"error": err}), 400
-
-    # lines_data 変換
-    lines_data = []
-    for i, line in enumerate(lines):
-        account_code = line.get("account_code")
-        if not account_code:
-            return jsonify({"error": f"lines[{i}].account_code は必須です。"}), 400
-        lines_data.append({
-            "account_code": account_code,
-            "debit_amount": int(line.get("debit", 0) or 0),
-            "credit_amount": int(line.get("credit", 0) or 0),
-            "description": line.get("description", ""),
-        })
-
-    # 提出済みロック科目チェック
-    locked_codes = get_submitted_account_codes(user_id)
-    if locked_codes:
-        used_codes = {ld["account_code"] for ld in lines_data}
-        if used_codes & locked_codes:
-            return jsonify({"error": "提出済みの税務科目を含むため登録できません。"}), 400
-
     try:
-        entry = create_journal_entry(
-            user_id=user_id,
-            date=entry_date,
-            description=description,
-            lines_data=lines_data,
-            source=source,
-        )
-    except ValueError as e:
+        entry = api_ops.create_journal(user_id, data)
+    except ApiError as e:
         from flask import current_app
-        current_app.logger.exception("create_journal_entry failed (API)")
-        return jsonify({"error": safe_user_error(e)}), 400
+        current_app.logger.exception("create_journal failed (API)")
+        return jsonify({"error": e.message}), e.status
 
     # draft_id が指定されていれば下書きを削除する
     draft_id = data.get("draft_id")
@@ -195,85 +176,32 @@ def create_journal():
 # --- 仕訳閲覧 ---
 
 
-def _entry_to_dict(entry):
-    """JournalEntry を API レスポンス用 dict に変換"""
-    return {
-        "id": entry.id,
-        "date": entry.date.isoformat(),
-        "entry_number": entry.entry_number,
-        "description": entry.description,
-        "source": entry.source,
-        "lines": [
-            {
-                "account_code": line.account_code,
-                "debit": int(line.debit_amount or 0),
-                "credit": int(line.credit_amount or 0),
-                "description": line.description or "",
-            }
-            for line in entry.lines
-        ],
-        "vouchers": [
-            {
-                "id": v.id,
-                "uploaded_at": v.uploaded_at.isoformat() if v.uploaded_at else None,
-            }
-            for v in entry.vouchers
-        ],
-    }
-
-
 @bp.route("/journals", methods=["GET"])
 @api_key_required(scope="journals:read")
 def list_journals():
     """仕訳一覧 API"""
-    user_id = g.api_user_id
-    page = request.args.get("page", 1, type=int)
-    per_page = min(request.args.get("per_page", 20, type=int), 100)
-
-    query = JournalEntry.query.filter_by(user_id=user_id)
-
-    date_from = request.args.get("date_from")
-    if date_from:
-        try:
-            query = query.filter(JournalEntry.date >= date_type.fromisoformat(date_from))
-        except ValueError:
-            return jsonify({"error": "date_from の形式が不正です（YYYY-MM-DD）。"}), 400
-
-    date_to = request.args.get("date_to")
-    if date_to:
-        try:
-            query = query.filter(JournalEntry.date <= date_type.fromisoformat(date_to))
-        except ValueError:
-            return jsonify({"error": "date_to の形式が不正です（YYYY-MM-DD）。"}), 400
-
-    total = query.count()
-    entries = (
-        query.order_by(JournalEntry.date.desc(), JournalEntry.entry_number.desc())
-        .offset((page - 1) * per_page)
-        .limit(per_page)
-        .all()
-    )
-
-    return jsonify({
-        "ok": True,
-        "journals": [_entry_to_dict(e) for e in entries],
-        "total": total,
-        "page": page,
-        "per_page": per_page,
-    })
+    try:
+        result = api_ops.list_journals(
+            g.api_user_id,
+            page=request.args.get("page", 1, type=int),
+            per_page=request.args.get("per_page", 20, type=int),
+            date_from=request.args.get("date_from"),
+            date_to=request.args.get("date_to"),
+        )
+    except ApiError as e:
+        return jsonify({"error": e.message}), e.status
+    return jsonify(result)
 
 
 @bp.route("/journals/<int:entry_id>", methods=["GET"])
 @api_key_required(scope="journals:read")
 def get_journal(entry_id):
     """仕訳詳細 API"""
-    entry = JournalEntry.query.filter_by(
-        id=entry_id, user_id=g.api_user_id
-    ).first()
-    if not entry:
-        return jsonify({"error": "仕訳が見つかりません。"}), 404
-
-    return jsonify({"ok": True, "journal": _entry_to_dict(entry)})
+    try:
+        result = api_ops.get_journal(g.api_user_id, entry_id)
+    except ApiError as e:
+        return jsonify({"error": e.message}), e.status
+    return jsonify(result)
 
 
 # --- 仕訳削除 ---
@@ -283,25 +211,10 @@ def get_journal(entry_id):
 @api_key_required(scope="journals:delete", write=True)
 def delete_journal(entry_id):
     """仕訳削除 API"""
-    user_id = g.api_user_id
-    entry = JournalEntry.query.filter_by(
-        id=entry_id, user_id=user_id
-    ).first()
-    if not entry:
-        return jsonify({"error": "仕訳が見つかりません。"}), 404
-
-    # 提出済みロック科目チェック
-    if is_entry_locked_for_owner(user_id, entry):
-        return jsonify({"error": "提出済みの税務科目を含む伝票のため削除できません。"}), 400
-
-    # 確定済み期間チェック
-    err = check_entry_modifiable(user_id, entry)
-    if err:
-        return jsonify({"error": err}), 400
-
-    db.session.delete(entry)
-    db.session.commit()
-
+    try:
+        api_ops.delete_journal(g.api_user_id, entry_id)
+    except ApiError as e:
+        return jsonify({"error": e.message}), e.status
     return jsonify({"ok": True})
 
 
@@ -323,43 +236,66 @@ def ai_analyze():
       comment: メモ (任意, 最大500文字)
       notify: "1" でWebhook通知を送信 (任意)
     """
-    from app.services.ai_receipt import analyze_and_suggest
-
-    user_id = g.api_user_id
-
-    config = UserAIConfig.query.filter_by(user_id=user_id).first()
-    if not config:
-        return jsonify({"error": "AI API設定が未登録です。"}), 400
-
     image_file = request.files.get("image")
     if not image_file or not image_file.filename:
         return jsonify({"error": "image は必須です。"}), 400
 
-    image_bytes = image_file.read()
-    if len(image_bytes) > _MAX_IMAGE_SIZE:
-        return jsonify({"error": "ファイルサイズが大きすぎます（上限10MB）。"}), 400
+    try:
+        draft, suggestions_data = _perform_analyze(
+            g.api_user_id,
+            image_file.read(),
+            image_file.content_type,
+            request.form.get("comment") or "",
+            notify=request.form.get("notify") == "1",
+        )
+    except ApiError as e:
+        return jsonify({"error": e.message}), e.status
 
-    mime_type = image_file.content_type
+    return jsonify({
+        "ok": True,
+        "draft_id": draft.id,
+        "suggestions": suggestions_data,
+    }), 201
+
+
+def _perform_analyze(user_id, image_bytes, mime_type, comment, notify=False):
+    """request 非依存の AI 解析コア (REST / MCP 共用)。
+
+    Raises:
+        ApiError: 設定不足・形式不正・容量超過など。
+
+    Returns:
+        (AIDraft, suggestions_data)
+    """
+    from app.services.ai_receipt import analyze_and_suggest
+
+    config = UserAIConfig.query.filter_by(user_id=user_id).first()
+    if not config:
+        raise ApiError("AI API設定が未登録です。")
+
+    if len(image_bytes) > _MAX_IMAGE_SIZE:
+        raise ApiError("ファイルサイズが大きすぎます（上限10MB）。")
+
     if mime_type not in _ALLOWED_MIME_TYPES:
-        return jsonify({
-            "error": "対応していないファイル形式です。JPEG/PNG/WebP/GIF を使用してください。"
-        }), 400
+        raise ApiError(
+            "対応していないファイル形式です。JPEG/PNG/WebP/GIF を使用してください。"
+        )
     if not is_declared_image_valid(image_bytes, mime_type):
-        return jsonify({"error": "画像ファイルの内容が形式と一致しません。"}), 400
+        raise ApiError("画像ファイルの内容が形式と一致しません。")
 
     # Phase 5 #70: AIDraft 段階で StorageUsage に計上 (ai_journal.analyze と同等)
     size = len(image_bytes)
     owner = db.session.get(User, user_id)
     if owner is None:
-        return jsonify({"error": "ユーザーが見つかりません。"}), 400
+        raise ApiError("ユーザーが見つかりません。")
     try:
         check_quota(owner, size)
     except QuotaExceededError as exc:
         # CodeQL py/stack-trace-exposure 対策で `exc.user_message` 経由 (PR #92)
-        return jsonify({"error": exc.user_message}), 413
+        raise ApiError(exc.user_message, 413)
 
     file_hash = hashlib.sha256(image_bytes).hexdigest()
-    comment = (request.form.get("comment") or "").strip()[:500]
+    comment = (comment or "").strip()[:500]
 
     try:
         suggestions = analyze_and_suggest(
@@ -368,7 +304,7 @@ def ai_analyze():
     except (ValueError, RuntimeError) as e:
         from flask import current_app
         current_app.logger.exception("analyze_and_suggest failed (API)")
-        return jsonify({"error": safe_user_error(e)}), 400
+        raise ApiError(safe_user_error(e))
 
     suggestions_data = [asdict(s) for s in suggestions]
     suggestions_json = json.dumps(suggestions_data, ensure_ascii=False)
@@ -427,113 +363,63 @@ def ai_analyze():
                 "api ai/drafts rollback: record_delete failed "
                 "(user=%d size=%d): %s", owner.id, size, e,
             )
-        return jsonify({
-            "error": "並行アップロードにより容量上限を超えました。再試行してください。",
-        }), 413
+        raise ApiError(
+            "並行アップロードにより容量上限を超えました。再試行してください。", 413
+        )
 
     # オプション: Webhook 通知
-    if request.form.get("notify") == "1":
+    if notify:
         _send_draft_notification(user_id, draft, suggestions_data)
 
     # 容量警告メール (Phase 6 #71)。閾値超過時のみ送信、失敗は best-effort
     maybe_send_quota_warning(owner)
 
-    return jsonify({
-        "ok": True,
-        "draft_id": draft.id,
-        "suggestions": suggestions_data,
-    }), 201
-
-
-def _draft_to_dict(draft: AIDraft, include_suggestions: bool = False) -> dict:
-    """AIDraft を API レスポンス用 dict に変換"""
-    result: dict = {
-        "id": draft.id,
-        "status": draft.status,
-        "comment": draft.comment or "",
-        "created_at": draft.created_at.isoformat(),
-    }
-    if draft.suggestions_json:
-        try:
-            suggestions = json.loads(draft.suggestions_json)
-            if suggestions:
-                s = suggestions[0]
-                result["summary"] = {
-                    "title": s.get("title", ""),
-                    "date": s.get("date", ""),
-                    "description": s.get("entry_description", ""),
-                    "amount": sum(
-                        l.get("debit_amount", 0) for l in s.get("lines", [])
-                    ),
-                    "suggestion_count": len(suggestions),
-                }
-            if include_suggestions:
-                result["suggestions"] = suggestions
-        except (json.JSONDecodeError, IndexError):
-            pass
-    return result
+    return draft, suggestions_data
 
 
 @bp.route("/ai/drafts", methods=["GET"])
 @api_key_required(scope="ai:analyze")
 def ai_drafts():
     """下書き一覧 API"""
-    user_id = g.api_user_id
-    status = request.args.get("status", "analyzed")
-    if status not in ("analyzed", "done", "all"):
-        return jsonify({"error": "status は analyzed / done / all のいずれかです。"}), 400
-
-    page = request.args.get("page", 1, type=int)
-    per_page = min(request.args.get("per_page", 50, type=int), 100)
-
-    query = AIDraft.query.filter_by(user_id=user_id)
-    if status != "all":
-        query = query.filter_by(status=status)
-    else:
-        query = query.filter(AIDraft.status.in_(["analyzed", "done"]))
-
-    total = query.count()
-    drafts = (
-        query.order_by(AIDraft.created_at.desc())
-        .offset((page - 1) * per_page)
-        .limit(per_page)
-        .all()
-    )
-
-    return jsonify({
-        "ok": True,
-        "drafts": [_draft_to_dict(d) for d in drafts],
-        "total": total,
-        "page": page,
-        "per_page": per_page,
-    })
+    try:
+        result = api_ops.list_ai_drafts(
+            g.api_user_id,
+            status=request.args.get("status", "analyzed"),
+            page=request.args.get("page", 1, type=int),
+            per_page=request.args.get("per_page", 50, type=int),
+        )
+    except ApiError as e:
+        return jsonify({"error": e.message}), e.status
+    return jsonify(result)
 
 
 @bp.route("/ai/drafts/<int:draft_id>", methods=["GET"])
 @api_key_required(scope="ai:analyze")
 def ai_draft_detail(draft_id):
     """下書き詳細 API（候補含む）"""
-    draft = AIDraft.query.filter_by(
-        id=draft_id, user_id=g.api_user_id
-    ).first()
-    if not draft or draft.status == "temp":
-        return jsonify({"error": "下書きが見つかりません。"}), 404
-
-    return jsonify({
-        "ok": True,
-        "draft": _draft_to_dict(draft, include_suggestions=True),
-    })
+    try:
+        result = api_ops.get_ai_draft(g.api_user_id, draft_id)
+    except ApiError as e:
+        return jsonify({"error": e.message}), e.status
+    return jsonify(result)
 
 
 @bp.route("/ai/drafts/<int:draft_id>", methods=["DELETE"])
 @api_key_required(scope="ai:analyze", write=True)
 def ai_draft_delete(draft_id):
     """下書き削除 API"""
-    draft = AIDraft.query.filter_by(
-        id=draft_id, user_id=g.api_user_id
-    ).first()
+    try:
+        _perform_delete_draft(g.api_user_id, draft_id)
+    except ApiError as e:
+        return jsonify({"error": e.message}), e.status
+    return jsonify({"ok": True})
+
+
+def _perform_delete_draft(user_id, draft_id):
+    """request 非依存の下書き削除コア (REST / MCP 共用)。"""
+    draft = AIDraft.query.filter_by(id=draft_id, user_id=user_id).first()
     if not draft or draft.status == "temp":
-        return jsonify({"error": "下書きが見つかりません。"}), 404
+        raise ApiError("下書きが見つかりません。", 404)
 
     image_key = draft.image_key
     # Phase 5 #70: Voucher 化されないことが確定するため StorageUsage 減算。
@@ -549,114 +435,25 @@ def ai_draft_delete(draft_id):
         if owner is not None:
             record_delete(owner, size_to_release)
 
-    return jsonify({"ok": True})
-
 
 @bp.route("/vouchers", methods=["GET"])
 @api_key_required(scope="journals:read")
 def list_vouchers():
     """証憑一覧 API"""
-    from sqlalchemy import func
-    from app.models.journal import JournalEntryLine
-
-    user_id = g.api_user_id
-    page = request.args.get("page", 1, type=int)
-    per_page = min(request.args.get("per_page", 20, type=int), 100)
-
-    query = (
-        Voucher.query
-        .outerjoin(JournalEntry, Voucher.journal_entry_id == JournalEntry.id)
-        .filter(Voucher.user_id == user_id)
-    )
-
-    date_from = request.args.get("date_from")
-    if date_from:
-        try:
-            d = date_type.fromisoformat(date_from)
-            query = query.filter(
-                db.or_(
-                    JournalEntry.date >= d,
-                    db.and_(Voucher.journal_entry_id.is_(None),
-                            func.date(Voucher.uploaded_at) >= d),
-                )
-            )
-        except ValueError:
-            return jsonify({"error": "date_from の形式が不正です。"}), 400
-
-    date_to = request.args.get("date_to")
-    if date_to:
-        try:
-            d = date_type.fromisoformat(date_to)
-            query = query.filter(
-                db.or_(
-                    JournalEntry.date <= d,
-                    db.and_(Voucher.journal_entry_id.is_(None),
-                            func.date(Voucher.uploaded_at) <= d),
-                )
-            )
-        except ValueError:
-            return jsonify({"error": "date_to の形式が不正です。"}), 400
-
-    search = request.args.get("search")
-    if search:
-        query = query.filter(JournalEntry.description.ilike(f"%{search}%"))
-
-    amount_from = request.args.get("amount_from", type=int)
-    amount_to = request.args.get("amount_to", type=int)
-    if amount_from is not None or amount_to is not None:
-        amount_subq = (
-            db.session.query(
-                JournalEntryLine.journal_entry_id,
-                func.sum(JournalEntryLine.debit_amount).label("total"),
-            )
-            .group_by(JournalEntryLine.journal_entry_id)
-            .subquery()
+    try:
+        result = api_ops.list_vouchers(
+            g.api_user_id,
+            page=request.args.get("page", 1, type=int),
+            per_page=request.args.get("per_page", 20, type=int),
+            date_from=request.args.get("date_from"),
+            date_to=request.args.get("date_to"),
+            search=request.args.get("search"),
+            amount_from=request.args.get("amount_from", type=int),
+            amount_to=request.args.get("amount_to", type=int),
         )
-        query = query.outerjoin(
-            amount_subq, JournalEntry.id == amount_subq.c.journal_entry_id
-        )
-        if amount_from is not None:
-            query = query.filter(amount_subq.c.total >= amount_from)
-        if amount_to is not None:
-            query = query.filter(amount_subq.c.total <= amount_to)
-
-    total = query.count()
-    vouchers = (
-        query.order_by(
-            func.coalesce(JournalEntry.date, func.date(Voucher.uploaded_at)).desc(),
-            Voucher.id.desc(),
-        )
-        .offset((page - 1) * per_page)
-        .limit(per_page)
-        .all()
-    )
-
-    result = []
-    for v in vouchers:
-        entry = v.journal_entry
-        d = {
-            "id": v.id,
-            "journal_entry_id": v.journal_entry_id,
-            "image_mime": v.image_mime,
-            "uploaded_at": v.uploaded_at.isoformat() if v.uploaded_at else None,
-        }
-        if entry:
-            d["journal"] = {
-                "date": entry.date.isoformat(),
-                "description": entry.description,
-                "amount": int(entry.total_debit),
-            }
-        else:
-            d["journal"] = None
-        result.append(d)
-
-    return jsonify({
-        "ok": True,
-        "vouchers": result,
-        "total": total,
-        "page": page,
-        "per_page": per_page,
-    })
+    except ApiError as e:
+        return jsonify({"error": e.message}), e.status
+    return jsonify(result)
 
 
 @bp.route("/vouchers/<int:voucher_id>/image", methods=["GET"])
@@ -685,20 +482,16 @@ def api_trial_balance():
     Query: year (default: 当年), period_from (0-16, default: 0),
     period_to (0-16, default: 15)
     """
-    from app.services.reports import compute_trial_balance
-
-    year = request.args.get("year", type=int) or date_type.today().year
-    pf = request.args.get("period_from", 0, type=int)
-    pt = request.args.get("period_to", 15, type=int)
-
-    balances = compute_trial_balance(g.api_user_id, year, pf, pt)
-    return jsonify({
-        "ok": True,
-        "year": year,
-        "period_from": max(0, min(16, pf)),
-        "period_to": max(pf, min(16, pt)),
-        "balances": balances,
-    })
+    try:
+        result = api_ops.trial_balance(
+            g.api_user_id,
+            year=request.args.get("year", type=int),
+            period_from=request.args.get("period_from", 0, type=int),
+            period_to=request.args.get("period_to", 15, type=int),
+        )
+    except ApiError as e:
+        return jsonify({"error": e.message}), e.status
+    return jsonify(result)
 
 
 @bp.route("/reports/income-statement", methods=["GET"])
@@ -708,15 +501,15 @@ def api_income_statement():
 
     Query: year (default: 当年), month (1-12, optional)
     """
-    from app.services.reports import compute_income_statement
-
-    year = request.args.get("year", type=int) or date_type.today().year
-    month = request.args.get("month", type=int)
-    if month is not None and not (1 <= month <= 12):
-        return jsonify({"error": "month は 1-12 で指定してください。"}), 400
-
-    data = compute_income_statement(g.api_user_id, year, month)
-    return jsonify({"ok": True, "year": year, "month": month, **data})
+    try:
+        result = api_ops.income_statement(
+            g.api_user_id,
+            year=request.args.get("year", type=int),
+            month=request.args.get("month", type=int),
+        )
+    except ApiError as e:
+        return jsonify({"error": e.message}), e.status
+    return jsonify(result)
 
 
 @bp.route("/reports/monthly", methods=["GET"])
@@ -726,18 +519,13 @@ def api_monthly_comparison():
 
     Query: year (default: 当年)
     """
-    from app.services.tax import get_monthly_comparison
-
-    year = request.args.get("year", type=int) or date_type.today().year
-    data = get_monthly_comparison(g.api_user_id, year)
-    return jsonify({
-        "ok": True,
-        "year": year,
-        "expense_accounts": data["expense_accounts"],
-        "income_accounts": data["income_accounts"],
-        "expense_totals": [int(v) for v in data["expense_totals"]],
-        "income_totals": [int(v) for v in data["income_totals"]],
-    })
+    try:
+        result = api_ops.monthly_comparison(
+            g.api_user_id, year=request.args.get("year", type=int)
+        )
+    except ApiError as e:
+        return jsonify({"error": e.message}), e.status
+    return jsonify(result)
 
 
 @bp.route("/reports/tax", methods=["GET"])
@@ -747,53 +535,13 @@ def api_tax_summary():
 
     Query: year (default: 当年)
     """
-    from app.services.tax import get_tax_summary, get_medical_summary
-
-    year = request.args.get("year", type=int) or date_type.today().year
-    tax = get_tax_summary(g.api_user_id, year)
-    medical = get_medical_summary(g.api_user_id, year)
-
-    tax_serializable = {
-        cat: {
-            "label": v["label"],
-            "total": int(v["total"]),
-            "accounts": [
-                {"name": a["name"], "amount": int(a["amount"])}
-                for a in v["accounts"]
-            ],
-        }
-        for cat, v in tax.items()
-    }
-    medical_serializable = {
-        "total_paid": int(medical.get("total_paid", 0) or 0),
-        "total_reimbursed": int(medical.get("total_reimbursed", 0) or 0),
-        "net_total": int(medical.get("net_total", 0) or 0),
-        "by_patient": [
-            {
-                "name": p.get("name", ""),
-                "paid": int(p.get("paid", 0) or 0),
-                "reimbursed": int(p.get("reimbursed", 0) or 0),
-                "net": int(p.get("net", 0) or 0),
-                "hospitals": [
-                    {
-                        "name": h.get("name", ""),
-                        "paid": int(h.get("paid", 0) or 0),
-                        "reimbursed": int(h.get("reimbursed", 0) or 0),
-                        "net": int(h.get("net", 0) or 0),
-                        "provider_type": h.get("provider_type", ""),
-                    }
-                    for h in p.get("hospitals", [])
-                ],
-            }
-            for p in medical.get("by_patient", [])
-        ],
-    }
-    return jsonify({
-        "ok": True,
-        "year": year,
-        "tax_summary": tax_serializable,
-        "medical_summary": medical_serializable,
-    })
+    try:
+        result = api_ops.tax_summary(
+            g.api_user_id, year=request.args.get("year", type=int)
+        )
+    except ApiError as e:
+        return jsonify({"error": e.message}), e.status
+    return jsonify(result)
 
 
 def _send_draft_notification(user_id: int, draft: AIDraft, suggestions: list):

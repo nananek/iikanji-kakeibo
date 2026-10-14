@@ -10,6 +10,11 @@ class Config:
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     WTF_CSRF_ENABLED = True
 
+    # アプリ基準のタイムゾーン。日付の初期値や当月判定に使う
+    # (app/services/clock.py)。プロセスの TZ に依存せず日付ズレを防ぐ。
+    # 既定は Asia/Tokyo。
+    APP_TIMEZONE = os.environ.get("APP_TIMEZONE") or "Asia/Tokyo"
+
     # セッション永続化（明示的ログアウトまで維持）
     REMEMBER_COOKIE_DURATION = timedelta(days=365)
     REMEMBER_COOKIE_HTTPONLY = True
@@ -26,6 +31,11 @@ class Config:
 
     # 絶対 URL 生成・Cookie の Secure 判定に使う。公開運用では https を指定。
     PREFERRED_URL_SCHEME = os.environ.get("PREFERRED_URL_SCHEME", "http")
+
+    # OAuth ディスカバリ / デバイス認証 URI など、クライアントへ返す絶対 URL の
+    # 基点。未設定なら SERVER_NAME、次に WEBAUTHN_ORIGIN を使う。Host ヘッダに
+    # 依存させないことで Host 偽装による URL 汚染を防ぐ。
+    PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "")
 
     # リクエストボディの最大サイズ (バイト)。未設定なら 25 MiB。
     # 上限がないと巨大アップロードでメモリを枯渇させられる (DoS)。

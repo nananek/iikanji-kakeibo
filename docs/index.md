@@ -58,7 +58,17 @@ AIが証憑を読み取って仕訳を提案。
 
 ## MCP サーバー
 
-[`iikanji-mcp`](https://github.com/nananek/iikanji-kakeibo-client-mcp) を使うと、Claude Desktop 等の MCP クライアントから財務分析が可能になります。OAuth 読み取り専用トークンと組み合わせれば、構造的に書き込み不可で安全。
+いいかんじ™家計簿は **MCP リモートサーバーを内蔵** しています。Claude の
+カスタムコネクタ等から `https://your-server/mcp` に接続すると、財務分析や
+仕訳の起票ができます。MCP 仕様の OAuth 2.1 (動的クライアント登録 +
+Authorization Code + PKCE) に対応し、**承認時に付与する権限を
+スコープ単位で絞り込めます**。
+
+- [MCP サーバーの使い方]({{ '/mcp.html' | relative_url }}) — エンドポイント・OAuth フロー・提供ツール
+
+別リポジトリの [`iikanji-mcp`](https://github.com/nananek/iikanji-kakeibo-client-mcp)
+(stdio 版) も利用できます。OAuth 読み取り専用トークンと組み合わせれば、
+構造的に書き込み不可で安全です。
 
 ## Python クライアント
 
