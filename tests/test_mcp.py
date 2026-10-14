@@ -235,3 +235,25 @@ class TestOAuthDiscovery:
         assert body["authorization_endpoint"].endswith("/oauth/authorize")
         assert body["registration_endpoint"].endswith("/oauth/register")
         assert body["code_challenge_methods_supported"] == ["S256"]
+
+    def test_metadata_ignores_host_header(self, client):
+        """Host ヘッダ偽装で issuer / resource を書き換えられない。"""
+        evil = "evil.example"
+        body = client.get(
+            "/.well-known/oauth-authorization-server",
+            headers={"Host": evil},
+        ).get_json()
+        assert evil not in body["issuer"]
+        prm = client.get(
+            "/.well-known/oauth-protected-resource", headers={"Host": evil}
+        ).get_json()
+        assert evil not in prm["resource"]
+
+    def test_mcp_401_ignores_host_header(self, client):
+        resp = client.post(
+            "/mcp",
+            json={"jsonrpc": "2.0", "id": 1, "method": "ping"},
+            headers={"Host": "evil.example"},
+        )
+        assert resp.status_code == 401
+        assert "evil.example" not in resp.headers.get("WWW-Authenticate", "")

@@ -33,6 +33,13 @@ class ApiError(Exception):
         self.status = status
 
 
+# 外部 API / MCP から指定できる source。``closing``（損益振替・自動生成）等の
+# システム専用値は許可しない。
+ALLOWED_SOURCES = frozenset({
+    "api", "journal", "cashbook", "csv", "ofx", "web", "ai_receipt",
+})
+
+
 # --- シリアライザ (REST / MCP 共用) ---
 
 
@@ -156,6 +163,8 @@ def create_journal(user_id, data: dict) -> JournalEntry:
         raise ApiError("description は必須です。")
     if not lines or not isinstance(lines, list):
         raise ApiError("lines は必須です（配列）。")
+    if source not in ALLOWED_SOURCES:
+        raise ApiError("source が不正です。")
 
     try:
         entry_date = date_type.fromisoformat(date_str)

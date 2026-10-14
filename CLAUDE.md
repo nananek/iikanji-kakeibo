@@ -109,6 +109,7 @@
 | notify.py | Webhook 通知（Discord等） |
 | voucher.py | ドラフト→証憑移行ヘルパー (create_voucher_from_draft) |
 | storage.py | 証憑画像ストレージ抽象化（Local/S3）・サムネイル生成 |
+| urls.py | 外部公開 URL の基点 (`PUBLIC_BASE_URL`/`SERVER_NAME`/`WEBAUTHN_ORIGIN`) |
 | image.py | 画像配信ヘルパー（キャッシュ・ETag/304・send_file・S3 presigned URL） |
 | seed.py | 標準科目の初期データ・system_role定義 |
 

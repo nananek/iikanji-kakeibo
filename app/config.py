@@ -32,6 +32,11 @@ class Config:
     # 絶対 URL 生成・Cookie の Secure 判定に使う。公開運用では https を指定。
     PREFERRED_URL_SCHEME = os.environ.get("PREFERRED_URL_SCHEME", "http")
 
+    # OAuth ディスカバリ / デバイス認証 URI など、クライアントへ返す絶対 URL の
+    # 基点。未設定なら SERVER_NAME、次に WEBAUTHN_ORIGIN を使う。Host ヘッダに
+    # 依存させないことで Host 偽装による URL 汚染を防ぐ。
+    PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "")
+
     # リクエストボディの最大サイズ (バイト)。未設定なら 25 MiB。
     # 上限がないと巨大アップロードでメモリを枯渇させられる (DoS)。
     MAX_CONTENT_LENGTH = int(

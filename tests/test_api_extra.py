@@ -360,6 +360,18 @@ class TestCreateJournalExtra:
         assert resp.status_code == 400
         assert "account_code" in resp.get_json()["error"]
 
+    def test_rejects_reserved_source(self, logged_in_client, auth_header, user, accounts):
+        """システム予約の source (closing) は API から指定できない"""
+        resp = logged_in_client.post("/api/v1/journals", headers=auth_header, json={
+            "date": "2026-02-15", "description": "x", "source": "closing",
+            "lines": [
+                {"account_code": "5010", "debit": 100, "credit": 0},
+                {"account_code": "1010", "debit": 0, "credit": 100},
+            ],
+        })
+        assert resp.status_code == 400
+        assert "source" in resp.get_json()["error"]
+
     def test_submitted_account_locked(
         self, db, logged_in_client, auth_header, user, accounts, auditor
     ):

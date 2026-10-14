@@ -36,3 +36,4 @@ playwright-report/
 
 # 一時ファイル (plan 等)
 tmp/
+.tmp/

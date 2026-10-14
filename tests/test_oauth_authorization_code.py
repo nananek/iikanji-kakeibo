@@ -122,6 +122,22 @@ class TestAuthorizationEndpoint:
         })
         assert resp.status_code == 400
 
+    def test_no_scope_defaults_to_read_only(self, logged_in_client, client):
+        """クライアントがスコープ未要求なら読み取り系のみを既定提示する。"""
+        verifier, challenge = _pkce()
+        reg = _register(client)
+        resp = logged_in_client.get("/oauth/authorize", query_string={
+            "response_type": "code", "client_id": reg["client_id"],
+            "redirect_uri": REDIRECT, "code_challenge": challenge,
+            "code_challenge_method": "S256",
+        })
+        assert resp.status_code == 200
+        body = resp.get_data(as_text=True)
+        assert "reports:read" in body
+        # 書き込み系スコープは既定で提示しない (最小権限)
+        assert "journals:create" not in body
+        assert "journals:delete" not in body
+
     def test_deny_redirects_with_error(self, logged_in_client, client):
         verifier, challenge = _pkce()
         reg = _register(client)

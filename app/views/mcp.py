@@ -40,8 +40,9 @@ INTERNAL_ERROR = -32603
 
 
 def issuer_url() -> str:
-    """本サーバーの issuer (スキーム://ホスト) を返す。"""
-    return request.url_root.rstrip("/")
+    """本サーバーの issuer (スキーム://ホスト) を返す。Host 偽装に依存しない。"""
+    from app.services.urls import external_base_url
+    return external_base_url()
 
 
 def resource_url() -> str:
@@ -484,7 +485,10 @@ def _call_tool(tool: dict, principal, args) -> dict:
     except ApiError as e:
         return _tool_error(e.message)
     except (ValueError, TypeError) as e:
-        return _tool_error(f"引数が不正です: {e}")
+        current_app.logger.warning(
+            "Invalid arguments for MCP tool %s: %s", tool["name"], e
+        )
+        return _tool_error("引数が不正です。")
     except Exception:
         current_app.logger.exception("MCP tool %s failed", tool["name"])
         return _tool_error("ツールの実行に失敗しました。")

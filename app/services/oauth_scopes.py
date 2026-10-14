@@ -18,6 +18,11 @@ SCOPES: dict[str, str] = {
 # 書き込みを伴うスコープ。1 つも選ばれなければ実質読み取り専用になる。
 WRITE_SCOPES = frozenset({"journals:create", "journals:delete", "ai:analyze"})
 
+# 読み取り専用スコープ。クライアントがスコープを要求しなかったときの
+# 既定値にする (最小権限)。書き込みは明示的に選ばせて付与する。
+READ_SCOPES = tuple(s for s in SCOPES if s not in WRITE_SCOPES)
+DEFAULT_SCOPES = READ_SCOPES
+
 # 既定で全スコープを表す並び (表示順)
 ALL_SCOPES = tuple(SCOPES.keys())
 

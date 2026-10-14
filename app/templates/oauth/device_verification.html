@@ -91,7 +91,8 @@
             {% for s in all_scopes %}
             <div class="form-check">
               <input class="form-check-input" type="checkbox" name="scope"
-                     value="{{ s }}" id="dscope-{{ loop.index }}" checked>
+                     value="{{ s }}" id="dscope-{{ loop.index }}"
+                     {% if s in read_scopes %}checked{% endif %}>
               <label class="form-check-label" for="dscope-{{ loop.index }}">
                 {{ scope_labels.get(s, s) }}
               </label>

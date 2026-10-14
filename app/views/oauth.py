@@ -23,7 +23,9 @@ from app.models.oauth import (
     DEVICE_CODE_EXPIRES_IN, DEVICE_CODE_POLL_INTERVAL,
     AUTHORIZATION_CODE_EXPIRES_IN, ACCESS_TOKEN_EXPIRES_IN,
 )
-from app.services.oauth_scopes import SCOPES, normalize, read_only_for
+from app.services.oauth_scopes import (
+    SCOPES, READ_SCOPES, normalize, read_only_for,
+)
 
 bp = Blueprint("oauth", __name__, url_prefix="/oauth")
 
@@ -63,7 +65,8 @@ def device_authorization():
     db.session.add(device)
     db.session.commit()
 
-    verification_uri = url_for("oauth.device_verification", _external=True)
+    from app.services.urls import external_base_url
+    verification_uri = external_base_url() + "/oauth/device"
     verification_uri_complete = (
         f"{verification_uri}?code={device.user_code}"
     )
@@ -305,6 +308,7 @@ def device_verification():
         device=device,
         expired=expired,
         all_scopes=list(SCOPES.keys()),
+        read_scopes=set(READ_SCOPES),
         scope_labels=SCOPES,
     )
 
@@ -418,7 +422,8 @@ def _parse_authorize_request(params, scope_value):
 
     requested = normalize(scope_value)
     if not requested:
-        requested = list(SCOPES.keys())
+        # クライアントがスコープ未要求 → 読み取り専用を既定にする (最小権限)
+        requested = list(READ_SCOPES)
 
     return {
         "client": client,

@@ -124,6 +124,8 @@ curl -s https://your-server.example.com/mcp \
 - アクセストークンは 1 時間、リフレッシュトークンは 30 日で、更新時にローテート。
 - トークンはハッシュのみ保存。付与したスコープの範囲でのみ操作可能。
 - 発行済みトークンは「設定 &gt; 接続アプリ」からいつでも取り消せます。
+- ディスカバリ等で返す絶対 URL は `PUBLIC_BASE_URL`（未設定なら
+  `SERVER_NAME`、次に `WEBAUTHN_ORIGIN`）に固定し、Host ヘッダに依存しません。
 
 > `iikanji-mcp` (stdio 版の別リポジトリ) と本サーバー内蔵の `/mcp` は
 > どちらも同じ REST API を利用します。用途に応じて選べます。
