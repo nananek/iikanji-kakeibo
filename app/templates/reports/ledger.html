@@ -49,7 +49,7 @@
 
 {% if selected_account %}
 <form id="ledgerBulkForm" method="POST" action="{{ url_for('journal.bulk_delete') }}"
-      onsubmit="return confirm('選択した仕訳を削除しますか？この操作は取り消せません。');">
+      data-confirm="選択した仕訳を削除しますか？この操作は取り消せません。">
   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
   <input type="hidden" name="redirect_url" value="{{ request.url }}">
 
@@ -157,7 +157,7 @@
             </td>
             <td>{{ e.date.strftime('%m/%d') }}</td>
             <td class="d-mobile-none"><small class="text-muted">#{{ e.entry_number }}</small></td>
-            <td>{{ e.description }}{% if e.voucher_id %} <a href="#" onclick="openImagePreview('{{ url_for('ai_journal.voucher_image', voucher_id=e.voucher_id) }}');return false" title="証憑画像" class="text-success"><i class="bi bi-image"></i></a>{% endif %}</td>
+            <td>{{ e.description }}{% if e.voucher_id %} <a href="#" data-action="openImagePreview" data-args='["{{ url_for('ai_journal.voucher_image', voucher_id=e.voucher_id) }}"]' data-prevent title="証憑画像" class="text-success"><i class="bi bi-image"></i></a>{% endif %}</td>
             <td class="d-mobile-none"><small>{{ e.counter_account }}</small></td>
             <td class="text-end">
               {% if e.debit %}&yen;{{ "{:,}".format(e.debit) }}{% endif %}
@@ -170,7 +170,7 @@
             </td>
             <td>
               <button type="button" class="btn btn-outline-secondary btn-sm py-0"
-                      title="{{ '仕訳を閲覧' if e.is_readonly else '仕訳を編集' }}" onclick="openEditModal({{ e.entry_id }})">
+                      title="{{ '仕訳を閲覧' if e.is_readonly else '仕訳を編集' }}" data-action="openEditModal" data-args="[{{ e.entry_id }}]">
                 <i class="bi {{ 'bi-eye' if e.is_readonly else 'bi-pencil' }}"></i>
               </button>
             </td>
@@ -217,7 +217,7 @@
         <div id="voucherUploadArea" class="d-none border rounded p-3 mb-3">
           <label class="form-label mb-1"><i class="bi bi-file-image"></i> 証憑画像を選択</label>
           <input type="file" id="voucherFileInput" accept="image/jpeg,image/png,image/webp,image/gif"
-                 class="form-control" onchange="uploadVoucher()">
+                 class="form-control" data-action-change="uploadVoucher">
           <div id="voucherUploadProgress" class="d-none mt-2 text-center">
             <div class="spinner-border spinner-border-sm text-primary" role="status"></div>
             <span class="ms-1 text-muted">アップロード中…</span>
@@ -273,22 +273,22 @@
             </tfoot>
           </table>
         </div>
-        <button type="button" class="btn btn-outline-secondary btn-sm" id="modalAddLineBtn" onclick="modalAddLine()">
+        <button type="button" class="btn btn-outline-secondary btn-sm" id="modalAddLineBtn" data-action="modalAddLine">
           <i class="bi bi-plus-lg"></i> 行を追加
         </button>
       </div>
       <div class="modal-footer">
-        <button type="button" class="btn btn-outline-danger me-auto" id="modalDeleteBtn" onclick="deleteEntry()">
+        <button type="button" class="btn btn-outline-danger me-auto" id="modalDeleteBtn" data-action="deleteEntry">
           <i class="bi bi-trash"></i> 削除
         </button>
-        <button type="button" class="btn btn-outline-info" id="modalCopyBtn" onclick="copyEntry()">
+        <button type="button" class="btn btn-outline-info" id="modalCopyBtn" data-action="copyEntry">
           <i class="bi bi-copy"></i> 複写
         </button>
-        <button type="button" class="btn btn-outline-success" id="modalAttachBtn" onclick="toggleVoucherUpload()">
+        <button type="button" class="btn btn-outline-success" id="modalAttachBtn" data-action="toggleVoucherUpload">
           <i class="bi bi-file-image"></i> 証憑追加
         </button>
         <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">閉じる</button>
-        <button type="button" class="btn btn-primary" id="modalSaveBtn" onclick="saveEntry()">
+        <button type="button" class="btn btn-primary" id="modalSaveBtn" data-action="saveEntry">
           <i class="bi bi-check-lg"></i> 保存
         </button>
       </div>
@@ -309,7 +309,7 @@
 {% endblock %}
 
 {% block scripts %}
-<script>
+<script nonce="{{ csp_nonce }}">
 // デスクトップ時は科目selectにコードを表示
 if (window.innerWidth > 576) {
   document.querySelectorAll('#accountSelect option[data-code]').forEach(function(opt) {
@@ -419,8 +419,8 @@ if (window.innerWidth > 576) {
 </script>
 
 {% if selected_account %}
-<script src="{{ url_for('static', filename='js/drag_select.js') }}"></script>
-<script>
+<script nonce="{{ csp_nonce }}" src="{{ url_for('static', filename='js/drag_select.js') }}"></script>
+<script nonce="{{ csp_nonce }}">
 // 一括選択
 (function() {
   var selectAll = document.getElementById('ledgerSelectAll');
@@ -500,10 +500,10 @@ function modalAddLine(data, readonly) {
           '<span class="modal-account-name ' + acctClass + '">' + acctName + '</span>' +
         '</button>' +
       '</td>' +
-      '<td><input type="number" class="form-control form-control-sm text-end modal-debit" value="' + (data.debit_amount || 0) + '" min="0" onchange="modalUpdateTotals()"></td>' +
-      '<td><input type="number" class="form-control form-control-sm text-end modal-credit" value="' + (data.credit_amount || 0) + '" min="0" onchange="modalUpdateTotals()"></td>' +
+      '<td><input type="number" class="form-control form-control-sm text-end modal-debit" value="' + (data.debit_amount || 0) + '" min="0" data-action-change="modalUpdateTotals"></td>' +
+      '<td><input type="number" class="form-control form-control-sm text-end modal-credit" value="' + (data.credit_amount || 0) + '" min="0" data-action-change="modalUpdateTotals"></td>' +
       '<td class="d-mobile-none"><input type="text" class="form-control form-control-sm modal-line-desc" value="' + (data.description || '').replace(/"/g, '&quot;') + '"></td>' +
-      '<td><button type="button" class="btn btn-outline-danger btn-sm modal-remove-btn" onclick="this.closest(\'tr\').remove(); modalUpdateTotals()"><i class="bi bi-x"></i></button></td>';
+      '<td><button type="button" class="btn btn-outline-danger btn-sm modal-remove-btn" data-action="removeRowAndUpdate" data-self><i class="bi bi-x"></i></button></td>';
 
     tr.querySelector('.modal-account-btn').addEventListener('click', function() {
       var btn = this;

@@ -25,7 +25,7 @@ from app.services.fiscal import check_period_open_for_new, get_closed_periods_ma
 from app.services.image import serve_image
 from app.services.storage import (
     get_storage_backend, make_storage_key, make_thumbnail_key,
-    store_image_with_thumbnail,
+    store_image_with_thumbnail, is_declared_image_valid,
 )
 from app.services.storage_quota import (
     QuotaExceededError, check_quota, is_over_quota,
@@ -66,6 +66,9 @@ def analyze_stream():
     mime_type = image_file.content_type
     if mime_type not in ALLOWED_MIME_TYPES:
         return Response(_sse_event({"stage": "error", "detail": "対応していないファイル形式です。JPEG/PNG/WebP/GIF を使用してください。"}),
+                        mimetype="text/event-stream")
+    if not is_declared_image_valid(image_bytes, mime_type):
+        return Response(_sse_event({"stage": "error", "detail": "画像ファイルの内容が形式と一致しません。"}),
                         mimetype="text/event-stream")
 
     user_id = get_effective_user_id()
@@ -200,6 +203,8 @@ def analyze():
         return jsonify({
             "error": "対応していないファイル形式です。JPEG/PNG/WebP/GIF を使用してください。"
         }), 400
+    if not is_declared_image_valid(image_bytes, mime_type):
+        return jsonify({"error": "画像ファイルの内容が形式と一致しません。"}), 400
 
     # Phase 5 #70: AIDraft 段階で StorageUsage に計上する。Voucher 化時は
     # 所有権移転で計上不変、reject/期限切れ削除時に record_delete で減算。

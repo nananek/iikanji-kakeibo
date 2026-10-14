@@ -192,7 +192,8 @@ class TestAIJournalAnalyzeQuota:
             resp = logged_in_client.post(
                 "/ai-journal/analyze",
                 data={
-                    "image_file": (BytesIO(b"x" * 100), "test.jpg", "image/jpeg"),
+                    "image_file": (BytesIO(b"\xff\xd8\xff\xe0" + b"x" * 96),
+                                   "test.jpg", "image/jpeg"),
                     "comment": "テストコメント",
                 },
                 content_type="multipart/form-data",
@@ -219,7 +220,7 @@ class TestAIJournalAnalyzeQuota:
         db.session.add(StorageUsage(user_id=user.id, used_bytes=499 * MB))
         db.session.commit()
 
-        big = b"x" * (2 * MB)
+        big = b"\xff\xd8\xff\xe0" + b"x" * (2 * MB - 4)
         resp = logged_in_client.post(
             "/ai-journal/analyze",
             data={
@@ -276,8 +277,8 @@ class TestAIJournalAnalyzeQuota:
             resp = logged_in_client.post(
                 "/ai-journal/analyze",
                 data={
-                    "image_file": (BytesIO(b"x" * 1000), "test.jpg",
-                                   "image/jpeg"),
+                    "image_file": (BytesIO(b"\xff\xd8\xff\xe0" + b"x" * 996),
+                                   "test.jpg", "image/jpeg"),
                 },
                 content_type="multipart/form-data",
             )

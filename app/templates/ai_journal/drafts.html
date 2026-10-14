@@ -82,7 +82,7 @@
         </a>
         {% endif %}
         <form method="POST" action="{{ url_for('ai_journal.drafts_delete', draft_id=d.id) }}"
-              onsubmit="return confirm('この下書きを削除しますか？')">
+              data-confirm="この下書きを削除しますか？">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <button type="submit" class="btn btn-outline-danger btn-sm">
             <i class="bi bi-trash"></i>

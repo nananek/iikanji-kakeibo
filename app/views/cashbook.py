@@ -19,7 +19,7 @@ from app.services.fiscal import check_entry_modifiable, check_period_open_for_ne
 from app.services.audit import (
     get_effective_user_id, get_allowed_account_codes, get_submitted_account_codes,
     is_entry_locked_for_owner, is_entry_locked_for_auditor,
-    is_acting_as_auditor,
+    is_acting_as_auditor, find_disallowed_write_codes,
 )
 from app.views.helpers import get_grouped_accounts, parse_iso_date
 
@@ -107,6 +107,22 @@ def new():
                         closed_periods=closed_periods,
                         restricted_before_year=restricted_before,
                     )
+
+        # Lv2: クライアントが送ってきた科目が公開範囲内か検証する
+        # (非公開科目を新規に書き込ませない)。
+        if find_disallowed_write_codes(
+            {form.payment_account_code.data, form.category_account_code.data},
+            allowed_codes,
+        ):
+            flash("使用できない科目が含まれています。", "danger")
+            return render_template(
+                "cashbook/form.html", form=form, is_edit=False,
+                grouped_accounts=get_grouped_accounts(user_id, allowed_codes),
+                payment_account_name=_account_name(form.payment_account_code.data, get_effective_user_id()),
+                category_account_name=_account_name(form.category_account_code.data, get_effective_user_id()),
+                closed_periods=closed_periods,
+                restricted_before_year=restricted_before,
+            )
 
         # 計上期間の決定
         fiscal_period = None
@@ -215,6 +231,21 @@ def edit(entry_id):
     restricted_before = get_restricted_before_year(user_id)
 
     if form.validate_on_submit():
+        # Lv2: 書き込み先の科目が公開範囲内か検証する
+        if find_disallowed_write_codes(
+            {form.payment_account_code.data, form.category_account_code.data},
+            allowed_codes,
+        ):
+            flash("使用できない科目が含まれています。", "danger")
+            return render_template(
+                "cashbook/form.html", form=form, is_edit=True, entry=entry,
+                grouped_accounts=get_grouped_accounts(user_id, allowed_codes),
+                payment_account_name=_account_name(form.payment_account_code.data, get_effective_user_id()),
+                category_account_name=_account_name(form.category_account_code.data, get_effective_user_id()),
+                closed_periods=closed_periods,
+                restricted_before_year=restricted_before,
+            )
+
         # 計上期間の決定
         fiscal_period = None
         if form.fiscal_period.data:

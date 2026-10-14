@@ -4,7 +4,7 @@
 {% block content %}
 <h2><i class="bi bi-file-earmark-binary"></i> OFX明細取込</h2>
 
-<script>
+<script nonce="{{ csp_nonce }}">
   var _importRows = {{ parsed | tojson }};
   var _closedPeriods = {{ closed_periods | tojson }};
   var _restrictedBefore = {{ restricted_before_year | tojson }};
@@ -33,5 +33,5 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="{{ url_for('static', filename='js/drag_select.js') }}"></script>
+<script nonce="{{ csp_nonce }}" src="{{ url_for('static', filename='js/drag_select.js') }}"></script>
 {% endblock %}

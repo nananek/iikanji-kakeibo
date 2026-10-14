@@ -80,8 +80,6 @@
 | AuditGrantAccount | audit_grant_accounts | audit_grant_id, account_user_id, account_code（Lv2の可視科目） |
 | AIDraft | ai_drafts | user_id, status (pending/analyzed), image_path, suggestions (JSON), discord_webhook_url, discord_message_id |
 | UserAIConfig | user_ai_configs | provider, api_key_encrypted, model_name, custom_prompt, base_url |
-| AutoImportSource | auto_import_sources | user_id, source_type (webdav), config (JSON暗号化) |
-| ProcessedFile | auto_import_processed_files | source_id, filename, draft_id |
 | WebhookConfig | webhook_configs | user_id, url, events |
 | Voucher | vouchers | user_id, journal_entry_id (SET NULL), image_key, image_mime, file_hash (SHA-256), uploaded_at |
 | BalanceCache | balance_caches | user_id, year, period, account_code, cumulative_debit, cumulative_credit |
@@ -103,7 +101,6 @@
 | balance_cache.py | 確定済み残高キャッシュの保存・取得 |
 | captcha.py | CAPTCHA 検証（hCaptcha/reCAPTCHA/Turnstile/mCaptcha） |
 | notify.py | Webhook 通知（Discord等） |
-| auto_import.py | 自動取込オーケストレーター（内部利用、UIはオプトアウト済み） |
 | voucher.py | ドラフト→証憑移行ヘルパー (create_voucher_from_draft) |
 | storage.py | 証憑画像ストレージ抽象化（Local/S3）・サムネイル生成 |
 | image.py | 画像配信ヘルパー（キャッシュ・ETag/304・send_file・S3 presigned URL） |

@@ -17,6 +17,7 @@ from app.services.audit import (
     is_entry_locked_for_owner, is_entry_locked_for_auditor,
     is_acting_as_auditor, get_permission_level,
     get_proprietor_account_code, mask_account_name,
+    find_disallowed_write_codes,
 )
 from app.views.helpers import get_grouped_accounts, is_safe_internal_path, safe_user_error, parse_iso_date
 
@@ -242,6 +243,24 @@ def edit(entry_id):
             })
 
         if allowed_codes is not None:
+            # Lv2: クライアントが送ってきた科目が公開範囲内か検証する
+            # (非公開科目を新規に書き込ませない)。事業主行は集約先として許容。
+            bad_codes = find_disallowed_write_codes(
+                [p["account_code"] for p in parsed],
+                allowed_codes, proprietor_code,
+            )
+            if bad_codes:
+                flash("使用できない科目が含まれています。", "danger")
+                return render_template(
+                    "journal/form.html",
+                    form=form,
+                    grouped_accounts=grouped_accounts,
+                    is_edit=True,
+                    entry=entry,
+                    closed_periods=closed_periods,
+                    restricted_before_year=restricted_before,
+                )
+
             # Lv2: 非公開行を保持、公開行のみ差し替え
             non_public_debit = sum(
                 int(l.debit_amount) for l in entry.lines if l.account_code not in allowed_codes
@@ -557,6 +576,13 @@ def edit_api(entry_id):
         })
 
     if allowed_codes is not None:
+        # Lv2: クライアントが送ってきた科目が公開範囲内か検証する
+        bad_codes = find_disallowed_write_codes(
+            [p["account_code"] for p in parsed], allowed_codes, proprietor_code,
+        )
+        if bad_codes:
+            return jsonify({"error": "使用できない科目が含まれています。"}), 400
+
         # Lv2: 非公開行を保持したまま、公開行だけ差し替え
         # 非公開行の借方/貸方合計を算出
         non_public_debit = 0
@@ -663,6 +689,7 @@ def edit_api(entry_id):
 def create_api():
     """仕訳をJSON APIで新規作成する（モーダル複写用）"""
     user_id = get_effective_user_id()
+    allowed_codes = get_allowed_account_codes()
     data = request.get_json()
     if not data:
         return jsonify({"error": "リクエストが不正です。"}), 400
@@ -690,6 +717,12 @@ def create_api():
 
     if not parsed:
         return jsonify({"error": "仕訳明細を1行以上入力してください。"}), 400
+
+    # Lv2: クライアントが送ってきた科目が公開範囲内か検証する
+    if find_disallowed_write_codes(
+        [p["account_code"] for p in parsed], allowed_codes
+    ):
+        return jsonify({"error": "使用できない科目が含まれています。"}), 400
 
     total_debit = sum(l["debit_amount"] for l in parsed)
     total_credit = sum(l["credit_amount"] for l in parsed)
@@ -907,29 +940,35 @@ def batches():
 @login_required
 def delete_batch(batch_id):
     """インポートバッチの一括削除"""
+    user_id = get_effective_user_id()
     entries = JournalEntry.query.filter_by(
-        user_id=get_effective_user_id(), batch_id=batch_id
+        user_id=user_id, batch_id=batch_id
     ).all()
 
     if not entries:
         flash("該当するバッチが見つかりません。", "warning")
         return redirect(url_for("journal.batches"))
 
-    # 確定済み期間チェック
+    allowed_codes = get_allowed_account_codes()
+
+    # 確定済み期間 + 伝票ロックチェック
     locked = []
     deletable = []
     for entry in entries:
-        err = check_entry_modifiable(get_effective_user_id(), entry)
+        err = check_entry_modifiable(user_id, entry)
         if err:
+            locked.append(entry)
+        elif not is_acting_as_auditor() and is_entry_locked_for_owner(user_id, entry):
+            locked.append(entry)
+        elif is_acting_as_auditor() and allowed_codes is not None and is_entry_locked_for_auditor(entry, allowed_codes):
             locked.append(entry)
         else:
             deletable.append(entry)
 
     if locked:
-        flash(f"{len(locked)}件の仕訳は確定済み期間のため削除できませんでした。", "warning")
+        flash(f"{len(locked)}件の仕訳は削除できませんでした。", "warning")
 
     count = len(deletable)
-    user_id = get_effective_user_id()
     for entry in deletable:
         db.session.delete(entry)
     db.session.commit()

@@ -115,6 +115,105 @@ document.addEventListener('alpine:init', function() {
           ? withVoucher + '件の仕訳に証憑が紐づいています。削除すると証憑が未紐付けになります。削除しますか？'
           : '選択した仕訳を削除しますか？この操作は取り消せません。';
         return confirm(msg);
+      },
+
+      onSubmit: function(e) {
+        if (!this.confirmBulkDelete()) e.preventDefault();
+      }
+    };
+  });
+
+  /**
+   * 出納帳フォーム (CSP ビルド対応: インライン x-data の getter/メソッドを移設)
+   */
+  Alpine.data('cashbookForm', function(config) {
+    return {
+      tab: config.tab || 'expense',
+      paymentCode: config.paymentCode || '',
+      paymentName: config.paymentName || '',
+      categoryCode: config.categoryCode || '',
+      categoryName: config.categoryName || '',
+
+      get field1Label() {
+        return this.tab === 'income' ? '入金先' : (this.tab === 'transfer' ? '移動元' : '支払元');
+      },
+      get field2Label() {
+        return this.tab === 'expense' ? '支出先' : (this.tab === 'income' ? '収入源' : '移動先');
+      },
+      get field2Filter() {
+        return this.tab === 'expense' ? 'expense' : (this.tab === 'income' ? 'revenue' : 'payment');
+      },
+      get field2ActiveTab() {
+        return this.tab === 'transfer' ? 'bs' : 'pl';
+      },
+      get field2ExcludeCode() {
+        return this.tab === 'transfer' ? this.paymentCode : null;
+      },
+      get sameAccountWarning() {
+        return this.tab === 'transfer' && this.paymentCode && this.categoryCode && this.paymentCode === this.categoryCode;
+      },
+
+      switchTab: function(newTab) {
+        this.tab = newTab;
+        this.categoryCode = '';
+        this.categoryName = '';
+      },
+
+      pickPayment: function() {
+        var self = this;
+        openAccountSelector(function(code, name) { self.paymentCode = code; self.paymentName = name; },
+          { filter: 'payment', activeTab: 'bs', currentCode: this.paymentCode });
+      },
+
+      pickCategory: function() {
+        var self = this;
+        openAccountSelector(function(code, name) { self.categoryCode = code; self.categoryName = name; },
+          { filter: this.field2Filter, activeTab: this.field2ActiveTab, excludeCode: this.field2ExcludeCode, currentCode: this.categoryCode });
+      }
+    };
+  });
+
+  /**
+   * 医療費フォーム (CSP ビルド対応)
+   */
+  Alpine.data('medicalForm', function(config) {
+    return {
+      acctCode: config.acctCode || '',
+      acctName: config.acctName || '',
+
+      pickPayment: function() {
+        var self = this;
+        openAccountSelector(function(code, name) { self.acctCode = code; self.acctName = name; },
+          { filter: 'payment', activeTab: 'bs', currentCode: this.acctCode });
+      }
+    };
+  });
+
+  /**
+   * AI 証憑仕訳 かんたんモード (CSP ビルド対応)
+   */
+  Alpine.data('aiSimpleForm', function(config) {
+    return {
+      categoryCode: config.categoryCode || '',
+      categoryName: '',
+      paymentCode: config.paymentCode || '',
+      paymentName: '',
+
+      init: function() {
+        if (this.categoryCode) this.categoryName = _acctNameByCode(this.categoryCode) || '';
+        if (this.paymentCode) this.paymentName = _acctNameByCode(this.paymentCode) || '';
+      },
+
+      selectCategory: function() {
+        var self = this;
+        openAccountSelector(function(code, name) { self.categoryCode = code; self.categoryName = name; },
+          { filter: 'category', activeTab: 'pl', currentCode: this.categoryCode });
+      },
+
+      selectPayment: function() {
+        var self = this;
+        openAccountSelector(function(code, name) { self.paymentCode = code; self.paymentName = name; },
+          { filter: 'payment', activeTab: 'bs', currentCode: this.paymentCode });
       }
     };
   });
@@ -536,9 +635,15 @@ document.addEventListener('alpine:init', function() {
         this._hoverTimer = setTimeout(function() { self.hoveredDay = null; }, 150);
       },
 
+      hoveredDiffAbs: function() {
+        var d = this.getDayDiff(this.hoveredDay);
+        var csv = d.csv.reduce(function(s, r) { return s + r.amount; }, 0);
+        var journal = d.journal.reduce(function(s, r) { return s + r.amount; }, 0);
+        return Math.abs(csv - journal);
+      },
+
       getDayDiff: function(dateStr) {
-        if (!dateStr) return { csv: [], journal: [] };
-        var csv = [];
+        if (!dateStr) return { csv: [], journal: [] };        var csv = [];
         for (var i = 0; i < this.reconcileRows.length; i++) {
           var r = this.reconcileRows[i];
           if (r.date === dateStr) {
@@ -779,7 +884,17 @@ document.addEventListener('alpine:init', function() {
         .finally(function() { row.snapping = false; });
       },
 
+      // CSP ビルドでは Math.* を式内で使えないためヘルパー化
+      absAmount: function(v) {
+        return Math.abs(v || 0);
+      },
+
+      confidencePct: function(c) {
+        return Math.round((c || 0) * 100);
+      },
+
       selectMatch: function(rowIdx, matchIdx) {
+        matchIdx = parseInt(matchIdx, 10);
         var row = this.reconcileRows[rowIdx];
         row.selectedMatchIndex = matchIdx;
         if (matchIdx >= 0) {
@@ -798,8 +913,7 @@ document.addEventListener('alpine:init', function() {
         }
       },
 
-      selectReconcileCategory: function(index) {
-        var row = this.reconcileRows[index];
+      selectReconcileCategory: function(index) {        var row = this.reconcileRows[index];
         openAccountSelector(function(code, name) {
           row.category_code = code;
           row.category_name = name;

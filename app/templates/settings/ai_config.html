@@ -178,7 +178,7 @@
       <div class="card-body">
         <p class="text-muted">API設定を削除すると、AI証憑仕訳機能が使用できなくなります。</p>
         <form method="POST" action="{{ url_for('settings.ai_config_delete') }}"
-              onsubmit="return confirm('外部AI設定を削除しますか？')">
+              data-confirm="外部AI設定を削除しますか？">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <button type="submit" class="btn btn-outline-danger">
             <i class="bi bi-trash"></i> 削除
@@ -234,7 +234,7 @@
 {% endblock %}
 
 {% block scripts %}
-<script>
+<script nonce="{{ csp_nonce }}">
 const defaults = {{ provider_defaults | tojson }};
 const select = document.getElementById('providerSelect');
 const hint = document.getElementById('defaultModelHint');

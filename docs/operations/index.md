@@ -20,7 +20,6 @@ title: 運用ガイド
 |---------|------|
 | `seed` | 標準勘定科目区分の初期投入 (初回起動時に自動実行) |
 | `seed-user <username>` | 指定ユーザーへ標準科目を再投入 |
-| `auto-import` | 自動取込の手動実行 (WebDAV 等) |
 | `generate-thumbnails` | 既存証憑画像のサムネイル一括生成 |
 | `storage-audit [--fix]` | ストレージ整合性監査 (file_size backfill + drift 検出) |
 | `notify-terms-update` | 規約改訂メールの一括送信 |

@@ -1,12 +1,68 @@
-from flask import Flask
+import os
+import secrets
+
+from flask import Flask, g, request
 
 from app.config import Config
 from app.extensions import db, migrate, login_manager, csrf, limiter
 
 
+# SECRET_KEY に設定されていたら本番起動を拒否する既知の安全でない値。
+_INSECURE_SECRET_KEYS = {
+    "",
+    "dev-secret-key",
+    "change-me-to-a-random-secret-key",
+    "changeme",
+    "secret",
+    "changethis",
+}
+
+
+def _is_insecure_secret(secret) -> bool:
+    if not isinstance(secret, str):
+        return True
+    if secret in _INSECURE_SECRET_KEYS:
+        return True
+    if secret.startswith("change-me"):
+        return True
+    # 短すぎる鍵 (総当たり可能) も本番では拒否する
+    return len(secret) < 16
+
+
 def create_app(config_class=Config):
     app = Flask(__name__)
     app.config.from_object(config_class)
+
+    # セッション Cookie の Secure 属性を決定する。
+    # 1. 環境変数 SESSION_COOKIE_SECURE が明示されていればそれに従う
+    # 2. そうでなければ PREFERRED_URL_SCHEME が https のときだけ有効化
+    env_secure = os.environ.get("SESSION_COOKIE_SECURE")
+    if env_secure is not None:
+        cookie_secure = env_secure.strip().lower() in ("1", "true", "yes", "on")
+    else:
+        cookie_secure = str(
+            app.config.get("PREFERRED_URL_SCHEME", "http")
+        ).lower() == "https"
+    app.config["SESSION_COOKIE_SECURE"] = cookie_secure
+    app.config["REMEMBER_COOKIE_SECURE"] = cookie_secure
+
+    # SECRET_KEY が既定値/空/短すぎるまま本番起動しないよう fail-fast する。
+    # そのまま起動するとセッション・CSRF・remember-me トークンが偽造可能。
+    # テスト (TESTING) と debug は対象外。
+    if not app.debug and not app.config.get("TESTING"):
+        if _is_insecure_secret(app.config.get("SECRET_KEY")):
+            raise RuntimeError(
+                "SECRET_KEY が未設定・既定値・または短すぎます。環境変数 "
+                "SECRET_KEY に十分な長さのランダム値を設定してください。"
+            )
+        # SERVER_NAME 未設定だと url_for(_external=True) がリクエストの
+        # Host ヘッダを使うため、Host 偽装で外部 URL (OAuth 検証 URI・
+        # メール本文の URL 等) が汚染されうる。公開運用では必須。
+        if not app.config.get("SERVER_NAME"):
+            app.logger.warning(
+                "SERVER_NAME が未設定です。Host ヘッダ偽装による外部 URL の "
+                "汚染を防ぐため、公開運用では SERVER_NAME を設定してください。"
+            )
 
     # Extensions
     db.init_app(app)
@@ -32,6 +88,11 @@ def create_app(config_class=Config):
     from app.views.oauth import device_authorization, token as oauth_token_view
     csrf.exempt(device_authorization)
     csrf.exempt(oauth_token_view)
+
+    # Before-request hook: CSP nonce を払い出す (インライン script 用)。
+    @app.before_request
+    def csp_nonce():
+        g.csp_nonce = secrets.token_urlsafe(16)
 
     # Before-request hook for terms acceptance check
     @app.before_request
@@ -162,6 +223,11 @@ def create_app(config_class=Config):
     def inject_dev_flag():
         return {"is_dev": app.debug}
 
+    # Context processor for CSP nonce (インライン script タグに付与する)
+    @app.context_processor
+    def inject_csp_nonce():
+        return {"csp_nonce": getattr(g, "csp_nonce", "")}
+
     # Context processor for CAPTCHA
     @app.context_processor
     def inject_captcha_config():
@@ -216,6 +282,46 @@ def create_app(config_class=Config):
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "SAMEORIGIN"
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        # CSP: script-src から 'unsafe-inline' を排除し、インライン script は
+        # nonce、外部 script はホスト allowlist で許可する。インライン
+        # イベントハンドラは data-* + 委譲ハンドラ (static/js/app.js) に置換済み。
+        #
+        # 'unsafe-eval' は Alpine 標準ビルドが Function コンストラクタを使う
+        # ため現状必要 (CSP ビルドへの移行は x-data 設定のグローバル参照を
+        # 全廃する大規模リファクタが必要なため別タスク)。
+        #
+        # style-src は既存のインライン style 属性 (119箇所) のため
+        # 'unsafe-inline' を許容する (script 実行とは独立)。
+        #
+        # ただし Service Worker (sw.js) のレスポンスには CSP を付けない。
+        # Worker スクリプト応答の CSP は Worker 自身の fetch() に適用される
+        # ため、connect-src 'self' が SW 経由の CDN スクリプト取得
+        # (fetch(event.request)) を阻害し、Bootstrap / Alpine が読み込まれ
+        # なくなる (Firefox で再現。E2E の回帰原因)。
+        if request.path != "/sw.js":
+            nonce = getattr(g, "csp_nonce", "")
+            response.headers["Content-Security-Policy"] = (
+                "default-src 'self'; "
+                f"script-src 'self' 'nonce-{nonce}' 'unsafe-eval' "
+                "https://cdn.jsdelivr.net "
+                "https://js.hcaptcha.com https://www.google.com "
+                "https://www.gstatic.com https://challenges.cloudflare.com; "
+                "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net "
+                "https://fonts.googleapis.com; "
+                "font-src 'self' https://cdn.jsdelivr.net "
+                "https://fonts.gstatic.com data:; "
+                "img-src 'self' data: blob:; "
+                "connect-src 'self' https://js.hcaptcha.com "
+                "https://www.google.com https://www.gstatic.com "
+                "https://challenges.cloudflare.com; "
+                "frame-src https://js.hcaptcha.com https://www.google.com "
+                "https://challenges.cloudflare.com; "
+                "form-action 'self'; "
+                "object-src 'none'; base-uri 'self'; frame-ancestors 'self'"
+            )
+        response.headers["Permissions-Policy"] = (
+            "geolocation=(), microphone=(), camera=()"
+        )
         if not app.debug:
             response.headers["Strict-Transport-Security"] = (
                 "max-age=31536000; includeSubDomains"
@@ -311,48 +417,6 @@ def register_cli(app):
                     print(f"  [warn] {u.id} <{u.email}>: {e}")
                     failed += 1
         print(f"送信完了: 成功 {sent} 件 / 失敗 {failed} 件")
-
-    @app.cli.command("auto-import")
-    @click.option("--user-id", type=int, default=None, help="指定ユーザーのみ実行")
-    @click.option("--dry-run", is_flag=True, help="DB変更なしで動作確認")
-    def auto_import_command(user_id, dry_run):
-        """外部ソースからレシート画像を自動取込してAI仕訳下書きを作成する"""
-        from app.models.user import User
-        from app.models.auto_import import AutoImportSource
-        from app.services.auto_import import run_auto_import
-
-        if user_id:
-            user = User.query.get(user_id)
-            if not user:
-                print(f"ユーザー ID {user_id} が見つかりません。")
-                return
-            users = [user]
-        else:
-            user_ids = (
-                db.session.query(AutoImportSource.user_id)
-                .filter_by(is_active=True)
-                .distinct()
-                .all()
-            )
-            users = [User.query.get(uid[0]) for uid in user_ids]
-
-        if not users:
-            print("自動取込が設定されているユーザーがいません。")
-            return
-
-        prefix = "[DRY RUN] " if dry_run else ""
-        for user in users:
-            print(f"{prefix}自動取込: {user.username}")
-            stats = run_auto_import(user.id, dry_run=dry_run)
-            print(
-                f"  ソース: {stats['sources_processed']}, "
-                f"ファイル: {stats['files_found']}, "
-                f"新規: {stats['files_new']}, "
-                f"下書き: {stats['drafts_created']}, "
-                f"エラー: {len(stats['errors'])}"
-            )
-            for err in stats["errors"][:5]:
-                print(f"    ERROR: {err}")
 
     @app.cli.command("generate-thumbnails")
     @click.option("--dry-run", is_flag=True, help="サムネイル生成をスキップして対象件数のみ表示")

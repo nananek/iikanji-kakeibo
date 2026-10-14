@@ -1,7 +1,7 @@
 """app/__init__.py のテスト
 
 audit_permission_check before_request, context processors, security headers,
-service worker route, CLI コマンド (seed/seed-user/auto-import/generate-thumbnails)
+service worker route, CLI コマンド (seed/seed-user/generate-thumbnails)
 """
 
 from unittest.mock import MagicMock, patch
@@ -221,101 +221,6 @@ class TestSeedUserCommand:
             assert result.exit_code == 0
             # user fixture が存在するので最低 1回呼ばれる
             mock_seed.assert_called()
-
-
-class TestAutoImportCommand:
-    def test_with_specific_user_id(self, db, app, user):
-        runner = app.test_cli_runner()
-        with patch("app.services.auto_import.run_auto_import") as mock_run:
-            mock_run.return_value = {
-                "sources_processed": 0, "files_found": 0,
-                "files_new": 0, "drafts_created": 0, "errors": [],
-            }
-            result = runner.invoke(args=["auto-import", "--user-id", str(user.id)])
-            assert result.exit_code == 0
-            mock_run.assert_called_once()
-
-    def test_unknown_user_id(self, db, app):
-        runner = app.test_cli_runner()
-        result = runner.invoke(args=["auto-import", "--user-id", "9999"])
-        assert result.exit_code == 0
-        assert "見つかりません" in result.output
-
-    def test_no_sources(self, db, app, user):
-        runner = app.test_cli_runner()
-        result = runner.invoke(args=["auto-import"])
-        assert result.exit_code == 0
-        assert "自動取込が設定されている" in result.output
-
-    def test_with_sources(self, db, app, user):
-        from app.models.auto_import import AutoImportSource
-        from app.services.auto_import import encrypt_credentials
-        import json
-        s = AutoImportSource(
-            user_id=user.id, name="x", provider="webdav",
-            config_json=json.dumps({"url": "https://x", "username": "u"}),
-            credentials_encrypted=encrypt_credentials({"password": "p"}),
-            is_active=True,
-        )
-        db.session.add(s)
-        db.session.commit()
-        runner = app.test_cli_runner()
-        with patch("app.services.auto_import.run_auto_import") as mock_run:
-            mock_run.return_value = {
-                "sources_processed": 1, "files_found": 5,
-                "files_new": 2, "drafts_created": 1, "errors": [],
-            }
-            result = runner.invoke(args=["auto-import"])
-            assert result.exit_code == 0
-            assert "drafts_created" in str(mock_run.call_args) or \
-                   "1" in result.output
-
-    def test_dry_run(self, db, app, user):
-        from app.models.auto_import import AutoImportSource
-        from app.services.auto_import import encrypt_credentials
-        import json
-        s = AutoImportSource(
-            user_id=user.id, name="x", provider="webdav",
-            config_json=json.dumps({"url": "https://x", "username": "u"}),
-            credentials_encrypted=encrypt_credentials({"password": "p"}),
-            is_active=True,
-        )
-        db.session.add(s)
-        db.session.commit()
-        runner = app.test_cli_runner()
-        with patch("app.services.auto_import.run_auto_import") as mock_run:
-            mock_run.return_value = {
-                "sources_processed": 1, "files_found": 0,
-                "files_new": 0, "drafts_created": 0, "errors": [],
-            }
-            result = runner.invoke(args=["auto-import", "--dry-run"])
-            assert result.exit_code == 0
-            assert "DRY RUN" in result.output
-            kw = mock_run.call_args.kwargs
-            assert kw.get("dry_run") is True
-
-    def test_with_errors_displayed(self, db, app, user):
-        from app.models.auto_import import AutoImportSource
-        from app.services.auto_import import encrypt_credentials
-        import json
-        s = AutoImportSource(
-            user_id=user.id, name="x", provider="webdav",
-            config_json=json.dumps({"url": "https://x", "username": "u"}),
-            credentials_encrypted=encrypt_credentials({"password": "p"}),
-            is_active=True,
-        )
-        db.session.add(s)
-        db.session.commit()
-        runner = app.test_cli_runner()
-        with patch("app.services.auto_import.run_auto_import") as mock_run:
-            mock_run.return_value = {
-                "sources_processed": 1, "files_found": 0,
-                "files_new": 0, "drafts_created": 0,
-                "errors": ["ファイル1: 失敗", "ファイル2: 失敗"],
-            }
-            result = runner.invoke(args=["auto-import"])
-            assert result.exit_code == 0
-            assert "失敗" in result.output
 
 
 class TestGenerateThumbnailsCommand:

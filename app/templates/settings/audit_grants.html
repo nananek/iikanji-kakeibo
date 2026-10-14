@@ -71,7 +71,7 @@
               <form method="POST" action="{{ url_for('settings.audit_submit', grant_id=grant.id) }}" class="d-inline">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <button type="submit" class="btn btn-outline-success"
-                        onclick="return confirm('提出しますか？提出後は税務科目を含む伝票が編集不可になります。')">
+                        data-confirm="提出しますか？提出後は税務科目を含む伝票が編集不可になります。">
                   <i class="bi bi-send"></i> 提出
                 </button>
               </form>
@@ -79,7 +79,7 @@
               <form method="POST" action="{{ url_for('settings.audit_unsubmit', grant_id=grant.id) }}" class="d-inline">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <button type="submit" class="btn btn-outline-warning"
-                        onclick="return confirm('提出を取り消しますか？')">
+                        data-confirm="提出を取り消しますか？">
                   <i class="bi bi-arrow-counterclockwise"></i> 提出取消
                 </button>
               </form>
@@ -88,7 +88,7 @@
             <form method="POST" action="{{ url_for('settings.audit_delete', grant_id=grant.id) }}" class="d-inline">
               <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
               <button type="submit" class="btn btn-outline-danger"
-                      onclick="return confirm('アクセスを取り消しますか？')">
+                      data-confirm="アクセスを取り消しますか？">
                 <i class="bi bi-trash"></i> 取消
               </button>
             </form>

@@ -14,8 +14,10 @@ from app.models.voucher import Voucher
 from app.models.ai_config import UserAIConfig
 from app.models.journal import JournalEntry, JournalEntryLine
 from app.services.audit import get_effective_user_id
-from app.views.helpers import parse_iso_date
-from app.services.storage import get_storage_backend, make_thumbnail_key
+from app.views.helpers import parse_iso_date, safe_user_error
+from app.services.storage import (
+    get_storage_backend, make_thumbnail_key, is_declared_image_valid,
+)
 from app.services.storage_quota import QuotaExceededError, record_delete
 from app.services.voucher import create_voucher_from_upload
 
@@ -150,6 +152,8 @@ def attach(entry_id):
         return jsonify({
             "error": "対応していないファイル形式です。JPEG/PNG/WebP/GIF を使用してください。",
         }), 400
+    if not is_declared_image_valid(image_bytes, mime_type):
+        return jsonify({"error": "画像ファイルの内容が形式と一致しません。"}), 400
 
     try:
         voucher = create_voucher_from_upload(
@@ -183,7 +187,13 @@ def attach(entry_id):
             )
             response_data["consistency"] = result["consistency"]
         except Exception as e:
-            response_data["ai_error"] = str(e)
+            # CodeQL py/stack-trace-exposure 対策: 生の例外は logger に残し、
+            # レスポンスには sanitize 済みの短いメッセージのみ返す (PR #46 と同様)
+            from flask import current_app
+            current_app.logger.exception(
+                "voucher attach: AI consistency check failed"
+            )
+            response_data["ai_error"] = safe_user_error(e)
 
     db.session.commit()
     return jsonify(response_data)
