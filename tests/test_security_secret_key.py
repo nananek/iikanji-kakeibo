@@ -6,13 +6,16 @@ CSRF・remember-me トークンが偽造可能になるため、起動時に拒�
 
 import pytest
 
-from app import create_app
+from app import create_app, _INSECURE_SECRET_KEYS
 from app.config import Config
+
+# 既知の安全でない鍵の一例 (リテラル直書きを避けてアプリ側の定義から取る)
+_INSECURE = sorted(k for k in _INSECURE_SECRET_KEYS if k)[0]
 
 
 class InsecureSecretConfig(Config):
     TESTING = False
-    SECRET_KEY = "dev-secret-key"
+    SECRET_KEY = _INSECURE
     SQLALCHEMY_DATABASE_URI = "sqlite:///:memory:"
     WTF_CSRF_ENABLED = False
     RATELIMIT_ENABLED = False
