@@ -54,6 +54,14 @@ def create_app(config_class=Config):
                 "SECRET_KEY が未設定・既定値・または短すぎます。環境変数 "
                 "SECRET_KEY に十分な長さのランダム値を設定してください。"
             )
+        # SERVER_NAME 未設定だと url_for(_external=True) がリクエストの
+        # Host ヘッダを使うため、Host 偽装で外部 URL (OAuth 検証 URI・
+        # メール本文の URL 等) が汚染されうる。公開運用では必須。
+        if not app.config.get("SERVER_NAME"):
+            app.logger.warning(
+                "SERVER_NAME が未設定です。Host ヘッダ偽装による外部 URL の "
+                "汚染を防ぐため、公開運用では SERVER_NAME を設定してください。"
+            )
 
     # Extensions
     db.init_app(app)
