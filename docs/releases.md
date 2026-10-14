@@ -7,7 +7,26 @@ title: リリースノート
 
 ## v4.2.3
 
-**パッチリリース** — AI 証憑仕訳エージェントの最大ターン数をユーザー設定化し、確定漏れ時のフォールバックで仕訳案を必ず生成するよう改善。
+**パッチリリース** — 公開前セキュリティ監査の指摘を修正し、CSP を導入。未使用の WebDAV 自動取込を撤去。AI 証憑仕訳エージェントの最大ターン数をユーザー設定化し、確定漏れ時のフォールバックで仕訳案を必ず生成するよう改善。
+
+### 公開前セキュリティ強化 (PR #468)
+
+- **Lv2 顧問の書き込みスコープ強制**: 仕訳 (フォーム / JSON API / 一括削除)・出納帳・医療費の全経路で、公開科目以外への書き込み・削除を拒否 (共通ヘルパー `find_disallowed_write_codes`)
+- **セッション Cookie の強化**: HTTPS 運用 (`PREFERRED_URL_SCHEME=https`) で Secure を自動付与し、SameSite / HttpOnly を明示
+- **SECRET_KEY の fail-fast**: 既定値・空・短鍵のまま本番起動した場合は起動エラーで停止
+- **リクエストサイズ上限**: `MAX_CONTENT_LENGTH` (既定 25 MiB) を設定
+- **CSP 導入**: `script-src` から `'unsafe-inline'` を排除。インライン script はリクエスト毎 nonce、インラインイベントハンドラ 39 箇所は `data-*` + 委譲ハンドラ (app.js) へ置換。`Permissions-Policy` ヘッダも追加
+- **アップロード検証**: 証憑アップロード全経路で、申告 Content-Type と実体の画像形式 (マジックバイト) の一致を検証 (不一致は 400)
+- **CSV 数式インジェクション対策**: 医療費 CSV / AI利用履歴 CSV の先頭危険文字を無害化
+- **Host ヘッダ偽装対策**: `SERVER_NAME` 未設定時に本番警告を出力
+- **コンテナ非 root 実行**: Dockerfile で app ユーザー実行に変更
+- **CodeQL アラート 0 件**: 例外文言の sanitize (stack-trace-exposure) と CSP 回帰テストの大文字小文字対応
+
+### WebDAV 自動取込の撤去 (PR #468)
+
+- 実運用で未使用の WebDAV 経由レシート画像自動取込を撤去 (UI は v2.6.0 でオプトアウト済み)。通知 (Webhook) 機能は維持
+- マイグレーション `051_drop_auto_import_tables`: `auto_import_sources` / `processed_files` を drop (コンテナ再作成で自動適用)
+- CLI `auto-import` コマンドを削除
 
 ### AI 証憑仕訳のターン数設定と確定フォールバック (PR #465)
 
@@ -16,7 +35,8 @@ title: リリースノート
 - **フォールバック仕訳案**: それでも確定できない場合は抽出した日付・摘要・金額と既定科目で仕訳案を必ず生成 (空振りなし)
 - **元帳照会のまとめ対応**: `get_account_ledger` が複数科目 (`account_codes`) のまとめ照会に対応し、ターン消費を削減
 - マイグレーション `050_ai_config_max_turns`: `user_ai_configs` に `max_turns` カラムを追加 (server_default 付きの非破壊変更、コンテナ再作成で自動適用)
-- REST API (`/api/v1`) の変更なし。クライアントの更新は不要
+
+REST API (`/api/v1`) の形式変更なし。クライアントの更新は不要 (画像アップロードは実体形式の検証が追加され、申告形式と一致しない場合は 400)。
 
 ## v4.2.2
 
