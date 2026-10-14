@@ -237,3 +237,40 @@ class TestAttachEndpoint:
         voucher = Voucher.query.filter_by(id=result["voucher_id"]).first()
         assert voucher is not None
         assert voucher.journal_entry_id == entry.id
+
+    @patch("app.services.voucher.store_image_with_thumbnail")
+    @patch("app.services.ai_receipt.analyze_voucher_for_attachment")
+    def test_attach_ai_traceback_not_exposed(
+        self, mock_analyze, mock_store, logged_in_client, user, accounts, db,
+    ):
+        """スタックトレース由来の例外文言は ai_error に露出しない (CodeQL #62)"""
+        from app.services.ai_receipt import encrypt_api_key
+
+        config = UserAIConfig(
+            user_id=user.id,
+            provider="openai",
+            api_key_encrypted=encrypt_api_key("sk-test"),
+            model_name="gpt-4o",
+        )
+        db.session.add(config)
+        db.session.commit()
+
+        mock_analyze.side_effect = RuntimeError(
+            "Traceback (most recent call last):\n"
+            '  File "/app/services/ai_receipt.py", line 1, in _call_ai\n'
+            "psycopg.OperationalError: connection failed"
+        )
+
+        entry = make_journal(
+            db, user.id, "5010", "1010", 800,
+        )
+        data = {"image": (io.BytesIO(TINY_JPEG), "receipt.jpg", "image/jpeg")}
+        resp = logged_in_client.post(
+            f"/vouchers/attach/{entry.id}",
+            data=data,
+            content_type="multipart/form-data",
+        )
+        assert resp.status_code == 200
+        result = resp.get_json()
+        assert result["ok"] is True
+        assert result["ai_error"] == "処理に失敗しました"
