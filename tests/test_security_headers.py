@@ -43,6 +43,19 @@ class TestSecurityHeaders:
         assert "object-src 'none'" in csp
         assert "base-uri 'self'" in csp
 
+    def test_no_csp_on_service_worker(self, client):
+        """Service Worker スクリプト (/sw.js) には CSP を付けない。
+
+        Worker スクリプト応答の CSP は Worker 自身の fetch() に適用され、
+        connect-src 'self' が SW 経由の CDN スクリプト取得を阻害する
+        (Firefox で Bootstrap / Alpine が読み込まれない E2E 回帰の原因)。
+        """
+        resp = client.get("/sw.js")
+        assert resp.status_code == 200
+        assert "Content-Security-Policy" not in resp.headers
+        # 他のセキュリティヘッダーは維持する
+        assert resp.headers.get("X-Content-Type-Options") == "nosniff"
+
 
 class TestHSTS:
     """HSTS ヘッダーの debug モード条件分岐"""

@@ -1,7 +1,7 @@
 import os
 import secrets
 
-from flask import Flask, g
+from flask import Flask, g, request
 
 from app.config import Config
 from app.extensions import db, migrate, login_manager, csrf, limiter
@@ -292,26 +292,33 @@ def create_app(config_class=Config):
         #
         # style-src は既存のインライン style 属性 (119箇所) のため
         # 'unsafe-inline' を許容する (script 実行とは独立)。
-        nonce = getattr(g, "csp_nonce", "")
-        response.headers["Content-Security-Policy"] = (
-            "default-src 'self'; "
-            f"script-src 'self' 'nonce-{nonce}' 'unsafe-eval' "
-            "https://cdn.jsdelivr.net "
-            "https://js.hcaptcha.com https://www.google.com "
-            "https://www.gstatic.com https://challenges.cloudflare.com; "
-            "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net "
-            "https://fonts.googleapis.com; "
-            "font-src 'self' https://cdn.jsdelivr.net "
-            "https://fonts.gstatic.com data:; "
-            "img-src 'self' data: blob:; "
-            "connect-src 'self' https://js.hcaptcha.com "
-            "https://www.google.com https://www.gstatic.com "
-            "https://challenges.cloudflare.com; "
-            "frame-src https://js.hcaptcha.com https://www.google.com "
-            "https://challenges.cloudflare.com; "
-            "form-action 'self'; "
-            "object-src 'none'; base-uri 'self'; frame-ancestors 'self'"
-        )
+        #
+        # ただし Service Worker (sw.js) のレスポンスには CSP を付けない。
+        # Worker スクリプト応答の CSP は Worker 自身の fetch() に適用される
+        # ため、connect-src 'self' が SW 経由の CDN スクリプト取得
+        # (fetch(event.request)) を阻害し、Bootstrap / Alpine が読み込まれ
+        # なくなる (Firefox で再現。E2E の回帰原因)。
+        if request.path != "/sw.js":
+            nonce = getattr(g, "csp_nonce", "")
+            response.headers["Content-Security-Policy"] = (
+                "default-src 'self'; "
+                f"script-src 'self' 'nonce-{nonce}' 'unsafe-eval' "
+                "https://cdn.jsdelivr.net "
+                "https://js.hcaptcha.com https://www.google.com "
+                "https://www.gstatic.com https://challenges.cloudflare.com; "
+                "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net "
+                "https://fonts.googleapis.com; "
+                "font-src 'self' https://cdn.jsdelivr.net "
+                "https://fonts.gstatic.com data:; "
+                "img-src 'self' data: blob:; "
+                "connect-src 'self' https://js.hcaptcha.com "
+                "https://www.google.com https://www.gstatic.com "
+                "https://challenges.cloudflare.com; "
+                "frame-src https://js.hcaptcha.com https://www.google.com "
+                "https://challenges.cloudflare.com; "
+                "form-action 'self'; "
+                "object-src 'none'; base-uri 'self'; frame-ancestors 'self'"
+            )
         response.headers["Permissions-Policy"] = (
             "geolocation=(), microphone=(), camera=()"
         )
