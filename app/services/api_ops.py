@@ -463,6 +463,190 @@ def monthly_comparison(user_id, *, year=None):
     }
 
 
+# --- 明細CSVの照合・取込 (フロントエンドの取込確認画面と同一ロジック) ---
+
+
+MAX_CSV_BYTES = 5 * 1024 * 1024  # 5MB (Web 取込画面と同じ上限)
+
+# 1 リクエストで一括取込できる最大行数。月次明細 (数百行) を十分に上回る値に
+# しつつ、トークン 1 つで大量起票・DB 負荷を生じさせないための上限。
+MAX_IMPORT_ROWS = 1000
+
+
+def _csv_summary(daily_summary, csv_results, journal_only):
+    """日計サマリー・照合結果から集計値を組み立てる。"""
+    csv_count = sum(d["csv_count"] for d in daily_summary)
+    csv_total = sum(d["csv_total"] for d in daily_summary)
+    journal_count = sum(d["journal_count"] for d in daily_summary)
+    journal_total = sum(d["journal_total"] for d in daily_summary)
+    return {
+        "csv_count": csv_count,
+        "csv_total": csv_total,
+        "journal_count": journal_count,
+        "journal_total": journal_total,
+        "diff_count": csv_count - journal_count,
+        "diff_amount": csv_total - journal_total,
+        "discrepancy_days": sum(
+            1 for d in daily_summary if d["has_discrepancy"]
+        ),
+        "matched_count": sum(
+            1 for r in csv_results if r["status"] == "matched"
+        ),
+        "multiple_count": sum(
+            1 for r in csv_results if r["status"] == "multiple"
+        ),
+        "unmatched_count": sum(
+            1 for r in csv_results if r["status"] == "unmatched"
+        ),
+        "journal_only_count": len(journal_only),
+        "journal_only_total": sum(
+            int(j.get("amount") or 0) for j in journal_only
+        ),
+    }
+
+
+def reconcile_csv(user_id, payment_account_code, raw_bytes, *,
+                  mapping=None, date_format=None, max_preview_rows=20):
+    """クレカ/銀行のCSV明細を既存仕訳と照合する (フロントの照合タブと同等)。
+
+    Args:
+        payment_account_code: 取込先の支払元/入金先口座コード。
+        raw_bytes: CSV の生バイト列 (エンコーディングは自動判定)。
+        mapping: 列マッピング。省略時は保存プロファイル → ヒューリスティック
+            の順に解決する。解決できない場合は ``needs_mapping=True`` を返す。
+        date_format: 日付 strftime 形式。省略時は推定。
+
+    Returns:
+        照合結果 dict。``csv_results`` (行ごとの状態と候補)、
+        ``journal_only`` (カード会社未達 = 仕訳済みだが明細未到着)、
+        ``daily_summary`` (日計差)、``summary`` (全体集計) を含む。
+    """
+    from app.services.csv_import import (
+        parse_csv_preview,
+        parse_csv_full,
+        resolve_mapping,
+        detect_mapping_heuristic,
+        serialize_parsed_rows,
+    )
+    from app.services.reconciliation import find_matches
+
+    if not payment_account_code:
+        raise ApiError("payment_account_code は必須です。")
+    if not raw_bytes:
+        raise ApiError("CSV の内容が空です。")
+    if len(raw_bytes) > MAX_CSV_BYTES:
+        raise ApiError("CSV が大きすぎます（上限 5MB）。")
+
+    account = Account.query.filter_by(
+        user_id=user_id, code=payment_account_code
+    ).first()
+    if account is None:
+        raise ApiError("取込先の口座が見つかりません。", 404)
+
+    preview = parse_csv_preview(raw_bytes, max_rows=max(max_preview_rows, 20))
+    headers = preview["headers"]
+    if not headers:
+        raise ApiError("CSV のヘッダーを読み取れませんでした。")
+
+    resolved, source = resolve_mapping(
+        user_id, payment_account_code, headers, preview["rows"],
+        explicit_mapping=mapping, explicit_date_format=date_format,
+    )
+
+    if resolved is None:
+        return {
+            "ok": True,
+            "needs_mapping": True,
+            "encoding": preview["encoding"],
+            "headers": headers,
+            "preview_rows": preview["rows"],
+            "total_rows": preview["total_rows"],
+            "suggested_mapping": detect_mapping_heuristic(headers),
+            "message": (
+                "列マッピングを自動判定できませんでした。headers と "
+                "preview_rows を確認し、mapping "
+                "(date_col / desc_col / deposit_col / withdrawal_col / "
+                "date_format) を指定して再度呼び出してください。"
+            ),
+        }
+
+    parsed = parse_csv_full(raw_bytes, resolved, resolved["date_format"])
+    serialized = serialize_parsed_rows(parsed)
+    matches = find_matches(user_id, payment_account_code, serialized)
+
+    csv_results = []
+    for r in matches["csv_results"]:
+        idx = r["csv_index"]
+        csv_results.append({
+            "csv_index": idx,
+            "row": serialized[idx] if 0 <= idx < len(serialized) else None,
+            "status": r["status"],
+            "matches": r["matches"],
+        })
+
+    daily = matches["daily_summary"]
+    journal_only = matches["journal_only"]
+
+    return {
+        "ok": True,
+        "needs_mapping": False,
+        "payment_account": {"code": account.code, "name": account.name},
+        "encoding": preview["encoding"],
+        "mapping": resolved,
+        "mapping_source": source,
+        "parsed_count": len(serialized),
+        "csv_results": csv_results,
+        "journal_only": journal_only,
+        "daily_summary": daily,
+        "summary": _csv_summary(daily, csv_results, journal_only),
+        "guidance": (
+            "status=unmatched の行は未仕訳です。費目 (category_code) を決めて "
+            "import_csv で取込んでください。status=matched は既に仕訳済みなので"
+            "取込不要です。journal_only は『レシートで仕訳済み・カード明細未到着』"
+            "の取引です。日計差が残る日は daily_summary を確認してください。"
+        ),
+    }
+
+
+def import_csv_rows(user_id, payment_account_code, rows, *,
+                    old_year_action="skip", source="csv"):
+    """照合で選別した行を一括で仕訳化する (フロントの一括取込と同一ロジック)。
+
+    Args:
+        rows: ``[{date, description, deposit, withdrawal, category_code,
+            enabled}, ...]``。
+        old_year_action: ``skip`` (既定) または ``capital``。
+    """
+    from app.services.import_ops import import_rows
+
+    if not payment_account_code:
+        raise ApiError("payment_account_code は必須です。")
+    if not rows or not isinstance(rows, list):
+        raise ApiError("rows は必須です（配列）。")
+    if len(rows) > MAX_IMPORT_ROWS:
+        raise ApiError(
+            f"1 回に取込める行数は {MAX_IMPORT_ROWS} 件までです。分割して"
+            "取込んでください。"
+        )
+    if source not in ALLOWED_SOURCES:
+        raise ApiError("source が不正です。")
+
+    account = Account.query.filter_by(
+        user_id=user_id, code=payment_account_code
+    ).first()
+    if account is None:
+        raise ApiError("取込先の口座が見つかりません。", 404)
+
+    result = import_rows(
+        user_id, payment_account_code, rows,
+        source=source, old_year_action=old_year_action,
+    )
+    return {"ok": True, **result}
+
+
+# --- レポート ---
+
+
 def tax_summary(user_id, *, year=None):
     from app.services.tax import get_tax_summary, get_medical_summary
 

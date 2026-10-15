@@ -314,9 +314,9 @@ class TestEndToEndFlow:
         poll = _post_token(client, device_code)
         assert poll.get_json()["error"] == "authorization_pending"
 
-        # 3. ユーザーがブラウザで承認
+        # 3. ユーザーがブラウザで承認 (読取スコープを選択)
         logged_in_client.post("/oauth/device/authorize", data={
-            "user_code": user_code, "decision": "approve",
+            "user_code": user_code, "decision": "approve", "scope": "journals:read",
         })
 
         # 4. クライアントが再度ポーリング → アクセストークン取得
@@ -491,14 +491,27 @@ class TestDeviceAuthorizeReadOnly:
         assert device.status == "approved"
         assert device.read_only is True
 
-    def test_approve_default_is_not_readonly(self, logged_in_client, db, user):
+    def test_approve_without_scope_grants_nothing(self, logged_in_client, db, user):
+        """権限を1つも選ばなかった場合は何も付与しない (最小権限)。"""
         resp = logged_in_client.post("/oauth/device", json={"client_name": "TUI"})
         user_code = resp.get_json()["user_code"]
         logged_in_client.post("/oauth/device/authorize", data={
             "user_code": user_code, "decision": "approve",
         })
         device = OAuthDevice.query.first()
+        assert device.read_only is True
+        assert device.scopes == ""
+
+    def test_approve_with_write_scope_is_not_readonly(self, logged_in_client, db, user):
+        """書込スコープを選べば読み取り専用ではない。"""
+        resp = logged_in_client.post("/oauth/device", json={"client_name": "TUI"})
+        user_code = resp.get_json()["user_code"]
+        logged_in_client.post("/oauth/device/authorize", data={
+            "user_code": user_code, "decision": "approve", "scope": "journals:create",
+        })
+        device = OAuthDevice.query.first()
         assert device.read_only is False
+        assert device.scopes == "journals:create"
 
     def test_token_inherits_read_only_from_device(self, client, logged_in_client, db, user):
         # 1. デバイス発行

@@ -95,7 +95,8 @@
 | ファイル | 責務 |
 |---------|------|
 | accounting.py | 仕訳自動生成（出納帳→仕訳変換、振替、直接仕訳） |
-| api_ops.py | REST API / MCP 共通の業務操作（仕訳・証憑・レポート、request 非依存） |
+| api_ops.py | REST API / MCP 共通の業務操作（仕訳・証憑・レポート、CSV照合/取込、request 非依存） |
+| import_ops.py | 取込確認画面 / MCP 共通の一括仕訳化 (CSV/OFX/Web) |
 | clock.py | アプリ基準タイムゾーン (`APP_TIMEZONE`) の today()/now() |
 | oauth_scopes.py | OAuth / MCP 共通のスコープ定義・正規化 |
 | fiscal.py | 月次確定・年度オープン判定・期間チェック・元入金科目取得 |
@@ -207,7 +208,7 @@
 - `tests/conftest.py` に SQLite in-memory のフィクスチャあり
 - pytest で実行: `docker exec -w /app server-web-1 python -m pytest tests/ -v`
 - GitHub Actions (`.github/workflows/test.yml`) で push/PR 時に自動実行
-- 2047テスト: accounting(16), api(27), audit(43), balance_cache(15), compliance(14), csv_import(53), fiscal(26), models(12), monthly_report(8), ofx_import(15), settings(7), storage(25), tax(45), security_auth(27), security_idor(12), security_input(12), security_csrf(9), security_headers(7), security_ratelimit(3), voucher(23), voucher_search(14), voucher_tamper(15), timestamp(12), timezone(6), mcp(26), oauth_authorization_code(21)
+- 2072テスト: accounting(16), api(27), audit(43), balance_cache(15), compliance(14), csv_import(53), fiscal(26), models(12), monthly_report(8), ofx_import(15), settings(7), storage(25), tax(45), security_auth(27), security_idor(12), security_input(12), security_csrf(9), security_headers(7), security_ratelimit(3), voucher(23), voucher_search(14), voucher_tamper(15), timestamp(12), timezone(6), mcp(26), mcp_csv(24), oauth_authorization_code(21)
 - E2Eテスト (Playwright/Firefox): `npx playwright test tests/e2e/` — 設定画面の表示・遷移(10), ドラッグ選択(15)。CIでも自動実行
 - 税務集計・プライバシー権限は重点テスト項目
 

@@ -190,6 +190,178 @@ def parse_csv_full(raw_bytes, mapping, date_format_str):
     return results
 
 
+# --- 列マッピングの推定・正規化 ---
+
+# 日本の銀行・クレカ CSV でよく使われる列名のキーワード。
+# 完全一致ではなく「ヘッダーに部分文字列として含まれるか」で判定する。
+_DATE_KEYWORDS = (
+    "利用日", "取引日", "ご利用日", "計上日", "処理日", "日付", "年月日", "日時",
+)
+_DESC_KEYWORDS = (
+    "利用店", "ご利用店", "利用先", "店舗", "摘要", "内容", "備考", "説明",
+    "相手先", "相手", "取引内容", "ご利用内容",
+)
+_DEPOSIT_KEYWORDS = (
+    "入金", "預入", "お預り", "お預かり", "返金", "振込入金", "収入",
+)
+_WITHDRAWAL_KEYWORDS = (
+    "出金", "お支払", "支払金額", "支払額", "利用金額", "ご利用金額", "利用額",
+    "引出", "払出", "キャッシング",
+)
+_AMOUNT_KEYWORDS = ("金額", "取引金額", "決済額")
+
+
+def _match_header(headers, keywords):
+    """ヘッダー配列から keywords のいずれかを含む列インデックスを返す。
+
+    先に現れたキーワードを優先する (利用日 > 日付 など)。見つからなければ None。
+    """
+    lowered = [str(h).strip() for h in headers]
+    for kw in keywords:
+        for idx, h in enumerate(lowered):
+            if kw in h:
+                return idx
+    return None
+
+
+def guess_date_format(values):
+    """サンプル値から date_format (strftime) を推定する。既定は %Y/%m/%d。"""
+    for value in values:
+        if not value or not str(value).strip():
+            continue
+        s = str(value).strip()
+        for _, fmt in DATE_FORMATS:
+            try:
+                datetime.strptime(s, fmt)
+                return fmt
+            except ValueError:
+                continue
+    return "%Y/%m/%d"
+
+
+def detect_mapping_heuristic(headers):
+    """ヘッダー名から列マッピングを推定する (AI を使わない簡易版)。
+
+    日付列・摘要列が特定できない場合は None を返す。入金/出金が 1 列に
+    まとまっている場合は withdrawal として扱う (クレカ明細で一般的)。
+    """
+    date_col = _match_header(headers, _DATE_KEYWORDS)
+    desc_col = _match_header(headers, _DESC_KEYWORDS)
+    if date_col is None or desc_col is None:
+        return None
+
+    deposit_col = _match_header(headers, _DEPOSIT_KEYWORDS)
+    withdrawal_col = _match_header(headers, _WITHDRAWAL_KEYWORDS)
+    if deposit_col is None and withdrawal_col is None:
+        amount_col = _match_header(headers, _AMOUNT_KEYWORDS)
+        if amount_col is not None:
+            withdrawal_col = amount_col
+
+    return {
+        "date_col": date_col,
+        "desc_col": desc_col,
+        "deposit_col": deposit_col,
+        "withdrawal_col": withdrawal_col,
+        "date_format": "%Y/%m/%d",
+    }
+
+
+def normalize_mapping(mapping, num_cols):
+    """外部 (MCP/API) から渡されたマッピングを検証・正規化する。
+
+    列インデックスが範囲内の整数であることを確認し、範囲外・必須欠落は
+    :class:`ValueError` を送出する。成功時は date_format を補完した dict を返す。
+    """
+    if not isinstance(mapping, dict):
+        raise ValueError("mapping はオブジェクトで指定してください。")
+
+    result = {}
+    for key in ("date_col", "desc_col", "deposit_col", "withdrawal_col"):
+        value = mapping.get(key)
+        if value is None:
+            result[key] = None
+            continue
+        try:
+            value = int(value)
+        except (ValueError, TypeError):
+            raise ValueError(f"mapping.{key} は整数で指定してください。")
+        if not (0 <= value < num_cols):
+            raise ValueError(f"mapping.{key} が列数の範囲外です。")
+        result[key] = value
+
+    if result["date_col"] is None or result["desc_col"] is None:
+        raise ValueError("mapping.date_col と mapping.desc_col は必須です。")
+
+    result["date_format"] = mapping.get("date_format") or "%Y/%m/%d"
+    return result
+
+
+def resolve_mapping(user_id, payment_account_code, headers, sample_rows,
+                    explicit_mapping=None, explicit_date_format=None):
+    """明示指定 → 保存プロファイル → ヒューリスティック の順で列マッピングを解決する。
+
+    Returns:
+        (mapping, source) または (None, None)。
+        source は ``"explicit"`` / ``"saved"`` / ``"heuristic"``。
+    """
+    num_cols = len(headers)
+    if num_cols == 0:
+        return None, None
+
+    if explicit_mapping:
+        mapping = normalize_mapping(explicit_mapping, num_cols)
+        if explicit_date_format:
+            mapping["date_format"] = explicit_date_format
+        elif not explicit_mapping.get("date_format"):
+            dc = mapping["date_col"]
+            mapping["date_format"] = guess_date_format(
+                [(r[dc] if dc < len(r) else "") for r in sample_rows]
+            )
+        return mapping, "explicit"
+
+    profile = load_column_profile(user_id, payment_account_code)
+    if profile:
+        cols_valid = all(
+            profile.get(k) is None or (
+                isinstance(profile.get(k), int)
+                and 0 <= profile[k] < num_cols
+            )
+            for k in ("date_col", "desc_col", "deposit_col",
+                      "withdrawal_col", "amount_col")
+        )
+        if cols_valid and profile.get("date_col") is not None \
+                and profile.get("desc_col") is not None:
+            return profile, "saved"
+
+    heuristic = detect_mapping_heuristic(headers)
+    if heuristic:
+        date_values = []
+        if 0 <= heuristic["date_col"] < num_cols:
+            date_values = [
+                (r[heuristic["date_col"]] if heuristic["date_col"] < len(r) else "")
+                for r in sample_rows
+            ]
+        heuristic["date_format"] = guess_date_format(date_values)
+        return heuristic, "heuristic"
+
+    return None, None
+
+
+def serialize_parsed_rows(parsed):
+    """parse_csv_full() の結果を JSON 化可能な形に変換する。"""
+    result = []
+    for p in parsed:
+        d = p.get("date")
+        result.append({
+            "row_num": p.get("row_num"),
+            "date": d.isoformat() if hasattr(d, "isoformat") else d,
+            "description": p.get("description", ""),
+            "deposit": int(p.get("deposit") or 0),
+            "withdrawal": int(p.get("withdrawal") or 0),
+        })
+    return result
+
+
 # --- 列プロファイル管理 ---
 
 logger = logging.getLogger(__name__)
