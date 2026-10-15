@@ -5,6 +5,26 @@ title: リリースノート
 
 # リリースノート
 
+## v4.4.0
+
+**マイナーリリース** — MCP サーバーにクレジットカード/銀行の明細 CSV を照合・取込むツール (`preview_csv` / `reconcile_csv` / `import_csv`) を追加。**日計差**と**カード会社未達（仕訳済み・明細未到着）**の検出に対応し、フロントエンドの取込確認画面と同一ロジックを共有します。テスト `test_mcp_csv.py` (21) を追加し、pytest 2068 件が pass。
+
+### MCP: 明細CSVの照合・取込
+
+- **`preview_csv`** — CSV 明細の文字コード・ヘッダー・プレビューと推定列マッピングを返す
+- **`reconcile_csv`** — 指定した支払口座の既存仕訳と照合し、行ごとの状態 (`matched` / `multiple` / `unmatched`)、**日計差** (`daily_summary`)、**カード会社未達** (`journal_only`) を返す。列マッピングは保存プロファイル → ヘッダー推定 → 明示指定 (`mapping`) の順で解決し、判定できない場合は `needs_mapping: true` とプレビューを返す
+- **`import_csv`** — 未照合行に費目を付けて一括取込。年度制限・確定済み期間・提出済みロック・資産/負債相手の自動振替をフロントと同一ロジックで検証
+- CSV 本文は `content`（UTF-8 テキスト）または `content_base64`（Shift-JIS 等）で受け取る。`content_base64` は `analyze_receipt` と同様 base64 デコード
+- スコープ: `reconcile_csv` / `preview_csv` は `journals:read`、`import_csv` は `journals:create`（書き込み）
+
+**共通化**
+
+- 取込確認画面の一括仕訳化ロジックを `app/services/import_ops.py` の `import_rows()` に抽出し、CSV / OFX / Web 取込ビューと MCP で共有（取込結果のズレを防止）
+- `app/services/csv_import.py` にヘッダーからの列マッピング推定 (`detect_mapping_heuristic`) とマッピング解決 (`resolve_mapping`) を追加
+- `app/services/api_ops.py` に `reconcile_csv()` / `import_csv_rows()` を追加（request 非依存）
+
+REST API (`/api/v1`) のエンドポイント・形式に変更はありません。クライアントの更新は不要です。
+
 ## v4.3.0
 
 **マイナーリリース** — **MCP リモートサーバー (`/mcp`) を内蔵** し、MCP 仕様の OAuth 2.1 認可 (動的クライアント登録 + Authorization Code + PKCE) に対応。日付初期値がプロセスのタイムゾーンに依存して前日にズレる問題と、確定済み期間の伝票を複写できない不具合も修正。pytest 2051 件 + E2E 66 件が CI で pass。

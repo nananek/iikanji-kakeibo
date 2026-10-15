@@ -263,6 +263,87 @@ def _t_tax_summary(principal, args):
     return api_ops.tax_summary(principal.user_id, year=args.get("year"))
 
 
+def _decode_csv_content(args) -> bytes:
+    """MCP 引数から CSV 生バイト列を取り出す。
+
+    ``content_base64`` を優先する (Shift-JIS などの非 UTF-8 を保持)。
+    ``content`` (素のテキスト) はそのまま UTF-8 エンコードして渡す。
+    """
+    b64 = args.get("content_base64")
+    if b64:
+        try:
+            return base64.b64decode(b64, validate=True)
+        except (ValueError, TypeError):
+            raise ApiError("content_base64 のデコードに失敗しました。")
+    content = args.get("content")
+    if content is None:
+        raise ApiError(
+            "content（CSV本文）または content_base64 のいずれかが必要です。"
+        )
+    if not isinstance(content, str):
+        raise ApiError("content は文字列で指定してください。")
+    return content.encode("utf-8")
+
+
+def _t_preview_csv(principal, args):
+    from app.services.csv_import import (
+        parse_csv_preview, detect_mapping_heuristic, guess_date_format,
+    )
+
+    raw_bytes = _decode_csv_content(args)
+    if not raw_bytes:
+        raise ApiError("CSV の内容が空です。")
+    if len(raw_bytes) > api_ops.MAX_CSV_BYTES:
+        raise ApiError("CSV が大きすぎます（上限 5MB）。")
+
+    try:
+        max_rows = int(args.get("max_rows", 20) or 20)
+    except (ValueError, TypeError):
+        max_rows = 20
+    max_rows = min(max(max_rows, 1), 100)
+
+    preview = parse_csv_preview(raw_bytes, max_rows=max_rows)
+    if not preview["headers"]:
+        raise ApiError("CSV のヘッダーを読み取れませんでした。")
+
+    suggested = detect_mapping_heuristic(preview["headers"])
+    if suggested:
+        dc = suggested["date_col"]
+        suggested["date_format"] = guess_date_format(
+            [(r[dc] if dc < len(r) else "") for r in preview["rows"]]
+        )
+
+    return {
+        "ok": True,
+        "encoding": preview["encoding"],
+        "headers": preview["headers"],
+        "preview_rows": preview["rows"],
+        "total_rows": preview["total_rows"],
+        "suggested_mapping": suggested,
+    }
+
+
+def _t_reconcile_csv(principal, args):
+    raw_bytes = _decode_csv_content(args)
+    return api_ops.reconcile_csv(
+        principal.user_id,
+        args.get("payment_account_code"),
+        raw_bytes,
+        mapping=args.get("mapping"),
+        date_format=args.get("date_format"),
+    )
+
+
+def _t_import_csv(principal, args):
+    return api_ops.import_csv_rows(
+        principal.user_id,
+        args.get("payment_account_code"),
+        args.get("rows"),
+        old_year_action=args.get("old_year_action", "skip"),
+        source=args.get("source", "csv"),
+    )
+
+
 def _obj(properties, required=None):
     schema = {"type": "object", "properties": properties}
     if required:
@@ -280,6 +361,46 @@ _JOURNAL_LINE_SCHEMA = _obj(
     },
     required=["account_code"],
 )
+
+_CSV_MAPPING_SCHEMA = _obj({
+    "date_col": {
+        "type": "integer", "description": "日付列のインデックス (0始まり)",
+    },
+    "desc_col": {
+        "type": "integer", "description": "摘要列のインデックス (0始まり)",
+    },
+    "deposit_col": {
+        "type": "integer", "description": "入金列 (0始まり, 無ければ省略)",
+    },
+    "withdrawal_col": {
+        "type": "integer", "description": "出金列 (0始まり, 無ければ省略)",
+    },
+    "date_format": {
+        "type": "string", "description": "日付の strftime 形式 (例: %Y/%m/%d)",
+    },
+}, required=["date_col", "desc_col"])
+
+_CSV_CONTENT_PROPS = {
+    "content": {"type": "string", "description": "CSV本文 (UTF-8 テキスト)"},
+    "content_base64": {
+        "type": "string",
+        "description": "CSVのbase64 (Shift-JIS 等の非UTF-8向け)",
+    },
+}
+
+_CSV_IMPORT_ROW_SCHEMA = _obj({
+    "date": {"type": "string", "description": "YYYY-MM-DD"},
+    "description": {"type": "string", "description": "摘要"},
+    "deposit": {"type": "integer", "description": "入金額"},
+    "withdrawal": {"type": "integer", "description": "出金額"},
+    "category_code": {
+        "type": "string",
+        "description": "費目または振替相手の勘定科目コード",
+    },
+    "enabled": {
+        "type": "boolean", "description": "false の行はスキップ (既定 true)",
+    },
+}, required=["date", "category_code"])
 
 # name, description, inputSchema, scope, write, handler
 TOOLS = [
@@ -451,6 +572,75 @@ TOOLS = [
         "write": False,
         "handler": _t_tax_summary,
     },
+    {
+        "name": "preview_csv",
+        "description": (
+            "クレジットカード/銀行のCSV明細を解析し、文字コード・ヘッダー・"
+            "プレビュー・推定列マッピングを返す。reconcile_csv の前段として使う。"
+        ),
+        "inputSchema": _obj({
+            **_CSV_CONTENT_PROPS,
+            "max_rows": {
+                "type": "integer",
+                "description": "プレビュー行数 (既定20, 最大100)",
+            },
+        }),
+        "scope": "journals:read",
+        "write": False,
+        "handler": _t_preview_csv,
+    },
+    {
+        "name": "reconcile_csv",
+        "description": (
+            "クレカ/銀行のCSV明細を、指定した支払口座の既存仕訳と照合する。"
+            "行ごとの状態 (matched/multiple/unmatched)、日計差 (daily_summary)、"
+            "カード会社未達 (journal_only = 仕訳済みだが明細未到着) を返す。"
+            "未照合行は費目を決めて import_csv で取込む。"
+        ),
+        "inputSchema": _obj({
+            **_CSV_CONTENT_PROPS,
+            "payment_account_code": {
+                "type": "string",
+                "description": (
+                    "取込先の口座コード (例: 2010 クレジットカード, "
+                    "1020 普通預金)。list_accounts で確認できる。"
+                ),
+            },
+            "mapping": _CSV_MAPPING_SCHEMA,
+            "date_format": {
+                "type": "string", "description": "日付形式 (省略時は推定)",
+            },
+        }, required=["payment_account_code"]),
+        "scope": "journals:read",
+        "write": False,
+        "handler": _t_reconcile_csv,
+    },
+    {
+        "name": "import_csv",
+        "description": (
+            "reconcile_csv で未照合 (unmatched) と判定された行を仕訳として"
+            "一括取込する。フロントエンドの一括取込と同じ検証 "
+            "(年度制限・確定済み期間・提出済みロック) を行う。"
+        ),
+        "inputSchema": _obj({
+            "payment_account_code": {"type": "string"},
+            "rows": {
+                "type": "array",
+                "items": _CSV_IMPORT_ROW_SCHEMA,
+                "description": "取込む行 (date, category_code 必須)",
+            },
+            "old_year_action": {
+                "type": "string", "enum": ["skip", "capital"],
+                "description": "未開設年度の扱い (既定 skip)",
+            },
+            "source": {
+                "type": "string", "description": "仕訳の source (既定 csv)",
+            },
+        }, required=["payment_account_code", "rows"]),
+        "scope": "journals:create",
+        "write": True,
+        "handler": _t_import_csv,
+    },
 ]
 
 _TOOLS_BY_NAME = {t["name"]: t for t in TOOLS}
@@ -535,8 +725,10 @@ def _handle_message(msg, principal):
             "instructions": (
                 "いいかんじ™家計簿の家計データにアクセスする MCP サーバーです。"
                 "試算表・損益計算書・確定申告集計の参照や、仕訳の起票・削除、"
-                "AI 下書きの操作ができます。付与されたスコープの範囲のみ実行"
-                "できます。"
+                "AI 下書きの操作ができます。クレジットカード/銀行のCSV明細は "
+                "preview_csv → reconcile_csv → import_csv の順で照合・取込"
+                "できます（日計差・カード会社未達の検出に対応）。付与された"
+                "スコープの範囲のみ実行できます。"
             ),
         }
         return {"jsonrpc": "2.0", "id": req_id, "result": result}, False

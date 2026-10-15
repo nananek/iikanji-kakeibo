@@ -84,8 +84,59 @@ CLI / TUI などのブラウザレス クライアントは従来どおり
 | `get_income_statement` | 損益計算書 | `reports:read` |
 | `get_monthly_comparison` | 月次比較 | `reports:read` |
 | `get_tax_summary` | 確定申告集計 | `reports:read` |
+| `preview_csv` | CSV 明細のプレビュー・列推定 | `journals:read` |
+| `reconcile_csv` | CSV 明細と仕訳の照合（日計差・未達検出） | `journals:read` |
+| `import_csv` | 照合済み行の一括取込 | `journals:create` |
 
 `tools/list` は、トークンに付与されたスコープで利用可能なツールのみを返します。
+
+## CSV 明細の照合・取込
+
+クレジットカードや銀行の明細 CSV を、フロントエンドの取込確認画面と
+**同じロジック**で照合・仕訳化できます。LLM からは次の順で呼び出します。
+
+1. `preview_csv` — 文字コード・ヘッダー・プレビュー・推定列マッピングを確認
+2. `reconcile_csv` — 指定した支払口座の既存仕訳と照合
+   - `csv_results`: 行ごとの状態（`matched` / `multiple` / `unmatched`）
+   - `daily_summary`: **日計差**（日付ごとの CSV 件数/合計 と 仕訳件数/合計 の差異）
+   - `journal_only`: **カード会社未達**（レシートで仕訳済みだが明細未到着）
+3. `import_csv` — `unmatched` の行に費目 (`category_code`) を付けて一括取込
+
+CSV 本文は `content`（UTF-8 テキスト）または `content_base64`
+（Shift-JIS などの非 UTF-8 を保持）で渡します。列マッピングが自動判定
+できない場合は、`reconcile_csv` が `needs_mapping: true` と `headers` /
+`preview_rows` / `suggested_mapping` を返すので、`mapping` を指定して
+再実行してください。
+
+取込はフロントエンドと同一の検証（年度制限・確定済み期間・提出済みロック・
+資産/負債相手の自動振替）を行います。`payment_account_code` は
+`list_accounts` で確認できます（例: `2010` クレジットカード、`1020` 普通預金）。
+
+```bash
+# 照合（利用日 / 利用店舗 / 利用金額 の 3 列）
+curl -s https://your-server.example.com/mcp \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{
+        "name":"reconcile_csv",
+        "arguments":{
+          "payment_account_code":"2010",
+          "content":"利用日,利用店舗,利用金額\n2026-01-10,コンビニ,1500\n"
+        }}}'
+
+# 未照合行を費目 5010 で取込
+curl -s https://your-server.example.com/mcp \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{
+        "name":"import_csv",
+        "arguments":{
+          "payment_account_code":"2010",
+          "rows":[{"date":"2026-01-10","description":"コンビニ",
+                   "withdrawal":1500,"category_code":"5010"}]
+        }}}'
+```
+
 
 ## 接続例 (Claude カスタムコネクタ)
 

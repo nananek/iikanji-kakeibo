@@ -1,7 +1,6 @@
 """CSV明細取り込みビュー"""
 
 import json
-import uuid
 
 from flask import Blueprint, render_template, redirect, url_for, flash, request, session, jsonify
 from flask_login import login_required, current_user
@@ -10,7 +9,7 @@ from app.extensions import db
 from app.models.account import Account, AccountType
 from app.models.ai_config import UserAIConfig
 from app.models.journal import JournalEntry
-from app.services.audit import get_effective_user_id, get_submitted_account_codes
+from app.services.audit import get_effective_user_id
 from app.services.csv_import import (
     parse_csv_preview,
     parse_csv_full,
@@ -19,11 +18,10 @@ from app.services.csv_import import (
     save_column_profile,
     detect_columns_by_ai,
 )
-from app.services.accounting import create_cashbook_entry, create_transfer_entry
+from app.services.import_ops import import_rows
 from app.services.fiscal import (
-    check_period_open_for_new, get_restricted_before_year, is_year_open,
-    get_capital_account_code, get_closed_periods_for_dates,
-    check_entry_modifiable,
+    check_period_open_for_new, get_restricted_before_year,
+    get_closed_periods_for_dates, check_entry_modifiable,
 )
 from app.views.helpers import (
     get_grouped_accounts, save_import_data, load_import_data, delete_import_data,
@@ -214,8 +212,6 @@ def mapping():
 @login_required
 def confirm():
     """Step 3: 確認して一括取り込み"""
-    from datetime import date as date_type
-
     data_key = session.get("csv_data_key")
     payment_account_code = session.get("csv_payment_account_code")
     parsed = load_import_data(data_key)
@@ -240,138 +236,35 @@ def confirm():
         .first()
     )
 
-    # 振替判定用: 資産・負債の科目IDセット
-    asset_type = AccountType.query.filter_by(code="asset").first()
-    liability_type = AccountType.query.filter_by(code="liability").first()
-    transfer_type_ids = {asset_type.id, liability_type.id}
-
     user_id = get_effective_user_id()
     restricted_before = get_restricted_before_year(user_id)
-    capital_code = get_capital_account_code(user_id)
 
     if request.method == "POST":
-        import_rows = request.form.get("import_rows", "")
-        if not import_rows:
+        import_rows_json = request.form.get("import_rows", "")
+        if not import_rows_json:
             flash("取り込むデータがありません。", "danger")
             return redirect(url_for("csv_import.upload"))
 
-        rows_data = json.loads(import_rows)
+        rows_data = json.loads(import_rows_json)
         old_year_action = request.form.get("old_year_action", "skip")
-        imported = 0
-        skipped = 0
-        capital_count = 0
-        batch_id = str(uuid.uuid4())
-        locked_codes = get_submitted_account_codes(user_id)
-        today_year = date_type.today().year
-
-        for row in rows_data:
-            if not row.get("enabled", True):
-                skipped += 1
-                continue
-
-            row_date_str = row.get("date")
-            if not row_date_str:
-                skipped += 1
-                continue
-
-            row_date = date_type.fromisoformat(row_date_str)
-            description = row.get("description", "")
-            deposit = int(row.get("deposit", 0))
-            withdrawal = int(row.get("withdrawal", 0))
-            category_code = row.get("category_code", "")
-
-            if not category_code or (deposit == 0 and withdrawal == 0):
-                skipped += 1
-                continue
-
-            # 提出済みロック科目チェック
-            if locked_codes and {payment_account_code, category_code} & locked_codes:
-                skipped += 1
-                continue
-
-            # 未開設年度チェック
-            if restricted_before and row_date.year < restricted_before:
-                if not is_year_open(user_id, row_date.year):
-                    if old_year_action == "capital" and capital_code:
-                        description = f"({row_date_str}) {description}"
-                        row_date = date_type(today_year, 1, 1)
-                        category_code = capital_code
-                        capital_count += 1
-                    else:
-                        skipped += 1
-                        continue
-
-            # 確定済み期間チェック
-            err = check_period_open_for_new(user_id, row_date.year, row_date.month)
-            if err:
-                skipped += 1
-                continue
-
-            # 振替かどうか判定
-            cat_account = Account.query.filter_by(user_id=user_id, code=category_code).first()
-            is_transfer = cat_account and cat_account.account_type_id in transfer_type_ids
-
-            if is_transfer:
-                amount = deposit or withdrawal
-                if withdrawal > 0:
-                    create_transfer_entry(
-                        user_id=user_id,
-                        date=row_date,
-                        from_account_code=payment_account_code,
-                        to_account_code=category_code,
-                        amount=amount,
-                        description=description,
-                        batch_id=batch_id,
-                        source="csv",
-                    )
-                else:
-                    create_transfer_entry(
-                        user_id=user_id,
-                        date=row_date,
-                        from_account_code=category_code,
-                        to_account_code=payment_account_code,
-                        amount=amount,
-                        description=description,
-                        batch_id=batch_id,
-                        source="csv",
-                    )
-                imported += 1
-            elif deposit > 0:
-                create_cashbook_entry(
-                    user_id=user_id,
-                    date=row_date,
-                    transaction_type="income",
-                    payment_account_code=payment_account_code,
-                    category_account_code=category_code,
-                    amount=deposit,
-                    description=description,
-                    batch_id=batch_id,
-                    source="csv",
-                )
-                imported += 1
-            elif withdrawal > 0:
-                create_cashbook_entry(
-                    user_id=user_id,
-                    date=row_date,
-                    transaction_type="expense",
-                    payment_account_code=payment_account_code,
-                    category_account_code=category_code,
-                    amount=withdrawal,
-                    description=description,
-                    batch_id=batch_id,
-                    source="csv",
-                )
-                imported += 1
-            else:
-                skipped += 1
+        result = import_rows(
+            user_id,
+            payment_account_code,
+            rows_data,
+            source="csv",
+            old_year_action=old_year_action,
+        )
 
         delete_import_data(data_key)
         session.pop("csv_data_key", None)
         session.pop("csv_payment_account_code", None)
 
-        msg = f"{imported}件を取り込みました。（スキップ: {skipped}件）"
-        if capital_count:
-            msg += f"（うち元入金変換: {capital_count}件）"
+        msg = (
+            f"{result['imported']}件を取り込みました。"
+            f"（スキップ: {result['skipped']}件）"
+        )
+        if result["capital_count"]:
+            msg += f"（うち元入金変換: {result['capital_count']}件）"
         flash(msg, "success")
         return redirect(url_for("cashbook.index"))
 
