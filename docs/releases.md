@@ -23,7 +23,12 @@ title: リリースノート
 - `app/services/csv_import.py` にヘッダーからの列マッピング推定 (`detect_mapping_heuristic`) とマッピング解決 (`resolve_mapping`) を追加
 - `app/services/api_ops.py` に `reconcile_csv()` / `import_csv_rows()` を追加（request 非依存）
 
-REST API (`/api/v1`) のエンドポイント・形式に変更はありません。クライアントの更新は不要です。
+### セキュリティ修正（出荷前の敵対的レビュー）
+
+- **OAuth Device Flow の同意**: 権限を1つも選ばずに「承認」した場合、従来は全権限（書込可）のトークンが発行されていた。Authorization Code フローと同じく何も付与しないよう修正。Device Flow を利用する CLI / TUI 等のクライアントで、承認時にスコープを選択していなかった場合は、必要なスコープを選び直すこと（未選択のまま承認すると何もできなくなる）
+- **MCP `import_csv`**: ユーザーが保有しない・無効化済みの勘定科目コードでの起票を拒否。1リクエストあたりの行数上限（1000 件）を追加
+
+REST API (`/api/v1`) のエンドポイント・レスポンス形式に変更はありません。挙動が変わるのは Device Flow でスコープ未選択のまま承認していた場合のみです。
 
 ## v4.3.0
 

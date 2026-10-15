@@ -207,6 +207,44 @@ class TestImportCsv:
         assert data["imported"] == 0
         assert data["skipped"] == 1
 
+    def test_unknown_category_code_is_skipped(self, client, db, user, accounts):
+        """ユーザー未保有の勘定科目コードでは起票しない。"""
+        raw, _, _ = _make_token(db, user, ["journals:create"])
+        resp = _call(client, raw, "import_csv", {
+            "payment_account_code": "2010",
+            "rows": [{"date": "2026-01-12", "withdrawal": 100,
+                      "category_code": "9999"}],
+        })
+        data = _parse_tool_result(resp)
+        assert data["imported"] == 0
+        assert data["skipped"] == 1
+
+    def test_inactive_category_code_is_skipped(self, client, db, user, accounts):
+        """無効化済みの勘定科目コードでは起票しない。"""
+        accounts["5010"].is_active = False
+        db.session.commit()
+        raw, _, _ = _make_token(db, user, ["journals:create"])
+        resp = _call(client, raw, "import_csv", {
+            "payment_account_code": "2010",
+            "rows": [{"date": "2026-01-12", "withdrawal": 100,
+                      "category_code": "5010"}],
+        })
+        data = _parse_tool_result(resp)
+        assert data["imported"] == 0
+        assert data["skipped"] == 1
+
+    def test_too_many_rows_is_tool_error(self, client, db, user, accounts):
+        """1 リクエストの行数上限を超えるとエラーになる。"""
+        from app.services.api_ops import MAX_IMPORT_ROWS
+
+        raw, _, _ = _make_token(db, user, ["journals:create"])
+        rows = [{"date": "2026-01-12", "withdrawal": 1, "category_code": "5010"}
+                for _ in range(MAX_IMPORT_ROWS + 1)]
+        resp = _call(client, raw, "import_csv", {
+            "payment_account_code": "2010", "rows": rows,
+        })
+        assert resp.get_json()["result"]["isError"] is True
+
     def test_denied_without_create_scope(self, client, db, user, accounts):
         raw, _, _ = _make_token(db, user, ["journals:read"])
         resp = _call(client, raw, "import_csv", {

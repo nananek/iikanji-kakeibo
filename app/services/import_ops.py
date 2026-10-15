@@ -121,9 +121,13 @@ def import_rows(user_id, payment_account_code, rows, *, source="csv",
         cat_account = Account.query.filter_by(
             user_id=user_id, code=category_code
         ).first()
-        is_transfer = bool(
-            cat_account and cat_account.account_type_id in transfer_type_ids
-        )
+        # ユーザーが保有する有効な科目のみを許可する (フロントの科目選択と
+        # 同じ制約)。存在しない・無効化済みのコードで宙に浮いた明細行を
+        # 作らせない。
+        if cat_account is None or not cat_account.is_active:
+            skipped += 1
+            continue
+        is_transfer = cat_account.account_type_id in transfer_type_ids
 
         if is_transfer:
             amount = deposit or withdrawal

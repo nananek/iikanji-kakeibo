@@ -468,6 +468,10 @@ def monthly_comparison(user_id, *, year=None):
 
 MAX_CSV_BYTES = 5 * 1024 * 1024  # 5MB (Web 取込画面と同じ上限)
 
+# 1 リクエストで一括取込できる最大行数。月次明細 (数百行) を十分に上回る値に
+# しつつ、トークン 1 つで大量起票・DB 負荷を生じさせないための上限。
+MAX_IMPORT_ROWS = 1000
+
 
 def _csv_summary(daily_summary, csv_results, journal_only):
     """日計サマリー・照合結果から集計値を組み立てる。"""
@@ -619,6 +623,11 @@ def import_csv_rows(user_id, payment_account_code, rows, *,
         raise ApiError("payment_account_code は必須です。")
     if not rows or not isinstance(rows, list):
         raise ApiError("rows は必須です（配列）。")
+    if len(rows) > MAX_IMPORT_ROWS:
+        raise ApiError(
+            f"1 回に取込める行数は {MAX_IMPORT_ROWS} 件までです。分割して"
+            "取込んでください。"
+        )
     if source not in ALLOWED_SOURCES:
         raise ApiError("source が不正です。")
 
