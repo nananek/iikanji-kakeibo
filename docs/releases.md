@@ -5,6 +5,58 @@ title: リリースノート
 
 # リリースノート
 
+## v4.3.0
+
+**マイナーリリース** — **MCP リモートサーバー (`/mcp`) を内蔵** し、MCP 仕様の OAuth 2.1 認可 (動的クライアント登録 + Authorization Code + PKCE) に対応。日付初期値がプロセスのタイムゾーンに依存して前日にズレる問題と、確定済み期間の伝票を複写できない不具合も修正。pytest 2051 件 + E2E 66 件が CI で pass。
+
+### MCP リモートサーバー内蔵 + OAuth 2.1 認可 (PR #469)
+
+**MCP サーバー (`/mcp`)**
+
+- Claude のカスタムコネクタ等の MCP クライアントから接続できるリモート MCP サーバーを内蔵 (Streamable HTTP / JSON-RPC 2.0)。対応プロトコルバージョン: `2025-06-18` / `2025-03-26` / `2024-11-05`
+- `initialize` / `ping` / `tools/list` / `tools/call` に対応 (通知は 202)
+- 提供ツール (15): 仕訳の一覧・詳細・起票・削除、証憑一覧・画像 (base64)、勘定科目一覧、AI 下書きの一覧・詳細・解析・削除、試算表・損益計算書・月次比較・確定申告集計
+- `tools/list` はトークンに付与されたスコープで利用可能なツールのみを返す
+- 未認証アクセスには `401` と `WWW-Authenticate: Bearer resource_metadata=...` を返し、MCP クライアントが認可サーバーを自動発見
+
+**OAuth 2.1 (MCP クライアント向け)**
+
+- ディスカバリ: `/.well-known/oauth-protected-resource` (RFC 9728) / `/.well-known/oauth-authorization-server` (RFC 8414)
+- 動的クライアント登録 `POST /oauth/register` (RFC 7591)
+- 認可コード + PKCE (`S256` 必須) `GET/POST /oauth/authorize` + 同意画面。リダイレクト URI は登録済みのものと完全一致のみ許可
+- `POST /oauth/token` に `authorization_code` / `refresh_token` グラントを追加 (既存の Device Flow も継続)。`POST /oauth/revoke` を追加
+- **スコープの絞り込み**: 同意画面で付与スコープ (仕訳の閲覧/起票/削除・AI 解析・レポート・科目) をチェックボックスで選択可能。書き込み系スコープを 1 つも選ばなければ自動的に読み取り専用扱い。Device Flow の承認画面も同様
+- アクセストークン 1 時間 / リフレッシュトークン 30 日 (更新時にローテート)。認可コードは 60 秒・単回使用。トークンはハッシュのみ保存し、発行済みトークンは「設定 > 接続アプリ」から取り消し可能
+
+**共通化・セキュリティ**
+
+- REST API のコアロジックを `app/services/api_ops.py` に抽出し、REST API と MCP で共有
+- Bearer 認証を `BearerPrincipal` (スコープ / read_only) に統一。従来の API キー・Device Flow トークンは全権限相当で互換
+- ディスカバリ等で返す絶対 URL を `PUBLIC_BASE_URL` (未設定なら `SERVER_NAME` → `WEBAUTHN_ORIGIN`) に固定し、Host ヘッダ依存を排除
+- 仕訳 `source` を許可リスト (`api` / `journal` / `cashbook` / `csv` / `ofx` / `web` / `ai_receipt`) で検証し、`closing` 等のシステム予約値を拒否
+- MCP ツールの引数エラーで例外詳細を応答に含めず、ログにのみ記録
+
+**マイグレーション**
+
+- `052_mcp_oauth`: `oauth_clients` / `oauth_authorization_codes` テーブルを追加し、`oauth_tokens` にスコープ・有効期限・リフレッシュ関連カラムを追加 (コンテナ再作成で自動適用)
+
+**その他**
+
+- docs に [MCP サーバー](mcp.html) ガイドを追加 (README / docs トップも更新)。テスト `test_mcp.py` (26) / `test_oauth_authorization_code.py` (21) を追加
+
+### タイムゾーン修正 (PR #469)
+
+- `date.today()` がプロセスのタイムゾーン (UTC 運用のコンテナ等) に依存し、「0時を過ぎても前日の日付が仕訳の初期値になる」問題を修正。`APP_TIMEZONE` (既定 `Asia/Tokyo`) 基準で today()/now() を返す `app/services/clock.py` を新設し、各画面・サービスの日付取得を置換 (不正な値は UTC にフォールバック)
+- 元帳モーダルの複写日付が `new Date().toISOString()` (UTC) で前日になる問題を修正 (`formatLocalDate()`)
+- 新環境変数: `APP_TIMEZONE` / `PUBLIC_BASE_URL` (`.env.example` 参照)。テスト `test_timezone.py` (6) を追加
+
+### 確定済み期間の伝票複写の修正 (PR #470)
+
+- 元帳で確定済み期間など閲覧モードの伝票を複写すると、明細行が `readonly` のままで編集 (科目変更) できない不具合を修正。取得済みの明細データから編集可能な行を再描画する
+- E2E 回帰テスト `ledger-copy.spec.ts` を追加
+
+REST API (`/api/v1`) の既存エンドポイントのリクエスト/レスポンス形式に変更はありません (OAuth 2.1 エンドポイントは MCP クライアント向けの追加)。`source` にシステム予約値を指定した場合のみ 400 になります。クライアントの更新は不要です。
+
 ## v4.2.3
 
 **パッチリリース** — 公開前セキュリティ監査の指摘を修正し、CSP を導入。未使用の WebDAV 自動取込を撤去。AI 証憑仕訳エージェントの最大ターン数をユーザー設定化し、確定漏れ時のフォールバックで仕訳案を必ず生成するよう改善。
