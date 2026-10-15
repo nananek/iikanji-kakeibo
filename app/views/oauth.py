@@ -364,9 +364,10 @@ def device_authorize():
         device.scopes = ",".join(scopes)
         device.read_only = read_only_for(scopes)
     else:
-        # 従来どおり全権限
-        device.read_only = False
-        device.scopes = None
+        # 権限を1つも選ばなかった場合は何も付与しない (最小権限)。
+        # Authorization Code フローと同じ扱いにする。
+        device.read_only = True
+        device.scopes = ""
 
     db.session.commit()
     if device.read_only:
