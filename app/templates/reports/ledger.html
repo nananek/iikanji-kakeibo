@@ -452,6 +452,7 @@ if (window.innerWidth > 576) {
 var csrfToken = "{{ csrf_token() }}";
 var currentEntryId = null;
 var currentHasVoucher = false;
+var currentEntryLines = [];
 var editModal = null;
 
 var _isMobile = window.innerWidth <= 576;
@@ -549,6 +550,7 @@ function openEditModal(entryId) {
     .then(function(r) { return r.json(); })
     .then(function(data) {
       currentHasVoucher = data.has_voucher || false;
+      currentEntryLines = data.lines || [];
       renderVoucherPreview(document.getElementById('modalVoucherPreview'), data.vouchers);
       var ro = data.is_readonly;
 
@@ -698,10 +700,13 @@ function copyEntry() {
   document.getElementById('modalAddLineBtn').style.display = '';
   document.getElementById('voucherUploadArea').classList.add('d-none');
 
-  // 明細行を編集可能に
-  document.querySelectorAll('#modalLinesBody input').forEach(function(el) { el.disabled = false; });
-  document.querySelectorAll('#modalLinesBody button').forEach(function(el) { el.disabled = false; });
-  document.querySelectorAll('#modalLinesBody .modal-remove-btn').forEach(function(btn) { btn.style.display = ''; });
+  // 明細行を編集可能な状態で再描画する。
+  // 確定済み期間などの閲覧モードでは行が readonly 属性付き・科目選択ボタン無しで
+  // 描画されるため、disabled を外すだけでは編集可能にならない。
+  // 取得済みの明細データから編集可能な行を組み直す（事業主行は読み取り専用のまま）。
+  var tbody = document.getElementById('modalLinesBody');
+  tbody.innerHTML = '';
+  currentEntryLines.forEach(function(line) { modalAddLine(line, false); });
 }
 
 function saveEntry() {

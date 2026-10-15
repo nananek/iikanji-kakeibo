@@ -77,6 +77,23 @@ with app.app_context():
         db.session.add(entry)
         db.session.commit()
 
+    # 確定済み期間（2025年は closed_period=12）の伝票: 元帳での複写 E2E 用
+    if not JournalEntry.query.filter_by(user_id=u.id, description='E2E確定済仕訳').first():
+        from app.services.accounting import get_next_entry_number
+        locked_entry = JournalEntry(
+            user_id=u.id, date=date(2025, 6, 15),
+            entry_number=get_next_entry_number(u.id),
+            description='E2E確定済仕訳', source='journal',
+        )
+        locked_entry.lines = [
+            JournalEntryLine(account_user_id=u.id, account_code=cash.code,
+                             debit_amount=2500, credit_amount=0),
+            JournalEntryLine(account_user_id=u.id, account_code=food.code,
+                             debit_amount=0, credit_amount=2500),
+        ]
+        db.session.add(locked_entry)
+        db.session.commit()
+
     # テスト用 analyzed ドラフト作成（既存があれば削除して再作成）
     AIDraft.query.filter_by(user_id=u.id, status='analyzed').delete()
     db.session.commit()
