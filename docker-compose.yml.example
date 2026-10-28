@@ -17,7 +17,11 @@ services:
     restart: unless-stopped
 
   web:
-    image: ghcr.io/nananek/iikanji-kakeibo:4.3.1
+    image: ghcr.io/nananek/iikanji-kakeibo:4.3.2
+    # distroless 版 (シェルなし / 非 root uid 65532) に差し替える場合はこちら。
+    # 同じタグ体系で `-distroless` を付けたイメージを公開している。
+    # 差し替える際は vouchers ボリュームの所有者を 65532:65532 に合わせること。
+    # image: ghcr.io/nananek/iikanji-kakeibo:4.3.2-distroless
     network_mode: service:tailscale
     environment:
       - TZ=Asia/Tokyo
@@ -25,11 +29,14 @@ services:
       # 未設定なら UI から llama.cpp 選択肢が消える。
       # - LLAMA_CPP_URL=http://llama-server:8080
     volumes:
-      # 証憑画像。コンテナは非 root (alpine の app ユーザー, uid 100) で
-      # 動作する。新規ボリュームはイメージの所有者を引き継ぐが、既存の
-      # root 所有ボリュームを引き継ぐ場合は一度 chown が必要:
+      # 証憑画像。コンテナは非 root (alpine 版は app ユーザー uid 100、
+      # distroless 版は uid 65532) で動作する。新規ボリュームはイメージの
+      # 所有者を引き継ぐが、既存の root 所有ボリュームや、alpine 版で作った
+      # ボリュームを distroless 版で使う場合は一度 chown が必要:
       #   docker run --rm -v iikanji-kakeibo_vouchers:/v alpine \
-      #     chown -R 100:101 /v
+      #     chown -R 100:101 /v          # alpine 版 (uid 100)
+      #   docker run --rm -v iikanji-kakeibo_vouchers:/v alpine \
+      #     chown -R 65532:65532 /v      # distroless 版 (uid 65532)
       - vouchers:/app/data/vouchers
     env_file:
       - .env

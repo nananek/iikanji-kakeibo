@@ -5,6 +5,44 @@ title: リリースノート
 
 # リリースノート
 
+## v4.3.2
+
+**パッチリリース** — 依存関係の更新に加え、**distroless イメージ (`python3-debian13:nonroot`)** を追加。既定の alpine イメージと同一タグ体系 (`-distroless` 付き) で公開し、`docker-compose.yml` の `image:` 1 行で差し替えられる。起動スクリプトは両イメージ共通の `entrypoint.py` に統一 (distroless にはシェルが無いため)。機能・仕様の変更はなし。pytest 2072 件が CI で pass し、同一スイートを alpine (Python 3.15) / distroless (Python 3.13) の実コンテナ内でも実行して pass を確認。
+
+### distroless イメージの追加
+
+- ビルドターゲット `web-distroless` を追加 (`Dockerfile`)。ベースは `gcr.io/distroless/python3-debian13:nonroot` (シェルなし / 非 root uid 65532 / Python 3.13)
+- GHCR には従来の `X.Y.Z` に加えて `X.Y.Z-distroless` を push (`.github/workflows/build-and-push.yml`)
+- 起動スクリプトを `entrypoint.sh` → `entrypoint.py` に統一。`flask db upgrade` → `flask seed` → Gunicorn の流れは従来どおり (`FLASK_DEBUG=1` で Flask 開発サーバー)
+- `entrypoint.py` は証憑ディレクトリが書き込み不可のときに警告を出す (ボリュームの所有者不一致を早期に検知)
+
+**差し替え手順**
+
+```yaml
+services:
+  web:
+    # image: ghcr.io/nananek/iikanji-kakeibo:4.3.2
+    image: ghcr.io/nananek/iikanji-kakeibo:4.3.2-distroless
+```
+
+証憑ボリュームの所有者はイメージ間で異なる (alpine 版 uid 100 / distroless 版 uid 65532) ため、差し替え時に一度だけ `chown` が必要:
+
+```sh
+docker run --rm -v iikanji-kakeibo_vouchers:/v alpine chown -R 65532:65532 /v   # distroless 版へ
+docker run --rm -v iikanji-kakeibo_vouchers:/v alpine chown -R 100:101 /v       # alpine 版へ戻す
+```
+
+### 依存関係の更新 (Dependabot #472〜#476)
+
+- **Python 依存** (requirements.txt):
+  - SQLAlchemy 2.1.3 → 2.1.4 (#472)
+  - boto3 >=1.43.89 → >=1.43.112 (#473)
+  - cryptography >=50.0.1 → >=50.0.2 (#474)
+  - webauthn >=3.0.0 → >=3.0.1 (登録レスポンスの attestation 形式検証を強化) (#475)
+- **コンテナ** (Dockerfile): python 3.14.8-alpine → 3.15.0-alpine (#476)
+
+REST API (`/api/v1`)・MCP の仕様変更なし。クライアントの更新は不要。
+
 ## v4.3.1
 
 **パッチリリース** — MCP サーバーにクレジットカード/銀行の明細 CSV を照合・取込むツール (`preview_csv` / `reconcile_csv` / `import_csv`) を追加。**日計差**と**カード会社未達（仕訳済み・明細未到着）**の検出に対応し、フロントエンドの取込確認画面と同一ロジックを共有します。テスト `test_mcp_csv.py` (20) を追加し、pytest 2072 件 + E2E 66 件が CI で pass。
