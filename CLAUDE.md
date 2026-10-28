@@ -27,7 +27,7 @@
 
 ## 技術スタック
 
-- Python 3.12 / Flask 3.x / Gunicorn
+- Python 3.15 (alpine イメージ) / 3.13 (distroless イメージ) / Flask 3.x / Gunicorn
 - PostgreSQL 16 / SQLAlchemy 2.x / Alembic (Flask-Migrate)
 - Flask-Login / Flask-WTF (CSRF) / py_webauthn
 - Bootstrap 5.3 (CDN) / Bootstrap Icons / Chart.js
@@ -197,7 +197,7 @@
 ### マイグレーション
 - revision ID は `NNN_snake_case` 形式（例: `010_system_role`）
 - `down_revision` は前のマイグレーションの `revision` 値と**完全一致**させること
-- 起動時に `flask db upgrade` が自動実行される (entrypoint.sh)
+- 起動時に `flask db upgrade` が自動実行される (entrypoint.py)
 
 ### テンプレート
 - HTML の `<form>` はネストできない。外側に `<form>` がある場合、個別のPOSTは JS で動的に form を生成して submit する
@@ -213,7 +213,12 @@
 - 税務集計・プライバシー権限は重点テスト項目
 
 ### Docker
-- `entrypoint.sh`: `flask db upgrade` → `flask seed` → `flask run`
+- `entrypoint.py`: 起動スクリプト (両イメージ共通)。`flask db upgrade` → `flask seed` → Gunicorn
+- ビルドターゲットは 2 つ: `web` (python:3.15-alpine, uid 100) と `web-distroless`
+  (gcr.io/distroless/python3-debian13:nonroot, uid 65532)。GHCR には
+  `X.Y.Z` と `X.Y.Z-distroless` の両タグが push される
+- どちらも非 root 実行。イメージを差し替えると証憑ボリュームの所有者
+  (100 / 65532) がずれるため、一度 `chown` が必要
 - 本番は Tailscale 経由でアクセス
 
 ### GitHub Actions

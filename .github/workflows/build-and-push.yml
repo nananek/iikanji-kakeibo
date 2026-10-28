@@ -38,6 +38,19 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
             type=sha,prefix=
 
+      - name: Extract metadata (distroless)
+        id: meta-distroless
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,prefix=
+          flavor: |
+            suffix=-distroless
+
       - name: Build and push
         uses: docker/build-push-action@v7
         with:
@@ -46,3 +59,14 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+
+      # distroless 版 (シェルなし / 非 root uid 65532)。既定の alpine 版と
+      # 差し替え可能な別タグとして公開する。
+      - name: Build and push (distroless)
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          target: web-distroless
+          push: true
+          tags: ${{ steps.meta-distroless.outputs.tags }}
+          labels: ${{ steps.meta-distroless.outputs.labels }}

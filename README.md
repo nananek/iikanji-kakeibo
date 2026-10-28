@@ -154,7 +154,7 @@
 
 ## 技術スタック
 
-- Python 3.12 / Flask 3.x / Gunicorn
+- Python 3.15 (alpine イメージ) / 3.13 (distroless イメージ) / Flask 3.x / Gunicorn
 - PostgreSQL 16
 - SQLAlchemy 2.x / Alembic (Flask-Migrate)
 - Flask-Login / Flask-WTF / Flask-Limiter
