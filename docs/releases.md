@@ -5,6 +5,24 @@ title: リリースノート
 
 # リリースノート
 
+## v4.3.3
+
+**パッチリリース** — 依存関係の更新と CI 修正のみ。機能・仕様の変更はなし。pytest 2072 件 + E2E 66 件が CI で pass。
+
+### 依存関係の更新 (Dependabot #477〜#479)
+
+- **Python 依存** (requirements.txt):
+  - SQLAlchemy 2.1.4 → 2.1.6 (#477)
+  - alembic 1.20.0 → 1.20.1 (#477)
+  - boto3 >=1.43.112 → >=1.43.123 (#479)
+  - Pillow >=12.3.0,<13.0 → >=13.0.0,<14.0 (#478)
+
+### CI
+
+- e2e ジョブの runner を `ubuntu-24.04` に固定 (#480)。`ubuntu-latest` が ubuntu-26.04 に移行したことで、Playwright 1.58.2 が `ubuntu26.04-x64` の firefox をインストールできず e2e が失敗していた (依存更新とは無関係)
+
+REST API (`/api/v1`)・MCP の仕様変更なし。クライアントの更新は不要。
+
 ## v4.3.2
 
 **パッチリリース** — 依存関係の更新に加え、**distroless イメージ (`python3-debian13:nonroot`)** を追加。既定の alpine イメージと同一タグ体系 (`-distroless` 付き) で公開し、`docker-compose.yml` の `image:` 1 行で差し替えられる。起動スクリプトは両イメージ共通の `entrypoint.py` に統一 (distroless にはシェルが無いため)。機能・仕様の変更はなし。pytest 2072 件が CI で pass し、同一スイートを alpine (Python 3.15) / distroless (Python 3.13) の実コンテナ内でも実行して pass を確認。

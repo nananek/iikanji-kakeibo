@@ -17,11 +17,11 @@ services:
     restart: unless-stopped
 
   web:
-    image: ghcr.io/nananek/iikanji-kakeibo:4.3.2
+    image: ghcr.io/nananek/iikanji-kakeibo:4.3.3
     # distroless 版 (シェルなし / 非 root uid 65532) に差し替える場合はこちら。
     # 同じタグ体系で `-distroless` を付けたイメージを公開している。
     # 差し替える際は vouchers ボリュームの所有者を 65532:65532 に合わせること。
-    # image: ghcr.io/nananek/iikanji-kakeibo:4.3.2-distroless
+    # image: ghcr.io/nananek/iikanji-kakeibo:4.3.3-distroless
     network_mode: service:tailscale
     environment:
       - TZ=Asia/Tokyo
