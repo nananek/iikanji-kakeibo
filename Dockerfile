@@ -39,7 +39,7 @@ ENTRYPOINT ["python", "/app/entrypoint.py"]
 # distroless イメージは Debian 13 (glibc) の Python 3.13 なので、musl 向けの
 # ビルドとは別に glibc 向け wheel を集める。distroless にはパッケージマネージャ
 # もシェルも無いため、実行時イメージにはこのステージの成果物だけをコピーする。
-FROM python:3.13-slim-trixie AS build-distroless
+FROM python:3.15-slim-trixie AS build-distroless
 
 WORKDIR /app
 
